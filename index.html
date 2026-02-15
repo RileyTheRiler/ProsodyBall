@@ -445,6 +445,16 @@ class VoiceAnalyzer {
     this.sustainedDuration = 0;
     this.sustainedThreshold = 0.02;
 
+    // Noise floor calibration
+    this.noiseFloor = 0.015; // default, will be calibrated
+    this.hfNoiseFloor = 0; // HF baseline for fans/AC
+    this.noiseCalibrationSamples = [];
+    this.hfCalibrationSamples = [];
+    this.noiseCalibrationDuration = 1.0; // seconds — longer for steady noise like fans
+    this.noiseCalibrationTimer = 0;
+    this.isCalibrated = false;
+    this.noiseAdaptRate = 0.002; // ongoing adaptation for changing environments
+
     this.metrics = {
       bounce: 0, tempo: 0, vowel: 0,
       articulation: 0, syllable: 0,
@@ -506,6 +516,12 @@ class VoiceAnalyzer {
     this.sustainedDuration = 0;
     this.syllableImpulse = 0;
     this.syllableState = 'silent';
+    this.noiseCalibrationSamples = [];
+    this.hfCalibrationSamples = [];
+    this.noiseCalibrationTimer = 0;
+    this.isCalibrated = false;
+    this.noiseFloor = 0.015;
+    this.hfNoiseFloor = 0;
     for (const k in this.metrics) this.metrics[k] = 0;
   }
 
@@ -519,7 +535,9 @@ class VoiceAnalyzer {
     let rms = 0;
     for (let i = 0; i < n; i++) rms += buf[i] * buf[i];
     rms = Math.sqrt(rms / n);
-    if (rms < 0.008) return 0;
+    // Use noise floor if calibrated, otherwise conservative default
+    const silenceThreshold = this.isCalibrated ? this.noiseFloor * 2.5 : 0.015;
+    if (rms < silenceThreshold) return 0;
 
     const minPeriod = Math.floor(sampleRate / 500);
     const maxPeriod = Math.min(Math.floor(sampleRate / 60), n - 1);
@@ -547,30 +565,80 @@ class VoiceAnalyzer {
 
     const now = performance.now() / 1000;
 
-    const pitch = this.detectPitch();
-    if (pitch > 0) {
-      this.lastPitch = pitch;
-      this.pitchHistory.push(pitch);
-      if (this.pitchHistory.length > this.pitchHistoryMax) this.pitchHistory.shift();
-    }
-
+    // --- Raw energy first (needed for calibration) ---
     this.analyser.getFloatTimeDomainData(this.timeDomainData);
     let rms = 0;
     for (let i = 0; i < this.timeDomainData.length; i++) {
       rms += this.timeDomainData[i] * this.timeDomainData[i];
     }
     rms = Math.sqrt(rms / this.timeDomainData.length);
-    this.smoothEnergy += (rms - this.smoothEnergy) * 0.15;
 
-    this.energyHistory.push(rms);
+    // --- Noise floor calibration ---
+    // Collect ambient noise samples for ~1s, then compute thresholds
+    if (!this.isCalibrated) {
+      this.noiseCalibrationTimer += dt;
+      this.noiseCalibrationSamples.push(rms);
+      // Also sample HF energy during calibration (for fan/AC baseline)
+      this.analyserHF.getByteFrequencyData(this.hfFrequencyData);
+      let hfSample = 0;
+      for (let i = 0; i < this.hfFrequencyData.length; i++) hfSample += this.hfFrequencyData[i];
+      this.hfCalibrationSamples.push(hfSample / (this.hfFrequencyData.length * 255));
+
+      if (this.noiseCalibrationTimer >= this.noiseCalibrationDuration) {
+        const samples = this.noiseCalibrationSamples;
+        const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+        const std = Math.sqrt(samples.reduce((a, v) => a + (v - mean) ** 2, 0) / samples.length);
+        // Set floor at mean + 4*std — aggressively above ambient noise (fans, AC, etc)
+        this.noiseFloor = Math.max(0.01, mean + std * 4);
+        this.syllableThreshold = this.noiseFloor * 1.2;
+        this.sustainedThreshold = this.noiseFloor * 1.5;
+        // HF noise floor — mean + 3*std of HF energy during silence
+        const hfMean = this.hfCalibrationSamples.reduce((a, b) => a + b, 0) / this.hfCalibrationSamples.length;
+        const hfStd = Math.sqrt(this.hfCalibrationSamples.reduce((a, v) => a + (v - hfMean) ** 2, 0) / this.hfCalibrationSamples.length);
+        this.hfNoiseFloor = hfMean + hfStd * 3;
+        this.isCalibrated = true;
+        console.log(`Noise calibrated: floor=${(this.noiseFloor * 1000).toFixed(1)}mRMS, hfFloor=${this.hfNoiseFloor.toFixed(4)} (ambient=${(mean * 1000).toFixed(1)}mRMS)`);
+      }
+      // During calibration, don't trigger any metrics
+      return;
+    }
+
+    // --- Slow ongoing noise floor adaptation (for changing environments) ---
+    if (rms < this.noiseFloor * 1.5 && rms > 0.001) {
+      this.noiseFloor += (rms * 1.2 - this.noiseFloor) * this.noiseAdaptRate;
+      this.noiseFloor = Math.max(0.005, this.noiseFloor);
+      this.syllableThreshold = this.noiseFloor * 1.2;
+      this.sustainedThreshold = this.noiseFloor * 1.5;
+    }
+
+    // --- Gate: subtract noise floor from RMS ---
+    const gatedRms = Math.max(0, rms - this.noiseFloor);
+    this.smoothEnergy += (gatedRms - this.smoothEnergy) * 0.15;
+
+    this.energyHistory.push(gatedRms);
     if (this.energyHistory.length > this.energyHistoryMax) this.energyHistory.shift();
 
+    // --- Pitch (only if above noise floor) ---
+    let pitch = 0;
+    if (rms > this.noiseFloor * 2) {
+      pitch = this.detectPitch();
+    }
+    if (pitch > 0) {
+      this.lastPitch = pitch;
+      this.pitchHistory.push(pitch);
+      if (this.pitchHistory.length > this.pitchHistoryMax) this.pitchHistory.shift();
+    }
+
+    // --- HF energy (articulation) — gated against both main noise floor and HF baseline ---
     this.analyserHF.getByteFrequencyData(this.hfFrequencyData);
     let hfEnergy = 0;
     for (let i = 0; i < this.hfFrequencyData.length; i++) {
       hfEnergy += this.hfFrequencyData[i];
     }
     hfEnergy = hfEnergy / (this.hfFrequencyData.length * 255);
+    // Subtract HF baseline (fan/AC noise) and require main signal above noise floor
+    hfEnergy = Math.max(0, hfEnergy - this.hfNoiseFloor);
+    if (rms < this.noiseFloor * 2.5) hfEnergy = 0;
 
     // ====== METRICS ======
 
@@ -583,10 +651,10 @@ class VoiceAnalyzer {
       this.metrics.bounce *= 0.95;
     }
 
-    // 2. TEMPO — energy transition rate
+    // 2. TEMPO — energy transition rate (uses gated energy history)
     if (this.energyHistory.length > 5) {
       let transitions = 0;
-      const thresh = 0.015;
+      const thresh = 0.005; // small absolute — history is already noise-subtracted
       for (let i = 1; i < this.energyHistory.length; i++) {
         if ((this.energyHistory[i - 1] > thresh) !== (this.energyHistory[i] > thresh)) transitions++;
       }
@@ -594,7 +662,7 @@ class VoiceAnalyzer {
     }
 
     // 3. VOWEL ELONGATION — sustained voicing
-    if (rms > this.sustainedThreshold && pitch > 0) {
+    if (gatedRms > this.sustainedThreshold && pitch > 0) {
       this.sustainedDuration += dt;
     } else {
       this.sustainedDuration *= 0.85;
@@ -605,23 +673,21 @@ class VoiceAnalyzer {
     const articTarget = Math.min(1, hfEnergy * 6);
     this.metrics.articulation += (articTarget - this.metrics.articulation) * 0.3;
 
-    // 5. SYLLABLE SEPARATION — energy onset detection
-    // FIX: Proper state machine with hysteresis
-    if (rms > this.syllableThreshold * 1.8 && this.syllableState === 'silent') {
+    // 5. SYLLABLE SEPARATION — energy onset detection (uses gated energy)
+    if (gatedRms > this.syllableThreshold * 1.8 && this.syllableState === 'silent') {
       if (now - this.lastSyllableTime > 0.08) {
         this.lastSyllableTime = now;
         this.syllableImpulse = 1.0;
       }
       this.syllableState = 'voiced';
-    } else if (rms < this.syllableThreshold * 0.8) {
+    } else if (gatedRms < this.syllableThreshold * 0.3) {
       this.syllableState = 'silent';
     }
-    // FIX: Slower decay so game loop reliably reads the impulse
     this.syllableImpulse *= 0.88;
     this.metrics.syllable = this.syllableImpulse;
 
     this.metrics.pitch = pitch > 0 ? Math.min(1, (pitch - 80) / 300) : this.metrics.pitch * 0.95;
-    this.metrics.energy = Math.min(1, rms * 12);
+    this.metrics.energy = Math.min(1, gatedRms * 12);
   }
 }
 
@@ -678,6 +744,9 @@ class ProsodyBallGame {
     this.scrollX = 0;
     this.scrollSpeed = 120;
     this.targetScrollSpeed = 120;
+    this.cameraY = 0;       // current camera vertical offset (negative = looking up)
+    this.targetCameraY = 0; // smooth target
+    this.prosodyScore = 0;  // smoothed composite prosody signal (0=monotone, 1=expressive)
     this.particles = [];
     this.trailPoints = [];
     this.sparkles = [];
@@ -827,6 +896,9 @@ class ProsodyBallGame {
         return;
       }
       this.scrollX = 0;
+      this.cameraY = 0;
+      this.targetCameraY = 0;
+      this.prosodyScore = 0;
       this.particles = [];
       this.trailPoints = [];
       this.sparkles = [];
@@ -887,6 +959,8 @@ class ProsodyBallGame {
       this.ballHue = 340;
       this.ballSat = 70;
       this.ballLit = 55;
+      this.cameraY = 0;
+      this.targetCameraY = 0;
       this.drawSceneInternal(0);
       this.idleAnimId = requestAnimationFrame(animate);
     };
@@ -901,8 +975,33 @@ class ProsodyBallGame {
 
     this.analyzer.update(dt);
     this.update(dt);
-    this.drawSceneInternal(this.analyzer.metrics.energy);
+    this.drawSceneInternal(this.prosodyScore);
     this.updateMeters();
+
+    // Show calibration notice during noise floor measurement
+    if (!this.analyzer.isCalibrated && this.analyzer.isActive) {
+      const ctx = this.ctx;
+      const progress = Math.min(1, this.analyzer.noiseCalibrationTimer / this.analyzer.noiseCalibrationDuration);
+      ctx.save();
+      ctx.fillStyle = 'rgba(10,10,18,0.6)';
+      ctx.fillRect(0, 0, this.width, this.height);
+      ctx.fillStyle = '#e8e6f0';
+      ctx.font = '600 16px "Outfit", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('🎙 Calibrating to room noise...', this.width / 2, this.height / 2 - 12);
+      ctx.font = '400 13px "Outfit", sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.fillText('Stay quiet for a moment', this.width / 2, this.height / 2 + 14);
+      // Progress bar
+      const barW = 160, barH = 4;
+      const barX = (this.width - barW) / 2;
+      const barY = this.height / 2 + 34;
+      ctx.fillStyle = 'rgba(255,255,255,0.1)';
+      ctx.fillRect(barX, barY, barW, barH);
+      ctx.fillStyle = '#4d96ff';
+      ctx.fillRect(barX, barY, barW * progress, barH);
+      ctx.restore();
+    }
 
     requestAnimationFrame(() => this.loop());
   }
@@ -911,38 +1010,65 @@ class ProsodyBallGame {
     const m = this.analyzer.metrics;
     const gravity = 800;
 
-    this.targetScrollSpeed = 80 + m.tempo * 200 + m.energy * 60;
-    this.scrollSpeed += (this.targetScrollSpeed - this.scrollSpeed) * 0.08;
+    // ==========================================================
+    // PROSODY SCORE — the core pedagogical signal
+    // Monotone speech ≈ 0. Expressive prosody → 1.
+    // Weighted toward variation metrics, NOT raw energy/volume.
+    // ==========================================================
+    const rawProsody = (
+      m.bounce * 0.35 +       // pitch variation — primary differentiator
+      m.tempo * 0.20 +        // speaking rate changes
+      m.vowel * 0.20 +        // vowel elongation
+      m.articulation * 0.15 + // crisp consonants
+      m.syllable * 0.10       // distinct syllables (transient)
+    );
+    this.prosodyScore += (rawProsody - this.prosodyScore) * 0.12;
+    const ps = this.prosodyScore;
+
+    // ==========================================================
+    // SCROLL SPEED — prosody drives movement, not volume
+    // Monotone: sluggish crawl (20 px/s). Full prosody: 280 px/s.
+    // ==========================================================
+    this.targetScrollSpeed = 20 + ps * 260;
+    this.scrollSpeed += (this.targetScrollSpeed - this.scrollSpeed) * 0.06;
     this.scrollX += this.scrollSpeed * dt;
 
     this.ball.x = this.width * 0.25;
     const localGround = this.getGroundHeight(this.scrollX + this.ball.x);
 
-    // FIX: Syllable bounce — lower threshold (0.5), works mid-air too
+    // ==========================================================
+    // SYLLABLE BOUNCE — gated by prosody
+    // Monotone syllables = tiny nudge. Prosodic = big bounce.
+    // ==========================================================
     if (m.syllable > 0.5) {
-      const bouncePower = 250 + m.bounce * 450;
+      const bouncePower = 40 + ps * 660;
       if (this.ball.vy > -bouncePower * 0.5) {
         this.ball.vy = -bouncePower * m.syllable;
         this.ball.onGround = false;
-        this.ball.squash = 0.6;
-        const pY = Math.min(this.ball.y + this.ball.radius, localGround);
-        for (let i = 0; i < 6; i++) {
-          const angle = Math.PI + Math.random() * Math.PI;
-          this.particles.push(new Particle(
-            this.ball.x, pY,
-            255, 120 + Math.floor(Math.random() * 100), 100,
-            Math.cos(angle) * (50 + Math.random() * 70),
-            Math.sin(angle) * (50 + Math.random() * 90),
-            0.5 + Math.random() * 0.4,
-            2 + Math.random() * 3
-          ));
+        this.ball.squash = 0.7 - ps * 0.15;
+        if (ps > 0.15) {
+          const pY = Math.min(this.ball.y + this.ball.radius, localGround);
+          const n = Math.floor(2 + ps * 6);
+          for (let i = 0; i < n; i++) {
+            const angle = Math.PI + Math.random() * Math.PI;
+            this.particles.push(new Particle(
+              this.ball.x, pY,
+              255, 120 + Math.floor(Math.random() * 100), 100,
+              Math.cos(angle) * (30 + ps * 60 + Math.random() * 50),
+              Math.sin(angle) * (30 + ps * 70 + Math.random() * 60),
+              0.4 + ps * 0.4,
+              1.5 + ps * 3
+            ));
+          }
         }
       }
     }
 
-    // Continuous pitch-bounce lift
-    if (m.bounce > 0.2 && m.energy > 0.1) {
-      this.ball.vy -= m.bounce * 300 * dt;
+    // ==========================================================
+    // CONTINUOUS PITCH LIFT — requires real pitch variation
+    // ==========================================================
+    if (m.bounce > 0.25) {
+      this.ball.vy -= m.bounce * ps * 400 * dt;
     }
 
     if (!this.ball.onGround) {
@@ -955,7 +1081,7 @@ class ProsodyBallGame {
     const groundContact = localGround - this.ball.radius;
     if (this.ball.y >= groundContact) {
       this.ball.y = groundContact;
-      if (Math.abs(this.ball.vy) > 30) {
+      if (Math.abs(this.ball.vy) > 30 && ps > 0.1) {
         this.ball.squash = 0.7;
         for (let i = 0; i < 3; i++) {
           this.particles.push(new Particle(
@@ -978,15 +1104,38 @@ class ProsodyBallGame {
     this.ball.rotation += (this.scrollSpeed / (this.ball.radius * 2)) * dt;
     this.ball.squash += (1 - this.ball.squash) * 5 * dt;
 
-    // Vowel → size + trail
-    this.ball.targetRadius = this.ball.baseRadius + m.vowel * 18;
+    // Camera Y tracking
+    const upperLimit = this.height * 0.3;
+    const ballScreenY = this.ball.y;
+    if (ballScreenY < upperLimit) {
+      this.targetCameraY = ballScreenY - upperLimit;
+    } else {
+      this.targetCameraY = 0;
+    }
+    const camSpeed = this.targetCameraY < this.cameraY ? 0.18 : 0.06;
+    this.cameraY += (this.targetCameraY - this.cameraY) * camSpeed;
+    this.cameraY = Math.min(0, this.cameraY);
+    const ballScreenY2 = this.ball.y - this.cameraY;
+    if (ballScreenY2 < this.ball.radius * 2) {
+      this.cameraY = this.ball.y - this.ball.radius * 2;
+    }
+
+    // ==========================================================
+    // BALL SIZE — monotone: small (16). Prosodic: 22-40.
+    // ==========================================================
+    const prosodyRadius = 16 + ps * 10;
+    const vowelBonus = m.vowel * 14;
+    this.ball.targetRadius = prosodyRadius + vowelBonus;
     this.ball.radius += (this.ball.targetRadius - this.ball.radius) * 0.1;
 
-    if (m.vowel > 0.2) {
+    // ==========================================================
+    // VOWEL TRAIL — only with real prosody
+    // ==========================================================
+    if (m.vowel > 0.2 && ps > 0.1) {
       this.trailPoints.push({
         wx: this.ball.x + this.scrollX,
         sy: this.ball.y + this.ball.radius,
-        size: this.ball.radius * 0.6 * m.vowel,
+        size: this.ball.radius * 0.5 * m.vowel * Math.min(1, ps * 3),
         life: 1.0,
         hue: this.ballHue
       });
@@ -998,9 +1147,12 @@ class ProsodyBallGame {
     }
     if (this.trailPoints.length > 60) this.trailPoints.splice(0, this.trailPoints.length - 60);
 
-    // Articulation → sparkles
-    if (m.articulation > 0.3) {
-      for (let i = 0; i < Math.floor(m.articulation * 4); i++) {
+    // ==========================================================
+    // SPARKLES — gated by prosody
+    // ==========================================================
+    if (m.articulation > 0.3 && ps > 0.1) {
+      const sparkleCount = Math.floor(m.articulation * ps * 6);
+      for (let i = 0; i < sparkleCount; i++) {
         const angle = Math.random() * Math.PI * 2;
         const dist = this.ball.radius + Math.random() * 20;
         this.sparkles.push({
@@ -1008,7 +1160,7 @@ class ProsodyBallGame {
           y: this.ball.y + this.ball.radius * 0.5 + Math.sin(angle) * dist,
           life: 0.4 + Math.random() * 0.3,
           maxLife: 0.5,
-          size: 1.5 + Math.random() * 2.5
+          size: 1 + ps * 3
         });
       }
     }
@@ -1024,14 +1176,15 @@ class ProsodyBallGame {
       if (this.particles[i].life <= 0) this.particles.splice(i, 1);
     }
 
-    // Ball color — HSL components
-    const engagement = (m.bounce + m.tempo + m.vowel + m.articulation + m.syllable) / 5;
-    this.ballHue = 340 + engagement * 80;
-    this.ballSat = 70 + engagement * 30;
-    this.ballLit = 55 + engagement * 15;
+    // ==========================================================
+    // BALL COLOR — grey/dim when monotone, vivid when prosodic
+    // ==========================================================
+    this.ballHue = 340 + ps * 80;
+    this.ballSat = 15 + ps * 85;   // 15% (grey) → 100% (vivid)
+    this.ballLit = 35 + ps * 35;   // 35% (dim)  → 70% (bright)
   }
 
-  drawSceneInternal(energyForGlow) {
+  drawSceneInternal(prosodyGlow) {
     const ctx = this.ctx;
     const w = this.width;
     const h = this.height;
@@ -1058,17 +1211,22 @@ class ProsodyBallGame {
     }
     ctx.globalAlpha = 1;
 
-    // Ground fill
+    // === Camera transform — world elements shift with cameraY ===
+    ctx.save();
+    ctx.translate(0, -this.cameraY);
+
+    // Ground fill — extend bottom well past viewport for camera shifts
+    const groundFillBottom = h + Math.abs(this.cameraY) + 100;
     ctx.beginPath();
-    ctx.moveTo(0, h);
+    ctx.moveTo(0, groundFillBottom);
     for (let x = -10; x <= w + 10; x += 4) {
       ctx.lineTo(x, this.getGroundHeight(this.scrollX + x));
     }
-    ctx.lineTo(w, h);
+    ctx.lineTo(w, groundFillBottom);
     ctx.closePath();
-    const groundGrad = ctx.createLinearGradient(0, this.groundY - 40, 0, h);
+    const groundGrad = ctx.createLinearGradient(0, this.groundY - 40, 0, groundFillBottom);
     groundGrad.addColorStop(0, '#1a1a30');
-    groundGrad.addColorStop(0.3, '#151528');
+    groundGrad.addColorStop(0.2, '#151528');
     groundGrad.addColorStop(1, '#0e0e1c');
     ctx.fillStyle = groundGrad;
     ctx.fill();
@@ -1118,7 +1276,7 @@ class ProsodyBallGame {
     ctx.scale(1 + (1 - this.ball.squash) * 0.3, this.ball.squash);
 
     // FIX: Ball glow uses proper HSLA
-    const glowSize = this.ball.radius * (1.8 + energyForGlow * 1.2);
+    const glowSize = this.ball.radius * (1.8 + prosodyGlow * 1.2);
     const glowGrad = ctx.createRadialGradient(0, 0, this.ball.radius * 0.3, 0, 0, glowSize);
     glowGrad.addColorStop(0, this.getBallColor(0.25));
     glowGrad.addColorStop(0.5, this.getBallColor(0.08));
@@ -1172,7 +1330,10 @@ class ProsodyBallGame {
     }
     ctx.globalAlpha = 1;
 
-    // Distance
+    // === End camera transform ===
+    ctx.restore();
+
+    // Distance (HUD — screen-fixed)
     const dist = Math.floor(this.scrollX / 50);
     ctx.font = '600 14px "Space Mono", monospace';
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
