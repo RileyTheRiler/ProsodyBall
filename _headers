@@ -1,0 +1,3 @@
+/*
+  Permissions-Policy: microphone=(self "https://huggingface.co")
+  Access-Control-Allow-Origin: *
