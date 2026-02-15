@@ -1,0 +1,1206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prosody Ball — Voice Training Game</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Space+Mono:wght@400;700&display=swap');
+
+  :root {
+    --bg-deep: #0a0a12;
+    --bg-surface: #12121f;
+    --accent-bounce: #ff6b6b;
+    --accent-tempo: #ffd93d;
+    --accent-vowel: #6bcb77;
+    --accent-artic: #4d96ff;
+    --accent-syllable: #c084fc;
+    --text-primary: #e8e6f0;
+    --text-muted: #7a7890;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    font-family: 'Outfit', sans-serif;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  .hud {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: linear-gradient(180deg, rgba(18,18,31,0.95) 0%, rgba(18,18,31,0.7) 100%);
+    backdrop-filter: blur(12px);
+    z-index: 10;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    flex-shrink: 0;
+  }
+
+  .hud-title {
+    font-weight: 800;
+    font-size: 1.1rem;
+    letter-spacing: 0.02em;
+    background: linear-gradient(135deg, #ff6b6b, #c084fc, #4d96ff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .hud-controls { display: flex; gap: 10px; align-items: center; }
+
+  .btn {
+    font-family: 'Outfit', sans-serif;
+    font-weight: 600;
+    font-size: 0.85rem;
+    padding: 8px 18px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 0.02em;
+  }
+
+  .btn-start {
+    background: linear-gradient(135deg, #ff6b6b, #ff8e53);
+    color: #fff;
+    box-shadow: 0 2px 12px rgba(255,107,107,0.3);
+  }
+  .btn-start:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(255,107,107,0.4); }
+  .btn-start.active {
+    background: linear-gradient(135deg, #555, #444);
+    box-shadow: none;
+  }
+
+  .btn-help {
+    background: rgba(255,255,255,0.06);
+    color: var(--text-muted);
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .btn-help:hover { background: rgba(255,255,255,0.1); color: var(--text-primary); }
+
+  .game-area {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  #gameCanvas { display: block; width: 100%; height: 100%; }
+
+  .meters-panel {
+    display: flex;
+    gap: 4px;
+    padding: 10px 16px 14px;
+    background: linear-gradient(0deg, rgba(18,18,31,0.98) 0%, rgba(18,18,31,0.8) 100%);
+    backdrop-filter: blur(12px);
+    border-top: 1px solid rgba(255,255,255,0.05);
+    z-index: 10;
+    flex-shrink: 0;
+  }
+
+  .meter {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .meter-label {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.7;
+  }
+
+  .meter-bar-bg {
+    width: 100%;
+    height: 6px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .meter-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.1s ease-out;
+    width: 0%;
+  }
+
+  .meter-bounce .meter-bar-fill { background: var(--accent-bounce); box-shadow: 0 0 8px rgba(255,107,107,0.4); }
+  .meter-tempo .meter-bar-fill { background: var(--accent-tempo); box-shadow: 0 0 8px rgba(255,217,61,0.4); }
+  .meter-vowel .meter-bar-fill { background: var(--accent-vowel); box-shadow: 0 0 8px rgba(107,203,119,0.4); }
+  .meter-artic .meter-bar-fill { background: var(--accent-artic); box-shadow: 0 0 8px rgba(77,150,255,0.4); }
+  .meter-syllable .meter-bar-fill { background: var(--accent-syllable); box-shadow: 0 0 8px rgba(192,132,252,0.4); }
+
+  .meter-value {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    opacity: 0.5;
+  }
+
+  /* Overlay */
+  .overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
+    background: rgba(10,10,18,0.88);
+    backdrop-filter: blur(20px);
+    transition: opacity 0.4s;
+    padding: 20px;
+    overflow-y: auto;
+  }
+
+  .overlay.hidden { opacity: 0; pointer-events: none; }
+
+  .overlay-title {
+    font-size: 2.4rem;
+    font-weight: 800;
+    margin-bottom: 8px;
+    background: linear-gradient(135deg, #ff6b6b, #c084fc, #4d96ff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .overlay-subtitle {
+    font-size: 1rem;
+    color: var(--text-muted);
+    margin-bottom: 32px;
+    text-align: center;
+    max-width: 500px;
+    line-height: 1.6;
+  }
+
+  .rules-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    max-width: 560px;
+    width: 90%;
+    margin-bottom: 32px;
+  }
+
+  .rule-card {
+    padding: 14px 16px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+
+  .rule-card:last-child {
+    grid-column: 1 / -1;
+    max-width: 275px;
+    justify-self: center;
+  }
+
+  .rule-name { font-weight: 700; font-size: 0.85rem; margin-bottom: 4px; }
+  .rule-desc { font-size: 0.75rem; color: var(--text-muted); line-height: 1.4; }
+
+  .rule-bounce .rule-name { color: var(--accent-bounce); }
+  .rule-tempo .rule-name { color: var(--accent-tempo); }
+  .rule-vowel .rule-name { color: var(--accent-vowel); }
+  .rule-artic .rule-name { color: var(--accent-artic); }
+  .rule-syllable .rule-name { color: var(--accent-syllable); }
+
+  .btn-big {
+    font-family: 'Outfit', sans-serif;
+    font-weight: 700;
+    font-size: 1.1rem;
+    padding: 14px 40px;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    background: linear-gradient(135deg, #ff6b6b, #ff8e53);
+    color: #fff;
+    box-shadow: 0 4px 24px rgba(255,107,107,0.35);
+    transition: all 0.2s;
+  }
+  .btn-big:hover { transform: translateY(-2px); box-shadow: 0 6px 30px rgba(255,107,107,0.5); }
+
+  .mic-note {
+    margin-top: 14px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    opacity: 0.6;
+  }
+
+  .tooltip {
+    position: absolute;
+    top: 60px;
+    right: 16px;
+    background: var(--bg-surface);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 16px 20px;
+    max-width: 320px;
+    z-index: 30;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    font-size: 0.8rem;
+    line-height: 1.6;
+    color: var(--text-muted);
+    display: none;
+  }
+
+  .tooltip.show { display: block; }
+  .tooltip h3 { color: var(--text-primary); font-size: 0.9rem; margin-bottom: 8px; }
+
+  .error-banner {
+    display: none;
+    background: rgba(255,80,80,0.12);
+    border: 1px solid rgba(255,80,80,0.25);
+    border-radius: 10px;
+    padding: 14px 18px;
+    max-width: 500px;
+    width: 90%;
+    margin-bottom: 20px;
+    text-align: center;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #ffa0a0;
+  }
+  .error-banner.show { display: block; }
+  .error-banner a {
+    color: #fff;
+    text-decoration: underline;
+    font-weight: 600;
+  }
+  .error-banner a:hover { color: #ffd93d; }
+
+  .iframe-notice {
+    display: none;
+    background: rgba(77,150,255,0.12);
+    border: 1px solid rgba(77,150,255,0.25);
+    border-radius: 10px;
+    padding: 14px 18px;
+    max-width: 500px;
+    width: 90%;
+    margin-bottom: 20px;
+    text-align: center;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #a0c4ff;
+  }
+  .iframe-notice.show { display: block; }
+  .iframe-notice a {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 8px 20px;
+    background: linear-gradient(135deg, #4d96ff, #6bcb77);
+    color: #fff;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.85rem;
+  }
+  .iframe-notice a:hover { opacity: 0.9; }
+
+  @media (max-width: 600px) {
+    .overlay-title { font-size: 1.6rem; }
+    .rules-grid { grid-template-columns: 1fr; }
+    .rule-card:last-child { max-width: 100%; }
+    .meters-panel { padding: 8px 10px 10px; gap: 2px; }
+    .meter-label { font-size: 0.5rem; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="hud">
+    <div class="hud-title">PROSODY BALL</div>
+    <div class="hud-controls">
+      <button class="btn btn-help" id="helpBtn">How to Play</button>
+      <button class="btn btn-start" id="startBtn">🎙 Start</button>
+    </div>
+  </div>
+
+  <div class="game-area">
+    <canvas id="gameCanvas"></canvas>
+
+    <div class="overlay" id="welcomeOverlay">
+      <div class="overlay-title">Prosody Ball</div>
+      <div class="overlay-subtitle">
+        Control the ball with your voice! Practice the 5 rules of prosody
+        by speaking expressively — the ball responds to how you sound.
+      </div>
+      <div class="rules-grid">
+        <div class="rule-card rule-bounce">
+          <div class="rule-name">① Bounciness</div>
+          <div class="rule-desc">Vary your pitch up and down. Bigger pitch swings = higher bounces.</div>
+        </div>
+        <div class="rule-card rule-tempo">
+          <div class="rule-name">② Tempo Variance</div>
+          <div class="rule-desc">Change your speaking speed. Fast→slow→fast makes the ball accelerate and decelerate.</div>
+        </div>
+        <div class="rule-card rule-vowel">
+          <div class="rule-name">③ Vowel Elongation</div>
+          <div class="rule-desc">Stretch your vowels ("hellooo"). Sustained sounds create a glowing trail.</div>
+        </div>
+        <div class="rule-card rule-artic">
+          <div class="rule-name">④ Articulation</div>
+          <div class="rule-desc">Crisp consonants create sparkle effects. Pronounce clearly!</div>
+        </div>
+        <div class="rule-card rule-syllable">
+          <div class="rule-name">⑤ Syllable Separation</div>
+          <div class="rule-desc">Distinct syllable breaks trigger individual bounce events. E-NUN-CI-ATE!</div>
+        </div>
+      </div>
+      <button class="btn-big" id="playBtn">🎙 Start Speaking</button>
+      <div class="mic-note">Requires microphone access · All processing is local</div>
+      <div class="error-banner" id="errorBanner"></div>
+      <div class="iframe-notice" id="iframeNotice"></div>
+    </div>
+
+    <div class="tooltip" id="helpTooltip">
+      <h3>Voice → Ball Mapping</h3>
+      <p><b style="color:var(--accent-bounce)">Bounciness:</b> Pitch variation controls bounce height. Speak with intonation!<br><br>
+      <b style="color:var(--accent-tempo)">Tempo:</b> Changes in speech rate shift ball speed. Speed up and slow down.<br><br>
+      <b style="color:var(--accent-vowel)">Vowel Elongation:</b> Sustained sounds grow the ball and leave trails.<br><br>
+      <b style="color:var(--accent-artic)">Articulation:</b> Sharp consonants create sparkle bursts. Be crisp!<br><br>
+      <b style="color:var(--accent-syllable)">Syllable Separation:</b> Each distinct syllable triggers a separate bounce. Pause between syllables.</p>
+    </div>
+  </div>
+
+  <div class="meters-panel">
+    <div class="meter meter-bounce">
+      <div class="meter-label">Bounce</div>
+      <div class="meter-bar-bg"><div class="meter-bar-fill" id="meterBounce"></div></div>
+      <div class="meter-value" id="valBounce">0</div>
+    </div>
+    <div class="meter meter-tempo">
+      <div class="meter-label">Tempo</div>
+      <div class="meter-bar-bg"><div class="meter-bar-fill" id="meterTempo"></div></div>
+      <div class="meter-value" id="valTempo">0</div>
+    </div>
+    <div class="meter meter-vowel">
+      <div class="meter-label">Vowels</div>
+      <div class="meter-bar-bg"><div class="meter-bar-fill" id="meterVowel"></div></div>
+      <div class="meter-value" id="valVowel">0</div>
+    </div>
+    <div class="meter meter-artic">
+      <div class="meter-label">Artic.</div>
+      <div class="meter-bar-bg"><div class="meter-bar-fill" id="meterArtic"></div></div>
+      <div class="meter-value" id="valArtic">0</div>
+    </div>
+    <div class="meter meter-syllable">
+      <div class="meter-label">Syllables</div>
+      <div class="meter-bar-bg"><div class="meter-bar-fill" id="meterSyllable"></div></div>
+      <div class="meter-value" id="valSyllable">0</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// VOICE ANALYZER
+// ============================================================
+class VoiceAnalyzer {
+  constructor() {
+    this.audioCtx = null;
+    this.analyser = null;
+    this.analyserHF = null;
+    this.source = null;
+    this.stream = null;
+    this.isActive = false;
+
+    this.timeDomainData = null;
+    this.hfFrequencyData = null;
+
+    // Pitch
+    this.pitchHistory = [];
+    this.pitchHistoryMax = 30;
+    this.lastPitch = 0;
+
+    // Energy
+    this.energyHistory = [];
+    this.energyHistoryMax = 40;
+    this.smoothEnergy = 0;
+
+    // Syllable detection
+    this.syllableState = 'silent';
+    this.syllableThreshold = 0.015;
+    this.lastSyllableTime = 0;
+    this.syllableImpulse = 0;
+
+    // Vowel
+    this.sustainedDuration = 0;
+    this.sustainedThreshold = 0.02;
+
+    this.metrics = {
+      bounce: 0, tempo: 0, vowel: 0,
+      articulation: 0, syllable: 0,
+      pitch: 0, energy: 0
+    };
+  }
+
+  async start() {
+    try {
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      });
+
+      this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      this.source = this.audioCtx.createMediaStreamSource(this.stream);
+
+      this.analyser = this.audioCtx.createAnalyser();
+      this.analyser.fftSize = 2048;
+      this.analyser.smoothingTimeConstant = 0.8;
+      this.source.connect(this.analyser);
+
+      this.analyserHF = this.audioCtx.createAnalyser();
+      this.analyserHF.fftSize = 1024;
+      this.analyserHF.smoothingTimeConstant = 0.5;
+      const hfFilter = this.audioCtx.createBiquadFilter();
+      hfFilter.type = 'highpass';
+      hfFilter.frequency.value = 3000;
+      this.source.connect(hfFilter);
+      hfFilter.connect(this.analyserHF);
+
+      this.timeDomainData = new Float32Array(this.analyser.fftSize);
+      this.hfFrequencyData = new Uint8Array(this.analyserHF.frequencyBinCount);
+
+      this.isActive = true;
+      return { ok: true };
+    } catch (e) {
+      console.error('Mic access denied:', e);
+      return { ok: false, error: e.name, message: e.message };
+    }
+  }
+
+  stop() {
+    this.isActive = false;
+    if (this.source) { try { this.source.disconnect(); } catch(e) {} }
+    // FIX: stop stream tracks so mic LED turns off
+    if (this.stream) {
+      this.stream.getTracks().forEach(t => t.stop());
+      this.stream = null;
+    }
+    if (this.audioCtx && this.audioCtx.state !== 'closed') {
+      this.audioCtx.close().catch(() => {});
+    }
+    this.audioCtx = null;
+    this.analyser = null;
+    this.analyserHF = null;
+    this.source = null;
+    this.pitchHistory = [];
+    this.energyHistory = [];
+    this.sustainedDuration = 0;
+    this.syllableImpulse = 0;
+    this.syllableState = 'silent';
+    for (const k in this.metrics) this.metrics[k] = 0;
+  }
+
+  // FIX: Optimized autocorrelation — stride in inner loop, capped window
+  detectPitch() {
+    this.analyser.getFloatTimeDomainData(this.timeDomainData);
+    const buf = this.timeDomainData;
+    const n = buf.length;
+    const sampleRate = this.audioCtx.sampleRate;
+
+    let rms = 0;
+    for (let i = 0; i < n; i++) rms += buf[i] * buf[i];
+    rms = Math.sqrt(rms / n);
+    if (rms < 0.008) return 0;
+
+    const minPeriod = Math.floor(sampleRate / 500);
+    const maxPeriod = Math.min(Math.floor(sampleRate / 60), n - 1);
+    let bestCorr = -1;
+    let bestPeriod = 0;
+    const corrWindow = Math.min(n - maxPeriod, 1024);
+
+    for (let p = minPeriod; p <= maxPeriod; p++) {
+      let corr = 0;
+      for (let i = 0; i < corrWindow; i += 2) {
+        corr += buf[i] * buf[i + p];
+      }
+      if (corr > bestCorr) {
+        bestCorr = corr;
+        bestPeriod = p;
+      }
+    }
+
+    if (bestCorr < 0.01) return 0;
+    return sampleRate / bestPeriod;
+  }
+
+  update(dt) {
+    if (!this.isActive || !this.analyser) return;
+
+    const now = performance.now() / 1000;
+
+    const pitch = this.detectPitch();
+    if (pitch > 0) {
+      this.lastPitch = pitch;
+      this.pitchHistory.push(pitch);
+      if (this.pitchHistory.length > this.pitchHistoryMax) this.pitchHistory.shift();
+    }
+
+    this.analyser.getFloatTimeDomainData(this.timeDomainData);
+    let rms = 0;
+    for (let i = 0; i < this.timeDomainData.length; i++) {
+      rms += this.timeDomainData[i] * this.timeDomainData[i];
+    }
+    rms = Math.sqrt(rms / this.timeDomainData.length);
+    this.smoothEnergy += (rms - this.smoothEnergy) * 0.15;
+
+    this.energyHistory.push(rms);
+    if (this.energyHistory.length > this.energyHistoryMax) this.energyHistory.shift();
+
+    this.analyserHF.getByteFrequencyData(this.hfFrequencyData);
+    let hfEnergy = 0;
+    for (let i = 0; i < this.hfFrequencyData.length; i++) {
+      hfEnergy += this.hfFrequencyData[i];
+    }
+    hfEnergy = hfEnergy / (this.hfFrequencyData.length * 255);
+
+    // ====== METRICS ======
+
+    // 1. BOUNCE — pitch variation
+    if (this.pitchHistory.length > 3) {
+      const mean = this.pitchHistory.reduce((a, b) => a + b, 0) / this.pitchHistory.length;
+      const variance = this.pitchHistory.reduce((a, p) => a + (p - mean) ** 2, 0) / this.pitchHistory.length;
+      this.metrics.bounce = Math.min(1, Math.sqrt(variance) / 70);
+    } else {
+      this.metrics.bounce *= 0.95;
+    }
+
+    // 2. TEMPO — energy transition rate
+    if (this.energyHistory.length > 5) {
+      let transitions = 0;
+      const thresh = 0.015;
+      for (let i = 1; i < this.energyHistory.length; i++) {
+        if ((this.energyHistory[i - 1] > thresh) !== (this.energyHistory[i] > thresh)) transitions++;
+      }
+      this.metrics.tempo = Math.min(1, transitions / 12);
+    }
+
+    // 3. VOWEL ELONGATION — sustained voicing
+    if (rms > this.sustainedThreshold && pitch > 0) {
+      this.sustainedDuration += dt;
+    } else {
+      this.sustainedDuration *= 0.85;
+    }
+    this.metrics.vowel = Math.min(1, Math.max(0, this.sustainedDuration - 0.15) / 0.6);
+
+    // 4. ARTICULATION — HF bursts
+    const articTarget = Math.min(1, hfEnergy * 6);
+    this.metrics.articulation += (articTarget - this.metrics.articulation) * 0.3;
+
+    // 5. SYLLABLE SEPARATION — energy onset detection
+    // FIX: Proper state machine with hysteresis
+    if (rms > this.syllableThreshold * 1.8 && this.syllableState === 'silent') {
+      if (now - this.lastSyllableTime > 0.08) {
+        this.lastSyllableTime = now;
+        this.syllableImpulse = 1.0;
+      }
+      this.syllableState = 'voiced';
+    } else if (rms < this.syllableThreshold * 0.8) {
+      this.syllableState = 'silent';
+    }
+    // FIX: Slower decay so game loop reliably reads the impulse
+    this.syllableImpulse *= 0.88;
+    this.metrics.syllable = this.syllableImpulse;
+
+    this.metrics.pitch = pitch > 0 ? Math.min(1, (pitch - 80) / 300) : this.metrics.pitch * 0.95;
+    this.metrics.energy = Math.min(1, rms * 12);
+  }
+}
+
+// ============================================================
+// PARTICLE — uses RGB for proper alpha rendering
+// ============================================================
+class Particle {
+  constructor(x, y, r, g, b, vx, vy, life, size) {
+    this.x = x; this.y = y;
+    this.r = r; this.g = g; this.b = b;
+    this.vx = vx; this.vy = vy;
+    this.life = life; this.maxLife = life;
+    this.size = size;
+  }
+  update(dt) {
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.vy += 120 * dt;
+    this.life -= dt;
+  }
+  draw(ctx) {
+    const alpha = Math.max(0, this.life / this.maxLife) * 0.8;
+    ctx.fillStyle = `rgba(${this.r},${this.g},${this.b},${alpha})`;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size * (this.life / this.maxLife), 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// ============================================================
+// MAIN GAME
+// ============================================================
+class ProsodyBallGame {
+  constructor() {
+    this.canvas = document.getElementById('gameCanvas');
+    this.ctx = this.canvas.getContext('2d');
+    this.analyzer = new VoiceAnalyzer();
+    this.isRunning = false;
+    this.lastTime = 0;
+    this.idleAnimId = null;
+
+    // FIX: Store ball color as HSL components for proper HSLA compositing
+    this.ballHue = 340;
+    this.ballSat = 70;
+    this.ballLit = 55;
+
+    this.ball = {
+      x: 0, y: 0, vy: 0,
+      radius: 22, baseRadius: 22, targetRadius: 22,
+      rotation: 0, squash: 1, onGround: true
+    };
+
+    this.groundY = 0;
+    this.scrollX = 0;
+    this.scrollSpeed = 120;
+    this.targetScrollSpeed = 120;
+    this.particles = [];
+    this.trailPoints = [];
+    this.sparkles = [];
+
+    // FIX: Procedural infinite terrain — layered sine waves, no finite array
+    this.terrainLayers = [];
+    for (let i = 0; i < 5; i++) {
+      this.terrainLayers.push({
+        amplitude: 10 + Math.random() * 25,
+        frequency: 0.002 + Math.random() * 0.005,
+        phase: Math.random() * Math.PI * 2
+      });
+    }
+
+    this.stars = [];
+
+    this.resize();
+    window.addEventListener('resize', () => this.resize());
+    this.setupUI();
+    this.drawIdleScene();
+  }
+
+  resize() {
+    const rect = this.canvas.parentElement.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    this.canvas.width = rect.width * dpr;
+    this.canvas.height = rect.height * dpr;
+    this.canvas.style.width = rect.width + 'px';
+    this.canvas.style.height = rect.height + 'px';
+    // FIX: Reset transform before scaling — prevents compound scaling on multiple resizes
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.width = rect.width;
+    this.height = rect.height;
+    this.groundY = this.height * 0.75;
+    this.ball.y = this.groundY - this.ball.radius;
+
+    // FIX: Generate stars sized to actual canvas dimensions
+    this.stars = [];
+    for (let i = 0; i < 80; i++) {
+      this.stars.push({
+        x: Math.random() * 3000,
+        y: Math.random() * this.height * 0.75,
+        size: Math.random() * 1.5 + 0.5,
+        twinkle: Math.random() * Math.PI * 2
+      });
+    }
+
+    if (!this.isRunning) this.drawIdleScene();
+  }
+
+  // FIX: Infinite procedural terrain
+  getGroundHeight(worldX) {
+    let h = 0;
+    for (const layer of this.terrainLayers) {
+      h += layer.amplitude * Math.sin(worldX * layer.frequency + layer.phase);
+    }
+    return this.groundY + h * 0.4;
+  }
+
+  // FIX: Helper for proper HSLA color strings
+  getBallColor(alpha) {
+    if (alpha !== undefined) {
+      return `hsla(${this.ballHue}, ${this.ballSat}%, ${this.ballLit}%, ${alpha})`;
+    }
+    return `hsl(${this.ballHue}, ${this.ballSat}%, ${this.ballLit}%)`;
+  }
+
+  setupUI() {
+    const startBtn = document.getElementById('startBtn');
+    const playBtn = document.getElementById('playBtn');
+    const helpBtn = document.getElementById('helpBtn');
+    const welcomeOverlay = document.getElementById('welcomeOverlay');
+    const helpTooltip = document.getElementById('helpTooltip');
+
+    const errorBanner = document.getElementById('errorBanner');
+    const iframeNotice = document.getElementById('iframeNotice');
+    const isInIframe = window.self !== window.top;
+
+    // Detect iframe on load and show helpful notice
+    if (isInIframe) {
+      // Build direct URL — HF Spaces has multiple URL patterns
+      let directUrl = window.location.href;
+      try {
+        // Try to build the *.hf.space direct URL from the current location
+        const url = new URL(window.location.href);
+        // If we're already on a .hf.space domain, just use it directly
+        if (!url.hostname.endsWith('.hf.space')) {
+          directUrl = window.location.href;
+        }
+      } catch(e) {}
+      iframeNotice.innerHTML =
+        'This app needs microphone access, which may be blocked when embedded.<br>' +
+        '<a href="' + directUrl + '" target="_blank" rel="noopener">Open in new tab for full access ↗</a>';
+      iframeNotice.classList.add('show');
+    }
+
+    const showError = (msg) => {
+      errorBanner.innerHTML = msg;
+      errorBanner.classList.add('show');
+    };
+    const clearError = () => {
+      errorBanner.classList.remove('show');
+    };
+
+    const startGame = async () => {
+      clearError();
+      if (this.idleAnimId) {
+        cancelAnimationFrame(this.idleAnimId);
+        this.idleAnimId = null;
+      }
+
+      // Check if getUserMedia is available at all
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showError(
+          '🎙 Microphone API not available.<br>' +
+          'This requires HTTPS and a modern browser. ' +
+          (isInIframe
+            ? '<a href="' + window.location.href + '" target="_blank">Try opening in a new tab ↗</a>'
+            : 'Please use Chrome, Firefox, Safari, or Edge.')
+        );
+        this.drawIdleScene();
+        return;
+      }
+
+      const result = await this.analyzer.start();
+      if (!result.ok) {
+        let msg = '';
+        if (result.error === 'NotAllowedError') {
+          if (isInIframe) {
+            msg =
+              '🎙 Microphone blocked by browser — this usually happens inside iframes.<br>' +
+              '<a href="' + window.location.href + '" target="_blank">Open in a new tab for full mic access ↗</a>';
+          } else {
+            msg =
+              '🎙 Microphone permission denied.<br>' +
+              'Click the lock/camera icon in your address bar → Allow microphone → then try again.';
+          }
+        } else if (result.error === 'NotFoundError') {
+          msg = '🎙 No microphone detected. Please connect a microphone and try again.';
+        } else if (result.error === 'NotReadableError') {
+          msg = '🎙 Microphone is in use by another app. Close other apps using the mic and try again.';
+        } else {
+          msg = '🎙 Could not access microphone: ' + (result.message || result.error);
+        }
+        showError(msg);
+        this.drawIdleScene();
+        return;
+      }
+      this.scrollX = 0;
+      this.particles = [];
+      this.trailPoints = [];
+      this.sparkles = [];
+      this.ball.vy = 0;
+      this.ball.onGround = true;
+      this.ball.squash = 1;
+      this.ball.radius = this.ball.baseRadius;
+      this.ball.x = this.width * 0.25;
+      this.ball.y = this.getGroundHeight(this.scrollX + this.ball.x) - this.ball.radius;
+
+      welcomeOverlay.classList.add('hidden');
+      iframeNotice.classList.remove('show');
+      startBtn.textContent = '⏹ Stop';
+      startBtn.classList.add('active');
+      this.isRunning = true;
+      this.lastTime = performance.now();
+      this.loop();
+    };
+
+    const stopGame = () => {
+      this.isRunning = false;
+      this.analyzer.stop();
+      startBtn.textContent = '🎙 Start';
+      startBtn.classList.remove('active');
+      welcomeOverlay.classList.remove('hidden');
+      this.drawIdleScene();
+    };
+
+    startBtn.addEventListener('click', () => {
+      if (this.isRunning) stopGame(); else startGame();
+    });
+
+    playBtn.addEventListener('click', startGame);
+
+    helpBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      helpTooltip.classList.toggle('show');
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!helpTooltip.contains(e.target) && e.target !== helpBtn) {
+        helpTooltip.classList.remove('show');
+      }
+    });
+  }
+
+  // FIX: Idle scene animation behind the overlay
+  drawIdleScene() {
+    const idleScroll = { x: this.scrollX || 0 };
+    const animate = () => {
+      if (this.isRunning) return;
+      idleScroll.x += 0.5;
+      this.scrollX = idleScroll.x;
+      this.ball.x = this.width * 0.25;
+      const ground = this.getGroundHeight(this.scrollX + this.ball.x);
+      this.ball.y = ground - this.ball.radius;
+      this.ball.rotation += 0.01;
+      this.ballHue = 340;
+      this.ballSat = 70;
+      this.ballLit = 55;
+      this.drawSceneInternal(0);
+      this.idleAnimId = requestAnimationFrame(animate);
+    };
+    animate();
+  }
+
+  loop() {
+    if (!this.isRunning) return;
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - this.lastTime) / 1000);
+    this.lastTime = now;
+
+    this.analyzer.update(dt);
+    this.update(dt);
+    this.drawSceneInternal(this.analyzer.metrics.energy);
+    this.updateMeters();
+
+    requestAnimationFrame(() => this.loop());
+  }
+
+  update(dt) {
+    const m = this.analyzer.metrics;
+    const gravity = 800;
+
+    this.targetScrollSpeed = 80 + m.tempo * 200 + m.energy * 60;
+    this.scrollSpeed += (this.targetScrollSpeed - this.scrollSpeed) * 0.08;
+    this.scrollX += this.scrollSpeed * dt;
+
+    this.ball.x = this.width * 0.25;
+    const localGround = this.getGroundHeight(this.scrollX + this.ball.x);
+
+    // FIX: Syllable bounce — lower threshold (0.5), works mid-air too
+    if (m.syllable > 0.5) {
+      const bouncePower = 250 + m.bounce * 450;
+      if (this.ball.vy > -bouncePower * 0.5) {
+        this.ball.vy = -bouncePower * m.syllable;
+        this.ball.onGround = false;
+        this.ball.squash = 0.6;
+        const pY = Math.min(this.ball.y + this.ball.radius, localGround);
+        for (let i = 0; i < 6; i++) {
+          const angle = Math.PI + Math.random() * Math.PI;
+          this.particles.push(new Particle(
+            this.ball.x, pY,
+            255, 120 + Math.floor(Math.random() * 100), 100,
+            Math.cos(angle) * (50 + Math.random() * 70),
+            Math.sin(angle) * (50 + Math.random() * 90),
+            0.5 + Math.random() * 0.4,
+            2 + Math.random() * 3
+          ));
+        }
+      }
+    }
+
+    // Continuous pitch-bounce lift
+    if (m.bounce > 0.2 && m.energy > 0.1) {
+      this.ball.vy -= m.bounce * 300 * dt;
+    }
+
+    if (!this.ball.onGround) {
+      this.ball.vy += gravity * dt;
+    }
+
+    this.ball.y += this.ball.vy * dt;
+
+    // Ground collision
+    const groundContact = localGround - this.ball.radius;
+    if (this.ball.y >= groundContact) {
+      this.ball.y = groundContact;
+      if (Math.abs(this.ball.vy) > 30) {
+        this.ball.squash = 0.7;
+        for (let i = 0; i < 3; i++) {
+          this.particles.push(new Particle(
+            this.ball.x + (Math.random() - 0.5) * 20, localGround,
+            200, 200, 220,
+            (Math.random() - 0.5) * 50, -Math.random() * 40,
+            0.3, 1.5
+          ));
+        }
+      }
+      this.ball.vy *= -0.3;
+      if (Math.abs(this.ball.vy) < 15) {
+        this.ball.vy = 0;
+        this.ball.onGround = true;
+      }
+    } else {
+      this.ball.onGround = false;
+    }
+
+    this.ball.rotation += (this.scrollSpeed / (this.ball.radius * 2)) * dt;
+    this.ball.squash += (1 - this.ball.squash) * 5 * dt;
+
+    // Vowel → size + trail
+    this.ball.targetRadius = this.ball.baseRadius + m.vowel * 18;
+    this.ball.radius += (this.ball.targetRadius - this.ball.radius) * 0.1;
+
+    if (m.vowel > 0.2) {
+      this.trailPoints.push({
+        wx: this.ball.x + this.scrollX,
+        sy: this.ball.y + this.ball.radius,
+        size: this.ball.radius * 0.6 * m.vowel,
+        life: 1.0,
+        hue: this.ballHue
+      });
+    }
+
+    for (let i = this.trailPoints.length - 1; i >= 0; i--) {
+      this.trailPoints[i].life -= dt * 1.5;
+      if (this.trailPoints[i].life <= 0) this.trailPoints.splice(i, 1);
+    }
+    if (this.trailPoints.length > 60) this.trailPoints.splice(0, this.trailPoints.length - 60);
+
+    // Articulation → sparkles
+    if (m.articulation > 0.3) {
+      for (let i = 0; i < Math.floor(m.articulation * 4); i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = this.ball.radius + Math.random() * 20;
+        this.sparkles.push({
+          x: this.ball.x + Math.cos(angle) * dist,
+          y: this.ball.y + this.ball.radius * 0.5 + Math.sin(angle) * dist,
+          life: 0.4 + Math.random() * 0.3,
+          maxLife: 0.5,
+          size: 1.5 + Math.random() * 2.5
+        });
+      }
+    }
+
+    for (let i = this.sparkles.length - 1; i >= 0; i--) {
+      this.sparkles[i].life -= dt;
+      if (this.sparkles[i].life <= 0) this.sparkles.splice(i, 1);
+    }
+    if (this.sparkles.length > 100) this.sparkles.splice(0, this.sparkles.length - 100);
+
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      this.particles[i].update(dt);
+      if (this.particles[i].life <= 0) this.particles.splice(i, 1);
+    }
+
+    // Ball color — HSL components
+    const engagement = (m.bounce + m.tempo + m.vowel + m.articulation + m.syllable) / 5;
+    this.ballHue = 340 + engagement * 80;
+    this.ballSat = 70 + engagement * 30;
+    this.ballLit = 55 + engagement * 15;
+  }
+
+  drawSceneInternal(energyForGlow) {
+    const ctx = this.ctx;
+    const w = this.width;
+    const h = this.height;
+    if (!w || !h) return;
+
+    // Background
+    const bgGrad = ctx.createLinearGradient(0, 0, 0, h);
+    bgGrad.addColorStop(0, '#0a0a18');
+    bgGrad.addColorStop(0.5, '#0e0e1a');
+    bgGrad.addColorStop(1, '#141425');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, w, h);
+
+    // Stars
+    const time = performance.now() / 1000;
+    for (const star of this.stars) {
+      const sx = ((star.x - this.scrollX * 0.05) % (w + 100) + w + 100) % (w + 100);
+      const twinkle = 0.4 + 0.6 * Math.sin(time * 2 + star.twinkle);
+      ctx.globalAlpha = twinkle * 0.6;
+      ctx.fillStyle = '#e8e6f0';
+      ctx.beginPath();
+      ctx.arc(sx, star.y, star.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Ground fill
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    for (let x = -10; x <= w + 10; x += 4) {
+      ctx.lineTo(x, this.getGroundHeight(this.scrollX + x));
+    }
+    ctx.lineTo(w, h);
+    ctx.closePath();
+    const groundGrad = ctx.createLinearGradient(0, this.groundY - 40, 0, h);
+    groundGrad.addColorStop(0, '#1a1a30');
+    groundGrad.addColorStop(0.3, '#151528');
+    groundGrad.addColorStop(1, '#0e0e1c');
+    ctx.fillStyle = groundGrad;
+    ctx.fill();
+
+    // Ground line
+    ctx.beginPath();
+    for (let x = -10; x <= w + 10; x += 4) {
+      const gy = this.getGroundHeight(this.scrollX + x);
+      if (x === -10) ctx.moveTo(x, gy); else ctx.lineTo(x, gy);
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Trail
+    for (const tp of this.trailPoints) {
+      const screenX = tp.wx - this.scrollX;
+      if (screenX < -50 || screenX > w + 50) continue;
+      ctx.globalAlpha = tp.life * 0.4;
+      ctx.fillStyle = `hsl(${tp.hue}, 80%, 60%)`;
+      ctx.beginPath();
+      ctx.arc(screenX, tp.sy, tp.size * tp.life, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Particles
+    for (const p of this.particles) p.draw(ctx);
+
+    // Shadow
+    const groundAtBall = this.getGroundHeight(this.scrollX + this.ball.x);
+    const shadowDist = groundAtBall - (this.ball.y + this.ball.radius);
+    const shadowAlpha = Math.max(0, 0.3 - shadowDist * 0.002);
+    const shadowScale = Math.max(0.3, 1 - shadowDist * 0.003);
+    if (shadowAlpha > 0.01) {
+      ctx.globalAlpha = shadowAlpha;
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.ellipse(this.ball.x, groundAtBall, this.ball.radius * shadowScale * 1.2, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // Ball
+    ctx.save();
+    ctx.translate(this.ball.x, this.ball.y + this.ball.radius * (1 - this.ball.squash) * 0.5);
+    ctx.scale(1 + (1 - this.ball.squash) * 0.3, this.ball.squash);
+
+    // FIX: Ball glow uses proper HSLA
+    const glowSize = this.ball.radius * (1.8 + energyForGlow * 1.2);
+    const glowGrad = ctx.createRadialGradient(0, 0, this.ball.radius * 0.3, 0, 0, glowSize);
+    glowGrad.addColorStop(0, this.getBallColor(0.25));
+    glowGrad.addColorStop(0.5, this.getBallColor(0.08));
+    glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glowGrad;
+    ctx.beginPath();
+    ctx.arc(0, 0, glowSize, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Ball body
+    const ballGrad = ctx.createRadialGradient(
+      -this.ball.radius * 0.25, -this.ball.radius * 0.25, 0,
+      0, 0, this.ball.radius
+    );
+    ballGrad.addColorStop(0, '#fff');
+    ballGrad.addColorStop(0.15, this.getBallColor());
+    ballGrad.addColorStop(1, '#111');
+    ctx.fillStyle = ballGrad;
+    ctx.beginPath();
+    ctx.arc(0, 0, this.ball.radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Rotation stripe
+    ctx.save();
+    ctx.rotate(this.ball.rotation);
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, this.ball.radius * 0.7, -0.5, 0.5);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, this.ball.radius * 0.7, Math.PI - 0.5, Math.PI + 0.5);
+    ctx.stroke();
+    ctx.restore();
+    ctx.restore();
+
+    // Sparkles
+    for (const s of this.sparkles) {
+      const alpha = s.life / s.maxLife;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = '#fff';
+      const cx = s.x, cy = s.y, sz = s.size * alpha;
+      ctx.beginPath();
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        const r = i % 2 === 0 ? sz : sz * 0.3;
+        ctx.lineTo(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r);
+      }
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Distance
+    const dist = Math.floor(this.scrollX / 50);
+    ctx.font = '600 14px "Space Mono", monospace';
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    ctx.textAlign = 'right';
+    ctx.fillText(`${dist}m`, w - 16, 28);
+  }
+
+  updateMeters() {
+    const m = this.analyzer.metrics;
+    const set = (id, val) => {
+      document.getElementById(id).style.width = (val * 100) + '%';
+    };
+    set('meterBounce', m.bounce);
+    set('meterTempo', m.tempo);
+    set('meterVowel', m.vowel);
+    set('meterArtic', m.articulation);
+    set('meterSyllable', m.syllable);
+
+    document.getElementById('valBounce').textContent = Math.round(m.bounce * 100);
+    document.getElementById('valTempo').textContent = Math.round(m.tempo * 100);
+    document.getElementById('valVowel').textContent = Math.round(m.vowel * 100);
+    document.getElementById('valArtic').textContent = Math.round(m.articulation * 100);
+    document.getElementById('valSyllable').textContent = Math.round(m.syllable * 100);
+  }
+}
+
+// Initialize
+const game = new ProsodyBallGame();
+</script>
+</body>
+</html>
