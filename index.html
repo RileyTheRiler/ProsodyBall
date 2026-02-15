@@ -451,6 +451,7 @@ class VoiceAnalyzer {
     this.pitchHistoryMax = 30;
     this.lastPitch = 0;
     this.smoothPitchHz = 160; // smoothed Hz for color mapping
+    this._pitchMedianBuf = []; // for octave-jump suppression
 
     // Energy
     this.energyHistory = [];
@@ -494,7 +495,7 @@ class VoiceAnalyzer {
       this.source = this.audioCtx.createMediaStreamSource(this.stream);
 
       this.analyser = this.audioCtx.createAnalyser();
-      this.analyser.fftSize = 2048;
+      this.analyser.fftSize = 4096; // Larger window → better low-freq pitch resolution
       this.analyser.smoothingTimeConstant = 0.8;
       this.source.connect(this.analyser);
 
@@ -536,6 +537,7 @@ class VoiceAnalyzer {
     this.pitchHistory = [];
     this.energyHistory = [];
     this.smoothPitchHz = 160;
+    this._pitchMedianBuf = [];
     this.sustainedDuration = 0;
     this.syllableImpulse = 0;
     this.syllableState = 'silent';
@@ -548,39 +550,100 @@ class VoiceAnalyzer {
     for (const k in this.metrics) this.metrics[k] = 0;
   }
 
-  // FIX: Optimized autocorrelation — stride in inner loop, capped window
+  // ========================================================
+  // YIN pitch detector — research-grade monophonic f0 estimation
+  // Based on de Cheveigné & Kawahara (2002)
+  // Steps: difference function → cumulative mean normalized
+  //        difference → absolute threshold → parabolic interp
+  // Plus median filter for octave-jump suppression
+  // ========================================================
   detectPitch() {
-    this.analyser.getFloatTimeDomainData(this.timeDomainData);
+    // timeDomainData already populated by update() — no need to re-read
     const buf = this.timeDomainData;
     const n = buf.length;
     const sampleRate = this.audioCtx.sampleRate;
 
+    // RMS gate
     let rms = 0;
     for (let i = 0; i < n; i++) rms += buf[i] * buf[i];
     rms = Math.sqrt(rms / n);
-    // Use noise floor if calibrated, otherwise conservative default
     const silenceThreshold = this.isCalibrated ? this.noiseFloor * 2.5 : 0.015;
     if (rms < silenceThreshold) return 0;
 
-    const minPeriod = Math.floor(sampleRate / 500);
-    const maxPeriod = Math.min(Math.floor(sampleRate / 60), n - 1);
-    let bestCorr = -1;
-    let bestPeriod = 0;
-    const corrWindow = Math.min(n - maxPeriod, 1024);
+    const minPeriod = Math.floor(sampleRate / 500); // 500 Hz max
+    const maxPeriod = Math.min(Math.floor(sampleRate / 60), Math.floor(n / 2)); // 60 Hz min
+    const W = maxPeriod; // integration window
 
-    for (let p = minPeriod; p <= maxPeriod; p++) {
-      let corr = 0;
-      for (let i = 0; i < corrWindow; i += 2) {
-        corr += buf[i] * buf[i + p];
+    // Step 1 & 2: Difference function d(τ) and CMND d'(τ)
+    // Compute both in one pass for efficiency
+    const cmnd = new Float32Array(maxPeriod + 1);
+    cmnd[0] = 1.0;
+    let runningSum = 0;
+
+    for (let tau = 1; tau <= maxPeriod; tau++) {
+      let diff = 0;
+      for (let i = 0; i < W; i++) {
+        const delta = buf[i] - buf[i + tau];
+        diff += delta * delta;
       }
-      if (corr > bestCorr) {
-        bestCorr = corr;
-        bestPeriod = p;
+      runningSum += diff;
+      // Cumulative mean normalized difference
+      cmnd[tau] = diff * tau / (runningSum || 1);
+    }
+
+    // Step 3: Absolute threshold — find first dip below threshold
+    // This is the key to YIN's octave-error resistance
+    const yinThreshold = 0.15; // Stricter = more accurate, less sensitive
+    let bestTau = -1;
+
+    for (let tau = minPeriod; tau <= maxPeriod; tau++) {
+      if (cmnd[tau] < yinThreshold) {
+        // Walk to the local minimum
+        while (tau + 1 <= maxPeriod && cmnd[tau + 1] < cmnd[tau]) {
+          tau++;
+        }
+        bestTau = tau;
+        break;
       }
     }
 
-    if (bestCorr < 0.01) return 0;
-    return sampleRate / bestPeriod;
+    // Fallback: if no dip below threshold, find global minimum
+    if (bestTau < 0) {
+      let minVal = Infinity;
+      for (let tau = minPeriod; tau <= maxPeriod; tau++) {
+        if (cmnd[tau] < minVal) {
+          minVal = cmnd[tau];
+          bestTau = tau;
+        }
+      }
+      // Reject if global min is still high (likely unvoiced)
+      if (minVal > 0.4) return 0;
+    }
+
+    // Step 4: Parabolic interpolation for sub-sample accuracy
+    let period = bestTau;
+    if (bestTau > 0 && bestTau < maxPeriod) {
+      const a = cmnd[bestTau - 1];
+      const b = cmnd[bestTau];
+      const c = cmnd[bestTau + 1];
+      const denom = 2 * (2 * b - a - c);
+      if (Math.abs(denom) > 1e-10) {
+        period = bestTau + (a - c) / denom;
+      }
+    }
+
+    const rawHz = sampleRate / period;
+
+    // Step 5: Median filter — suppresses octave jumps
+    // Keep a small buffer of recent raw detections
+    this._pitchMedianBuf.push(rawHz);
+    if (this._pitchMedianBuf.length > 5) this._pitchMedianBuf.shift();
+
+    if (this._pitchMedianBuf.length >= 3) {
+      const sorted = [...this._pitchMedianBuf].sort((a, b) => a - b);
+      return sorted[Math.floor(sorted.length / 2)];
+    }
+    return rawHz;
   }
 
   update(dt) {
@@ -815,10 +878,34 @@ class ProsodyBallGame {
     for (let i = 0; i < 80; i++) {
       this.stars.push({
         x: Math.random() * 3000,
-        y: Math.random() * this.height * 0.75,
+        y: Math.random() * this.height * 0.55,
         size: Math.random() * 1.5 + 0.5,
         twinkle: Math.random() * Math.PI * 2
       });
+    }
+
+    // Generate mountain layers (procedural, infinite via sine sums)
+    if (!this.mountainLayers) {
+      this.mountainLayers = [
+        // Far mountains — slow parallax, taller, lighter
+        { parallax: 0.08, baseY: 0.52, color: '#1a1a35', layers: [
+          { amp: 60, freq: 0.0008, phase: 0.0 },
+          { amp: 30, freq: 0.002, phase: 1.2 },
+          { amp: 15, freq: 0.005, phase: 3.7 },
+        ]},
+        // Mid mountains — medium parallax
+        { parallax: 0.18, baseY: 0.58, color: '#151530', layers: [
+          { amp: 55, freq: 0.0012, phase: 2.1 },
+          { amp: 25, freq: 0.003, phase: 0.5 },
+          { amp: 12, freq: 0.007, phase: 4.2 },
+        ]},
+        // Near hills — faster parallax, smaller, darker
+        { parallax: 0.35, baseY: 0.65, color: '#111128', layers: [
+          { amp: 35, freq: 0.002, phase: 4.5 },
+          { amp: 18, freq: 0.005, phase: 1.8 },
+          { amp: 8, freq: 0.012, phase: 0.3 },
+        ]},
+      ];
     }
 
     if (!this.isRunning) this.drawIdleScene();
@@ -1239,11 +1326,12 @@ class ProsodyBallGame {
     const h = this.height;
     if (!w || !h) return;
 
-    // Background
+    // Background — slightly brighter for contrast
     const bgGrad = ctx.createLinearGradient(0, 0, 0, h);
-    bgGrad.addColorStop(0, '#0a0a18');
-    bgGrad.addColorStop(0.5, '#0e0e1a');
-    bgGrad.addColorStop(1, '#141425');
+    bgGrad.addColorStop(0, '#0c0c20');
+    bgGrad.addColorStop(0.4, '#10102a');
+    bgGrad.addColorStop(0.7, '#161638');
+    bgGrad.addColorStop(1, '#1a1a3a');
     ctx.fillStyle = bgGrad;
     ctx.fillRect(0, 0, w, h);
 
@@ -1259,6 +1347,42 @@ class ProsodyBallGame {
       ctx.fill();
     }
     ctx.globalAlpha = 1;
+
+    // Mountain ranges — parallax layers for speed perception
+    if (this.mountainLayers) {
+      for (const mtn of this.mountainLayers) {
+        const baseY = h * mtn.baseY;
+        const scrollOffset = this.scrollX * mtn.parallax;
+        ctx.beginPath();
+        ctx.moveTo(-20, h);
+        for (let x = -20; x <= w + 20; x += 3) {
+          const worldX = x + scrollOffset;
+          let my = 0;
+          for (const l of mtn.layers) {
+            my += l.amp * Math.sin(worldX * l.freq + l.phase);
+          }
+          ctx.lineTo(x, baseY - Math.abs(my));
+        }
+        ctx.lineTo(w + 20, h);
+        ctx.closePath();
+        ctx.fillStyle = mtn.color;
+        ctx.fill();
+        // Subtle top edge highlight
+        ctx.beginPath();
+        for (let x = -20; x <= w + 20; x += 3) {
+          const worldX = x + scrollOffset;
+          let my = 0;
+          for (const l of mtn.layers) {
+            my += l.amp * Math.sin(worldX * l.freq + l.phase);
+          }
+          const gy = baseY - Math.abs(my);
+          if (x === -20) ctx.moveTo(x, gy); else ctx.lineTo(x, gy);
+        }
+        ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
 
     // === Camera transform — zoom + vertical follow ===
     ctx.save();
@@ -1281,20 +1405,20 @@ class ProsodyBallGame {
     ctx.lineTo(w + margin, groundFillBottom);
     ctx.closePath();
     const groundGrad = ctx.createLinearGradient(0, this.groundY - 40, 0, groundFillBottom);
-    groundGrad.addColorStop(0, '#1a1a30');
-    groundGrad.addColorStop(0.2, '#151528');
-    groundGrad.addColorStop(1, '#0e0e1c');
+    groundGrad.addColorStop(0, '#1e1e3a');
+    groundGrad.addColorStop(0.2, '#191932');
+    groundGrad.addColorStop(1, '#121228');
     ctx.fillStyle = groundGrad;
     ctx.fill();
 
-    // Ground line
+    // Ground line — brighter for visibility
     ctx.beginPath();
     for (let x = -margin; x <= w + margin; x += 4) {
       const gy = this.getGroundHeight(this.scrollX + x);
       if (x === -margin) ctx.moveTo(x, gy); else ctx.lineTo(x, gy);
     }
-    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 1.5;
     ctx.stroke();
 
     // Trail
@@ -1331,29 +1455,38 @@ class ProsodyBallGame {
     ctx.translate(this.ball.x, this.ball.y + this.ball.radius * (1 - this.ball.squash) * 0.5);
     ctx.scale(1 + (1 - this.ball.squash) * 0.3, this.ball.squash);
 
-    // FIX: Ball glow uses proper HSLA
-    const glowSize = this.ball.radius * (1.8 + prosodyGlow * 1.2);
-    const glowGrad = ctx.createRadialGradient(0, 0, this.ball.radius * 0.3, 0, 0, glowSize);
-    glowGrad.addColorStop(0, this.getBallColor(0.25));
-    glowGrad.addColorStop(0.5, this.getBallColor(0.08));
+    // Ball glow — boosted for visibility against dark scene
+    const glowSize = this.ball.radius * (2.2 + prosodyGlow * 1.5);
+    const glowGrad = ctx.createRadialGradient(0, 0, this.ball.radius * 0.2, 0, 0, glowSize);
+    glowGrad.addColorStop(0, this.getBallColor(0.35));
+    glowGrad.addColorStop(0.4, this.getBallColor(0.12));
+    glowGrad.addColorStop(0.7, this.getBallColor(0.04));
     glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = glowGrad;
     ctx.beginPath();
     ctx.arc(0, 0, glowSize, 0, Math.PI * 2);
     ctx.fill();
 
-    // Ball body
+    // Ball body — bright with rim light
     const ballGrad = ctx.createRadialGradient(
       -this.ball.radius * 0.25, -this.ball.radius * 0.25, 0,
       0, 0, this.ball.radius
     );
     ballGrad.addColorStop(0, '#fff');
-    ballGrad.addColorStop(0.15, this.getBallColor());
-    ballGrad.addColorStop(1, '#111');
+    ballGrad.addColorStop(0.12, this.getBallColor());
+    ballGrad.addColorStop(0.85, this.getBallColor());
+    ballGrad.addColorStop(1, '#222');
     ctx.fillStyle = ballGrad;
     ctx.beginPath();
     ctx.arc(0, 0, this.ball.radius, 0, Math.PI * 2);
     ctx.fill();
+
+    // Rim light — subtle bright edge
+    ctx.strokeStyle = this.getBallColor(0.4);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(0, 0, this.ball.radius - 0.5, 0, Math.PI * 2);
+    ctx.stroke();
 
     // Rotation stripe
     ctx.save();
