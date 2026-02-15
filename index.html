@@ -280,6 +280,53 @@
   .tooltip.show { display: block; }
   .tooltip h3 { color: var(--text-primary); font-size: 0.9rem; margin-bottom: 8px; }
 
+  .help-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .help-tab {
+    flex: 1;
+    font-family: 'Outfit', sans-serif;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.04);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .help-tab.active {
+    color: var(--text-primary);
+    background: rgba(77,150,255,0.2);
+    border-color: rgba(77,150,255,0.6);
+  }
+
+  .help-panel { display: none; }
+  .help-panel.active { display: block; }
+
+  .task-list {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+
+  .task-list h4 {
+    color: var(--text-primary);
+    font-size: 0.75rem;
+    margin-bottom: 8px;
+  }
+
+  .task-list ul {
+    padding-left: 16px;
+    display: grid;
+    gap: 6px;
+  }
+
   .error-banner {
     display: none;
     background: rgba(255,80,80,0.12);
@@ -387,12 +434,35 @@
     </div>
 
     <div class="tooltip" id="helpTooltip">
-      <h3>Voice → Ball Mapping</h3>
-      <p><b style="color:var(--accent-bounce)">Bounciness:</b> Pitch variation controls bounce height. Speak with intonation!<br><br>
-      <b style="color:var(--accent-tempo)">Tempo:</b> Changes in speech rate shift ball speed. Speed up and slow down.<br><br>
-      <b style="color:var(--accent-vowel)">Vowel Elongation:</b> Sustained sounds grow the ball and leave trails.<br><br>
-      <b style="color:var(--accent-artic)">Articulation:</b> Sharp consonants create sparkle bursts. Be crisp!<br><br>
-      <b style="color:var(--accent-syllable)">Syllable Separation:</b> Each distinct syllable triggers a separate bounce. Pause between syllables.</p>
+      <div class="help-tabs">
+        <button class="help-tab active" data-tab="howto">How To Play</button>
+        <button class="help-tab" data-tab="rainbow">Rainbow Passage</button>
+      </div>
+
+      <div class="help-panel active" data-panel="howto">
+        <h3>Voice → Ball Mapping</h3>
+        <p><b style="color:var(--accent-bounce)">Bounciness:</b> Pitch variation controls bounce height. Speak with intonation!<br><br>
+        <b style="color:var(--accent-tempo)">Tempo:</b> Changes in speech rate shift ball speed. Speed up and slow down.<br><br>
+        <b style="color:var(--accent-vowel)">Vowel Elongation:</b> Sustained sounds grow the ball and leave trails.<br><br>
+        <b style="color:var(--accent-artic)">Articulation:</b> Sharp consonants create sparkle bursts. Be crisp!<br><br>
+        <b style="color:var(--accent-syllable)">Syllable Separation:</b> Each distinct syllable triggers a separate bounce. Pause between syllables.</p>
+
+        <div class="task-list">
+          <h4>Improvement Task List</h4>
+          <ul>
+            <li><b>Goals:</b> Add level-based objectives and a session recap score that tracks progress over time.</li>
+            <li><b>UI/UX:</b> Add an onboarding walkthrough with live mic checks and clearer meter explanations.</li>
+            <li><b>Appearance:</b> Add theme presets (high contrast, playful, minimal) and richer ball/terrain animations.</li>
+            <li><b>Accuracy:</b> Improve pitch/tempo calibration with speaker-specific baselines and adaptive thresholds.</li>
+            <li><b>Feedback:</b> Show real-time hints (e.g., “slow down,” “stretch vowels”) based on weakest metric.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="help-panel" data-panel="rainbow">
+        <h3>Rainbow Passage</h3>
+        <p>When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is a division of white light into many beautiful colors. These take the shape of a long round arch, with its path high above, and its two ends apparently beyond the horizon. There is , according to legend, a boiling pot of gold at one end. People look, but no one ever finds it.</p>
+      </div>
     </div>
   </div>
 
@@ -934,6 +1004,8 @@ class ProsodyBallGame {
     const helpBtn = document.getElementById('helpBtn');
     const welcomeOverlay = document.getElementById('welcomeOverlay');
     const helpTooltip = document.getElementById('helpTooltip');
+    const helpTabs = Array.from(helpTooltip.querySelectorAll('.help-tab'));
+    const helpPanels = Array.from(helpTooltip.querySelectorAll('.help-panel'));
 
     const errorBanner = document.getElementById('errorBanner');
     const iframeNotice = document.getElementById('iframeNotice');
@@ -1050,6 +1122,16 @@ class ProsodyBallGame {
     helpBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       helpTooltip.classList.toggle('show');
+    });
+
+    helpTabs.forEach((tab) => {
+      tab.addEventListener('click', () => {
+        const selected = tab.dataset.tab;
+        helpTabs.forEach((btn) => btn.classList.toggle('active', btn === tab));
+        helpPanels.forEach((panel) => {
+          panel.classList.toggle('active', panel.dataset.panel === selected);
+        });
+      });
     });
 
     document.addEventListener('click', (e) => {
