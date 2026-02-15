@@ -148,6 +148,22 @@
   .meter-artic .meter-bar-fill { background: var(--accent-artic); box-shadow: 0 0 8px rgba(77,150,255,0.4); }
   .meter-syllable .meter-bar-fill { background: var(--accent-syllable); box-shadow: 0 0 8px rgba(192,132,252,0.4); }
 
+  /* Pitch meter — gradient background shows full range, fill acts as position indicator */
+  .meter-bar-pitch-bg {
+    background: linear-gradient(90deg, #4d96ff 0%, #7b68ee 40%, #c084fc 55%, #ff6b9d 80%, #ff4d8d 100%) !important;
+    position: relative;
+  }
+  .meter-pitch .meter-bar-fill {
+    position: absolute;
+    width: 3px !important;
+    height: 100%;
+    background: #fff;
+    box-shadow: 0 0 6px rgba(255,255,255,0.8);
+    border-radius: 2px;
+    left: 0%;
+    transition: left 0.12s ease-out, width 0s;
+  }
+
   .meter-value {
     font-family: 'Space Mono', monospace;
     font-size: 0.65rem;
@@ -381,6 +397,11 @@
   </div>
 
   <div class="meters-panel">
+    <div class="meter meter-pitch">
+      <div class="meter-label">Pitch</div>
+      <div class="meter-bar-bg meter-bar-pitch-bg"><div class="meter-bar-fill" id="meterPitch"></div></div>
+      <div class="meter-value" id="valPitch">— Hz</div>
+    </div>
     <div class="meter meter-bounce">
       <div class="meter-label">Bounce</div>
       <div class="meter-bar-bg"><div class="meter-bar-fill" id="meterBounce"></div></div>
@@ -429,6 +450,7 @@ class VoiceAnalyzer {
     this.pitchHistory = [];
     this.pitchHistoryMax = 30;
     this.lastPitch = 0;
+    this.smoothPitchHz = 160; // smoothed Hz for color mapping
 
     // Energy
     this.energyHistory = [];
@@ -513,6 +535,7 @@ class VoiceAnalyzer {
     this.source = null;
     this.pitchHistory = [];
     this.energyHistory = [];
+    this.smoothPitchHz = 160;
     this.sustainedDuration = 0;
     this.syllableImpulse = 0;
     this.syllableState = 'silent';
@@ -627,6 +650,8 @@ class VoiceAnalyzer {
       this.lastPitch = pitch;
       this.pitchHistory.push(pitch);
       if (this.pitchHistory.length > this.pitchHistoryMax) this.pitchHistory.shift();
+      // Smooth Hz for color mapping — fast enough to follow speech, slow enough to not jitter
+      this.smoothPitchHz += (pitch - this.smoothPitchHz) * 0.15;
     }
 
     // --- HF energy (articulation) — gated against both main noise floor and HF baseline ---
@@ -731,7 +756,7 @@ class ProsodyBallGame {
     this.idleAnimId = null;
 
     // FIX: Store ball color as HSL components for proper HSLA compositing
-    this.ballHue = 340;
+    this.ballHue = 275;
     this.ballSat = 70;
     this.ballLit = 55;
 
@@ -747,6 +772,7 @@ class ProsodyBallGame {
     this.targetScrollSpeed = 120;
     this.cameraY = 0;       // current camera vertical offset (negative = looking up)
     this.targetCameraY = 0; // smooth target
+    this.cameraZoom = 1.35; // zoom into the ball
     this.prosodyScore = 0;  // smoothed composite prosody signal (0=monotone, 1=expressive)
     this.particles = [];
     this.trailPoints = [];
@@ -907,7 +933,7 @@ class ProsodyBallGame {
       this.ball.onGround = true;
       this.ball.squash = 1;
       this.ball.radius = this.ball.baseRadius;
-      this.ball.x = this.width * 0.25;
+      this.ball.x = this.width * 0.45;
       this.ball.y = this.getGroundHeight(this.scrollX + this.ball.x) - this.ball.radius;
 
       welcomeOverlay.classList.add('hidden');
@@ -953,11 +979,11 @@ class ProsodyBallGame {
       if (this.isRunning) return;
       idleScroll.x += 0.5;
       this.scrollX = idleScroll.x;
-      this.ball.x = this.width * 0.25;
+      this.ball.x = this.width * 0.45;
       const ground = this.getGroundHeight(this.scrollX + this.ball.x);
       this.ball.y = ground - this.ball.radius;
       this.ball.rotation += 0.01;
-      this.ballHue = 340;
+      this.ballHue = 275;
       this.ballSat = 70;
       this.ballLit = 55;
       this.cameraY = 0;
@@ -1034,7 +1060,7 @@ class ProsodyBallGame {
     this.scrollSpeed += (this.targetScrollSpeed - this.scrollSpeed) * 0.06;
     this.scrollX += this.scrollSpeed * dt;
 
-    this.ball.x = this.width * 0.25;
+    this.ball.x = this.width * 0.45;
     const localGround = this.getGroundHeight(this.scrollX + this.ball.x);
 
     // ==========================================================
@@ -1180,11 +1206,31 @@ class ProsodyBallGame {
     }
 
     // ==========================================================
-    // BALL COLOR — grey/dim when monotone, vivid when prosodic
+    // BALL COLOR — pitch drives hue (blue→purple→pink),
+    // prosody drives saturation and brightness
+    //
+    // ≤100 Hz  → 210 (deep blue)
+    // 145 Hz   → 250 (blue-purple)
+    // 160 Hz   → 275 (true purple / androgynous center)
+    // 175 Hz   → 310 (pink-purple)
+    // ≥250 Hz  → 340 (hot pink)
     // ==========================================================
-    this.ballHue = 340 + ps * 80;
-    this.ballSat = 15 + ps * 85;   // 15% (grey) → 100% (vivid)
-    this.ballLit = 35 + ps * 35;   // 35% (dim)  → 70% (bright)
+    const hz = this.analyzer.smoothPitchHz;
+    let pitchHue;
+    if (hz <= 100) {
+      pitchHue = 210;
+    } else if (hz <= 145) {
+      pitchHue = 210 + ((hz - 100) / 45) * 40;  // 210 → 250
+    } else if (hz <= 175) {
+      pitchHue = 250 + ((hz - 145) / 30) * 60;  // 250 → 310
+    } else if (hz <= 250) {
+      pitchHue = 310 + ((hz - 175) / 75) * 30;  // 310 → 340
+    } else {
+      pitchHue = 340;
+    }
+    this.ballHue = pitchHue;
+    this.ballSat = 25 + ps * 75;   // 25% (muted) → 100% (vivid)
+    this.ballLit = 40 + ps * 30;   // 40% (dim)   → 70% (bright)
   }
 
   drawSceneInternal(prosodyGlow) {
@@ -1214,18 +1260,25 @@ class ProsodyBallGame {
     }
     ctx.globalAlpha = 1;
 
-    // === Camera transform — world elements shift with cameraY ===
+    // === Camera transform — zoom + vertical follow ===
     ctx.save();
+    const zoomPivotX = this.ball.x;
+    const zoomPivotY = this.groundY;
+    ctx.translate(zoomPivotX, zoomPivotY);
+    ctx.scale(this.cameraZoom, this.cameraZoom);
+    ctx.translate(-zoomPivotX, -zoomPivotY);
     ctx.translate(0, -this.cameraY);
 
-    // Ground fill — extend bottom well past viewport for camera shifts
-    const groundFillBottom = h + Math.abs(this.cameraY) + 100;
+    // Ground fill — extend bottom well past viewport for camera shifts + zoom
+    const groundFillBottom = h / this.cameraZoom + Math.abs(this.cameraY) + 200;
+    // Ground fill with extended range for zoom
+    const margin = w * 0.3; // extra margin for zoom edges
     ctx.beginPath();
-    ctx.moveTo(0, groundFillBottom);
-    for (let x = -10; x <= w + 10; x += 4) {
+    ctx.moveTo(-margin, groundFillBottom);
+    for (let x = -margin; x <= w + margin; x += 4) {
       ctx.lineTo(x, this.getGroundHeight(this.scrollX + x));
     }
-    ctx.lineTo(w, groundFillBottom);
+    ctx.lineTo(w + margin, groundFillBottom);
     ctx.closePath();
     const groundGrad = ctx.createLinearGradient(0, this.groundY - 40, 0, groundFillBottom);
     groundGrad.addColorStop(0, '#1a1a30');
@@ -1236,9 +1289,9 @@ class ProsodyBallGame {
 
     // Ground line
     ctx.beginPath();
-    for (let x = -10; x <= w + 10; x += 4) {
+    for (let x = -margin; x <= w + margin; x += 4) {
       const gy = this.getGroundHeight(this.scrollX + x);
-      if (x === -10) ctx.moveTo(x, gy); else ctx.lineTo(x, gy);
+      if (x === -margin) ctx.moveTo(x, gy); else ctx.lineTo(x, gy);
     }
     ctx.strokeStyle = 'rgba(255,255,255,0.08)';
     ctx.lineWidth = 1;
@@ -1354,6 +1407,16 @@ class ProsodyBallGame {
     set('meterVowel', m.vowel);
     set('meterArtic', m.articulation);
     set('meterSyllable', m.syllable);
+
+    // Pitch meter — position-based indicator (not fill width)
+    // Map 80-300 Hz to 0-100% position on the gradient bar
+    const hz = this.analyzer.smoothPitchHz;
+    const pitchPos = Math.max(0, Math.min(1, (hz - 80) / 220));
+    const pitchEl = document.getElementById('meterPitch');
+    pitchEl.style.left = (pitchPos * 100) + '%';
+    pitchEl.style.width = '3px';
+    document.getElementById('valPitch').textContent =
+      this.analyzer.lastPitch > 0 ? Math.round(hz) + ' Hz' : '— Hz';
 
     document.getElementById('valBounce').textContent = Math.round(m.bounce * 100);
     document.getElementById('valTempo').textContent = Math.round(m.tempo * 100);
