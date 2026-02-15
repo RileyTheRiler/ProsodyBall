@@ -61,6 +61,17 @@
 
   .hud-controls { display: flex; gap: 10px; align-items: center; }
 
+  .theme-select {
+    background: rgba(255,255,255,0.06);
+    color: var(--text-primary);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-family: 'Outfit', sans-serif;
+    font-size: 0.78rem;
+    font-weight: 600;
+  }
+
   .btn {
     font-family: 'Outfit', sans-serif;
     font-weight: 600;
@@ -327,6 +338,99 @@
     gap: 6px;
   }
 
+  .status-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    font-size: 0.74rem;
+  }
+
+  .status-chip {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.62rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.15);
+    color: var(--text-muted);
+  }
+
+  .status-chip.good {
+    color: #d7ffe1;
+    border-color: rgba(107,203,119,0.5);
+    background: rgba(107,203,119,0.16);
+  }
+
+  .hint-banner {
+    position: absolute;
+    top: 70px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(10,10,18,0.75);
+    border: 1px solid rgba(255,255,255,0.16);
+    border-radius: 999px;
+    padding: 8px 14px;
+    font-size: 0.78rem;
+    color: #e8e6f0;
+    z-index: 25;
+    backdrop-filter: blur(8px);
+    pointer-events: none;
+  }
+
+  .session-card {
+    margin-top: 16px;
+    width: 90%;
+    max-width: 560px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.1);
+    padding: 12px 14px;
+  }
+
+  .session-card h4 {
+    font-size: 0.78rem;
+    margin-bottom: 8px;
+    color: #fff;
+  }
+
+  .session-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .session-grid div {
+    background: rgba(255,255,255,0.04);
+    border-radius: 8px;
+    padding: 8px;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+  }
+
+  .session-grid b {
+    display: block;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    margin-top: 2px;
+  }
+
+  .objective-pill {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.62rem;
+    color: #fff;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.16);
+  }
+
   .error-banner {
     display: none;
     background: rgba(255,80,80,0.12);
@@ -383,6 +487,8 @@
     .rule-card:last-child { max-width: 100%; }
     .meters-panel { padding: 8px 10px 10px; gap: 2px; }
     .meter-label { font-size: 0.5rem; }
+    .theme-select { display: none; }
+    .session-grid { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -391,6 +497,11 @@
   <div class="hud">
     <div class="hud-title">PROSODY BALL</div>
     <div class="hud-controls">
+      <select id="themeSelect" class="theme-select" aria-label="Theme preset">
+        <option value="playful">Playful</option>
+        <option value="minimal">Minimal</option>
+        <option value="highcontrast">High Contrast</option>
+      </select>
       <button class="btn btn-help" id="helpBtn">How to Play</button>
       <button class="btn btn-start" id="startBtn">🎙 Start</button>
     </div>
@@ -398,6 +509,7 @@
 
   <div class="game-area">
     <canvas id="gameCanvas"></canvas>
+    <div class="hint-banner" id="hintBanner">Hint: Add pitch movement to get the ball airborne.</div>
 
     <div class="overlay" id="welcomeOverlay">
       <div class="overlay-title">Prosody Ball</div>
@@ -428,9 +540,31 @@
         </div>
       </div>
       <button class="btn-big" id="playBtn">🎙 Start Speaking</button>
+      <div class="status-row">
+        <div>
+          <div style="font-weight:700; color:var(--text-primary);">Objective</div>
+          <div id="objectiveText">Level 1: Keep prosody above 35 for 10 seconds.</div>
+        </div>
+        <div class="objective-pill" id="objectiveTimer">0.0s</div>
+      </div>
+      <div class="status-row">
+        <div>
+          <div style="font-weight:700; color:var(--text-primary);">Mic Check</div>
+          <div id="micStatusText">Waiting for microphone…</div>
+        </div>
+        <div class="status-chip" id="micStatusChip">pending</div>
+      </div>
       <div class="mic-note">Requires microphone access · All processing is local</div>
       <div class="error-banner" id="errorBanner"></div>
       <div class="iframe-notice" id="iframeNotice"></div>
+      <div class="session-card">
+        <h4>Session Recap</h4>
+        <div class="session-grid">
+          <div>Best Prosody<b id="bestProsody">0</b></div>
+          <div>Distance<b id="sessionDistance">0m</b></div>
+          <div>Objectives<b id="sessionObjectives">0</b></div>
+        </div>
+      </div>
     </div>
 
     <div class="tooltip" id="helpTooltip">
@@ -547,6 +681,8 @@ class VoiceAnalyzer {
     this.noiseCalibrationTimer = 0;
     this.isCalibrated = false;
     this.noiseAdaptRate = 0.002; // ongoing adaptation for changing environments
+    this.speakerPitchBase = 160;
+    this.tempoBaseline = 0.35;
 
     this.metrics = {
       bounce: 0, tempo: 0, vowel: 0,
@@ -617,6 +753,8 @@ class VoiceAnalyzer {
     this.isCalibrated = false;
     this.noiseFloor = 0.015;
     this.hfNoiseFloor = 0;
+    this.speakerPitchBase = 160;
+    this.tempoBaseline = 0.35;
     for (const k in this.metrics) this.metrics[k] = 0;
   }
 
@@ -785,6 +923,7 @@ class VoiceAnalyzer {
       if (this.pitchHistory.length > this.pitchHistoryMax) this.pitchHistory.shift();
       // Smooth Hz for color mapping — fast enough to follow speech, slow enough to not jitter
       this.smoothPitchHz += (pitch - this.smoothPitchHz) * 0.15;
+      this.speakerPitchBase += (pitch - this.speakerPitchBase) * 0.04;
     }
 
     // --- HF energy (articulation) — gated against both main noise floor and HF baseline ---
@@ -805,7 +944,9 @@ class VoiceAnalyzer {
     if (this.pitchHistory.length > 3) {
       const mean = this.pitchHistory.reduce((a, b) => a + b, 0) / this.pitchHistory.length;
       const variance = this.pitchHistory.reduce((a, p) => a + (p - mean) ** 2, 0) / this.pitchHistory.length;
-      this.metrics.bounce = Math.min(1, Math.sqrt(variance) / 70);
+      const variation = Math.sqrt(variance);
+      const adaptiveDenom = Math.max(40, this.speakerPitchBase * 0.33);
+      this.metrics.bounce = Math.min(1, variation / adaptiveDenom);
     } else {
       this.metrics.bounce *= 0.95;
     }
@@ -817,7 +958,9 @@ class VoiceAnalyzer {
       for (let i = 1; i < this.energyHistory.length; i++) {
         if ((this.energyHistory[i - 1] > thresh) !== (this.energyHistory[i] > thresh)) transitions++;
       }
-      this.metrics.tempo = Math.min(1, transitions / 12);
+      const tempoRaw = Math.min(1, transitions / 12);
+      this.tempoBaseline += (tempoRaw - this.tempoBaseline) * 0.02;
+      this.metrics.tempo = Math.min(1, tempoRaw / Math.max(0.2, this.tempoBaseline + 0.25));
     }
 
     // 3. VOWEL ELONGATION — sustained voicing
@@ -910,6 +1053,18 @@ class ProsodyBallGame {
     this.particles = [];
     this.trailPoints = [];
     this.sparkles = [];
+    this.themeMode = 'playful';
+    this.liveHint = 'Hint: Add pitch movement to get the ball airborne.';
+    this.objectiveLevel = 0;
+    this.objectiveProgress = 0;
+    this.objectiveCompletedCount = 0;
+    this.bestProsody = 0;
+    this.lastSessionDistance = 0;
+    this.objectives = [
+      { label: 'Level 1: Keep prosody above 35 for 10 seconds.', target: 0.35, duration: 10 },
+      { label: 'Level 2: Keep prosody above 50 for 12 seconds.', target: 0.5, duration: 12 },
+      { label: 'Level 3: Keep prosody above 65 for 14 seconds.', target: 0.65, duration: 14 }
+    ];
 
     // FIX: Procedural infinite terrain — layered sine waves, no finite array
     this.terrainLayers = [];
@@ -1006,6 +1161,15 @@ class ProsodyBallGame {
     const helpTooltip = document.getElementById('helpTooltip');
     const helpTabs = Array.from(helpTooltip.querySelectorAll('.help-tab'));
     const helpPanels = Array.from(helpTooltip.querySelectorAll('.help-panel'));
+    const themeSelect = document.getElementById('themeSelect');
+    const hintBanner = document.getElementById('hintBanner');
+    const micStatusText = document.getElementById('micStatusText');
+    const micStatusChip = document.getElementById('micStatusChip');
+    const objectiveText = document.getElementById('objectiveText');
+    const objectiveTimer = document.getElementById('objectiveTimer');
+    const bestProsody = document.getElementById('bestProsody');
+    const sessionDistance = document.getElementById('sessionDistance');
+    const sessionObjectives = document.getElementById('sessionObjectives');
 
     const errorBanner = document.getElementById('errorBanner');
     const iframeNotice = document.getElementById('iframeNotice');
@@ -1081,6 +1245,10 @@ class ProsodyBallGame {
         this.drawIdleScene();
         return;
       }
+
+      micStatusText.textContent = 'Calibrating noise floor… stay quiet briefly.';
+      micStatusChip.textContent = 'calibrating';
+      micStatusChip.classList.remove('good');
       this.scrollX = 0;
       this.cameraY = 0;
       this.targetCameraY = 0;
@@ -1094,6 +1262,13 @@ class ProsodyBallGame {
       this.ball.radius = this.ball.baseRadius;
       this.ball.x = this.width * 0.45;
       this.ball.y = this.getGroundHeight(this.scrollX + this.ball.x) - this.ball.radius;
+      this.objectiveLevel = 0;
+      this.objectiveProgress = 0;
+      this.objectiveCompletedCount = 0;
+      this.bestProsody = 0;
+      objectiveText.textContent = this.objectives[0].label;
+      objectiveTimer.textContent = '0.0s';
+      hintBanner.textContent = this.liveHint;
 
       welcomeOverlay.classList.add('hidden');
       iframeNotice.classList.remove('show');
@@ -1107,11 +1282,22 @@ class ProsodyBallGame {
     const stopGame = () => {
       this.isRunning = false;
       this.analyzer.stop();
+      this.lastSessionDistance = Math.floor(this.scrollX / 50);
+      bestProsody.textContent = Math.round(this.bestProsody * 100);
+      sessionDistance.textContent = `${this.lastSessionDistance}m`;
+      sessionObjectives.textContent = String(this.objectiveCompletedCount);
+      micStatusText.textContent = 'Waiting for microphone…';
+      micStatusChip.textContent = 'pending';
+      micStatusChip.classList.remove('good');
       startBtn.textContent = '🎙 Start';
       startBtn.classList.remove('active');
       welcomeOverlay.classList.remove('hidden');
       this.drawIdleScene();
     };
+
+    themeSelect.addEventListener('change', (e) => {
+      this.themeMode = e.target.value;
+    });
 
     startBtn.addEventListener('click', () => {
       if (this.isRunning) stopGame(); else startGame();
@@ -1174,6 +1360,14 @@ class ProsodyBallGame {
     this.drawSceneInternal(this.prosodyScore);
     this.updateMeters();
 
+    const micStatusText = document.getElementById('micStatusText');
+    const micStatusChip = document.getElementById('micStatusChip');
+    if (this.analyzer.isActive && this.analyzer.isCalibrated) {
+      micStatusText.textContent = 'Microphone ready. Speak naturally to move the ball.';
+      micStatusChip.textContent = 'ready';
+      micStatusChip.classList.add('good');
+    }
+
     // Show calibration notice during noise floor measurement
     if (!this.analyzer.isCalibrated && this.analyzer.isActive) {
       const ctx = this.ctx;
@@ -1220,6 +1414,50 @@ class ProsodyBallGame {
     );
     this.prosodyScore += (rawProsody - this.prosodyScore) * 0.12;
     const ps = this.prosodyScore;
+    this.bestProsody = Math.max(this.bestProsody, ps);
+
+    const objective = this.objectives[Math.min(this.objectiveLevel, this.objectives.length - 1)];
+    if (this.objectiveLevel < this.objectives.length) {
+      if (ps >= objective.target) {
+        this.objectiveProgress += dt;
+      } else {
+        this.objectiveProgress = Math.max(0, this.objectiveProgress - dt * 0.7);
+      }
+      if (this.objectiveProgress >= objective.duration) {
+        this.objectiveCompletedCount++;
+        this.objectiveLevel++;
+        this.objectiveProgress = 0;
+      }
+    }
+
+    const objectiveText = document.getElementById('objectiveText');
+    const objectiveTimer = document.getElementById('objectiveTimer');
+    if (this.objectiveLevel < this.objectives.length) {
+      const currentObjective = this.objectives[this.objectiveLevel];
+      objectiveText.textContent = currentObjective.label;
+      objectiveTimer.textContent = `${this.objectiveProgress.toFixed(1)}s`;
+    } else {
+      objectiveText.textContent = 'All objectives complete! Keep an expressive streak going.';
+      objectiveTimer.textContent = 'done';
+    }
+
+    const hintBanner = document.getElementById('hintBanner');
+    const weakest = [
+      ['bounce', m.bounce],
+      ['tempo', m.tempo],
+      ['vowel', m.vowel],
+      ['articulation', m.articulation],
+      ['syllable', m.syllable],
+    ].sort((a, b) => a[1] - b[1])[0][0];
+    const hints = {
+      bounce: 'Hint: Use bigger pitch ups and downs to boost bounciness.',
+      tempo: 'Hint: Alternate speaking speed (fast → slow → fast).',
+      vowel: 'Hint: Stretch vowels like “heeellooo” for longer trails.',
+      articulation: 'Hint: Crisp consonants (t, k, s) improve articulation.',
+      syllable: 'Hint: Separate syllables clearly with tiny pauses.'
+    };
+    this.liveHint = hints[weakest];
+    hintBanner.textContent = this.liveHint;
 
     // ==========================================================
     // SCROLL SPEED — prosody drives movement, not volume
@@ -1409,11 +1647,17 @@ class ProsodyBallGame {
     if (!w || !h) return;
 
     // Background — slightly brighter for contrast
+    const themePresets = {
+      playful: ['#0c0c20', '#10102a', '#161638', '#1a1a3a'],
+      minimal: ['#0f1117', '#131722', '#161a25', '#191d28'],
+      highcontrast: ['#030305', '#080814', '#0c0c1f', '#12122a']
+    };
+    const colors = themePresets[this.themeMode] || themePresets.playful;
     const bgGrad = ctx.createLinearGradient(0, 0, 0, h);
-    bgGrad.addColorStop(0, '#0c0c20');
-    bgGrad.addColorStop(0.4, '#10102a');
-    bgGrad.addColorStop(0.7, '#161638');
-    bgGrad.addColorStop(1, '#1a1a3a');
+    bgGrad.addColorStop(0, colors[0]);
+    bgGrad.addColorStop(0.4, colors[1]);
+    bgGrad.addColorStop(0.7, colors[2]);
+    bgGrad.addColorStop(1, colors[3]);
     ctx.fillStyle = bgGrad;
     ctx.fillRect(0, 0, w, h);
 
@@ -1421,7 +1665,7 @@ class ProsodyBallGame {
     const time = performance.now() / 1000;
     for (const star of this.stars) {
       const sx = ((star.x - this.scrollX * 0.05) % (w + 100) + w + 100) % (w + 100);
-      const twinkle = 0.4 + 0.6 * Math.sin(time * 2 + star.twinkle);
+      const twinkle = 0.4 + 0.6 * Math.sin(time * 2.2 + star.twinkle + prosodyGlow * 2);
       ctx.globalAlpha = twinkle * 0.6;
       ctx.fillStyle = '#e8e6f0';
       ctx.beginPath();
@@ -1499,7 +1743,7 @@ class ProsodyBallGame {
       const gy = this.getGroundHeight(this.scrollX + x);
       if (x === -margin) ctx.moveTo(x, gy); else ctx.lineTo(x, gy);
     }
-    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.strokeStyle = this.themeMode === 'highcontrast' ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.12)';
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
