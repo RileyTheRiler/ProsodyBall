@@ -2094,6 +2094,9 @@ class ProsodyBallGame {
         if (!this.isRunning) {
           welcomeOverlay.classList.add('hidden');
           this.drawIdleScene();
+        // Menu cards should directly launch the selected game mode.
+        if (!this.isRunning) {
+          startGame();
         }
       });
     });
