@@ -2074,6 +2074,8 @@ class ProsodyBallGame {
     modeCards.forEach(card => {
       card.addEventListener('click', () => {
         const mode = card.dataset.mode;
+        const wasSelected = card.classList.contains('selected');
+
         this.gameMode = mode;
         modeCards.forEach(c => c.classList.toggle('selected', c === card));
         modeDetails.classList.add('show');
@@ -2087,6 +2089,12 @@ class ProsodyBallGame {
         // Restart idle scene for correct mode preview
         if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
         if (!this.isRunning) this.drawIdleScene();
+
+        // UX: selecting a mode should feel actionable.
+        // Click once to preview rules, click again on the selected mode to start.
+        if (!this.isRunning && wasSelected) {
+          startGame();
+        }
       });
     });
 
