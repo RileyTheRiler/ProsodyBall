@@ -2074,6 +2074,7 @@ class ProsodyBallGame {
     modeCards.forEach(card => {
       card.addEventListener('click', () => {
         const mode = card.dataset.mode;
+
         this.gameMode = mode;
         modeCards.forEach(c => c.classList.toggle('selected', c === card));
         modeDetails.classList.add('show');
@@ -2087,6 +2088,11 @@ class ProsodyBallGame {
         // Restart idle scene for correct mode preview
         if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
         if (!this.isRunning) this.drawIdleScene();
+
+        // Menu cards should directly launch the selected game mode.
+        if (!this.isRunning) {
+          startGame();
+        }
       });
     });
 
