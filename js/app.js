@@ -1,3 +1,6 @@
+// Compatibility shim to reduce merge conflicts with branches that still reference js/app.js.
+// The real app entrypoint now lives at the repository root.
+import '../app.js';
 import { computeProsodyScore, pitchHzToPosition } from './dsp-utils.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';

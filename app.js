@@ -2089,6 +2089,11 @@ class ProsodyBallGame {
         if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
         if (!this.isRunning) this.drawIdleScene();
 
+        // Open the selected mode immediately from the menu.
+        // Starting mic capture remains an explicit action via Start button.
+        if (!this.isRunning) {
+          welcomeOverlay.classList.add('hidden');
+          this.drawIdleScene();
         // Menu cards should directly launch the selected game mode.
         if (!this.isRunning) {
           startGame();
