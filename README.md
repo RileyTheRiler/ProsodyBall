@@ -34,6 +34,16 @@ Click **Start Speaking** and allow microphone access. Then speak expressively â€
 
 **Note:** If microphone access is blocked when viewing the Space on huggingface.co, click the expand button (â†—) in the top-right corner of the Space to open it in a full browser tab. The app will also detect this automatically and show an "Open in new tab" link.
 
+
+## Hugging Face Spaces file/folder setup
+
+For a **Static** Hugging Face Space (`sdk: static`), a flat structure works fine:
+
+- Keep `index.html` at the repo root.
+- Keep your JS files at the repo root too (for example: `app.js`, `dsp-utils.js`).
+- Use relative paths from `index.html` (example: `./app.js` or `app.js`).
+- After pushing changes, the Space rebuilds automatically.
+
 ## Technical Details
 
 - Pitch detection via autocorrelation on time-domain audio data
