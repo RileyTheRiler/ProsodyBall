@@ -36,6 +36,8 @@
     font-family: 'Outfit', sans-serif;
     overflow: hidden;
     height: 100vh;
+    min-height: 100vh;
+    height: 100dvh;
     width: 100vw;
   }
 
@@ -43,6 +45,8 @@
     display: flex;
     flex-direction: column;
     height: 100vh;
+    min-height: 100vh;
+    height: 100dvh;
     width: 100vw;
   }
 
@@ -816,19 +820,6 @@
   .cal-progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #4d96ff, #c084fc); }
   .cal-actions { margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px; }
 
-  .diag-panel {
-    margin-top: 10px;
-    width: 100%;
-    max-width: 560px;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 10px;
-    padding: 10px 12px;
-    font-size: 0.78rem;
-    color: var(--text-muted);
-    line-height: 1.45;
-  }
-
   .perf-panel {
     position: absolute;
     left: 10px;
@@ -898,17 +889,31 @@
   :root.colorblind .iframe-notice a { background: linear-gradient(135deg, #56B4E9, #009E73); }
 
   @media (max-width: 600px) {
+    body,
+    #app {
+      overflow: auto;
+    }
     .overlay-title { font-size: 2rem; }
     .overlay-subtitle { font-size: 1rem; }
+    .overlay { padding: 16px 12px 26px; }
     .mode-picker { grid-template-columns: 1fr; gap: 10px; }
     .mode-icon { font-size: 1.6rem; }
     .mode-name { font-size: 1rem; }
+    .mode-desc { font-size: 0.8rem; }
+    .mode-card { padding: 14px 10px; }
     .rules-grid { grid-template-columns: 1fr; gap: 10px; }
+    .rules-grid { margin-bottom: 18px; }
     .rule-card:last-child { max-width: 100%; }
     .rule-name { font-size: 0.95rem; }
     .rule-desc { font-size: 0.85rem; }
     .btn-big { font-size: 1.1rem; padding: 14px 36px; }
-    .meters-panel { padding: 8px 10px 10px; gap: 3px; }
+    .meters-panel {
+      padding: 8px 10px 10px;
+      gap: 8px;
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+    .meter { min-width: 72px; }
     .meter-label { font-size: 0.52rem; }
     .meter-value { font-size: 0.55rem; }
     .theme-select { display: none; }
@@ -916,14 +921,68 @@
     .recordings-drawer { max-width: 100%; right: 0; left: 0; border-radius: 12px 12px 0 0; }
     .vib-panel { right: 4px; left: 4px; max-width: 100%; }
     .vib-rule { grid-template-columns: 1fr auto; }
-    .hud { padding: 8px 12px; flex-wrap: wrap; gap: 6px; }
+    .hud {
+      padding: 8px 10px;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: flex-start;
+    }
+    .hud > .hud-title {
+      flex: 1;
+      min-width: 0;
+    }
     .hud-title { font-size: 0.9rem; }
-    .session-timer { font-size: 0.62rem; margin-left: 6px; }
-    .hud-controls { gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .session-timer {
+      font-size: 0.62rem;
+      margin-left: 0;
+      order: 2;
+      flex: 0 0 auto;
+      align-self: center;
+    }
+    .hud-controls {
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: flex-start;
+      width: 100%;
+      order: 3;
+    }
     .hud-controls .btn { font-size: 0.75rem; padding: 6px 10px; }
     .btn-help { display: none; }
     .btn-recordings span:first-child { display: none; }
     .meter-resonance { flex: 1.2; }
+    .summary-actions {
+      width: 100%;
+      flex-direction: column;
+    }
+    .summary-actions .btn {
+      width: 100%;
+      min-width: 0;
+    }
+  }
+
+  @media (max-width: 420px) {
+    .hud-title {
+      font-size: 0.78rem;
+      letter-spacing: 0;
+    }
+    .hud-controls .btn {
+      padding: 6px 8px;
+      font-size: 0.7rem;
+    }
+    .btn-start {
+      flex: 1 1 auto;
+      justify-content: center;
+    }
+    .overlay-subtitle {
+      margin-bottom: 20px;
+      line-height: 1.45;
+    }
+    .btn-big {
+      width: 100%;
+      max-width: 320px;
+      padding: 13px 16px;
+      font-size: 1rem;
+    }
   }
 
   /* Recording button */
@@ -1264,7 +1323,6 @@
       </div>
       <div class="error-banner" id="errorBanner"></div>
       <div class="iframe-notice" id="iframeNotice"></div>
-      <div class="diag-panel" id="diagPanel">Diagnostics: idle</div>
       <div class="calibration-overlay" id="calibrationOverlay">
         <div class="calibration-card">
           <div class="calibration-title" id="calStepTitle">Preparing calibration</div>
