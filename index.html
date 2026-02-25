@@ -847,16 +847,13 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      /* Keep content top-anchored so full menu remains reachable when details expand. */
       justify-content: flex-start;
       z-index: 20;
       background: rgba(10, 10, 18, 0.88);
       backdrop-filter: blur(20px);
       transition: opacity 0.4s;
-      padding: 20px;
-      padding-bottom: 40px;
-      overflow-y: auto;
-      -webkit-overflow-scrolling: touch;
+      padding: 16px 20px 12px;
+      overflow: hidden;
     }
 
     .overlay.hidden {
@@ -865,9 +862,9 @@
     }
 
     .overlay-title {
-      font-size: 2.8rem;
+      font-size: 2rem;
       font-weight: 800;
-      margin-bottom: 10px;
+      margin-bottom: 4px;
       background: linear-gradient(135deg, #ff6b6b, #c084fc, #4d96ff);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
@@ -875,97 +872,169 @@
     }
 
     .overlay-subtitle {
-      font-size: 1.3rem;
-      color: rgba(255, 255, 255, 0.6);
-      margin-bottom: 36px;
+      font-size: 1rem;
+      color: rgba(255, 255, 255, 0.55);
+      margin-bottom: 12px;
       text-align: center;
-      max-width: 560px;
-      line-height: 1.6;
+      max-width: 700px;
+      line-height: 1.5;
     }
 
+    /* Two-column split layout container */
+    .menu-split {
+      display: flex;
+      gap: 16px;
+      width: 100%;
+      max-width: 900px;
+      flex: 1;
+      min-height: 0;
+    }
+
+    /* Left column: scrollable card list */
+    .menu-left {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      width: 200px;
+      flex-shrink: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(192, 132, 252, 0.3) transparent;
+      padding-right: 4px;
+    }
+
+    /* Right column: detail + play button */
+    .menu-right {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 16px;
+      padding: 20px;
+      overflow: hidden;
+    }
+
+    /* Left-column card list (replaces mode-picker grid) */
     .mode-picker {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      max-width: 580px;
-      width: 94%;
-      margin-bottom: 24px;
+      display: contents;
+      /* children go directly into .menu-left */
     }
 
     .mode-card {
-      padding: 18px 14px;
-      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 10px;
       background: rgba(255, 255, 255, 0.03);
       border: 2px solid rgba(255, 255, 255, 0.06);
       cursor: pointer;
-      transition: all 0.25s;
-      text-align: center;
+      transition: all 0.2s;
+      flex-shrink: 0;
     }
 
     .mode-card:hover {
-      background: rgba(255, 255, 255, 0.06);
+      background: rgba(255, 255, 255, 0.07);
       border-color: rgba(192, 132, 252, 0.3);
-      transform: translateY(-3px);
-      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+      transform: translateX(2px);
     }
 
     .mode-card.selected {
-      border-color: rgba(192, 132, 252, 0.6);
-      background: rgba(192, 132, 252, 0.08);
-      box-shadow: 0 0 20px rgba(192, 132, 252, 0.15);
+      border-color: rgba(192, 132, 252, 0.7);
+      background: rgba(192, 132, 252, 0.1);
+      box-shadow: 0 0 14px rgba(192, 132, 252, 0.2);
     }
 
     :root.colorblind .mode-card.selected {
-      border-color: rgba(86, 180, 233, 0.6);
-      background: rgba(86, 180, 233, 0.08);
-      box-shadow: 0 0 20px rgba(86, 180, 233, 0.15);
+      border-color: rgba(86, 180, 233, 0.7);
+      background: rgba(86, 180, 233, 0.1);
+      box-shadow: 0 0 14px rgba(86, 180, 233, 0.2);
     }
 
     .mode-icon {
-      font-size: 2.2rem;
-      margin-bottom: 10px;
+      font-size: 1.6rem;
+      flex-shrink: 0;
     }
 
     .mode-name {
       font-weight: 700;
-      font-size: 1.25rem;
-      margin-bottom: 8px;
+      font-size: 0.92rem;
       color: var(--text-primary);
+      white-space: nowrap;
     }
 
     .mode-desc {
-      font-size: 0.95rem;
-      color: rgba(255, 255, 255, 0.5);
-      line-height: 1.5;
+      display: none;
+      /* description shown in right panel instead */
     }
 
+    /* Right panel detail area */
     .mode-details {
-      display: none;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+    }
+
+    /* Empty state hint - visible initially, hidden once .show added to .mode-details */
+    .mode-details-empty {
+      flex: 1;
+      display: flex;
       flex-direction: column;
       align-items: center;
-      width: 100%;
-      animation: fadeSlideIn 0.3s ease-out;
+      justify-content: center;
+      color: rgba(255, 255, 255, 0.25);
+      font-size: 1rem;
+      gap: 8px;
+      text-align: center;
     }
 
-    .mode-details.show {
-      display: flex;
+    .mode-details.show .mode-details-empty {
+      display: none;
     }
 
     .mode-detail-panel {
       display: none;
-      width: 100%;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
     }
 
     .mode-detail-panel.show {
       display: flex;
-      flex-direction: column;
+      animation: fadeSlideIn 0.25s ease-out;
+    }
+
+    /* Detail header inside right pane */
+    .detail-header {
+      margin-bottom: 14px;
+      flex-shrink: 0;
+    }
+
+    .detail-title {
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: var(--text-primary);
+      display: flex;
       align-items: center;
+      gap: 8px;
+    }
+
+    .detail-blurb {
+      font-size: 0.9rem;
+      color: rgba(255, 255, 255, 0.5);
+      margin-top: 4px;
+      line-height: 1.5;
     }
 
     @keyframes fadeSlideIn {
       from {
         opacity: 0;
-        transform: translateY(12px);
+        transform: translateY(8px);
       }
 
       to {
@@ -974,38 +1043,40 @@
       }
     }
 
+    .mode-detail-panel.show {
+      animation: fadeSlideIn 0.25s ease-out;
+    }
+
     .rules-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 14px;
-      max-width: 640px;
-      width: 92%;
-      margin-bottom: 36px;
+      gap: 10px;
+      width: 100%;
+      overflow-y: auto;
+      flex: 1;
+      min-height: 0;
+      align-content: start;
     }
 
     .rule-card {
-      padding: 18px 20px;
-      border-radius: 12px;
+      padding: 12px 14px;
+      border-radius: 10px;
       background: rgba(255, 255, 255, 0.04);
       border: 1px solid rgba(255, 255, 255, 0.06);
     }
 
-    .rule-card:last-child {
-      grid-column: 1 / -1;
-      max-width: 310px;
-      justify-self: center;
-    }
+
 
     .rule-name {
       font-weight: 700;
-      font-size: 1.15rem;
-      margin-bottom: 6px;
+      font-size: 0.9rem;
+      margin-bottom: 4px;
     }
 
     .rule-desc {
-      font-size: 1rem;
+      font-size: 0.82rem;
       color: rgba(255, 255, 255, 0.55);
-      line-height: 1.5;
+      line-height: 1.45;
     }
 
     .rule-bounce .rule-name {
@@ -1031,33 +1102,37 @@
     .btn-big {
       font-family: 'Outfit', sans-serif;
       font-weight: 700;
-      font-size: 1.3rem;
-      padding: 16px 48px;
+      font-size: 1.15rem;
+      padding: 14px 36px;
       border: none;
-      border-radius: 14px;
+      border-radius: 12px;
       cursor: pointer;
       background: linear-gradient(135deg, #ff6b6b, #ff8e53);
       color: #fff;
-      box-shadow: 0 4px 24px rgba(255, 107, 107, 0.35);
+      box-shadow: 0 4px 20px rgba(255, 107, 107, 0.35);
       transition: all 0.2s;
+      flex-shrink: 0;
+      margin-top: 14px;
+      width: 100%;
     }
 
     .btn-big:hover {
       transform: translateY(-2px);
-      box-shadow: 0 6px 30px rgba(255, 107, 107, 0.5);
+      box-shadow: 0 6px 28px rgba(255, 107, 107, 0.5);
     }
 
     :root.colorblind .btn-big {
       background: linear-gradient(135deg, #D55E00, #E69F00);
-      box-shadow: 0 4px 24px rgba(213, 94, 0, 0.35);
+      box-shadow: 0 4px 20px rgba(213, 94, 0, 0.35);
     }
 
     .mic-note {
-      margin-top: 16px;
-      margin-bottom: 24px;
-      font-size: 0.95rem;
+      margin-top: 8px;
+      font-size: 0.8rem;
       color: var(--text-muted);
-      opacity: 0.6;
+      opacity: 0.55;
+      text-align: center;
+      flex-shrink: 0;
     }
 
     .tooltip {
@@ -1872,8 +1947,13 @@
     }
 
     @keyframes prism-pulse {
-      from { text-shadow: 0 0 6px rgba(255, 217, 61, 0.3); }
-      to   { text-shadow: 0 0 14px rgba(255, 217, 61, 0.7); }
+      from {
+        text-shadow: 0 0 6px rgba(255, 217, 61, 0.3);
+      }
+
+      to {
+        text-shadow: 0 0 14px rgba(255, 217, 61, 0.7);
+      }
     }
 
     .prism-syl.crystallized {
@@ -1937,7 +2017,8 @@
       <div class="hud-controls hud-primary" aria-label="Primary session controls">
         <button class="btn btn-start" id="startBtn">🎙 Start</button>
         <button class="btn btn-rec" id="recBtn"><span class="rec-dot"></span><span class="rec-label">Rec</span></button>
-        <button class="btn btn-recordings" id="recordingsBtn"><span>Clips</span><span class="badge" id="recBadge">0</span></button>
+        <button class="btn btn-recordings" id="recordingsBtn"><span>Clips</span><span class="badge"
+            id="recBadge">0</span></button>
         <button class="btn btn-help canvas-only" id="pauseCanvasBtn" title="Pause paint updates">Pause</button>
         <button class="btn btn-help canvas-only" id="clearCanvasBtn" title="Clear current canvas drawing">Clear</button>
       </div>
@@ -1966,7 +2047,8 @@
           <option value="hz" selected>Labels: Hz</option>
           <option value="notes">Labels: Notes</option>
         </select>
-        <button class="btn btn-help canvas-only" id="gridContrastBtn" title="Increase or reduce pitch grid contrast">Grid: Soft</button>
+        <button class="btn btn-help canvas-only" id="gridContrastBtn"
+          title="Increase or reduce pitch grid contrast">Grid: Soft</button>
         <select id="teleprompterModeSelect" class="theme-select" aria-label="Teleprompter mode">
           <option value="off">Teleprompter: Off</option>
           <option value="rainbow" selected>Teleprompter: Rainbow Passage</option>
@@ -1974,13 +2056,15 @@
         </select>
         <button class="btn btn-help" id="teleprompterCustomBtn" title="Edit custom teleprompter text">Edit Text</button>
         <button class="btn btn-cb" id="cbToggle" aria-label="Toggle colorblind mode" title="Colorblind mode">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round">
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" />
             <circle cx="12" cy="12" r="3" />
           </svg>
         </button>
         <button class="btn btn-vib" id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round">
             <rect x="8" y="4" width="8" height="16" rx="2" />
             <path d="M4 8v8" />
             <path d="M20 8v8" />
@@ -2015,489 +2099,576 @@
 
       <div class="overlay" id="welcomeOverlay">
         <div class="overlay-title">Prosody Training</div>
-        <div class="overlay-subtitle">
-          Practice expressive speech with real-time voice feedback.
-          Choose your training mode:
-        </div>
+        <div class="overlay-subtitle">Choose a training mode below, then press Start.</div>
 
-        <div class="mode-picker" id="modePicker">
-          <div class="mode-card" data-mode="ball">
-            <div class="mode-icon">⚽</div>
-            <div class="mode-name">Prosody Ball</div>
-            <div class="mode-desc">Control a bouncing ball with your voice. Pitch bounces, tempo changes speed, vowels
-              leave trails.</div>
-          </div>
-          <div class="mode-card" data-mode="creature">
-            <div class="mode-icon">🐉</div>
-            <div class="mode-name">Voice Creature</div>
-            <div class="mode-desc">Your voice becomes a living being. Resonance shapes its body, prosody transforms it.
+        <div class="menu-split">
+          <!-- Left: game card list -->
+          <div class="menu-left">
+            <div class="mode-picker" id="modePicker">
+              <div class="mode-card" data-mode="ball">
+                <div class="mode-icon">⚽</div>
+                <div class="mode-name">Prosody Ball</div>
+              </div>
+              <div class="mode-card" data-mode="creature">
+                <div class="mode-icon">🐉</div>
+                <div class="mode-name">Voice Creature</div>
+              </div>
+              <div class="mode-card" data-mode="garden">
+                <div class="mode-icon">🌱</div>
+                <div class="mode-name">Voice Garden</div>
+              </div>
+              <div class="mode-card" data-mode="canvas">
+                <div class="mode-icon">🎨</div>
+                <div class="mode-name">Voice Canvas</div>
+              </div>
+              <div class="mode-card" data-mode="keyboard">
+                <div class="mode-icon">🎹</div>
+                <div class="mode-name">Vocal Keyboard</div>
+              </div>
+              <div class="mode-card" data-mode="pilot">
+                <div class="mode-icon">✨</div>
+                <div class="mode-name">Pitch Pilot</div>
+              </div>
+              <div class="mode-card" data-mode="road">
+                <div class="mode-icon">🏍️</div>
+                <div class="mode-name">Resonance Road</div>
+              </div>
+              <div class="mode-card" data-mode="ascent">
+                <div class="mode-icon">🎈</div>
+                <div class="mode-name">Spectral Ascent</div>
+              </div>
+              <div class="mode-card" data-mode="prism">
+                <div class="mode-icon">🔮</div>
+                <div class="mode-name">Prism Reader</div>
+              </div>
             </div>
           </div>
-          <div class="mode-card" data-mode="garden">
-            <div class="mode-icon">🌱</div>
-            <div class="mode-name">Voice Garden</div>
-            <div class="mode-desc">Grow a living ecosystem with your voice. Every session adds plants that accumulate.
-            </div>
-          </div>
-          <div class="mode-card" data-mode="canvas">
-            <div class="mode-icon">🎨</div>
-            <div class="mode-name">Voice Canvas</div>
-            <div class="mode-desc">Paint generative art with your voice. Each session creates a unique piece you can
-              save.</div>
-          </div>
-          <div class="mode-card" data-mode="keyboard">
-            <div class="mode-icon">🎹</div>
-            <div class="mode-name">Vocal Keyboard</div>
-            <div class="mode-desc">A neon vocal synth keyboard for pitch exploration, target-note training, and
-              note-target training.</div>
-          </div>
-          <div class="mode-card" data-mode="pilot">
-            <div class="mode-icon">✨</div>
-            <div class="mode-name">Pitch Pilot</div>
-            <div class="mode-desc">Navigate the resonance cavern with your voice by steering a luminous vocal spark through crystal barriers.</div>
-          </div>
-          <div class="mode-card" data-mode="road">
-            <div class="mode-icon">🏍️</div>
-            <div class="mode-name">Resonance Road</div>
-            <div class="mode-desc">Steer a sonic speeder with vocal timbre while reading a teleprompter. Stay on-tone or skid into the hazard lane.</div>
-          </div>
-          <div class="mode-card" data-mode="ascent">
-            <div class="mode-icon">🎈</div>
-            <div class="mode-name">Spectral Ascent</div>
-            <div class="mode-desc">A diagnostic flight mode: vocal weight directly drives altitude while a live spectral tilt gauge exposes the raw interpretation.</div>
-          </div>
-          <div class="mode-card" data-mode="prism">
-            <div class="mode-icon">🔮</div>
-            <div class="mode-name">Prism Reader</div>
-            <div class="mode-desc">Read text aloud and watch each syllable crystallize with color, glow, and texture from your voice.</div>
-          </div>
-        </div>
 
-        <div class="mode-details" id="modeDetails">
-          <div class="mode-detail-panel" id="ballDetails">
-            <div class="rules-grid">
-              <div class="rule-card rule-bounce">
-                <div class="rule-name">① Bounciness</div>
-                <div class="rule-desc">Vary your pitch up and down. Bigger pitch swings = higher bounces.</div>
-              </div>
-              <div class="rule-card rule-tempo">
-                <div class="rule-name">② Tempo Variance</div>
-                <div class="rule-desc">Change your speaking speed. Fast→slow→fast makes the ball accelerate and
-                  decelerate.</div>
-              </div>
-              <div class="rule-card rule-vowel">
-                <div class="rule-name">③ Vowel Elongation</div>
-                <div class="rule-desc">Stretch your vowels ("hellooo"). Sustained sounds create a glowing trail.</div>
-              </div>
-              <div class="rule-card rule-artic">
-                <div class="rule-name">④ Articulation</div>
-                <div class="rule-desc">Crisp consonants create sparkle effects. Pronounce clearly!</div>
-              </div>
-              <div class="rule-card rule-syllable">
-                <div class="rule-name">⑤ Syllable Separation</div>
-                <div class="rule-desc">Distinct syllable breaks trigger individual bounce events. E-NUN-CI-ATE!</div>
-              </div>
-            </div>
-          </div>
-          <div class="mode-detail-panel" id="creatureDetails">
-            <div class="creature-style-picker" id="creatureStylePicker">
-              <button class="style-pill selected" data-style="jellyfish">🦑 Jellyfish</button>
-              <button class="style-pill" data-style="phoenix">🔥 Phoenix</button>
-              <button class="style-pill" data-style="nebula">🌌 Nebula</button>
-              <button class="style-pill" data-style="spirit">👻 Spirit</button>
-              <button class="style-pill" data-style="koi">🐟 Koi</button>
-              <button class="style-pill" data-style="blob">🫧 Classic</button>
-            </div>
-            <div class="rules-grid">
-              <div class="rule-card rule-bounce">
-                <div class="rule-name">Pitch → Float</div>
-                <div class="rule-desc">Higher pitch lifts the creature. It floats when your voice rises.</div>
-              </div>
-              <div class="rule-card rule-tempo">
-                <div class="rule-name">Resonance → Form</div>
-                <div class="rule-desc">Resonance shapes its body — dark/compact to bright/tall. It IS your vocal tract.
+          <!-- Right: detail panel + play button -->
+          <div class="menu-right">
+            <div class="mode-details" id="modeDetails">
+              <div class="mode-details-empty">👈 Pick a mode to see details</div>
+
+              <div class="mode-detail-panel" id="ballDetails">
+                <div class="detail-header">
+                  <div class="detail-title">⚽ Prosody Ball</div>
+                  <div class="detail-blurb">Control a bouncing ball with your voice. Pitch bounces, tempo changes speed,
+                    vowels leave trails.</div>
+                </div>
+                <div class="rules-grid">
+                  <div class="rule-card rule-bounce">
+                    <div class="rule-name">① Bounciness</div>
+                    <div class="rule-desc">Vary your pitch up and down. Bigger pitch swings = higher bounces.</div>
+                  </div>
+                  <div class="rule-card rule-tempo">
+                    <div class="rule-name">② Tempo Variance</div>
+                    <div class="rule-desc">Change your speaking speed. Fast→slow→fast makes the ball accelerate and
+                      decelerate.</div>
+                  </div>
+                  <div class="rule-card rule-vowel">
+                    <div class="rule-name">③ Vowel Elongation</div>
+                    <div class="rule-desc">Stretch your vowels ("hellooo"). Sustained sounds create a glowing trail.
+                    </div>
+                  </div>
+                  <div class="rule-card rule-artic">
+                    <div class="rule-name">④ Articulation</div>
+                    <div class="rule-desc">Crisp consonants create sparkle effects. Pronounce clearly!</div>
+                  </div>
+                  <div class="rule-card rule-syllable">
+                    <div class="rule-name">⑤ Syllable Separation</div>
+                    <div class="rule-desc">Distinct syllable breaks trigger individual bounce events. E-NUN-CI-ATE!
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div class="rule-card rule-vowel">
-                <div class="rule-name">Vowels → Tendrils</div>
-                <div class="rule-desc">Sustained sounds grow flowing tendrils. The longer you hold, the more they
-                  extend.</div>
-              </div>
-              <div class="rule-card rule-artic">
-                <div class="rule-name">Articulation → Spark</div>
-                <div class="rule-desc">Sharp consonants make the surface crackle with light. Be crisp!</div>
-              </div>
-              <div class="rule-card rule-syllable">
-                <div class="rule-name">Prosody → Transform</div>
-                <div class="rule-desc">Sustained expressiveness unlocks wings, glow, and luminous patterns.</div>
-              </div>
-            </div>
-          </div>
-          <div class="mode-detail-panel" id="gardenDetails">
-            <div class="rules-grid">
-              <div class="rule-card rule-bounce">
-                <div class="rule-name">Pitch → Species</div>
-                <div class="rule-desc">Low pitch grows mushrooms, mid grows flowers, high grows tall trees. Vary to
-                  diversify!</div>
-              </div>
-              <div class="rule-card rule-tempo">
-                <div class="rule-name">Resonance → Color</div>
-                <div class="rule-desc">Bright resonance makes vivid, warm plants. Dark resonance grows cool, blue-toned
-                  flora.</div>
-              </div>
-              <div class="rule-card rule-vowel">
-                <div class="rule-name">Vowels → Sunlight</div>
-                <div class="rule-desc">Sustained sounds are photosynthesis — they accelerate growth. Hold vowels to
-                  watch plants surge.</div>
-              </div>
-              <div class="rule-card rule-artic">
-                <div class="rule-name">Articulation → Pollen</div>
-                <div class="rule-desc">Crisp consonants scatter pollen and firefly particles through the garden.</div>
-              </div>
-              <div class="rule-card rule-syllable">
-                <div class="rule-name">Syllables → Seeds</div>
-                <div class="rule-desc">Each distinct syllable plants a new seed. More syllables = denser garden.</div>
-              </div>
-            </div>
-          </div>
-          <div class="mode-detail-panel" id="canvasDetails">
-            <div class="rules-grid">
-              <div class="rule-card rule-bounce">
-                <div class="rule-name">Pitch → Y Position</div>
-                <div class="rule-desc">Your pitch paints vertically — low voice at the bottom, high voice sweeps to the
-                  top.</div>
-              </div>
-              <div class="rule-card rule-tempo">
-                <div class="rule-name">Resonance → Color</div>
-                <div class="rule-desc">Dark resonance paints cool blues, bright resonance paints warm golds and pinks.
+              <div class="mode-detail-panel" id="creatureDetails">
+                <div class="detail-header">
+                  <div class="detail-title">🐉 Voice Creature</div>
+                  <div class="detail-blurb">Your voice becomes a living being. Resonance shapes its body, prosody
+                    transforms it.</div>
+                </div>
+                <div class="creature-style-picker" id="creatureStylePicker">
+                  <button class="style-pill selected" data-style="jellyfish">🦑 Jellyfish</button>
+                  <button class="style-pill" data-style="phoenix">🔥 Phoenix</button>
+                  <button class="style-pill" data-style="nebula">🌌 Nebula</button>
+                  <button class="style-pill" data-style="spirit">👻 Spirit</button>
+                  <button class="style-pill" data-style="koi">🐟 Koi</button>
+                  <button class="style-pill" data-style="blob">🫧 Classic</button>
+                </div>
+                <div class="rules-grid">
+                  <div class="rule-card rule-bounce">
+                    <div class="rule-name">Pitch → Float</div>
+                    <div class="rule-desc">Higher pitch lifts the creature. It floats when your voice rises.</div>
+                  </div>
+                  <div class="rule-card rule-tempo">
+                    <div class="rule-name">Resonance → Form</div>
+                    <div class="rule-desc">Resonance shapes its body — dark/compact to bright/tall. It IS your vocal
+                      tract.
+                    </div>
+                  </div>
+                  <div class="rule-card rule-vowel">
+                    <div class="rule-name">Vowels → Tendrils</div>
+                    <div class="rule-desc">Sustained sounds grow flowing tendrils. The longer you hold, the more they
+                      extend.</div>
+                  </div>
+                  <div class="rule-card rule-artic">
+                    <div class="rule-name">Articulation → Spark</div>
+                    <div class="rule-desc">Sharp consonants make the surface crackle with light. Be crisp!</div>
+                  </div>
+                  <div class="rule-card rule-syllable">
+                    <div class="rule-name">Prosody → Transform</div>
+                    <div class="rule-desc">Sustained expressiveness unlocks wings, glow, and luminous patterns.</div>
+                  </div>
                 </div>
               </div>
-              <div class="rule-card rule-vowel">
-                <div class="rule-name">Vowels → Curves</div>
-                <div class="rule-desc">Sustained sounds create smooth flowing brushstrokes. Hold vowels for long,
-                  graceful lines.</div>
+              <div class="mode-detail-panel" id="gardenDetails">
+                <div class="detail-header">
+                  <div class="detail-title">🌱 Voice Garden</div>
+                  <div class="detail-blurb">Grow a living ecosystem with your voice. Every session adds plants that
+                    accumulate.</div>
+                </div>
+                <div class="rules-grid">
+                  <div class="rule-card rule-bounce">
+                    <div class="rule-name">Pitch → Species</div>
+                    <div class="rule-desc">Low pitch grows mushrooms, mid grows flowers, high grows tall trees. Vary to
+                      diversify!</div>
+                  </div>
+                  <div class="rule-card rule-tempo">
+                    <div class="rule-name">Resonance → Color</div>
+                    <div class="rule-desc">Bright resonance makes vivid, warm plants. Dark resonance grows cool,
+                      blue-toned
+                      flora.</div>
+                  </div>
+                  <div class="rule-card rule-vowel">
+                    <div class="rule-name">Vowels → Sunlight</div>
+                    <div class="rule-desc">Sustained sounds are photosynthesis — they accelerate growth. Hold vowels to
+                      watch plants surge.</div>
+                  </div>
+                  <div class="rule-card rule-artic">
+                    <div class="rule-name">Articulation → Pollen</div>
+                    <div class="rule-desc">Crisp consonants scatter pollen and firefly particles through the garden.
+                    </div>
+                  </div>
+                  <div class="rule-card rule-syllable">
+                    <div class="rule-name">Syllables → Seeds</div>
+                    <div class="rule-desc">Each distinct syllable plants a new seed. More syllables = denser garden.
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div class="rule-card rule-artic">
-                <div class="rule-name">Articulation → Texture</div>
-                <div class="rule-desc">Sharp consonants <span id="mapSplatter" class="map-term">splatter</span> paint droplets and add texture to the canvas.</div>
+              <div class="mode-detail-panel" id="canvasDetails">
+                <div class="detail-header">
+                  <div class="detail-title">🎨 Voice Canvas</div>
+                  <div class="detail-blurb">Paint generative art with your voice. Each session creates a unique piece
+                    you can save.</div>
+                </div>
+                <div class="rules-grid">
+                  <div class="rule-card rule-bounce">
+                    <div class="rule-name">Pitch → Y Position</div>
+                    <div class="rule-desc">Your pitch paints vertically — low voice at the bottom, high voice sweeps to
+                      the
+                      top.</div>
+                  </div>
+                  <div class="rule-card rule-tempo">
+                    <div class="rule-name">Resonance → Color</div>
+                    <div class="rule-desc">Dark resonance paints cool blues, bright resonance paints warm golds and
+                      pinks.
+                    </div>
+                  </div>
+                  <div class="rule-card rule-vowel">
+                    <div class="rule-name">Vowels → Curves</div>
+                    <div class="rule-desc">Sustained sounds create smooth flowing brushstrokes. Hold vowels for long,
+                      graceful lines.</div>
+                  </div>
+                  <div class="rule-card rule-artic">
+                    <div class="rule-name">Articulation → Texture</div>
+                    <div class="rule-desc">Sharp consonants <span id="mapSplatter" class="map-term">splatter</span>
+                      paint
+                      droplets and add texture to the canvas.</div>
+                  </div>
+                  <div class="rule-card rule-syllable">
+                    <div class="rule-name">Energy → Width</div>
+                    <div class="rule-desc">Louder, more energetic speech creates wider, bolder strokes. Whisper for fine
+                      detail.</div>
+                  </div>
+                </div>
               </div>
-              <div class="rule-card rule-syllable">
-                <div class="rule-name">Energy → Width</div>
-                <div class="rule-desc">Louder, more energetic speech creates wider, bolder strokes. Whisper for fine
-                  detail.</div>
+              <div class="mode-detail-panel" id="keyboardDetails">
+                <div class="detail-header">
+                  <div class="detail-title">🎹 Vocal Keyboard</div>
+                  <div class="detail-blurb">A neon vocal synth keyboard for pitch exploration and target-note training.
+                  </div>
+                </div>
+                <div class="rules-grid">
+                  <div class="rule-card rule-bounce">
+                    <div class="rule-name">Mirror Mode</div>
+                    <div class="rule-desc">The keyboard reflects your voice in real time. Use it to explore your
+                      speaking
+                      and singing range.</div>
+                  </div>
+                  <div class="rule-card rule-tempo">
+                    <div class="rule-name">Target Practice</div>
+                    <div class="rule-desc">Hit and hold the highlighted key for 1 second to score and advance to a new
+                      note.
+                    </div>
+                  </div>
+                  <div class="rule-card rule-artic">
+                    <div class="rule-name">Pitch Plasma</div>
+                    <div class="rule-desc">The glowing plasma orb tracks micro-pitch continuously as your voice slides
+                      between notes.</div>
+                  </div>
+                  <div class="rule-card rule-syllable">
+                    <div class="rule-name">Neon Keyboard Range</div>
+                    <div class="rule-desc">Expanded key range from C2 to C6 with octave labels for orientation.</div>
+                  </div>
+                </div>
               </div>
+              <div class="mode-detail-panel" id="pilotDetails">
+                <div class="detail-header">
+                  <div class="detail-title">✨ Pitch Pilot</div>
+                  <div class="detail-blurb">Navigate the resonance cavern with your voice, steering a luminous vocal
+                    spark through crystal barriers.</div>
+                </div>
+                <div class="rules-grid">
+                  <div class="rule-card rule-bounce">
+                    <div class="rule-name">Pitch → Altitude</div>
+                    <div class="rule-desc">The vocal spark maps to your absolute pitch, so stable notes hold altitude
+                      precisely.</div>
+                  </div>
+                  <div class="rule-card rule-tempo">
+                    <div class="rule-name">Quick Calibration</div>
+                    <div class="rule-desc">At run start, glide from low to high so the cavern adapts to your personal
+                      vocal
+                      range.</div>
+                  </div>
+                  <div class="rule-card rule-vowel">
+                    <div class="rule-name">Silence = Gravity</div>
+                    <div class="rule-desc">If you stop voicing, the spark slowly descends until you sing or speak again.
+                    </div>
+                  </div>
+                  <div class="rule-card rule-artic">
+                    <div class="rule-name">Discord Barriers</div>
+                    <div class="rule-desc">Crystal barriers leave glowing safe gaps with note-center guide lines for
+                      accuracy.</div>
+                  </div>
+                  <div class="rule-card rule-syllable">
+                    <div class="rule-name">Phase Progression</div>
+                    <div class="rule-desc">Warm-up starts wide and slow, then Steps and Slalom push interval jumps and
+                      smooth glides.</div>
+                  </div>
+                </div>
+              </div>
+              <div class="mode-detail-panel" id="roadDetails">
+                <div class="detail-header">
+                  <div class="detail-title">🏍️ Resonance Road</div>
+                  <div class="detail-blurb">Steer a sonic speeder with vocal timbre while reading a teleprompter. Stay
+                    on-tone or skid into the hazard lane.</div>
+                </div>
+                <div class="rules-grid">
+                  <div class="rule-card rule-bounce">
+                    <div class="rule-name">Target Resonance</div>
+                    <div class="rule-desc">Pick Bright or Dark posture. The road color palette flips to match your
+                      training
+                      goal.</div>
+                  </div>
+                  <div class="rule-card rule-tempo">
+                    <div class="rule-name">Voice = Engine</div>
+                    <div class="rule-desc">Speaking drives forward speed. Confidence increases pace and scoring
+                      potential.
+                    </div>
+                  </div>
+                  <div class="rule-card rule-vowel">
+                    <div class="rule-name">Timbre = Steering</div>
+                    <div class="rule-desc">Maintain target tone color to stay centered. Drift in timbre and the speeder
+                      veers off-road.</div>
+                  </div>
+                  <div class="rule-card rule-artic">
+                    <div class="rule-name">Hazard Feedback</div>
+                    <div class="rule-desc">Off-road creates messy hazard trails, speed drag, and multiplier loss.</div>
+                  </div>
+                  <div class="rule-card rule-syllable">
+                    <div class="rule-name">Session Replay</div>
+                    <div class="rule-desc">Your trail records control through the passage, making weak words easy to
+                      identify.</div>
+                  </div>
+                </div>
+                <div
+                  style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
+                  <label>Target Tone
+                    <select id="roadTargetSelect" class="theme-select" aria-label="Resonance Road target tone">
+                      <option value="bright">Target BRIGHT</option>
+                      <option value="dark">Target DARK</option>
+                    </select>
+                  </label>
+                  <label>Passage
+                    <select id="roadPassageSelect" class="theme-select" aria-label="Resonance Road passage">
+                      <option value="balcony">Romeo &amp; Juliet Balcony</option>
+                      <option value="news">Professional News Read</option>
+                      <option value="custom">Custom passage</option>
+                    </select>
+                  </label>
+                  <label style="grid-column:1 / -1;">Custom Text
+                    <textarea id="roadCustomText" class="theme-select" rows="3"
+                      placeholder="Paste your own script here. Used only when Passage = Custom."></textarea>
+                  </label>
+                </div>
+              </div>
+              <div class="mode-detail-panel" id="ascentDetails">
+                <div class="detail-header">
+                  <div class="detail-title">🎈 Spectral Ascent</div>
+                  <div class="detail-blurb">Vocal weight directly drives altitude. A live spectral tilt gauge exposes
+                    the raw algorithm output.</div>
+                </div>
+                <div class="rules-grid">
+                  <div class="rule-card rule-bounce">
+                    <div class="rule-name">Spectral Weight → Altitude</div>
+                    <div class="rule-desc">Light/breathy phonation lifts the balloon, heavy/buzzy phonation sinks it
+                      with
+                      direct 1-to-1 mapping.</div>
+                  </div>
+                  <div class="rule-card rule-tempo">
+                    <div class="rule-name">Live Tilt Gauge</div>
+                    <div class="rule-desc">A vertical gauge shows MAX LIGHT, NEUTRAL, and MAX HEAVY with a tethered
+                      marker
+                      linked to the balloon.</div>
+                  </div>
+                  <div class="rule-card rule-vowel">
+                    <div class="rule-name">Single Vowel Constraint</div>
+                    <div class="rule-desc">Hold one neutral vowel ("Ah"/"Uh") and vary only vocal weight for cleaner
+                      spectral tilt diagnostics.</div>
+                  </div>
+                  <div class="rule-card rule-artic">
+                    <div class="rule-name">Spectral Gates</div>
+                    <div class="rule-desc">Fly through high, low, neutral, and staircase gate patterns to stress-test
+                      calibration, drift, and response speed.</div>
+                  </div>
+                  <div class="rule-card rule-syllable">
+                    <div class="rule-name">Post-Flight Diagnostics</div>
+                    <div class="rule-desc">Run reports Spectral Latency, Stability, and Dynamic Range so users can
+                      inspect
+                      algorithm behavior directly.</div>
+                  </div>
+                </div>
+              </div>
+              <div class="mode-detail-panel" id="prismDetails">
+                <div class="detail-header">
+                  <div class="detail-title">🔮 Prism Reader</div>
+                  <div class="detail-blurb">Read text aloud and watch each syllable crystallize with color, glow, and
+                    texture from your voice.</div>
+                </div>
+                <div class="rules-grid">
+                  <div class="rule-card rule-bounce">
+                    <div class="rule-name">Pitch → Hue</div>
+                    <div class="rule-desc">Low pitch crystallizes blue. High pitch crystallizes pink. Each syllable gets
+                      a
+                      permanent color from your voice.</div>
+                  </div>
+                  <div class="rule-card rule-tempo">
+                    <div class="rule-name">Resonance → Glow</div>
+                    <div class="rule-desc">Forward, bright resonance creates luminous text glow. Dark resonance stays
+                      flat
+                      and matte.</div>
+                  </div>
+                  <div class="rule-card rule-vowel">
+                    <div class="rule-name">Weight → Edge</div>
+                    <div class="rule-desc">Heavy vocal weight gives sharp, crisp text edges. Breathy voice creates soft,
+                      fuzzy syllable outlines.</div>
+                  </div>
+                  <div class="rule-card rule-artic">
+                    <div class="rule-name">Onset Stepping</div>
+                    <div class="rule-desc">Each syllable onset in your speech advances the reader. Speak naturally to
+                      progress through the text.</div>
+                  </div>
+                  <div class="rule-card rule-syllable">
+                    <div class="rule-name">Manual Mode</div>
+                    <div class="rule-desc">Press spacebar or tap to manually advance syllables. Use this if onset
+                      detection
+                      misaligns.</div>
+                  </div>
+                </div>
+                <div
+                  style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
+                  <label>Pacing Mode
+                    <select id="prismPacingSelect" class="theme-select" aria-label="Prism Reader pacing mode">
+                      <option value="auto">Auto (Onset Detection)</option>
+                      <option value="manual">Manual (Spacebar/Tap)</option>
+                    </select>
+                  </label>
+                  <label>Passage
+                    <select id="prismPassageSelect" class="theme-select" aria-label="Prism Reader passage">
+                      <option value="rainbow">Rainbow Passage</option>
+                      <option value="custom">Custom Text</option>
+                    </select>
+                  </label>
+                  <label style="grid-column:1 / -1;">Custom Text
+                    <textarea id="prismCustomText" class="theme-select" rows="3" placeholder="Paste your own text here.
+                      Used only when Passage=Custom."></textarea>
+                  </label>
+                </div>
+              </div>
+              <button class="btn-big" id="playBtn">🎙 Start Speaking</button>
+              <div class="mic-note">Requires microphone access · All processing is local</div>
+            </div>
+            <div class="error-banner" id="errorBanner"></div>
+            <div class="iframe-notice" id="iframeNotice"></div>
+            <div class="calibration-overlay" id="calibrationOverlay">
+              <div class="calibration-card">
+                <div class="calibration-title" id="calStepTitle">Preparing calibration</div>
+                <div class="calibration-desc" id="calStepDesc">We'll quickly tune to your mic and voice.</div>
+                <div class="cal-progress">
+                  <div class="cal-progress-fill" id="calProgressFill"></div>
+                </div>
+                <div class="cal-actions">
+                  <button class="cal-btn-secondary" id="calSkipBtn">Skip</button>
+                  <button class="cal-btn-primary" id="calNextBtn" style="display:none">Next</button>
+                </div>
+              </div>
+            </div>
+            <div class="perf-panel" id="perfPanel"></div>
+          </div>
+
+          <!-- Session summary overlay (shown on stop) -->
+          <div class="summary-overlay" id="summaryOverlay">
+            <div class="summary-title">Session Complete</div>
+            <div class="summary-duration" id="summaryDuration">0:00</div>
+            <div class="summary-grid" id="summaryGrid"></div>
+            <div class="summary-stat wide" id="summaryProsodyWrap"
+              style="max-width:400px;width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px 14px">
+              <div class="summary-stat-label" style="margin-top:0;margin-bottom:6px">Prosody Score Over Time</div>
+              <div class="summary-prosody-bar" id="summaryProsodyBar"></div>
+            </div>
+            <div class="summary-actions">
+              <button class="btn btn-start" id="summaryBackBtn">↩ Menu</button>
+              <button class="btn btn-start" id="summaryAgainBtn">🎙 Again</button>
             </div>
           </div>
-          <div class="mode-detail-panel" id="keyboardDetails">
-            <div class="rules-grid">
-              <div class="rule-card rule-bounce">
-                <div class="rule-name">Mirror Mode</div>
-                <div class="rule-desc">The keyboard reflects your voice in real time. Use it to explore your speaking and singing range.</div>
-              </div>
-              <div class="rule-card rule-tempo">
-                <div class="rule-name">Target Practice</div>
-                <div class="rule-desc">Hit and hold the highlighted key for 1 second to score and advance to a new note.</div>
-              </div>
-              <div class="rule-card rule-artic">
-                <div class="rule-name">Pitch Plasma</div>
-                <div class="rule-desc">The glowing plasma orb tracks micro-pitch continuously as your voice slides between notes.</div>
-              </div>
-              <div class="rule-card rule-syllable">
-                <div class="rule-name">Neon Keyboard Range</div>
-                <div class="rule-desc">Expanded key range from C2 to C6 with octave labels for orientation.</div>
-              </div>
+
+          <div class="tooltip" id="helpTooltip">
+            <div class="help-tabs">
+              <button class="help-tab active" data-tab="howto">How To Play</button>
+              <button class="help-tab" data-tab="rainbow">Rainbow Passage</button>
+            </div>
+
+            <div class="help-panel active" data-panel="howto" id="helpHowTo">
+              <!-- Populated dynamically per mode -->
+            </div>
+
+            <div class="help-panel" data-panel="rainbow">
+              <h3>Rainbow Passage</h3>
+              <p>When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is
+                a
+                division of white light into many beautiful colors. These take the shape of a long round arch, with its
+                path
+                high above, and its two ends apparently beyond the horizon. There is, according to legend, a boiling pot
+                of
+                gold at one end. People look, but no one ever finds it.</p>
             </div>
           </div>
-          <div class="mode-detail-panel" id="pilotDetails">
-            <div class="rules-grid">
-              <div class="rule-card rule-bounce">
-                <div class="rule-name">Pitch → Altitude</div>
-                <div class="rule-desc">The vocal spark maps to your absolute pitch, so stable notes hold altitude precisely.</div>
-              </div>
-              <div class="rule-card rule-tempo">
-                <div class="rule-name">Quick Calibration</div>
-                <div class="rule-desc">At run start, glide from low to high so the cavern adapts to your personal vocal range.</div>
-              </div>
-              <div class="rule-card rule-vowel">
-                <div class="rule-name">Silence = Gravity</div>
-                <div class="rule-desc">If you stop voicing, the spark slowly descends until you sing or speak again.</div>
-              </div>
-              <div class="rule-card rule-artic">
-                <div class="rule-name">Discord Barriers</div>
-                <div class="rule-desc">Crystal barriers leave glowing safe gaps with note-center guide lines for accuracy.</div>
-              </div>
-              <div class="rule-card rule-syllable">
-                <div class="rule-name">Phase Progression</div>
-                <div class="rule-desc">Warm-up starts wide and slow, then Steps and Slalom push interval jumps and smooth glides.</div>
+
+          <div class="vib-panel" id="vibPanel">
+            <h3>📳 Vibration Alerts</h3>
+            <div class="vib-panel-sub">
+              Get haptic or visual feedback when your voice goes outside target ranges.
+              Add rules below — each triggers a brief vibration when the condition is met.
+            </div>
+
+            <div class="vib-master">
+              <label>Vibration alerts</label>
+              <div class="toggle-switch">
+                <input type="checkbox" id="vibMasterToggle">
+                <span class="toggle-slider"></span>
               </div>
             </div>
+
+            <div id="vibEmptyHint"
+              style="text-align:center;padding:12px 0 6px;font-size:0.72rem;color:rgba(255,255,255,0.25);line-height:1.5">
+              No alert rules yet.<br>Add a rule or use a preset below.
+            </div>
+
+            <div class="vib-rules-list" id="vibRulesList"></div>
+            <button class="vib-add-btn" id="vibAddRule">+ Add Alert Rule</button>
+            <div style="display:flex;gap:6px;margin-top:8px">
+              <button class="vib-add-btn" id="vibPresetFem" style="flex:1;font-size:0.66rem">♀ Feminine preset</button>
+              <button class="vib-add-btn" id="vibPresetMasc" style="flex:1;font-size:0.66rem">♂ Masculine
+                preset</button>
+            </div>
+            <button class="vib-add-btn" id="vibTestBtn" style="margin-top:8px;border-style:solid;opacity:0.7">📳 Test
+              Vibration</button>
           </div>
-          <div class="mode-detail-panel" id="roadDetails">
-            <div class="rules-grid">
-              <div class="rule-card rule-bounce">
-                <div class="rule-name">Target Resonance</div>
-                <div class="rule-desc">Pick Bright or Dark posture. The road color palette flips to match your training goal.</div>
-              </div>
-              <div class="rule-card rule-tempo">
-                <div class="rule-name">Voice = Engine</div>
-                <div class="rule-desc">Speaking drives forward speed. Confidence increases pace and scoring potential.</div>
-              </div>
-              <div class="rule-card rule-vowel">
-                <div class="rule-name">Timbre = Steering</div>
-                <div class="rule-desc">Maintain target tone color to stay centered. Drift in timbre and the speeder veers off-road.</div>
-              </div>
-              <div class="rule-card rule-artic">
-                <div class="rule-name">Hazard Feedback</div>
-                <div class="rule-desc">Off-road creates messy hazard trails, speed drag, and multiplier loss.</div>
-              </div>
-              <div class="rule-card rule-syllable">
-                <div class="rule-name">Session Replay</div>
-                <div class="rule-desc">Your trail records control through the passage, making weak words easy to identify.</div>
-              </div>
+
+          <div class="recordings-drawer" id="recordingsDrawer">
+            <div class="recordings-header">
+              <h3>Recordings</h3>
+              <button class="btn-clear-all" id="clearAllRecs">Clear all</button>
             </div>
-            <div style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
-              <label>Target Tone
-                <select id="roadTargetSelect" class="theme-select" aria-label="Resonance Road target tone">
-                  <option value="bright">Target BRIGHT</option>
-                  <option value="dark">Target DARK</option>
-                </select>
-              </label>
-              <label>Passage
-                <select id="roadPassageSelect" class="theme-select" aria-label="Resonance Road passage">
-                  <option value="balcony">Romeo &amp; Juliet Balcony</option>
-                  <option value="news">Professional News Read</option>
-                  <option value="custom">Custom passage</option>
-                </select>
-              </label>
-              <label style="grid-column:1 / -1;">Custom Text
-                <textarea id="roadCustomText" class="theme-select" rows="3" placeholder="Paste your own script here. Used only when Passage = Custom."></textarea>
-              </label>
-            </div>
-          </div>
-          <div class=”mode-detail-panel” id=”ascentDetails”>
-            <div class=”rules-grid”>
-              <div class=”rule-card rule-bounce”>
-                <div class=”rule-name”>Spectral Weight → Altitude</div>
-                <div class=”rule-desc”>Light/breathy phonation lifts the balloon, heavy/buzzy phonation sinks it with direct 1-to-1 mapping.</div>
-              </div>
-              <div class=”rule-card rule-tempo”>
-                <div class=”rule-name”>Live Tilt Gauge</div>
-                <div class=”rule-desc”>A vertical gauge shows MAX LIGHT, NEUTRAL, and MAX HEAVY with a tethered marker linked to the balloon.</div>
-              </div>
-              <div class=”rule-card rule-vowel”>
-                <div class=”rule-name”>Single Vowel Constraint</div>
-                <div class=”rule-desc”>Hold one neutral vowel (“Ah”/”Uh”) and vary only vocal weight for cleaner spectral tilt diagnostics.</div>
-              </div>
-              <div class=”rule-card rule-artic”>
-                <div class=”rule-name”>Spectral Gates</div>
-                <div class=”rule-desc”>Fly through high, low, neutral, and staircase gate patterns to stress-test calibration, drift, and response speed.</div>
-              </div>
-              <div class=”rule-card rule-syllable”>
-                <div class=”rule-name”>Post-Flight Diagnostics</div>
-                <div class=”rule-desc”>Run reports Spectral Latency, Stability, and Dynamic Range so users can inspect algorithm behavior directly.</div>
-              </div>
-            </div>
-          </div>
-          <div class=”mode-detail-panel” id=”prismDetails”>
-            <div class=”rules-grid”>
-              <div class=”rule-card rule-bounce”>
-                <div class=”rule-name”>Pitch → Hue</div>
-                <div class=”rule-desc”>Low pitch crystallizes blue. High pitch crystallizes pink. Each syllable gets a permanent color from your voice.</div>
-              </div>
-              <div class=”rule-card rule-tempo”>
-                <div class=”rule-name”>Resonance → Glow</div>
-                <div class=”rule-desc”>Forward, bright resonance creates luminous text glow. Dark resonance stays flat and matte.</div>
-              </div>
-              <div class=”rule-card rule-vowel”>
-                <div class=”rule-name”>Weight → Edge</div>
-                <div class=”rule-desc”>Heavy vocal weight gives sharp, crisp text edges. Breathy voice creates soft, fuzzy syllable outlines.</div>
-              </div>
-              <div class=”rule-card rule-artic”>
-                <div class=”rule-name”>Onset Stepping</div>
-                <div class=”rule-desc”>Each syllable onset in your speech advances the reader. Speak naturally to progress through the text.</div>
-              </div>
-              <div class=”rule-card rule-syllable”>
-                <div class=”rule-name”>Manual Mode</div>
-                <div class=”rule-desc”>Press spacebar or tap to manually advance syllables. Use this if onset detection misaligns.</div>
-              </div>
-            </div>
-            <div style=”margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;”>
-              <label>Pacing Mode
-                <select id=”prismPacingSelect” class=”theme-select” aria-label=”Prism Reader pacing mode”>
-                  <option value=”auto”>Auto (Onset Detection)</option>
-                  <option value=”manual”>Manual (Spacebar/Tap)</option>
-                </select>
-              </label>
-              <label>Passage
-                <select id=”prismPassageSelect” class=”theme-select” aria-label=”Prism Reader passage”>
-                  <option value=”rainbow”>Rainbow Passage</option>
-                  <option value=”custom”>Custom Text</option>
-                </select>
-              </label>
-              <label style=”grid-column:1 / -1;”>Custom Text
-                <textarea id=”prismCustomText” class=”theme-select” rows=”3” placeholder=”Paste your own text here. Used only when Passage = Custom.”></textarea>
-              </label>
-            </div>
-          </div>
-          <button class=”btn-big” id=”playBtn”>🎙 Start Speaking</button>
-          <div class="mic-note">Requires microphone access · All processing is local</div>
-        </div>
-        <div class="error-banner" id="errorBanner"></div>
-        <div class="iframe-notice" id="iframeNotice"></div>
-        <div class="calibration-overlay" id="calibrationOverlay">
-          <div class="calibration-card">
-            <div class="calibration-title" id="calStepTitle">Preparing calibration</div>
-            <div class="calibration-desc" id="calStepDesc">We'll quickly tune to your mic and voice.</div>
-            <div class="cal-progress">
-              <div class="cal-progress-fill" id="calProgressFill"></div>
-            </div>
-            <div class="cal-actions">
-              <button class="cal-btn-secondary" id="calSkipBtn">Skip</button>
-              <button class="cal-btn-primary" id="calNextBtn" style="display:none">Next</button>
+            <div class="recordings-list" id="recordingsList">
+              <div class="recordings-empty" id="recsEmpty">No recordings yet. Hit <b>Rec</b> while playing!</div>
             </div>
           </div>
         </div>
-        <div class="perf-panel" id="perfPanel"></div>
-      </div>
 
-      <!-- Session summary overlay (shown on stop) -->
-      <div class="summary-overlay" id="summaryOverlay">
-        <div class="summary-title">Session Complete</div>
-        <div class="summary-duration" id="summaryDuration">0:00</div>
-        <div class="summary-grid" id="summaryGrid"></div>
-        <div class="summary-stat wide" id="summaryProsodyWrap"
-          style="max-width:400px;width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px 14px">
-          <div class="summary-stat-label" style="margin-top:0;margin-bottom:6px">Prosody Score Over Time</div>
-          <div class="summary-prosody-bar" id="summaryProsodyBar"></div>
-        </div>
-        <div class="summary-actions">
-          <button class="btn btn-start" id="summaryBackBtn">↩ Menu</button>
-          <button class="btn btn-start" id="summaryAgainBtn">🎙 Again</button>
-        </div>
-      </div>
-
-      <div class="tooltip" id="helpTooltip">
-        <div class="help-tabs">
-          <button class="help-tab active" data-tab="howto">How To Play</button>
-          <button class="help-tab" data-tab="rainbow">Rainbow Passage</button>
-        </div>
-
-        <div class="help-panel active" data-panel="howto" id="helpHowTo">
-          <!-- Populated dynamically per mode -->
-        </div>
-
-        <div class="help-panel" data-panel="rainbow">
-          <h3>Rainbow Passage</h3>
-          <p>When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is a
-            division of white light into many beautiful colors. These take the shape of a long round arch, with its path
-            high above, and its two ends apparently beyond the horizon. There is, according to legend, a boiling pot of
-            gold at one end. People look, but no one ever finds it.</p>
-        </div>
-      </div>
-
-      <div class="vib-panel" id="vibPanel">
-        <h3>📳 Vibration Alerts</h3>
-        <div class="vib-panel-sub">
-          Get haptic or visual feedback when your voice goes outside target ranges.
-          Add rules below — each triggers a brief vibration when the condition is met.
-        </div>
-
-        <div class="vib-master">
-          <label>Vibration alerts</label>
-          <div class="toggle-switch">
-            <input type="checkbox" id="vibMasterToggle">
-            <span class="toggle-slider"></span>
+        <div class="meters-panel">
+          <div class="meter meter-pitch">
+            <div class="meter-label">Pitch</div>
+            <div class="meter-bar-bg meter-bar-pitch-bg">
+              <div class="meter-bar-fill" id="meterPitch"></div>
+            </div>
+            <div class="meter-value" id="valPitch">— Hz</div>
+          </div>
+          <div class="meter meter-resonance">
+            <div class="meter-label">
+              Resonance
+              <select id="resMethodSelect" class="res-method-select" aria-label="Resonance method">
+                <option value="harmonic">A: Harmonic Env</option>
+                <option value="cepstral">B: Cepstral</option>
+                <option value="lpc">C: LPC</option>
+                <option value="centroid">D: Centroid</option>
+              </select>
+            </div>
+            <div class="meter-bar-bg meter-bar-res-bg">
+              <div class="meter-bar-fill" id="meterResonance"></div>
+            </div>
+            <div class="meter-value" id="valResonance">—</div>
+          </div>
+          <div class="meter meter-bounce">
+            <div class="meter-label">Bounce</div>
+            <div class="meter-bar-bg">
+              <div class="meter-bar-fill" id="meterBounce"></div>
+            </div>
+            <div class="meter-value" id="valBounce">0</div>
+          </div>
+          <div class="meter meter-tempo">
+            <div class="meter-label">Tempo</div>
+            <div class="meter-bar-bg">
+              <div class="meter-bar-fill" id="meterTempo"></div>
+            </div>
+            <div class="meter-value" id="valTempo">0</div>
+          </div>
+          <div class="meter meter-vowel">
+            <div class="meter-label">Vowels</div>
+            <div class="meter-bar-bg">
+              <div class="meter-bar-fill" id="meterVowel"></div>
+            </div>
+            <div class="meter-value" id="valVowel">0</div>
+          </div>
+          <div class="meter meter-artic">
+            <div class="meter-label">Artic.</div>
+            <div class="meter-bar-bg">
+              <div class="meter-bar-fill" id="meterArtic"></div>
+            </div>
+            <div class="meter-value" id="valArtic">0</div>
+          </div>
+          <div class="meter meter-syllable">
+            <div class="meter-label">Syllables</div>
+            <div class="meter-bar-bg">
+              <div class="meter-bar-fill" id="meterSyllable"></div>
+            </div>
+            <div class="meter-value" id="valSyllable">0</div>
           </div>
         </div>
-
-        <div id="vibEmptyHint"
-          style="text-align:center;padding:12px 0 6px;font-size:0.72rem;color:rgba(255,255,255,0.25);line-height:1.5">
-          No alert rules yet.<br>Add a rule or use a preset below.
-        </div>
-
-        <div class="vib-rules-list" id="vibRulesList"></div>
-        <button class="vib-add-btn" id="vibAddRule">+ Add Alert Rule</button>
-        <div style="display:flex;gap:6px;margin-top:8px">
-          <button class="vib-add-btn" id="vibPresetFem" style="flex:1;font-size:0.66rem">♀ Feminine preset</button>
-          <button class="vib-add-btn" id="vibPresetMasc" style="flex:1;font-size:0.66rem">♂ Masculine preset</button>
-        </div>
-        <button class="vib-add-btn" id="vibTestBtn" style="margin-top:8px;border-style:solid;opacity:0.7">📳 Test
-          Vibration</button>
       </div>
 
-      <div class="recordings-drawer" id="recordingsDrawer">
-        <div class="recordings-header">
-          <h3>Recordings</h3>
-          <button class="btn-clear-all" id="clearAllRecs">Clear all</button>
-        </div>
-        <div class="recordings-list" id="recordingsList">
-          <div class="recordings-empty" id="recsEmpty">No recordings yet. Hit <b>Rec</b> while playing!</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="meters-panel">
-      <div class="meter meter-pitch">
-        <div class="meter-label">Pitch</div>
-        <div class="meter-bar-bg meter-bar-pitch-bg">
-          <div class="meter-bar-fill" id="meterPitch"></div>
-        </div>
-        <div class="meter-value" id="valPitch">— Hz</div>
-      </div>
-      <div class="meter meter-resonance">
-        <div class="meter-label">
-          Resonance
-          <select id="resMethodSelect" class="res-method-select" aria-label="Resonance method">
-            <option value="harmonic">A: Harmonic Env</option>
-            <option value="cepstral">B: Cepstral</option>
-            <option value="lpc">C: LPC</option>
-            <option value="centroid">D: Centroid</option>
-          </select>
-        </div>
-        <div class="meter-bar-bg meter-bar-res-bg">
-          <div class="meter-bar-fill" id="meterResonance"></div>
-        </div>
-        <div class="meter-value" id="valResonance">—</div>
-      </div>
-      <div class="meter meter-bounce">
-        <div class="meter-label">Bounce</div>
-        <div class="meter-bar-bg">
-          <div class="meter-bar-fill" id="meterBounce"></div>
-        </div>
-        <div class="meter-value" id="valBounce">0</div>
-      </div>
-      <div class="meter meter-tempo">
-        <div class="meter-label">Tempo</div>
-        <div class="meter-bar-bg">
-          <div class="meter-bar-fill" id="meterTempo"></div>
-        </div>
-        <div class="meter-value" id="valTempo">0</div>
-      </div>
-      <div class="meter meter-vowel">
-        <div class="meter-label">Vowels</div>
-        <div class="meter-bar-bg">
-          <div class="meter-bar-fill" id="meterVowel"></div>
-        </div>
-        <div class="meter-value" id="valVowel">0</div>
-      </div>
-      <div class="meter meter-artic">
-        <div class="meter-label">Artic.</div>
-        <div class="meter-bar-bg">
-          <div class="meter-bar-fill" id="meterArtic"></div>
-        </div>
-        <div class="meter-value" id="valArtic">0</div>
-      </div>
-      <div class="meter meter-syllable">
-        <div class="meter-label">Syllables</div>
-        <div class="meter-bar-bg">
-          <div class="meter-bar-fill" id="meterSyllable"></div>
-        </div>
-        <div class="meter-value" id="valSyllable">0</div>
-      </div>
-    </div>
-  </div>
-
-  <script type="module" src="app.js"></script>
+      <script type="module" src="app.js"></script>
 
 </body>
 
