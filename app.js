@@ -6,6 +6,17 @@ import { getMicDiagnostics, ensureAudioContextRunning } from './reliability.js';
 // ============================================================
 // VOICE ANALYZER
 // ============================================================
+
+function escapeHtml(text) {
+  if (!text) return text;
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 class VoiceAnalyzer {
   constructor() {
     this.audioCtx = null;
@@ -6101,7 +6112,7 @@ class ProsodyBallGame {
     const view = [];
     for (let i = start; i < end; i++) {
       const cls = i === active ? 'active-word' : '';
-      view.push(`<span class="${cls}">${words[i]}</span>`);
+      view.push(`<span class="${cls}">${escapeHtml(words[i])}</span>`);
     }
     overlay.innerHTML = view.join(' ');
   }
