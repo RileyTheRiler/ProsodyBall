@@ -2114,8 +2114,8 @@ class ProsodyBallGame {
     const recalibrateBtn = document.getElementById('recalibrateBtn');
     const welcomeOverlay = document.getElementById('welcomeOverlay');
     const helpTooltip = document.getElementById('helpTooltip');
-    const helpTabs = Array.from(helpTooltip.querySelectorAll('.help-tab'));
-    const helpPanels = Array.from(helpTooltip.querySelectorAll('.help-panel'));
+    const helpTabs = Array.from(helpTooltip?.querySelectorAll('.help-tab') || []);
+    const helpPanels = Array.from(helpTooltip?.querySelectorAll('.help-panel') || []);
     const themeSelect = document.getElementById('themeSelect');
     const visualStyleSelect = document.getElementById('visualStyleSelect');
     const canvasModeSelect = document.getElementById('canvasModeSelect');
@@ -2444,11 +2444,11 @@ class ProsodyBallGame {
       }
     };
 
-    startBtn.addEventListener('click', () => {
+    startBtn?.addEventListener('click', () => {
       if (this.isRunning) stopGame(); else startGame();
     });
 
-    playBtn.addEventListener('click', startGame);
+    playBtn?.addEventListener('click', startGame);
 
     perfBtn?.addEventListener('click', () => {
       this.perfMonitor.toggle();
@@ -2456,7 +2456,7 @@ class ProsodyBallGame {
     });
 
     // Session summary buttons
-    document.getElementById('summaryBackBtn').addEventListener('click', () => {
+    document.getElementById('summaryBackBtn')?.addEventListener('click', () => {
       document.getElementById('summaryOverlay').classList.remove('show');
       welcomeOverlay.classList.remove('hidden');
       // Reset mode selection so user can pick fresh
@@ -2468,7 +2468,7 @@ class ProsodyBallGame {
         .forEach(p => p && p.classList.remove('show'));
       this.drawIdleScene();
     });
-    document.getElementById('summaryAgainBtn').addEventListener('click', () => {
+    document.getElementById('summaryAgainBtn')?.addEventListener('click', () => {
       document.getElementById('summaryOverlay').classList.remove('show');
       startGame();
     });
@@ -2525,6 +2525,7 @@ class ProsodyBallGame {
     const keyboardDetails = document.getElementById('keyboardDetails');
     const pilotDetails = document.getElementById('pilotDetails');
     const roadDetails = document.getElementById('roadDetails');
+    const modeCards = modePicker ? modePicker.querySelectorAll('.mode-card') : [];
     const ascentDetails = document.getElementById('ascentDetails');
     const prismDetails = document.getElementById('prismDetails');
     const modeCards = modePicker.querySelectorAll('.mode-card');
@@ -2538,6 +2539,18 @@ class ProsodyBallGame {
       if (mode === 'canvas') this.canvasMode = 'paint';
 
       modeCards.forEach(c => c.classList.toggle('selected', c === card));
+      modeDetails?.classList.add('show');
+      ballDetails?.classList.toggle('show', mode === 'ball');
+      creatureDetails?.classList.toggle('show', mode === 'creature');
+      gardenDetails?.classList.toggle('show', mode === 'garden');
+      canvasDetails?.classList.toggle('show', mode === 'canvas');
+      keyboardDetails?.classList.toggle('show', mode === 'keyboard');
+      pilotDetails?.classList.toggle('show', mode === 'pilot');
+      roadDetails?.classList.toggle('show', mode === 'road');
+
+      const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD' };
+      const hudTitle = document.querySelector('.hud-title');
+      if (hudTitle) hudTitle.textContent = titles[mode] || 'PROSODY BALL';
       modeDetails.classList.add('show');
       ballDetails.classList.toggle('show', mode === 'ball');
       creatureDetails.classList.toggle('show', mode === 'creature');
@@ -2569,6 +2582,11 @@ class ProsodyBallGame {
       if (!this.isRunning) this.drawIdleScene();
     };
 
+    if (!modePicker) {
+      console.error('Mode picker element not found; main menu selection is unavailable.');
+      return;
+    }
+
     const activateFromEvent = (event, preventDefault = false) => {
       const card = event.target.closest('.mode-card');
       if (!card || !modePicker.contains(card)) return;
@@ -2576,11 +2594,11 @@ class ProsodyBallGame {
       selectMode(card.dataset.mode, card);
     };
 
-    modePicker.addEventListener('click', (event) => activateFromEvent(event, false));
-    modePicker.addEventListener('touchend', (event) => activateFromEvent(event, true), { passive: false });
+    modePicker?.addEventListener('click', (event) => activateFromEvent(event, false));
+    modePicker?.addEventListener('touchend', (event) => activateFromEvent(event, true), { passive: false });
 
     // Default a visible selection so mode tap/click state is always initialized.
-    const initialCard = modePicker.querySelector(`.mode-card[data-mode="${this.gameMode}"]`) || modeCards[0];
+    const initialCard = modePicker?.querySelector(`.mode-card[data-mode="${this.gameMode}"]`) || modeCards[0];
     if (initialCard) selectMode(initialCard.dataset.mode, initialCard);
 
     // Creature style picker (both menu + HUD versions)
