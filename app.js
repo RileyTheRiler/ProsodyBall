@@ -2592,7 +2592,11 @@ class ProsodyBallGame {
     }
 
     const activateFromEvent = (event, preventDefault = false) => {
-      const card = event.target.closest('.mode-card');
+      const target = event.target instanceof Element
+        ? event.target
+        : event.target && event.target.parentElement;
+      if (!target) return;
+      const card = target.closest('.mode-card');
       if (!card || !modePicker.contains(card)) return;
       if (preventDefault) event.preventDefault();
       selectMode(card.dataset.mode, card);
