@@ -1938,6 +1938,11 @@
             <div class="mode-name">Pitch Pilot</div>
             <div class="mode-desc">Navigate the resonance cavern with your voice by steering a luminous vocal spark through crystal barriers.</div>
           </div>
+          <div class="mode-card" data-mode="road">
+            <div class="mode-icon">🏍️</div>
+            <div class="mode-name">Resonance Road</div>
+            <div class="mode-desc">Steer a sonic speeder with vocal timbre while reading a teleprompter. Stay on-tone or skid into the hazard lane.</div>
+          </div>
         </div>
 
         <div class="mode-details" id="modeDetails">
@@ -2097,6 +2102,48 @@
                 <div class="rule-name">Phase Progression</div>
                 <div class="rule-desc">Warm-up starts wide and slow, then Steps and Slalom push interval jumps and smooth glides.</div>
               </div>
+            </div>
+          </div>
+          <div class="mode-detail-panel" id="roadDetails">
+            <div class="rules-grid">
+              <div class="rule-card rule-bounce">
+                <div class="rule-name">Target Resonance</div>
+                <div class="rule-desc">Pick Bright or Dark posture. The road color palette flips to match your training goal.</div>
+              </div>
+              <div class="rule-card rule-tempo">
+                <div class="rule-name">Voice = Engine</div>
+                <div class="rule-desc">Speaking drives forward speed. Confidence increases pace and scoring potential.</div>
+              </div>
+              <div class="rule-card rule-vowel">
+                <div class="rule-name">Timbre = Steering</div>
+                <div class="rule-desc">Maintain target tone color to stay centered. Drift in timbre and the speeder veers off-road.</div>
+              </div>
+              <div class="rule-card rule-artic">
+                <div class="rule-name">Hazard Feedback</div>
+                <div class="rule-desc">Off-road creates messy hazard trails, speed drag, and multiplier loss.</div>
+              </div>
+              <div class="rule-card rule-syllable">
+                <div class="rule-name">Session Replay</div>
+                <div class="rule-desc">Your trail records control through the passage, making weak words easy to identify.</div>
+              </div>
+            </div>
+            <div style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
+              <label>Target Tone
+                <select id="roadTargetSelect" class="theme-select" aria-label="Resonance Road target tone">
+                  <option value="bright">Target BRIGHT</option>
+                  <option value="dark">Target DARK</option>
+                </select>
+              </label>
+              <label>Passage
+                <select id="roadPassageSelect" class="theme-select" aria-label="Resonance Road passage">
+                  <option value="balcony">Romeo &amp; Juliet Balcony</option>
+                  <option value="news">Professional News Read</option>
+                  <option value="custom">Custom passage</option>
+                </select>
+              </label>
+              <label style="grid-column:1 / -1;">Custom Text
+                <textarea id="roadCustomText" class="theme-select" rows="3" placeholder="Paste your own script here. Used only when Passage = Custom."></textarea>
+              </label>
             </div>
           </div>
           <button class="btn-big" id="playBtn">🎙 Start Speaking</button>
