@@ -1323,12 +1323,16 @@ class ProsodyBallGame {
     this.voiceKeyboard = {
       minMidi: 36, // C2
       maxMidi: 84, // C6
+      maxMidi: 60, // C4
       plasmaTrail: [],
       glowKey: -1,
       glowStrength: 0,
       targetMidi: 57,
       targetHold: 0,
       score: 0,
+      heroTime: 0,
+      heroSpawn: 0,
+      heroNotes: [],
       successPulse: 0,
       missPulse: 0,
     };
@@ -1396,6 +1400,9 @@ class ProsodyBallGame {
     this.calibrationWizard = new CalibrationWizard();
     this.hasCompletedCalibration = false;
     this.guidedStartTs = 0;
+    this.guidedDurationSec = 5;
+    this.guidedDismissed = false;
+    this.guidedCloseHitbox = null;
     this.guidedPitchStable = 0;
     this.guidedChecklist = {
       roomReady: false,
@@ -1407,6 +1414,7 @@ class ProsodyBallGame {
     this.canvasMode = 'paint'; // 'paint' | 'keyboard'
     this.canvasModeTransition = 0;
     this.keyboardGameMode = 'mirror'; // 'mirror' | 'target'
+    this.keyboardGameMode = 'mirror'; // 'mirror' | 'target' | 'hero'
     this.pitchGuideLabelMode = 'hz';
     this.pitchGridStrength = 'soft';
     this.teleprompterMode = 'rainbow';
@@ -2054,6 +2062,8 @@ class ProsodyBallGame {
         pauseCanvasBtn.classList.remove('active');
       }
       this.guidedStartTs = performance.now();
+      this.guidedDismissed = false;
+      this.guidedCloseHitbox = null;
       this.guidedPitchStable = 0;
       this.guidedChecklist = {
         roomReady: this.analyzer.isCalibrated,
@@ -2334,6 +2344,7 @@ class ProsodyBallGame {
       this.canvasMode = e.target.value;
       if (canvasModeSelect) canvasModeSelect.style.display = this.gameMode === 'canvas' ? '' : 'none';
       if (keyboardGameSelect) keyboardGameSelect.style.display = this.gameMode === 'keyboard' ? '' : 'none';
+      if (keyboardGameSelect) keyboardGameSelect.style.display = this.canvasMode === 'keyboard' ? '' : 'none';
       if (!this.isRunning) this.drawIdleScene();
     });
 
@@ -2344,6 +2355,7 @@ class ProsodyBallGame {
     });
     if (canvasModeSelect) canvasModeSelect.style.display = this.gameMode === 'canvas' ? '' : 'none';
     if (keyboardGameSelect) keyboardGameSelect.style.display = this.gameMode === 'keyboard' ? '' : 'none';
+    if (keyboardGameSelect) keyboardGameSelect.style.display = this.canvasMode === 'keyboard' ? '' : 'none';
 
     pitchLabelsSelect?.addEventListener('change', (e) => {
       this.pitchGuideLabelMode = e.target.value;
@@ -2604,8 +2616,26 @@ class ProsodyBallGame {
       }
       const calResult = await this.calibrationWizard.run(this.analyzer);
       this.hasCompletedCalibration = true;
+      this.guidedStartTs = performance.now();
+      this.guidedDismissed = false;
+      this.guidedCloseHitbox = null;
+      this.guidedPitchStable = 0;
       this.guidedChecklist.roomReady = this.analyzer.isCalibrated;
+      this.guidedChecklist.voiceDetected = false;
+      this.guidedChecklist.pitchLocked = false;
       showCalibrationOutcome(calResult);
+    });
+
+    this.canvas.addEventListener('click', (e) => {
+      if (!this.isRunning || this.guidedDismissed || !this.guidedCloseHitbox) return;
+      const rect = this.canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const hit = this.guidedCloseHitbox;
+      if (x >= hit.x && x <= hit.x + hit.w && y >= hit.y && y <= hit.y + hit.h) {
+        this.guidedDismissed = true;
+        this.guidedCloseHitbox = null;
+      }
     });
 
     helpBtn.addEventListener('click', (e) => {
@@ -2883,7 +2913,7 @@ class ProsodyBallGame {
 
     // Guided onboarding overlay for first 30 seconds
     const guidedElapsed = (performance.now() - this.guidedStartTs) / 1000;
-    if (this.isRunning && this.guidedStartTs > 0 && guidedElapsed < 30) {
+    if (this.isRunning && this.guidedStartTs > 0 && !this.guidedDismissed && guidedElapsed < this.guidedDurationSec) {
       const hasVoice = this.analyzer.metrics.energy > 0.05 || this.analyzer.lastPitch > 0;
       this.guidedChecklist.voiceDetected = this.guidedChecklist.voiceDetected || hasVoice;
       if (this.analyzer.pitchConfidence > 0.65 && this.analyzer.lastPitch > 0) {
@@ -2909,7 +2939,21 @@ class ProsodyBallGame {
       ctx.fill();
       ctx.stroke();
 
-      const secsLeft = Math.max(0, Math.ceil(30 - guidedElapsed));
+      const closeSize = 18;
+      const closeX = left + w - closeSize - 8;
+      const closeY = y + 8;
+      this.guidedCloseHitbox = { x: closeX, y: closeY, w: closeSize, h: closeSize };
+
+      ctx.fillStyle = 'rgba(255,255,255,0.14)';
+      ctx.beginPath();
+      ctx.roundRect(closeX, closeY, closeSize, closeSize, 6);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.font = '600 12px "Outfit", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('✕', closeX + closeSize * 0.5, closeY + 13);
+
+      const secsLeft = Math.max(0, Math.ceil(this.guidedDurationSec - guidedElapsed));
       ctx.textAlign = 'left';
       ctx.fillStyle = '#e8e6f0';
       ctx.font = '600 14px "Outfit", sans-serif';
@@ -2929,6 +2973,8 @@ class ProsodyBallGame {
         ctx.fillText('Great! You are fully tracked.', left + 14, y + 112);
       }
       ctx.restore();
+    } else {
+      this.guidedCloseHitbox = null;
     }
 
     // Vibration alert flash overlay
@@ -5545,12 +5591,40 @@ class ProsodyBallGame {
       }
     }
 
+    if (this.keyboardGameMode === 'hero') {
+      kb.heroTime += dt;
+      kb.heroSpawn += dt;
+      if (kb.heroSpawn >= 0.75) {
+        kb.heroSpawn = 0;
+        const midiTarget = kb.minMidi + Math.floor(Math.random() * (kb.maxMidi - kb.minMidi + 1));
+        kb.heroNotes.push({ midi: midiTarget, y: 0, hit: false });
+      }
+      const speed = this.height * 0.24;
+      for (let i = kb.heroNotes.length - 1; i >= 0; i--) {
+        const n = kb.heroNotes[i];
+        n.y += speed * dt;
+        if (!n.hit && n.y > this.height * 0.7 + 20) {
+          kb.missPulse = 1;
+          kb.heroNotes.splice(i, 1);
+          continue;
+        }
+        if (isVoiced && Number.isFinite(midi) && !n.hit && Math.abs(midi - n.midi) < 0.3 && n.y >= this.height * 0.68 && n.y <= this.height * 0.74) {
+          kb.score += 10;
+          kb.successPulse = 1;
+          this._playKeyboardSuccessChime();
+          kb.heroNotes.splice(i, 1);
+        }
+      }
+    }
   }
 
   _resetKeyboardModeState() {
     const kb = this.voiceKeyboard;
     kb.score = 0;
     kb.targetHold = 0;
+    kb.heroTime = 0;
+    kb.heroSpawn = 0;
+    kb.heroNotes = [];
     kb.successPulse = 0;
     kb.missPulse = 0;
   }
@@ -5729,6 +5803,30 @@ class ProsodyBallGame {
       }
     }
 
+    if (this.keyboardGameMode === 'hero') {
+      const hitLineY = h * 0.72;
+      ctx.strokeStyle = 'rgba(135,235,255,0.38)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(left, hitLineY);
+      ctx.lineTo(left + keyboardW, hitLineY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      for (const n of kb.heroNotes) {
+        const nx = this._midiToX(n.midi, layout, left, keyboardW);
+        const ny = Math.min(hitLineY, keyboardTop - 16 + n.y);
+        const barH = 34;
+        const grad = ctx.createLinearGradient(0, ny - barH, 0, ny);
+        grad.addColorStop(0, 'rgba(102,225,255,0.88)');
+        grad.addColorStop(1, 'rgba(102,225,255,0.18)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.roundRect(nx - whiteW * 0.34, ny - barH, whiteW * 0.68, barH, 6);
+        ctx.fill();
+      }
+    }
 
     for (const trail of kb.plasmaTrail) {
       const x = this._midiToX(trail.midi, layout, left, keyboardW);
@@ -5757,6 +5855,7 @@ class ProsodyBallGame {
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(196,220,255,0.85)';
     const modeLabel = this.keyboardGameMode === 'mirror' ? 'Mirror Mode' : 'Target Practice';
+    const modeLabel = this.keyboardGameMode === 'mirror' ? 'Mirror Mode' : this.keyboardGameMode === 'target' ? 'Target Practice' : 'Vocal Hero';
     ctx.fillText(modeLabel, left, keyboardTop + keyboardH + 20);
     if (this.keyboardGameMode !== 'mirror') {
       ctx.textAlign = 'right';
