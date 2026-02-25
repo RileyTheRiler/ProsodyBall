@@ -1392,6 +1392,20 @@ class ProsodyBallGame {
       driftStrength: 0,
     };
 
+    this.resonanceRoad = {
+      targetTone: 'bright',
+      passageMode: 'balcony',
+      customText: '',
+      centerX: 0,
+      laneHalfWidth: 60,
+      roadHalfWidth: 150,
+      speed: 0,
+      trail: [],
+      score: 0,
+      multiplier: 1,
+      driftStrength: 0,
+    };
+
     // Recording — AnalyserNode polling approach
     this.isRecording = false;
     this._recInterval = null;
@@ -2122,7 +2136,18 @@ class ProsodyBallGame {
       }
 
       if (!this.hasCompletedCalibration) {
-        const calResult = await this.calibrationWizard.run(this.analyzer);
+        let calResult = { outcome: 'incomplete', skipped: true, reason: 'timeout-guard' };
+        try {
+          // Global guard so calibration can never stall session start.
+          const timeoutMs = 15000;
+          calResult = await Promise.race([
+            this.calibrationWizard.run(this.analyzer),
+            new Promise((resolve) => setTimeout(() => resolve({ outcome: 'incomplete', skipped: true, reason: 'wizard-timeout' }), timeoutMs)),
+          ]);
+        } catch (err) {
+          console.error('Calibration flow failed:', err);
+          calResult = { outcome: 'incomplete', skipped: true, reason: 'wizard-exception' };
+        }
         this.hasCompletedCalibration = true;
         showCalibrationOutcome(calResult);
       }
@@ -2210,6 +2235,9 @@ class ProsodyBallGame {
         this._resetPitchPilotState();
         const choice = this._offerPitchPilotRange({ allowContinueSame: false });
         this._applyPitchPilotRangeChoice(choice);
+      }
+      if (this.gameMode === 'road') {
+        this._resetResonanceRoadState();
       }
       if (this.gameMode === 'road') {
         this._resetResonanceRoadState();
