@@ -1200,6 +1200,7 @@ class ProsodyBallGame {
     this.sparkles = [];
     this.themeMode = 'playful';
     this.colorblindMode = false;
+    this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road'
     this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road' | 'ascent' | 'prism'
 
     // ====== CREATURE STATE ======
@@ -2393,6 +2394,7 @@ class ProsodyBallGame {
       helpTooltip.classList.remove('show');
       vibPanel.classList.remove('show');
       recordingsDrawer.classList.remove('show');
+      const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot', road: 'Resonance Road' };
       const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot', road: 'Resonance Road', ascent: 'Spectral Ascent', prism: 'Prism Reader' };
       startBtn.textContent = `⏹ Stop ${modeNames[this.gameMode] || ''}`;
       startBtn.classList.add('active');
@@ -2460,6 +2462,8 @@ class ProsodyBallGame {
       // Reset mode selection so user can pick fresh
       modeDetails.classList.remove('show');
       modeCards.forEach(c => c.classList.remove('selected'));
+      [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails, roadDetails]
+        .forEach(p => p.classList.remove('show'));
       [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails, roadDetails, ascentDetails, prismDetails]
         .forEach(p => p && p.classList.remove('show'));
       this.drawIdleScene();
@@ -2545,6 +2549,7 @@ class ProsodyBallGame {
       ascentDetails.classList.toggle('show', mode === 'ascent');
       prismDetails.classList.toggle('show', mode === 'prism');
 
+      const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD' };
       const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD', ascent: 'SPECTRAL ASCENT', prism: 'PRISM READER' };
       document.querySelector('.hud-title').textContent = titles[mode] || 'PROSODY BALL';
       const canvasOnly = document.querySelectorAll('.canvas-only');
