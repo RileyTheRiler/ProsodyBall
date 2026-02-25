@@ -643,6 +643,37 @@
       text-align: center;
     }
 
+    /* Pitch Pilot range selection */
+    .range-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-width: 400px;
+      width: 100%;
+      margin-top: 10px;
+    }
+
+    .range-btn {
+      width: 100%;
+      padding: 14px;
+      text-align: center;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-primary);
+      font-size: 1rem;
+    }
+
+    .range-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: var(--accent-artic);
+      transform: translateY(-1px);
+    }
+
+    .range-btn.primary {
+      border-color: var(--accent-bounce);
+      background: rgba(255, 107, 107, 0.1);
+    }
+
     @media (max-width: 600px) {
       .summary-grid {
         grid-template-columns: 1fr 1fr;
@@ -2593,6 +2624,23 @@
             <div class="summary-actions">
               <button class="btn btn-start" id="summaryBackBtn">↩ Menu</button>
               <button class="btn btn-start" id="summaryAgainBtn">🎙 Again</button>
+            </div>
+          </div>
+
+          <!-- Pitch Pilot range selection overlay -->
+          <div class="summary-overlay" id="pilotRangeOverlay">
+            <div class="summary-title" id="pilotRangeTitle">Pitch Pilot Range</div>
+            <div class="summary-duration" id="pilotRangeDesc">Choose a pitch range before starting:</div>
+            <div class="range-grid">
+              <button class="btn range-btn primary" data-type="auto">✨ Auto (Glide Calibration)</button>
+              <button class="btn range-btn" data-type="preset" data-low="82.41" data-high="246.94">Low / Bass
+                (E2–B3)</button>
+              <button class="btn range-btn" data-type="preset" data-low="110.0" data-high="349.23">Mid / Baritone–Alto
+                (A2–F4)</button>
+              <button class="btn range-btn" data-type="preset" data-low="164.81" data-high="523.25">High / Tenor–Soprano
+                (E3–C5)</button>
+              <button class="btn range-btn" id="pilotContinueBtn" style="display:none" data-type="same">Continue Same
+                Range</button>
             </div>
           </div>
 

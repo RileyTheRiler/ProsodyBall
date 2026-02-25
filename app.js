@@ -2348,7 +2348,7 @@ class ProsodyBallGame {
 
       if (this.gameMode === 'pilot') {
         this._resetPitchPilotState();
-        const choice = this._offerPitchPilotRange({ allowContinueSame: false });
+        const choice = await this._offerPitchPilotRange({ allowContinueSame: false });
         this._applyPitchPilotRangeChoice(choice);
       }
       if (this.gameMode === 'road') {
@@ -6321,35 +6321,53 @@ class ProsodyBallGame {
     }
   }
 
-  _offerPitchPilotRange(options = {}) {
+  async _offerPitchPilotRange(options = {}) {
     const { allowContinueSame = false } = options;
-    const presets = [
-      { type: 'auto', label: 'Auto (glide calibration at run start)' },
-      { type: 'preset', label: 'Low / Bass', lowHz: 82.41, highHz: 246.94 },
-      { type: 'preset', label: 'Mid / Baritone-Alto', lowHz: 110.0, highHz: 349.23 },
-      { type: 'preset', label: 'High / Tenor-Soprano', lowHz: 164.81, highHz: 523.25 },
-    ];
+    const overlay = document.getElementById('pilotRangeOverlay');
+    const title = document.getElementById('pilotRangeTitle');
+    const desc = document.getElementById('pilotRangeDesc');
+    const continueBtn = document.getElementById('pilotContinueBtn');
 
-    const lines = presets.map((p, i) => `${i + 1}. ${p.label}`).join('\n');
-    const header = allowContinueSame
-      ? 'Pitch Pilot crashed. Choose a range for the next run, or continue same range.'
-      : 'Choose a pitch range before starting Pitch Pilot:';
-    const continueLine = allowContinueSame ? '\nC. Continue same range' : '';
-    const input = window.prompt(`${header}\n\n${lines}${continueLine}\n\nEnter option number:`, allowContinueSame ? 'C' : '1');
-
-    if (input === null) return allowContinueSame ? { type: 'same' } : { type: 'auto' };
-    const normalized = input.trim().toLowerCase();
-
-    if (allowContinueSame && (normalized === 'c' || normalized === 'same' || normalized === 'continue')) {
-      return { type: 'same' };
+    if (!overlay) {
+      return allowContinueSame ? { type: 'same' } : { type: 'auto' };
     }
 
-    const idx = Number.parseInt(normalized, 10) - 1;
-    if (Number.isInteger(idx) && idx >= 0 && idx < presets.length) {
-      return presets[idx];
+    if (allowContinueSame) {
+      title.textContent = 'Discord Collision';
+      desc.textContent = 'Pitch Pilot crashed. Choose a range for the next run, or continue same range.';
+      continueBtn.style.display = 'block';
+    } else {
+      title.textContent = 'Pitch Pilot Range';
+      desc.textContent = 'Choose a pitch range before starting:';
+      continueBtn.style.display = 'none';
     }
 
-    return allowContinueSame ? { type: 'same' } : { type: 'auto' };
+    overlay.classList.add('show');
+
+    return new Promise((resolve) => {
+      const handleClick = (e) => {
+        const btn = e.target.closest('.range-btn');
+        if (!btn) return;
+
+        overlay.classList.remove('show');
+        overlay.removeEventListener('click', handleClick);
+
+        const type = btn.dataset.type;
+        if (type === 'auto') {
+          resolve({ type: 'auto' });
+        } else if (type === 'same') {
+          resolve({ type: 'same' });
+        } else if (type === 'preset') {
+          resolve({
+            type: 'preset',
+            label: btn.textContent.split('(')[0].trim().replace('✨ ', ''),
+            lowHz: parseFloat(btn.dataset.low),
+            highHz: parseFloat(btn.dataset.high)
+          });
+        }
+      };
+      overlay.addEventListener('click', handleClick);
+    });
   }
 
   _handlePitchPilotLossChoice() {
@@ -6359,12 +6377,12 @@ class ProsodyBallGame {
     pp.awaitingRestartChoice = true;
     const previousRange = { lowHz: pp.lowHz, highHz: pp.highHz, label: pp.selectedRangeLabel };
 
-    setTimeout(() => {
+    setTimeout(async () => {
       if (!this.isRunning || this.gameMode !== 'pilot') {
         pp.awaitingRestartChoice = false;
         return;
       }
-      const choice = this._offerPitchPilotRange({ allowContinueSame: true });
+      const choice = await this._offerPitchPilotRange({ allowContinueSame: true });
       this._resetPitchPilotState();
       this._applyPitchPilotRangeChoice(choice, previousRange);
     }, 20);
