@@ -95,6 +95,71 @@
       align-items: center;
     }
 
+    .hud-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 220px;
+    }
+
+    .hud-primary {
+      justify-content: center;
+      flex: 1;
+      gap: 8px;
+    }
+
+    .hud-secondary {
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+      max-width: 60vw;
+    }
+
+    .canvas-only {
+      display: none;
+    }
+
+    .canvas-only.show {
+      display: inline-flex;
+    }
+
+    .teleprompter-overlay {
+      position: absolute;
+      left: 20px;
+      right: 20px;
+      bottom: 14px;
+      padding: 10px 14px;
+      background: rgba(7, 10, 20, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      font-size: 0.9rem;
+      color: rgba(255, 255, 255, 0.72);
+      line-height: 1.45;
+      z-index: 20;
+      pointer-events: none;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+
+    .teleprompter-overlay.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .teleprompter-overlay .active-word {
+      color: #ffd93d;
+      text-shadow: 0 0 10px rgba(255, 217, 61, 0.45);
+      font-weight: 700;
+    }
+
+    .meter .meter-label.active-ping,
+    .map-term.active-ping {
+      color: #ffd93d;
+      text-shadow: 0 0 10px rgba(255, 217, 61, 0.45);
+      transition: color 0.15s ease;
+    }
+
     .theme-select {
       background: rgba(255, 255, 255, 0.06);
       color: var(--text-primary);
@@ -1750,25 +1815,43 @@
 <body>
   <div id="app">
     <div class="hud">
-      <div class="hud-title">PROSODY TRAINING</div>
-      <span class="session-timer" id="sessionTimer">0:00</span>
-      <div class="hud-controls">
+      <div class="hud-left">
+        <div class="hud-title">PROSODY TRAINING</div>
+        <span class="session-timer" id="sessionTimer">0:00</span>
+      </div>
+      <div class="hud-controls hud-primary" aria-label="Primary session controls">
+        <button class="btn btn-start" id="startBtn">🎙 Start</button>
+        <button class="btn btn-rec" id="recBtn"><span class="rec-dot"></span><span class="rec-label">Rec</span></button>
+        <button class="btn btn-recordings" id="recordingsBtn"><span>Clips</span><span class="badge" id="recBadge">0</span></button>
+        <button class="btn btn-help canvas-only" id="pauseCanvasBtn" title="Pause paint updates">Pause</button>
+        <button class="btn btn-help canvas-only" id="clearCanvasBtn" title="Clear current canvas drawing">Clear</button>
+      </div>
+      <div class="hud-controls hud-secondary" aria-label="Secondary settings">
         <select id="themeSelect" class="theme-select" aria-label="Theme preset">
           <option value="playful">Playful</option>
           <option value="ocean">Ocean</option>
           <option value="minimal">Minimal</option>
           <option value="highcontrast">High Contrast</option>
         </select>
+        <select id="visualStyleSelect" class="theme-select" aria-label="Visual style mode">
+          <option value="artistic">🖌️ Artistic</option>
+          <option value="analysis">📈 Analysis</option>
+        </select>
+        <select id="pitchLabelsSelect" class="theme-select" aria-label="Pitch guide labels">
+          <option value="off">Labels: Off</option>
+          <option value="hz" selected>Labels: Hz</option>
+          <option value="notes">Labels: Notes</option>
+        </select>
+        <button class="btn btn-help" id="gridContrastBtn" title="Increase or reduce pitch grid contrast">Grid: Soft</button>
+        <button class="btn btn-help" id="teleprompterBtn" title="Toggle Rainbow teleprompter">Teleprompter</button>
         <button class="btn btn-cb" id="cbToggle" aria-label="Toggle colorblind mode" title="Colorblind mode">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-            stroke-linecap="round">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" />
             <circle cx="12" cy="12" r="3" />
           </svg>
         </button>
         <button class="btn btn-vib" id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-            stroke-linecap="round">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
             <rect x="8" y="4" width="8" height="16" rx="2" />
             <path d="M4 8v8" />
             <path d="M20 8v8" />
@@ -1777,16 +1860,14 @@
           </svg>
         </button>
         <button class="btn btn-help" id="helpBtn">How to Play</button>
+        <button class="btn btn-help" id="recalibrateBtn" title="Run mic calibration again">Recalibrate</button>
         <button class="btn btn-perf" id="perfBtn" title="Toggle performance overlay">FPS</button>
-        <button class="btn btn-recordings" id="recordingsBtn"><span>Clips</span><span class="badge"
-            id="recBadge">0</span></button>
-        <button class="btn btn-rec" id="recBtn"><span class="rec-dot"></span><span class="rec-label">Rec</span></button>
-        <button class="btn btn-start" id="startBtn">🎙 Start</button>
       </div>
     </div>
 
     <div class="game-area">
       <canvas id="gameCanvas"></canvas>
+      <div class="teleprompter-overlay" id="teleprompterOverlay"></div>
 
       <div class="creature-style-hud" id="creatureStyleHud">
         <button class="style-pill selected" data-style="jellyfish">🦑</button>
@@ -1937,7 +2018,7 @@
               </div>
               <div class="rule-card rule-artic">
                 <div class="rule-name">Articulation → Texture</div>
-                <div class="rule-desc">Sharp consonants splatter paint droplets and add texture to the canvas.</div>
+                <div class="rule-desc">Sharp consonants <span id="mapSplatter" class="map-term">splatter</span> paint droplets and add texture to the canvas.</div>
               </div>
               <div class="rule-card rule-syllable">
                 <div class="rule-name">Energy → Width</div>
