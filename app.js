@@ -2145,7 +2145,7 @@ class ProsodyBallGame {
     const isInIframe = window.self !== window.top;
 
     // Detect iframe on load and show helpful notice
-    if (isInIframe) {
+    if (isInIframe && iframeNotice) {
       // Build direct URL — HF Spaces has multiple URL patterns
       let directUrl = window.location.href;
       try {
@@ -2390,7 +2390,7 @@ class ProsodyBallGame {
       document.getElementById('summaryOverlay').classList.remove('show');
 
       welcomeOverlay.classList.add('hidden');
-      iframeNotice.classList.remove('show');
+      if (iframeNotice) iframeNotice.classList.remove('show');
       helpTooltip.classList.remove('show');
       vibPanel.classList.remove('show');
       recordingsDrawer.classList.remove('show');
@@ -2547,6 +2547,10 @@ class ProsodyBallGame {
       keyboardDetails?.classList.toggle('show', mode === 'keyboard');
       pilotDetails?.classList.toggle('show', mode === 'pilot');
       roadDetails?.classList.toggle('show', mode === 'road');
+
+      const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD' };
+      const hudTitle = document.querySelector('.hud-title');
+      if (hudTitle) hudTitle.textContent = titles[mode] || 'PROSODY BALL';
 
       const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD' };
       const hudTitle = document.querySelector('.hud-title');
