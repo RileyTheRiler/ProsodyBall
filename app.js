@@ -1399,6 +1399,9 @@ class ProsodyBallGame {
     this.calibrationWizard = new CalibrationWizard();
     this.hasCompletedCalibration = false;
     this.guidedStartTs = 0;
+    this.guidedDurationSec = 5;
+    this.guidedDismissed = false;
+    this.guidedCloseHitbox = null;
     this.guidedPitchStable = 0;
     this.guidedChecklist = {
       roomReady: false,
@@ -2043,6 +2046,8 @@ class ProsodyBallGame {
         pauseCanvasBtn.classList.remove('active');
       }
       this.guidedStartTs = performance.now();
+      this.guidedDismissed = false;
+      this.guidedCloseHitbox = null;
       this.guidedPitchStable = 0;
       this.guidedChecklist = {
         roomReady: this.analyzer.isCalibrated,
@@ -2580,8 +2585,26 @@ class ProsodyBallGame {
       }
       const calResult = await this.calibrationWizard.run(this.analyzer);
       this.hasCompletedCalibration = true;
+      this.guidedStartTs = performance.now();
+      this.guidedDismissed = false;
+      this.guidedCloseHitbox = null;
+      this.guidedPitchStable = 0;
       this.guidedChecklist.roomReady = this.analyzer.isCalibrated;
+      this.guidedChecklist.voiceDetected = false;
+      this.guidedChecklist.pitchLocked = false;
       showCalibrationOutcome(calResult);
+    });
+
+    this.canvas.addEventListener('click', (e) => {
+      if (!this.isRunning || this.guidedDismissed || !this.guidedCloseHitbox) return;
+      const rect = this.canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const hit = this.guidedCloseHitbox;
+      if (x >= hit.x && x <= hit.x + hit.w && y >= hit.y && y <= hit.y + hit.h) {
+        this.guidedDismissed = true;
+        this.guidedCloseHitbox = null;
+      }
     });
 
     helpBtn.addEventListener('click', (e) => {
@@ -2848,7 +2871,7 @@ class ProsodyBallGame {
 
     // Guided onboarding overlay for first 30 seconds
     const guidedElapsed = (performance.now() - this.guidedStartTs) / 1000;
-    if (this.isRunning && this.guidedStartTs > 0 && guidedElapsed < 30) {
+    if (this.isRunning && this.guidedStartTs > 0 && !this.guidedDismissed && guidedElapsed < this.guidedDurationSec) {
       const hasVoice = this.analyzer.metrics.energy > 0.05 || this.analyzer.lastPitch > 0;
       this.guidedChecklist.voiceDetected = this.guidedChecklist.voiceDetected || hasVoice;
       if (this.analyzer.pitchConfidence > 0.65 && this.analyzer.lastPitch > 0) {
@@ -2874,7 +2897,21 @@ class ProsodyBallGame {
       ctx.fill();
       ctx.stroke();
 
-      const secsLeft = Math.max(0, Math.ceil(30 - guidedElapsed));
+      const closeSize = 18;
+      const closeX = left + w - closeSize - 8;
+      const closeY = y + 8;
+      this.guidedCloseHitbox = { x: closeX, y: closeY, w: closeSize, h: closeSize };
+
+      ctx.fillStyle = 'rgba(255,255,255,0.14)';
+      ctx.beginPath();
+      ctx.roundRect(closeX, closeY, closeSize, closeSize, 6);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.font = '600 12px "Outfit", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('✕', closeX + closeSize * 0.5, closeY + 13);
+
+      const secsLeft = Math.max(0, Math.ceil(this.guidedDurationSec - guidedElapsed));
       ctx.textAlign = 'left';
       ctx.fillStyle = '#e8e6f0';
       ctx.font = '600 14px "Outfit", sans-serif';
@@ -2894,6 +2931,8 @@ class ProsodyBallGame {
         ctx.fillText('Great! You are fully tracked.', left + 14, y + 112);
       }
       ctx.restore();
+    } else {
+      this.guidedCloseHitbox = null;
     }
 
     // Vibration alert flash overlay
