@@ -123,14 +123,14 @@ class VoiceAnalyzer {
 
   stop() {
     this.isActive = false;
-    if (this.source) { try { this.source.disconnect(); } catch(e) {} }
+    if (this.source) { try { this.source.disconnect(); } catch (e) { } }
     // FIX: stop stream tracks so mic LED turns off
     if (this.stream) {
       this.stream.getTracks().forEach(t => t.stop());
       this.stream = null;
     }
     if (this.audioCtx && this.audioCtx.state !== 'closed') {
-      this.audioCtx.close().catch(() => {});
+      this.audioCtx.close().catch(() => { });
     }
     this.audioCtx = null;
     this.analyser = null;
@@ -368,8 +368,8 @@ class VoiceAnalyzer {
       return sum / Math.max(1, endBin - startBin + 1);
     };
 
-    const eLow  = bandEnergy(250, 900);   // F1 region
-    const eMid  = bandEnergy(900, 2800);  // F2 region
+    const eLow = bandEnergy(250, 900);   // F1 region
+    const eMid = bandEnergy(900, 2800);  // F2 region
     const eHigh = bandEnergy(2800, 6000); // Fricative region
     const eTotal = eLow + eMid + eHigh + 0.0001;
 
@@ -430,7 +430,7 @@ class VoiceAnalyzer {
       // Cepstral is smooth but broad → medium-slow
       // Centroid conflates pitch → slowest (most smoothing needed)
       const methodLerp = {
-        lpc:      { base: 0.10, confScale: 0.12 },  // fast: precise root-solved values
+        lpc: { base: 0.10, confScale: 0.12 },  // fast: precise root-solved values
         harmonic: { base: 0.06, confScale: 0.10 },  // medium: harmonic-resolution limited
         cepstral: { base: 0.05, confScale: 0.08 },  // medium-slow: broad smoothing
         centroid: { base: 0.03, confScale: 0.06 }   // slow: inherently noisy
@@ -1154,6 +1154,73 @@ class ProsodyBallGame {
       });
     }
 
+    // ====== CREATURE STYLE ======
+    this.creatureStyle = 'jellyfish';
+
+    // Jellyfish state
+    this._jelly = {
+      bellW: 65, bellH: 55, floatY: 0, breath: 0, pulsePhase: 0,
+      biolumFlash: 0, glow: 0.15, transformLevel: 0,
+      bellEdge: [], tentacles: [], particles: [],
+    };
+    for (let i = 0; i < 20; i++) {
+      this._jelly.bellEdge.push({ phase: Math.random() * Math.PI * 2, speed: 0.6 + Math.random() * 0.5 });
+    }
+    for (let i = 0; i < 8; i++) {
+      this._jelly.tentacles.push({
+        x: -0.35 + (i / 7) * 0.7, length: 30 + Math.random() * 20,
+        targetLen: 30, phase: Math.random() * Math.PI * 2,
+        curl: 0.08 + Math.random() * 0.12, width: 1.2 + Math.random() * 1.5,
+      });
+    }
+
+    // Phoenix state
+    this._phoenix = {
+      wingAngle: 0, tailLen: 0, flameIntensity: 0.1, floatY: 0,
+      transformLevel: 0, breath: 0, sparks: [], flames: [], embers: [],
+    };
+
+    // Nebula state
+    this._nebula = {
+      radius: 80, coreGlow: 0.1, spiralAngle: 0, spiralLen: 0,
+      transformLevel: 0, breath: 0, compression: 1, flares: [],
+      dustMotes: [], ringAlpha: 0,
+    };
+    for (let i = 0; i < 30; i++) {
+      this._nebula.dustMotes.push({
+        angle: Math.random() * Math.PI * 2, dist: 40 + Math.random() * 100,
+        speed: 0.1 + Math.random() * 0.3, size: 0.5 + Math.random() * 1.5,
+        phase: Math.random() * Math.PI * 2,
+      });
+    }
+
+    // Spirit state
+    this._spirit = {
+      orbR: 20, floatY: 0, glow: 0.15, colorTemp: 0.5, breath: 0,
+      transformLevel: 0, ribbons: [], lights: [], bokeh: [],
+    };
+    for (let i = 0; i < 5; i++) {
+      this._spirit.ribbons.push({
+        angle: (i / 5) * Math.PI * 2, length: 40, targetLen: 40,
+        phase: Math.random() * Math.PI * 2, freq: 1.5 + Math.random(),
+        amp: 8 + Math.random() * 6, width: 2 + Math.random() * 2,
+      });
+    }
+    for (let i = 0; i < 12; i++) {
+      this._spirit.bokeh.push({
+        x: (Math.random() - 0.5) * 300, y: (Math.random() - 0.5) * 300,
+        size: 3 + Math.random() * 8, phase: Math.random() * Math.PI * 2,
+        speed: 0.2 + Math.random() * 0.4, alpha: 0.05 + Math.random() * 0.1,
+      });
+    }
+
+    // Koi state
+    this._koi = {
+      swimPhase: 0, depth: 0, finExt: 0, tailAmp: 0.3, floatY: 0,
+      transformLevel: 0, breath: 0, whiskerLen: 0, bodyLen: 1,
+      iridescence: 0, ripples: [], scales: [],
+    };
+
     // ====== GARDEN STATE ======
     this.garden = {
       plants: [],
@@ -1170,7 +1237,7 @@ class ProsodyBallGame {
     for (let i = 0; i < 10; i++) {
       const p = this._makeGardenPlant(
         30 + i * 55 + Math.random() * 25,
-        ['mushroom','fern','flower','tree'][Math.floor(Math.random() * 4)],
+        ['mushroom', 'fern', 'flower', 'tree'][Math.floor(Math.random() * 4)],
         100 + Math.random() * 220, 45 + Math.random() * 25, 0.5 + Math.random() * 0.5
       );
       p.age = 5 + Math.random() * 10; // mature
@@ -1394,36 +1461,42 @@ class ProsodyBallGame {
     if (!this.mountainLayers) {
       this.mountainLayers = [
         // Far mountains — slow parallax, taller, lighter
-        { parallax: 0.08, baseY: 0.52, layers: [
-          { amp: 60, freq: 0.0008, phase: 0.0 },
-          { amp: 30, freq: 0.002, phase: 1.2 },
-          { amp: 15, freq: 0.005, phase: 3.7 },
-        ]},
+        {
+          parallax: 0.08, baseY: 0.52, layers: [
+            { amp: 60, freq: 0.0008, phase: 0.0 },
+            { amp: 30, freq: 0.002, phase: 1.2 },
+            { amp: 15, freq: 0.005, phase: 3.7 },
+          ]
+        },
         // Mid mountains — medium parallax
-        { parallax: 0.18, baseY: 0.58, layers: [
-          { amp: 55, freq: 0.0012, phase: 2.1 },
-          { amp: 25, freq: 0.003, phase: 0.5 },
-          { amp: 12, freq: 0.007, phase: 4.2 },
-        ]},
+        {
+          parallax: 0.18, baseY: 0.58, layers: [
+            { amp: 55, freq: 0.0012, phase: 2.1 },
+            { amp: 25, freq: 0.003, phase: 0.5 },
+            { amp: 12, freq: 0.007, phase: 4.2 },
+          ]
+        },
         // Near hills — faster parallax, smaller, darker
-        { parallax: 0.35, baseY: 0.65, layers: [
-          { amp: 35, freq: 0.002, phase: 4.5 },
-          { amp: 18, freq: 0.005, phase: 1.8 },
-          { amp: 8, freq: 0.012, phase: 0.3 },
-        ]},
+        {
+          parallax: 0.35, baseY: 0.65, layers: [
+            { amp: 35, freq: 0.002, phase: 4.5 },
+            { amp: 18, freq: 0.005, phase: 1.8 },
+            { amp: 8, freq: 0.012, phase: 0.3 },
+          ]
+        },
       ];
     }
     // Theme-aware mountain + ground colors
     const mtnColors = {
-      playful:      ['#1a1a35', '#151530', '#111128'],
-      ocean:        ['#0c2a38', '#0a2230', '#081c28'],
-      minimal:      ['#181c24', '#14181f', '#10141a'],
+      playful: ['#1a1a35', '#151530', '#111128'],
+      ocean: ['#0c2a38', '#0a2230', '#081c28'],
+      minimal: ['#181c24', '#14181f', '#10141a'],
       highcontrast: ['#12122a', '#0e0e22', '#0a0a1a'],
     };
     const groundColors = {
-      playful:      ['#1e1e3a', '#191932', '#121228'],
-      ocean:        ['#0e3040', '#0b2836', '#081e2c'],
-      minimal:      ['#1a1e28', '#161a22', '#12161c'],
+      playful: ['#1e1e3a', '#191932', '#121228'],
+      ocean: ['#0e3040', '#0b2836', '#081e2c'],
+      minimal: ['#1a1e28', '#161a22', '#12161c'],
       highcontrast: ['#14142a', '#101024', '#0c0c1e'],
     };
     const mc = mtnColors[this.themeMode] || mtnColors.playful;
@@ -1780,7 +1853,7 @@ class ProsodyBallGame {
         if (!url.hostname.endsWith('.hf.space')) {
           directUrl = window.location.href;
         }
-      } catch(e) {}
+      } catch (e) { }
       iframeNotice.innerHTML =
         'This app needs microphone access, which may be blocked when embedded.<br>' +
         '<a href="' + directUrl + '" target="_blank" rel="noopener">Open in new tab for full access ↗</a>';
@@ -1856,12 +1929,8 @@ class ProsodyBallGame {
 
       if (!this.hasCompletedCalibration) {
         const calResult = await this.calibrationWizard.run(this.analyzer);
-        if (calResult.reason === 'user-skip') {
-          this.hasCompletedCalibration = true;
-        } else if (calResult.reason === 'completed') {
-          this.hasCompletedCalibration = true;
-        } else {
-          this.hasCompletedCalibration = false;
+        this.hasCompletedCalibration = true; // Don't re-prompt this session
+        if (calResult.reason === 'timeout') {
           showError('🎯 Calibration timed out. You can continue, but voice tracking may be less accurate. Try again next start in a quieter room.');
         }
       }
@@ -1909,14 +1978,16 @@ class ProsodyBallGame {
       // Reset creature ephemeral state (keep structural points)
       if (this.gameMode === 'creature') {
         const c = this.creature;
-        c.glow = 0;
-        c.wingSpread = 0;
-        c.transformLevel = 0;
-        c.floatY = 0;
-        c.pulseRings = [];
-        c.auraParticles = [];
-        c.tendrilGrow = 0;
+        c.glow = 0; c.wingSpread = 0; c.transformLevel = 0; c.floatY = 0;
+        c.pulseRings = []; c.auraParticles = []; c.tendrilGrow = 0;
         for (const t of c.tendrils) { t.length = 0; t.targetLength = 0; }
+        // Reset style-specific state
+        const j = this._jelly; j.glow = 0.15; j.biolumFlash = 0; j.transformLevel = 0; j.floatY = 0; j.particles = [];
+        for (const t of j.tentacles) t.length = t.targetLen = 30;
+        const ph = this._phoenix; ph.flameIntensity = 0.1; ph.transformLevel = 0; ph.floatY = 0; ph.flames = []; ph.sparks = []; ph.embers = [];
+        const nb = this._nebula; nb.coreGlow = 0.1; nb.transformLevel = 0; nb.ringAlpha = 0; nb.flares = [];
+        const sp = this._spirit; sp.glow = 0.15; sp.transformLevel = 0; sp.floatY = 0; sp.lights = [];
+        const ko = this._koi; ko.transformLevel = 0; ko.floatY = 0; ko.whiskerLen = 0; ko.ripples = [];
       }
 
       // Reset garden ephemeral state (keep plants — they accumulate)
@@ -1961,9 +2032,12 @@ class ProsodyBallGame {
       helpTooltip.classList.remove('show');
       vibPanel.classList.remove('show');
       recordingsDrawer.classList.remove('show');
-      startBtn.textContent = '⏹ Stop';
+      const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas' };
+      startBtn.textContent = `⏹ Stop ${modeNames[this.gameMode] || ''}`;
       startBtn.classList.add('active');
       recBtn.classList.add('visible');
+      const hud = document.getElementById('creatureStyleHud');
+      if (hud) hud.style.display = this.gameMode === 'creature' ? '' : 'none';
       this.isRunning = true;
       this.lastTime = performance.now();
       this.loop();
@@ -1978,6 +2052,8 @@ class ProsodyBallGame {
         await this.stopRecording();
       }
       this.isRunning = false;
+      const hud = document.getElementById('creatureStyleHud');
+      if (hud) hud.style.display = 'none';
       this.analyzer.stop();
       startBtn.textContent = '🎙 Start';
       startBtn.classList.remove('active');
@@ -2017,6 +2093,11 @@ class ProsodyBallGame {
     document.getElementById('summaryBackBtn').addEventListener('click', () => {
       document.getElementById('summaryOverlay').classList.remove('show');
       welcomeOverlay.classList.remove('hidden');
+      // Reset mode selection so user can pick fresh
+      modeDetails.classList.remove('show');
+      modeCards.forEach(c => c.classList.remove('selected'));
+      [ballDetails, creatureDetails, gardenDetails, canvasDetails]
+        .forEach(p => p.classList.remove('show'));
       this.drawIdleScene();
     });
     document.getElementById('summaryAgainBtn').addEventListener('click', () => {
@@ -2088,17 +2169,20 @@ class ProsodyBallGame {
         // Restart idle scene for correct mode preview
         if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
         if (!this.isRunning) this.drawIdleScene();
-
-        // Open the selected mode immediately from the menu.
-        // Starting mic capture remains an explicit action via Start button.
-        if (!this.isRunning) {
-          welcomeOverlay.classList.add('hidden');
-          this.drawIdleScene();
-        // Menu cards should directly launch the selected game mode.
-        if (!this.isRunning) {
-          startGame();
-        }
       });
+    });
+
+    // Creature style picker (both menu + HUD versions)
+    const syncStylePickers = (style) => {
+      this.creatureStyle = style;
+      document.querySelectorAll('#creatureStylePicker .style-pill, #creatureStyleHud .style-pill').forEach(b => {
+        b.classList.toggle('selected', b.dataset.style === style);
+      });
+      if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
+      if (!this.isRunning) this.drawIdleScene();
+    };
+    document.querySelectorAll('#creatureStylePicker .style-pill, #creatureStyleHud .style-pill').forEach(btn => {
+      btn.addEventListener('click', () => syncStylePickers(btn.dataset.style));
     });
 
     themeSelect.addEventListener('change', (e) => {
@@ -2371,32 +2455,59 @@ class ProsodyBallGame {
       if (this.isRunning) return;
       idleTime += 0.016;
       if (this.gameMode === 'creature') {
-        // Idle creature: gently breathing, decay transformations
-        this.creature.breath += 0.016 * 1.2;
-        this.creature.morphTime += 0.016 * 0.5;
-        this.creature.glow = 0.15 + 0.05 * Math.sin(idleTime * 0.8);
-        this.creature.wingSpread *= 0.98;
-        this.creature.transformLevel *= 0.98;
-        this.creature.tendrilGrow *= 0.97;
-        this.creature.floatY *= 0.95;
-        for (const t of this.creature.tendrils) {
-          t.length *= 0.97;
-          t.targetLength = 0;
-        }
-        for (const p of this.creature.points) {
-          const breathScale = 1 + 0.06 * Math.sin(this.creature.breath);
-          const wobble = 3 * Math.sin(this.creature.morphTime * p.wobbleSpeed + p.wobblePhase);
-          p.r += ((p.baseR * breathScale + wobble) - p.r) * 0.1;
-        }
-        // Decay ephemeral effects
-        for (let i = this.creature.pulseRings.length - 1; i >= 0; i--) {
-          this.creature.pulseRings[i].life -= 0.016 * 0.8;
-          this.creature.pulseRings[i].r += 0.016 * 40;
-          if (this.creature.pulseRings[i].life <= 0) this.creature.pulseRings.splice(i, 1);
-        }
-        for (let i = this.creature.auraParticles.length - 1; i >= 0; i--) {
-          this.creature.auraParticles[i].life -= 0.016 * 0.5;
-          if (this.creature.auraParticles[i].life <= 0) this.creature.auraParticles.splice(i, 1);
+        // Idle creature — dispatch to style-specific idle
+        const dt = 0.016;
+        switch (this.creatureStyle) {
+          case 'blob': {
+            const c = this.creature;
+            c.breath += dt * 1.2; c.morphTime += dt * 0.5;
+            c.glow = 0.15 + 0.05 * Math.sin(idleTime * 0.8);
+            c.wingSpread *= 0.98; c.transformLevel *= 0.98; c.tendrilGrow *= 0.97; c.floatY *= 0.95;
+            for (const t of c.tendrils) { t.length *= 0.97; t.targetLength = 0; }
+            for (const p of c.points) {
+              p.r += ((p.baseR * (1 + 0.06 * Math.sin(c.breath)) + 3 * Math.sin(c.morphTime * p.wobbleSpeed + p.wobblePhase)) - p.r) * 0.1;
+            }
+            for (let i = c.pulseRings.length - 1; i >= 0; i--) { c.pulseRings[i].life -= dt * 0.8; c.pulseRings[i].r += dt * 40; if (c.pulseRings[i].life <= 0) c.pulseRings.splice(i, 1); }
+            for (let i = c.auraParticles.length - 1; i >= 0; i--) { c.auraParticles[i].life -= dt * 0.5; if (c.auraParticles[i].life <= 0) c.auraParticles.splice(i, 1); }
+            break;
+          }
+          case 'jellyfish': {
+            const j = this._jelly;
+            j.breath += dt * 1.2; j.glow = 0.15 + 0.05 * Math.sin(idleTime * 0.8);
+            j.transformLevel *= 0.98; j.biolumFlash *= 0.96; j.floatY *= 0.95;
+            for (const t of j.tentacles) { t.length *= 0.97; }
+            for (let i = j.particles.length - 1; i >= 0; i--) { j.particles[i].life -= dt * 0.5; if (j.particles[i].life <= 0) j.particles.splice(i, 1); }
+            break;
+          }
+          case 'phoenix': {
+            const p = this._phoenix;
+            p.breath += dt * 1.5; p.flameIntensity *= 0.97; p.transformLevel *= 0.98; p.floatY *= 0.95;
+            for (let i = p.flames.length - 1; i >= 0; i--) { p.flames[i].life -= dt; if (p.flames[i].life <= 0) p.flames.splice(i, 1); }
+            for (let i = p.sparks.length - 1; i >= 0; i--) { p.sparks[i].life -= dt; if (p.sparks[i].life <= 0) p.sparks.splice(i, 1); }
+            for (let i = p.embers.length - 1; i >= 0; i--) { p.embers[i].life -= dt * 0.5; if (p.embers[i].life <= 0) p.embers.splice(i, 1); }
+            break;
+          }
+          case 'nebula': {
+            const n = this._nebula; n.breath += dt * 0.6; n.coreGlow *= 0.98; n.transformLevel *= 0.98;
+            n.spiralAngle += dt * 0.1; n.ringAlpha *= 0.97;
+            for (const d of n.dustMotes) d.angle += d.speed * dt;
+            for (let i = n.flares.length - 1; i >= 0; i--) { n.flares[i].life -= dt; if (n.flares[i].life <= 0) n.flares.splice(i, 1); }
+            break;
+          }
+          case 'spirit': {
+            const sp = this._spirit; sp.breath += dt; sp.glow = 0.15 + 0.05 * Math.sin(idleTime * 0.7);
+            sp.transformLevel *= 0.98; sp.floatY *= 0.95;
+            for (const r of sp.ribbons) { r.length *= 0.97; r.phase += dt * r.freq; }
+            for (const b of sp.bokeh) { b.phase += dt * b.speed; b.x += Math.sin(b.phase) * b.speed * dt * 3; b.y += Math.cos(b.phase * 0.7) * b.speed * dt * 2; }
+            for (let i = sp.lights.length - 1; i >= 0; i--) { sp.lights[i].life -= dt; if (sp.lights[i].life <= 0) sp.lights.splice(i, 1); }
+            break;
+          }
+          case 'koi': {
+            const k = this._koi; k.breath += dt; k.swimPhase += dt * 1.5;
+            k.transformLevel *= 0.98; k.floatY *= 0.95; k.finExt *= 0.97; k.whiskerLen *= 0.97;
+            for (let i = k.ripples.length - 1; i >= 0; i--) { k.ripples[i].life -= dt * 1.2; if (k.ripples[i].life <= 0) k.ripples.splice(i, 1); }
+            break;
+          }
         }
         this.drawCreatureScene(0);
       } else if (this.gameMode === 'garden') {
@@ -2922,7 +3033,7 @@ class ProsodyBallGame {
     }
     ctx.strokeStyle = (this.themeMode === 'highcontrast') ? 'rgba(255,255,255,0.28)'
       : (this.themeMode === 'ocean') ? 'rgba(130,210,210,0.14)'
-      : 'rgba(255,255,255,0.12)';
+        : 'rgba(255,255,255,0.12)';
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
@@ -3108,23 +3219,16 @@ class ProsodyBallGame {
   }
 
   // ============================================================
-  // VOICE CREATURE — Update
+  // VOICE CREATURE — Update (Dispatcher)
   // ============================================================
   updateCreature(dt) {
     const m = this.analyzer.metrics;
-    const ps = this.prosodyScore;
-
-    // Prosody score (same composite metric as ball mode)
     const bounceW = 0.30, tempoW = 0.20, vowelW = 0.20, articW = 0.15, sylW = 0.15;
     const rawPS = m.bounce * bounceW + m.tempo * tempoW + m.vowel * vowelW +
-                  m.articulation * articW + m.syllable * sylW;
+      m.articulation * articW + m.syllable * sylW;
     this.prosodyScore += (rawPS - this.prosodyScore) * 2.0 * dt;
+    const ps = this.prosodyScore;
 
-    const c = this.creature;
-    c.breath += dt * (1.0 + ps * 0.5);  // breathe faster with energy
-    c.morphTime += dt * (0.4 + ps * 0.3);
-
-    // Pitch-to-color (same mapping as ball)
     const hz = this.analyzer.smoothPitchHz;
     if (this.colorblindMode) {
       if (hz <= 100) this.ballHue = 220;
@@ -3141,364 +3245,868 @@ class ProsodyBallGame {
     this.ballSat = 25 + ps * 75;
     this.ballLit = 40 + ps * 30;
 
-    // Resonance → body proportions
-    const res = this.analyzer.smoothResonance;
-    const resConf = this.analyzer.formantConfidence;
-    // Low resonance = wide/squat (aspect < 1), high = tall/elegant (aspect > 1)
-    const aspect = 0.7 + res * 0.6; // 0.7→1.3
+    const pitchNorm = this.analyzer.lastPitch > 0
+      ? Math.max(0, Math.min(1, (this.analyzer.lastPitch - 80) / 250)) : 0;
+    const S = {
+      ps, m, hz, dt, pitchNorm,
+      pitchConf: this.analyzer.pitchConfidence,
+      res: this.analyzer.smoothResonance,
+      hue: this.ballHue, sat: this.ballSat, lit: this.ballLit,
+      time: performance.now() / 1000,
+    };
+
+    switch (this.creatureStyle) {
+      case 'jellyfish': this._updateJellyfish(S); break;
+      case 'phoenix': this._updatePhoenix(S); break;
+      case 'nebula': this._updateNebula(S); break;
+      case 'spirit': this._updateSpirit(S); break;
+      case 'koi': this._updateKoi(S); break;
+      default: this._updateBlob(S); break;
+    }
+  }
+
+  // ---------- BLOB update (original) ----------
+  _updateBlob(S) {
+    const { ps, m, dt, pitchNorm, res, time } = S;
+    const c = this.creature;
+    c.breath += dt * (1.0 + ps * 0.5);
+    c.morphTime += dt * (0.4 + ps * 0.3);
+    const aspect = 0.7 + (res || 0.5) * 0.6;
     const baseSize = 50 + m.energy * 40 + ps * 20;
-
     for (const p of c.points) {
-      const a = p.angle;
-      // Vertical stretch based on resonance (cos component = vertical)
-      const vertFactor = Math.abs(Math.cos(a));
-      const horizFactor = Math.abs(Math.sin(a));
-      const shapedR = baseSize * (vertFactor * aspect + horizFactor * (2 - aspect)) / 1;
-
-      // Breathing
+      const vertFactor = Math.abs(Math.cos(p.angle));
+      const horizFactor = Math.abs(Math.sin(p.angle));
+      const shapedR = baseSize * (vertFactor * aspect + horizFactor * (2 - aspect));
       const breathScale = 1 + 0.08 * Math.sin(c.breath) * (0.5 + m.energy);
-
-      // Organic wobble — each point has its own phase
       const wobble = (3 + ps * 8) * Math.sin(c.morphTime * p.wobbleSpeed + p.wobblePhase);
-
-      // Pitch variation → undulation (dancing)
-      const dance = m.bounce * 12 * Math.sin(c.morphTime * 3 + a * 2);
-
+      const dance = m.bounce * 12 * Math.sin(c.morphTime * 3 + p.angle * 2);
       p.targetR = shapedR * breathScale + wobble + dance;
       p.r += (p.targetR - p.r) * (4 + ps * 4) * dt;
     }
-
-    // Float height — pitch lifts creature
-    const pitchNorm = this.analyzer.lastPitch > 0
-      ? Math.max(0, Math.min(1, (this.analyzer.lastPitch - 80) / 250))
-      : 0;
-    const targetFloat = -pitchNorm * 80 * (0.3 + this.analyzer.pitchConfidence * 0.7);
+    const targetFloat = -pitchNorm * 80 * (0.3 + (S.pitchConf || 0) * 0.7);
     c.floatY += (targetFloat - c.floatY) * 2.5 * dt;
-
-    // Glow intensity
     c.glow += ((0.15 + ps * 0.7 + m.energy * 0.3) - c.glow) * 3 * dt;
-
-    // Transformation level — accumulates during sustained high prosody
-    if (ps > 0.45) {
-      c.transformLevel += (ps - 0.45) * 0.8 * dt;
-    } else {
-      c.transformLevel -= 0.15 * dt;
-    }
+    if (ps > 0.45) { c.transformLevel += (ps - 0.45) * 0.8 * dt; }
+    else { c.transformLevel -= 0.15 * dt; }
     c.transformLevel = Math.max(0, Math.min(1, c.transformLevel));
-
-    // Wing spread follows transform level
     c.wingSpread += (c.transformLevel * 0.9 - c.wingSpread) * 2 * dt;
-
-    // Tendrils — vowel-driven
     c.tendrilGrow += ((m.vowel * 0.8 + m.energy * 0.2) - c.tendrilGrow) * 3 * dt;
     for (const t of c.tendrils) {
       t.targetLength = c.tendrilGrow * (60 + ps * 80);
       t.length += (t.targetLength - t.length) * 3 * dt;
       t.phase += dt * (1.5 + ps);
     }
-
-    // Syllable pulse rings
     if (m.syllable > 0.5 && ps > 0.1) {
-      c.pulseRings.push({ r: baseSize * 0.8, maxR: baseSize * 2.5, life: 1 });
+      const bS = Math.max(...c.points.map(p => p.r)) * 0.8;
+      c.pulseRings.push({ r: bS, maxR: bS * 3, life: 1 });
     }
     for (let i = c.pulseRings.length - 1; i >= 0; i--) {
       const ring = c.pulseRings[i];
-      ring.r += (ring.maxR - ring.r) * 3 * dt;
-      ring.life -= dt * 1.5;
+      ring.r += (ring.maxR - ring.r) * 3 * dt; ring.life -= dt * 1.5;
       if (ring.life <= 0) c.pulseRings.splice(i, 1);
     }
     if (c.pulseRings.length > 8) c.pulseRings.splice(0, c.pulseRings.length - 8);
-
-    // Aura particles — drift toward creature
     const maxAura = this.reducedMotion ? 10 : 40;
     if (m.energy > 0.05 && c.auraParticles.length < maxAura) {
       const angle = Math.random() * Math.PI * 2;
       const dist = 200 + Math.random() * 150;
       c.auraParticles.push({
-        x: Math.cos(angle) * dist,
-        y: Math.sin(angle) * dist,
-        size: 1 + Math.random() * 2,
-        speed: 30 + Math.random() * 50,
-        life: 1, maxLife: 1.5 + Math.random()
+        x: Math.cos(angle) * dist, y: Math.sin(angle) * dist,
+        size: 1 + Math.random() * 2, speed: 30 + Math.random() * 50, life: 1, maxLife: 1.5 + Math.random()
       });
     }
     for (let i = c.auraParticles.length - 1; i >= 0; i--) {
       const ap = c.auraParticles[i];
-      const dx = -ap.x, dy = -ap.y;
-      const dist = Math.sqrt(dx * dx + dy * dy) + 0.1;
-      ap.x += (dx / dist) * ap.speed * dt;
-      ap.y += (dy / dist) * ap.speed * dt;
+      const dx = -ap.x, dy = -ap.y, dist = Math.sqrt(dx * dx + dy * dy) + 0.1;
+      ap.x += (dx / dist) * ap.speed * dt; ap.y += (dy / dist) * ap.speed * dt;
       ap.life -= dt / ap.maxLife;
       if (ap.life <= 0 || dist < 15) c.auraParticles.splice(i, 1);
     }
   }
 
+  // ---------- JELLYFISH update ----------
+  _updateJellyfish(S) {
+    const { ps, m, dt, pitchNorm, res, pitchConf } = S;
+    const j = this._jelly;
+    j.breath += dt * (1.2 + ps * 0.6);
+    j.pulsePhase += dt * (0.8 + ps * 0.4);
+    // Float with pitch
+    const targetFloat = -pitchNorm * 100 * (0.3 + (pitchConf || 0) * 0.7);
+    j.floatY += (targetFloat - j.floatY) * 2.0 * dt;
+    // Bell size — resonance shapes aspect, energy grows it
+    j.bellW += ((55 + m.energy * 30 + ps * 15) * (1.3 - (res || 0.5) * 0.6) - j.bellW) * 3 * dt;
+    j.bellH += ((45 + m.energy * 25 + ps * 10) * (0.7 + (res || 0.5) * 0.6) - j.bellH) * 3 * dt;
+    // Glow & transform
+    j.glow += ((0.15 + ps * 0.6 + m.energy * 0.3) - j.glow) * 3 * dt;
+    j.biolumFlash = m.articulation > 0.4 ? Math.min(1, j.biolumFlash + dt * 8) : j.biolumFlash * (1 - dt * 4);
+    if (ps > 0.4) j.transformLevel += (ps - 0.4) * 0.6 * dt;
+    else j.transformLevel -= 0.1 * dt;
+    j.transformLevel = Math.max(0, Math.min(1, j.transformLevel));
+    // Tentacles — vowels extend them
+    for (const t of j.tentacles) {
+      t.targetLen = 30 + m.vowel * 80 + ps * 40 + j.transformLevel * 30;
+      t.length += (t.targetLen - t.length) * 3 * dt;
+      t.phase += dt * (1.0 + ps * 0.5);
+    }
+    // Particles
+    const maxP = this.reducedMotion ? 5 : 20;
+    if (m.energy > 0.05 && j.particles.length < maxP) {
+      j.particles.push({
+        x: (Math.random() - 0.5) * j.bellW, y: j.bellH * 0.3 + Math.random() * 30,
+        vy: 10 + Math.random() * 20, size: 1 + Math.random() * 2, life: 1
+      });
+    }
+    for (let i = j.particles.length - 1; i >= 0; i--) {
+      j.particles[i].y += j.particles[i].vy * dt;
+      j.particles[i].x += Math.sin(j.particles[i].life * 5) * dt * 10;
+      j.particles[i].life -= dt * 0.5;
+      if (j.particles[i].life <= 0) j.particles.splice(i, 1);
+    }
+  }
+
+  // ---------- PHOENIX update ----------
+  _updatePhoenix(S) {
+    const { ps, m, dt, pitchNorm, res, pitchConf } = S;
+    const p = this._phoenix;
+    p.breath += dt * (1.5 + ps);
+    const targetFloat = -pitchNorm * 90 * (0.3 + (pitchConf || 0) * 0.7);
+    p.floatY += (targetFloat - p.floatY) * 2.5 * dt;
+    // Wings lift with pitch
+    p.wingAngle += ((0.15 + pitchNorm * 0.7 + ps * 0.3) * Math.PI * 0.5 - p.wingAngle) * 3 * dt;
+    // Tail grows with vowels
+    p.tailLen += ((20 + m.vowel * 100 + ps * 50) - p.tailLen) * 3 * dt;
+    // Flame intensity
+    p.flameIntensity += ((0.1 + ps * 0.7 + m.energy * 0.3) - p.flameIntensity) * 3 * dt;
+    // Transform
+    if (ps > 0.45) p.transformLevel += (ps - 0.45) * 0.7 * dt;
+    else p.transformLevel -= 0.12 * dt;
+    p.transformLevel = Math.max(0, Math.min(1, p.transformLevel));
+    // Flames — rising particles
+    const maxF = this.reducedMotion ? 15 : 60;
+    if (p.flameIntensity > 0.05 && p.flames.length < maxF) {
+      const spread = 25 + p.transformLevel * 30;
+      p.flames.push({
+        x: (Math.random() - 0.5) * spread, y: 0,
+        vx: (Math.random() - 0.5) * 30, vy: -(40 + Math.random() * 60 + ps * 40),
+        size: 3 + Math.random() * 5 + ps * 3, life: 0.4 + Math.random() * 0.5
+      });
+    }
+    for (let i = p.flames.length - 1; i >= 0; i--) {
+      const f = p.flames[i]; f.x += f.vx * dt; f.y += f.vy * dt;
+      f.vx += (Math.random() - 0.5) * 80 * dt; f.life -= dt;
+      if (f.life <= 0) p.flames.splice(i, 1);
+    }
+    // Sparks on articulation
+    if (m.articulation > 0.4 && ps > 0.1) {
+      for (let i = 0; i < 3; i++) {
+        const a = Math.random() * Math.PI * 2;
+        p.sparks.push({
+          x: Math.cos(a) * 20, y: Math.sin(a) * 20 - 10,
+          vx: Math.cos(a) * (60 + Math.random() * 40), vy: Math.sin(a) * (60 + Math.random() * 40),
+          life: 0.3 + Math.random() * 0.3, size: 1 + Math.random() * 2
+        });
+      }
+    }
+    for (let i = p.sparks.length - 1; i >= 0; i--) {
+      const s = p.sparks[i]; s.x += s.vx * dt; s.y += s.vy * dt; s.life -= dt;
+      if (s.life <= 0) p.sparks.splice(i, 1);
+    }
+    if (p.sparks.length > 30) p.sparks.splice(0, p.sparks.length - 30);
+    // Embers
+    const maxE = this.reducedMotion ? 5 : 20;
+    if (p.flameIntensity > 0.15 && p.embers.length < maxE) {
+      p.embers.push({
+        x: (Math.random() - 0.5) * 60, y: 10 + Math.random() * 30,
+        vx: (Math.random() - 0.5) * 15, vy: -(5 + Math.random() * 15),
+        life: 1 + Math.random(), size: 1 + Math.random()
+      });
+    }
+    for (let i = p.embers.length - 1; i >= 0; i--) {
+      const e = p.embers[i]; e.x += e.vx * dt; e.y += e.vy * dt;
+      e.vx += (Math.random() - 0.5) * 10 * dt; e.life -= dt * 0.5;
+      if (e.life <= 0) p.embers.splice(i, 1);
+    }
+  }
+
+  // ---------- NEBULA update ----------
+  _updateNebula(S) {
+    const { ps, m, dt, pitchNorm, res } = S;
+    const n = this._nebula;
+    n.breath += dt * (0.6 + ps * 0.3);
+    // Compression — pitch compresses the cloud
+    n.compression += ((1.0 - pitchNorm * 0.5 + ps * 0.2) - n.compression) * 2 * dt;
+    // Radius with energy
+    n.radius += ((70 + m.energy * 40 + ps * 20) * n.compression - n.radius) * 2 * dt;
+    // Spiral arms from vowels
+    n.spiralLen += ((m.vowel * 120 + ps * 60) - n.spiralLen) * 2 * dt;
+    n.spiralAngle += dt * (0.2 + ps * 0.3);
+    // Core glow
+    n.coreGlow += ((0.1 + ps * 0.6 + m.energy * 0.3) - n.coreGlow) * 3 * dt;
+    // Transform — star collapse
+    if (ps > 0.45) n.transformLevel += (ps - 0.45) * 0.6 * dt;
+    else n.transformLevel -= 0.08 * dt;
+    n.transformLevel = Math.max(0, Math.min(1, n.transformLevel));
+    n.ringAlpha += ((n.transformLevel > 0.5 ? (n.transformLevel - 0.5) * 2 : 0) - n.ringAlpha) * 2 * dt;
+    // Dust motes orbit
+    for (const d of n.dustMotes) {
+      d.angle += d.speed * dt * (1 + ps * 0.5);
+      d.dist += ((40 + (1 - n.transformLevel) * 80) - d.dist) * 0.5 * dt;
+    }
+    // Flares on articulation
+    if (m.articulation > 0.4 && ps > 0.1) {
+      const a = Math.random() * Math.PI * 2;
+      n.flares.push({ angle: a, length: 30 + Math.random() * 40, life: 0.5 + Math.random() * 0.3, width: 2 + Math.random() * 3 });
+    }
+    for (let i = n.flares.length - 1; i >= 0; i--) {
+      n.flares[i].life -= dt; if (n.flares[i].life <= 0) n.flares.splice(i, 1);
+    }
+    if (n.flares.length > 10) n.flares.splice(0, n.flares.length - 10);
+  }
+
+  // ---------- SPIRIT update ----------
+  _updateSpirit(S) {
+    const { ps, m, dt, pitchNorm, res, pitchConf } = S;
+    const sp = this._spirit;
+    sp.breath += dt * (1.0 + ps * 0.5);
+    const targetFloat = -pitchNorm * 80 * (0.3 + (pitchConf || 0) * 0.7);
+    sp.floatY += (targetFloat - sp.floatY) * 2.5 * dt;
+    // Orb size
+    sp.orbR += ((18 + m.energy * 12 + ps * 8) - sp.orbR) * 3 * dt;
+    // Glow
+    sp.glow += ((0.15 + ps * 0.6 + m.energy * 0.3) - sp.glow) * 3 * dt;
+    // Color temp — res warm/cool
+    sp.colorTemp += (((res || 0.5)) - sp.colorTemp) * 2 * dt;
+    // Transform
+    if (ps > 0.4) sp.transformLevel += (ps - 0.4) * 0.7 * dt;
+    else sp.transformLevel -= 0.1 * dt;
+    sp.transformLevel = Math.max(0, Math.min(1, sp.transformLevel));
+    // Ribbons — vowels extend
+    for (const r of sp.ribbons) {
+      r.targetLen = 30 + m.vowel * 90 + ps * 40 + sp.transformLevel * 40;
+      r.length += (r.targetLen - r.length) * 3 * dt;
+      r.phase += dt * (r.freq + ps * 0.5);
+    }
+    // Spirit lights on articulation
+    if (m.articulation > 0.3 && ps > 0.05) {
+      for (let i = 0; i < 2; i++) {
+        const a = Math.random() * Math.PI * 2, d = 30 + Math.random() * 50;
+        sp.lights.push({
+          x: Math.cos(a) * d, y: Math.sin(a) * d,
+          vx: (Math.random() - 0.5) * 20, vy: -(10 + Math.random() * 20),
+          life: 0.6 + Math.random() * 0.5, size: 2 + Math.random() * 3
+        });
+      }
+    }
+    for (let i = sp.lights.length - 1; i >= 0; i--) {
+      const l = sp.lights[i]; l.x += l.vx * dt; l.y += l.vy * dt; l.life -= dt;
+      if (l.life <= 0) sp.lights.splice(i, 1);
+    }
+    if (sp.lights.length > 25) sp.lights.splice(0, sp.lights.length - 25);
+    // Bokeh drift
+    for (const b of sp.bokeh) {
+      b.x += Math.sin(b.phase) * b.speed * 10 * dt;
+      b.y += Math.cos(b.phase * 0.7) * b.speed * 8 * dt;
+      b.phase += dt * b.speed;
+    }
+  }
+
+  // ---------- KOI update ----------
+  _updateKoi(S) {
+    const { ps, m, dt, pitchNorm, res, pitchConf } = S;
+    const k = this._koi;
+    k.breath += dt * (1.0 + ps * 0.5);
+    k.swimPhase += dt * (2.0 + ps * 1.5);
+    // Depth from pitch
+    const targetFloat = -pitchNorm * 80 * (0.3 + (pitchConf || 0) * 0.7);
+    k.floatY += (targetFloat - k.floatY) * 2.0 * dt;
+    // Fin extension from vowels
+    k.finExt += ((m.vowel * 0.8 + ps * 0.3) - k.finExt) * 3 * dt;
+    // Tail amplitude from energy
+    k.tailAmp += ((0.3 + m.energy * 0.5 + ps * 0.3) - k.tailAmp) * 3 * dt;
+    // Iridescence from resonance
+    k.iridescence += (((res || 0.5)) - k.iridescence) * 2 * dt;
+    // Transform — dragon koi
+    if (ps > 0.45) k.transformLevel += (ps - 0.45) * 0.6 * dt;
+    else k.transformLevel -= 0.1 * dt;
+    k.transformLevel = Math.max(0, Math.min(1, k.transformLevel));
+    k.whiskerLen += (k.transformLevel * 50 - k.whiskerLen) * 2 * dt;
+    k.bodyLen += ((1 + k.transformLevel * 0.5) - k.bodyLen) * 1.5 * dt;
+    // Ripples on articulation
+    if (m.articulation > 0.3 && ps > 0.05) {
+      k.ripples.push({ r: 10, maxR: 60 + Math.random() * 40, life: 1, x: (Math.random() - 0.5) * 40, y: (Math.random() - 0.5) * 20 });
+    }
+    for (let i = k.ripples.length - 1; i >= 0; i--) {
+      const rp = k.ripples[i]; rp.r += (rp.maxR - rp.r) * 3 * dt; rp.life -= dt * 1.2;
+      if (rp.life <= 0) k.ripples.splice(i, 1);
+    }
+    if (k.ripples.length > 8) k.ripples.splice(0, k.ripples.length - 8);
+  }
+
   // ============================================================
-  // VOICE CREATURE — Draw
+  // VOICE CREATURE — Draw (Dispatcher)
   // ============================================================
   drawCreatureScene(prosodyGlow) {
-    const ctx = this.ctx;
-    const w = this.width;
-    const h = this.height;
+    const ctx = this.ctx, w = this.width, h = this.height;
     if (!w || !h) return;
-
-    const c = this.creature;
-    const cx = w / 2;
-    const cy = h * 0.52 + c.floatY;
-    const hue = this.ballHue;
-    const sat = this.ballSat;
-    const lit = this.ballLit;
     const ps = this.prosodyScore;
-
-    // Background — same theme system
-    const themePresets = {
-      playful: ['#0c0c20', '#10102a', '#161638', '#1a1a3a'],
-      ocean: ['#040e18', '#081a2a', '#0c2636', '#103040'],
-      minimal: ['#0f1117', '#131722', '#161a25', '#191d28'],
-      highcontrast: ['#030305', '#080814', '#0c0c1f', '#12122a']
-    };
-    const colors = themePresets[this.themeMode] || themePresets.playful;
-    const bgGrad = ctx.createLinearGradient(0, 0, 0, h);
-    bgGrad.addColorStop(0, colors[0]);
-    bgGrad.addColorStop(0.4, colors[1]);
-    bgGrad.addColorStop(0.7, colors[2]);
-    bgGrad.addColorStop(1, colors[3]);
-    ctx.fillStyle = bgGrad;
-    ctx.fillRect(0, 0, w, h);
-
-    // Dim ambient stars
+    const hue = this.ballHue, sat = this.ballSat, lit = this.ballLit;
     const time = performance.now() / 1000;
+    // --- Shared background ---
+    const tp = {
+      playful: ['#0c0c20', '#10102a', '#161638', '#1a1a3a'], ocean: ['#040e18', '#081a2a', '#0c2636', '#103040'],
+      minimal: ['#0f1117', '#131722', '#161a25', '#191d28'], highcontrast: ['#030305', '#080814', '#0c0c1f', '#12122a']
+    };
+    const cols = tp[this.themeMode] || tp.playful;
+    const bg = ctx.createLinearGradient(0, 0, 0, h);
+    bg.addColorStop(0, cols[0]); bg.addColorStop(0.4, cols[1]); bg.addColorStop(0.7, cols[2]); bg.addColorStop(1, cols[3]);
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h);
     if (this.stars) {
-      for (const star of this.stars) {
-        const twinkle = 0.3 + 0.4 * Math.sin(time * 1.5 + star.twinkle);
-        ctx.globalAlpha = twinkle * 0.35;
+      for (const s of this.stars) {
+        ctx.globalAlpha = (0.3 + 0.4 * Math.sin(time * 1.5 + s.twinkle)) * 0.35;
         ctx.fillStyle = this.themeMode === 'ocean' ? '#6abfbf' : '#c8c6d8';
-        ctx.beginPath();
-        ctx.arc(star.x, star.y, star.size * 0.8, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(s.x, s.y, s.size * 0.8, 0, Math.PI * 2); ctx.fill();
       }
       ctx.globalAlpha = 1;
     }
+    // --- Dispatch ---
+    const S = { ctx, w, h, ps, hue, sat, lit, time };
+    switch (this.creatureStyle) {
+      case 'jellyfish': this._drawJellyfish(S); break;
+      case 'phoenix': this._drawPhoenix(S); break;
+      case 'nebula': this._drawNebula(S); break;
+      case 'spirit': this._drawSpirit(S); break;
+      case 'koi': this._drawKoi(S); break;
+      default: this._drawBlob(S); break;
+    }
+    // --- Shared HUD ---
+    ctx.font = '600 14px "Space Mono", monospace';
+    ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.textAlign = 'right';
+    ctx.fillText(`${Math.round(ps * 100)}%`, w - 16, 28);
+  }
 
-    // ---- Aura particles drifting inward ----
+  // ---------- BLOB draw (original) ----------
+  _drawBlob(S) {
+    const { ctx, w, h, ps, hue, sat, lit, time } = S;
+    const c = this.creature, cx = w / 2, cy = h * 0.52 + c.floatY;
+    // Aura particles
     for (const ap of c.auraParticles) {
       ctx.globalAlpha = ap.life * 0.4 * (0.3 + ps);
       ctx.fillStyle = `hsl(${hue}, ${sat * 0.6}%, ${lit + 20}%)`;
-      ctx.beginPath();
-      ctx.arc(cx + ap.x, cy + ap.y, ap.size, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + ap.x, cy + ap.y, ap.size, 0, Math.PI * 2); ctx.fill();
     }
     ctx.globalAlpha = 1;
-
-    // ---- Outer aura glow ----
+    // Outer aura
     if (c.glow > 0.05) {
-      const auraR = 120 + ps * 60 + c.wingSpread * 40;
-      const aura = ctx.createRadialGradient(cx, cy, 10, cx, cy, auraR);
-      aura.addColorStop(0, `hsla(${hue}, ${sat}%, ${lit}%, ${c.glow * 0.3})`);
-      aura.addColorStop(0.5, `hsla(${hue}, ${sat * 0.6}%, ${lit * 0.7}%, ${c.glow * 0.12})`);
+      const aR = 120 + ps * 60 + c.wingSpread * 40;
+      const aura = ctx.createRadialGradient(cx, cy, 10, cx, cy, aR);
+      aura.addColorStop(0, `hsla(${hue},${sat}%,${lit}%,${c.glow * 0.3})`);
+      aura.addColorStop(0.5, `hsla(${hue},${sat * 0.6}%,${lit * 0.7}%,${c.glow * 0.12})`);
       aura.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = aura;
-      ctx.beginPath();
-      ctx.arc(cx, cy, auraR, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.fillStyle = aura; ctx.beginPath(); ctx.arc(cx, cy, aR, 0, Math.PI * 2); ctx.fill();
     }
-
-    // ---- Pulse rings (syllable hits) ----
+    // Pulse rings
     for (const ring of c.pulseRings) {
-      ctx.strokeStyle = `hsla(${hue}, ${sat}%, ${lit + 15}%, ${ring.life * 0.4})`;
+      ctx.strokeStyle = `hsla(${hue},${sat}%,${lit + 15}%,${ring.life * 0.4})`;
       ctx.lineWidth = 1.5 + ring.life * 2;
-      ctx.beginPath();
-      ctx.arc(cx, cy, ring.r, 0, Math.PI * 2);
-      ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, ring.r, 0, Math.PI * 2); ctx.stroke();
     }
-
-    // ---- Wings (unfurl during sustained prosody) ----
+    // Wings
     if (c.wingSpread > 0.02) {
-      const wingAlpha = c.wingSpread * (0.15 + ps * 0.2);
+      const wA = c.wingSpread * (0.15 + ps * 0.2);
       for (let side = -1; side <= 1; side += 2) {
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.globalAlpha = wingAlpha;
-
-        const spread = c.wingSpread * 70;
-        const waveOff = 8 * Math.sin(time * 2 + side);
-
-        ctx.beginPath();
-        ctx.moveTo(0, -10);
-        ctx.bezierCurveTo(
-          side * spread * 0.6, -40 + waveOff,
-          side * spread * 1.2, -20 + waveOff * 0.5,
-          side * spread * 1.5, 10 + waveOff
-        );
-        ctx.bezierCurveTo(
-          side * spread * 1.1, 30 + waveOff * 0.3,
-          side * spread * 0.5, 35,
-          0, 15
-        );
+        ctx.save(); ctx.translate(cx, cy); ctx.globalAlpha = wA;
+        const sp = c.wingSpread * 70, wO = 8 * Math.sin(time * 2 + side);
+        ctx.beginPath(); ctx.moveTo(0, -10);
+        ctx.bezierCurveTo(side * sp * 0.6, -40 + wO, side * sp * 1.2, -20 + wO * 0.5, side * sp * 1.5, 10 + wO);
+        ctx.bezierCurveTo(side * sp * 1.1, 30 + wO * 0.3, side * sp * 0.5, 35, 0, 15);
         ctx.closePath();
-
-        const wingGrad = ctx.createLinearGradient(0, 0, side * spread * 1.5, 0);
-        wingGrad.addColorStop(0, `hsla(${hue}, ${sat}%, ${lit}%, 0.4)`);
-        wingGrad.addColorStop(0.6, `hsla(${hue + side * 20}, ${sat * 0.7}%, ${lit + 10}%, 0.2)`);
-        wingGrad.addColorStop(1, `hsla(${hue + side * 40}, ${sat * 0.4}%, ${lit + 20}%, 0)`);
-        ctx.fillStyle = wingGrad;
-        ctx.fill();
-
-        ctx.restore();
+        const wG = ctx.createLinearGradient(0, 0, side * sp * 1.5, 0);
+        wG.addColorStop(0, `hsla(${hue},${sat}%,${lit}%,0.4)`);
+        wG.addColorStop(0.6, `hsla(${hue + side * 20},${sat * 0.7}%,${lit + 10}%,0.2)`);
+        wG.addColorStop(1, `hsla(${hue + side * 40},${sat * 0.4}%,${lit + 20}%,0)`);
+        ctx.fillStyle = wG; ctx.fill(); ctx.restore();
       }
       ctx.globalAlpha = 1;
     }
-
-    // ---- Tendrils ----
+    // Tendrils
     for (const t of c.tendrils) {
       if (t.length < 3) continue;
-      ctx.save();
-      ctx.translate(cx, cy);
-
-      const baseAngle = t.angle + 0.2 * Math.sin(time * 0.7 + t.phase);
-      const segs = 12;
-      const segLen = t.length / segs;
-
+      ctx.save(); ctx.translate(cx, cy);
+      const bA = t.angle + 0.2 * Math.sin(time * 0.7 + t.phase);
+      const segs = 12, segLen = t.length / segs;
       ctx.beginPath();
-      let px = Math.cos(baseAngle) * (c.points[0]?.r || 50) * 0.85;
-      let py = Math.sin(baseAngle) * (c.points[0]?.r || 50) * 0.85;
+      let px = Math.cos(bA) * (c.points[0]?.r || 50) * 0.85;
+      let py = Math.sin(bA) * (c.points[0]?.r || 50) * 0.85;
       ctx.moveTo(px, py);
-
-      let curAngle = baseAngle;
+      let curAngle = bA;
       for (let s = 0; s < segs; s++) {
         const frac = s / segs;
         curAngle += t.curl * 0.3 + 0.15 * Math.sin(t.phase + time * 2 + frac * 4);
-        px += Math.cos(curAngle) * segLen;
-        py += Math.sin(curAngle) * segLen;
+        px += Math.cos(curAngle) * segLen; py += Math.sin(curAngle) * segLen;
         ctx.lineTo(px, py);
       }
-
-      ctx.strokeStyle = `hsla(${hue + 15}, ${sat * 0.7}%, ${lit + 10}%, ${0.2 + ps * 0.3})`;
-      ctx.lineWidth = t.width * (1 - 0); // taper could go here
-      ctx.lineCap = 'round';
-      ctx.stroke();
-      ctx.restore();
+      ctx.strokeStyle = `hsla(${hue + 15},${sat * 0.7}%,${lit + 10}%,${0.2 + ps * 0.3})`;
+      ctx.lineWidth = t.width; ctx.lineCap = 'round'; ctx.stroke(); ctx.restore();
     }
-
-    // ---- Body: smooth bezier blob ----
-    ctx.save();
-    ctx.translate(cx, cy);
-
-    const pts = c.points;
-    const n = pts.length;
-
-    // Draw smooth closed curve through points using Catmull-Rom → Bezier conversion
+    // Body bezier blob
+    ctx.save(); ctx.translate(cx, cy);
+    const pts = c.points, n = pts.length;
     ctx.beginPath();
     for (let i = 0; i < n; i++) {
-      const p0 = pts[(i - 1 + n) % n];
-      const p1 = pts[i];
-      const p2 = pts[(i + 1) % n];
-      const p3 = pts[(i + 2) % n];
-
-      const x1 = Math.cos(p1.angle) * p1.r;
-      const y1 = Math.sin(p1.angle) * p1.r;
-      const x2 = Math.cos(p2.angle) * p2.r;
-      const y2 = Math.sin(p2.angle) * p2.r;
-
+      const p0 = pts[(i - 1 + n) % n], p1 = pts[i], p2 = pts[(i + 1) % n], p3 = pts[(i + 2) % n];
+      const x1 = Math.cos(p1.angle) * p1.r, y1 = Math.sin(p1.angle) * p1.r;
+      const x2 = Math.cos(p2.angle) * p2.r, y2 = Math.sin(p2.angle) * p2.r;
       if (i === 0) ctx.moveTo(x1, y1);
-
-      // Catmull-Rom tangent → Bezier control points
-      const x0 = Math.cos(p0.angle) * p0.r;
-      const y0 = Math.sin(p0.angle) * p0.r;
-      const x3 = Math.cos(p3.angle) * p3.r;
-      const y3 = Math.sin(p3.angle) * p3.r;
-
-      const tension = 0.35;
-      const cp1x = x1 + (x2 - x0) * tension;
-      const cp1y = y1 + (y2 - y0) * tension;
-      const cp2x = x2 - (x3 - x1) * tension;
-      const cp2y = y2 - (y3 - y1) * tension;
-
-      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x2, y2);
+      const x0 = Math.cos(p0.angle) * p0.r, y0 = Math.sin(p0.angle) * p0.r;
+      const x3 = Math.cos(p3.angle) * p3.r, y3 = Math.sin(p3.angle) * p3.r;
+      const T = 0.35;
+      ctx.bezierCurveTo(x1 + (x2 - x0) * T, y1 + (y2 - y0) * T, x2 - (x3 - x1) * T, y2 - (y3 - y1) * T, x2, y2);
     }
     ctx.closePath();
-
-    // Body fill: radial gradient from bright center to translucent edge
-    const bodyR = Math.max(...pts.map(p => p.r));
-    const bodyGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, bodyR);
-    bodyGrad.addColorStop(0, `hsla(${hue}, ${sat}%, ${Math.min(95, lit + 25)}%, ${0.6 + c.glow * 0.35})`);
-    bodyGrad.addColorStop(0.4, `hsla(${hue}, ${sat}%, ${lit}%, ${0.4 + c.glow * 0.3})`);
-    bodyGrad.addColorStop(0.8, `hsla(${hue + 15}, ${sat * 0.7}%, ${lit * 0.7}%, ${0.2 + c.glow * 0.15})`);
-    bodyGrad.addColorStop(1, `hsla(${hue + 30}, ${sat * 0.5}%, ${lit * 0.5}%, 0.05)`);
-    ctx.fillStyle = bodyGrad;
-    ctx.fill();
-
-    // Body edge
-    ctx.strokeStyle = `hsla(${hue}, ${sat * 0.8}%, ${lit + 15}%, ${0.15 + c.glow * 0.25})`;
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-
-    // ---- Core light (inner "eye") ----
-    const coreR = 6 + c.glow * 8 + ps * 4;
-    const coreGrad = ctx.createRadialGradient(0, -5, 0, 0, -5, coreR);
-    coreGrad.addColorStop(0, `hsla(${hue}, 30%, 95%, ${0.5 + c.glow * 0.5})`);
-    coreGrad.addColorStop(0.5, `hsla(${hue}, ${sat}%, ${lit + 20}%, ${0.3 + c.glow * 0.3})`);
-    coreGrad.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = coreGrad;
-    ctx.beginPath();
-    ctx.arc(0, -5, coreR, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Transformation pattern: luminous veins when transformLevel > 0.3
+    const bR = Math.max(...pts.map(p => p.r));
+    const bG = ctx.createRadialGradient(0, 0, 0, 0, 0, bR);
+    bG.addColorStop(0, `hsla(${hue},${sat}%,${Math.min(95, lit + 25)}%,${0.6 + c.glow * 0.35})`);
+    bG.addColorStop(0.4, `hsla(${hue},${sat}%,${lit}%,${0.4 + c.glow * 0.3})`);
+    bG.addColorStop(0.8, `hsla(${hue + 15},${sat * 0.7}%,${lit * 0.7}%,${0.2 + c.glow * 0.15})`);
+    bG.addColorStop(1, `hsla(${hue + 30},${sat * 0.5}%,${lit * 0.5}%,0.05)`);
+    ctx.fillStyle = bG; ctx.fill();
+    ctx.strokeStyle = `hsla(${hue},${sat * 0.8}%,${lit + 15}%,${0.15 + c.glow * 0.25})`;
+    ctx.lineWidth = 1.5; ctx.stroke();
+    // Core light
+    const cR = 6 + c.glow * 8 + ps * 4;
+    const cG = ctx.createRadialGradient(0, -5, 0, 0, -5, cR);
+    cG.addColorStop(0, `hsla(${hue},30%,95%,${0.5 + c.glow * 0.5})`);
+    cG.addColorStop(0.5, `hsla(${hue},${sat}%,${lit + 20}%,${0.3 + c.glow * 0.3})`);
+    cG.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = cG; ctx.beginPath(); ctx.arc(0, -5, cR, 0, Math.PI * 2); ctx.fill();
+    // Transform veins
     if (c.transformLevel > 0.3) {
-      const veinAlpha = (c.transformLevel - 0.3) * 1.4;
-      ctx.globalAlpha = Math.min(0.5, veinAlpha);
-      ctx.strokeStyle = `hsla(${hue + 60}, 70%, 80%, 1)`;
-      ctx.lineWidth = 0.8;
+      const vA = (c.transformLevel - 0.3) * 1.4;
+      ctx.globalAlpha = Math.min(0.5, vA);
+      ctx.strokeStyle = `hsla(${hue + 60},70%,80%,1)`; ctx.lineWidth = 0.8;
       for (let i = 0; i < n; i++) {
         const p = pts[i];
-        const px = Math.cos(p.angle) * p.r * 0.4;
-        const py = Math.sin(p.angle) * p.r * 0.4;
-        const ox = Math.cos(p.angle) * p.r * 0.85;
-        const oy = Math.sin(p.angle) * p.r * 0.85;
-        const midOff = 8 * Math.sin(time * 2 + p.angle * 3);
-        ctx.beginPath();
-        ctx.moveTo(px, py);
-        ctx.quadraticCurveTo(
-          (px + ox) / 2 + midOff, (py + oy) / 2 - midOff,
-          ox, oy
-        );
-        ctx.stroke();
+        const px = Math.cos(p.angle) * p.r * 0.4, py = Math.sin(p.angle) * p.r * 0.4;
+        const ox = Math.cos(p.angle) * p.r * 0.85, oy = Math.sin(p.angle) * p.r * 0.85;
+        const mO = 8 * Math.sin(time * 2 + p.angle * 3);
+        ctx.beginPath(); ctx.moveTo(px, py);
+        ctx.quadraticCurveTo((px + ox) / 2 + mO, (py + oy) / 2 - mO, ox, oy); ctx.stroke();
       }
       ctx.globalAlpha = 1;
     }
-
     ctx.restore();
-
-    // ---- Articulation sparkles ----
+    // Articulation sparkles
     if (this.analyzer.metrics.articulation > 0.3 && ps > 0.1) {
-      const sparkCount = Math.floor(this.analyzer.metrics.articulation * ps * 5);
-      for (let i = 0; i < sparkCount; i++) {
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 30 + Math.random() * (bodyR + 20);
-        const sx = cx + Math.cos(angle) * dist;
-        const sy = cy + Math.sin(angle) * dist;
-        const sz = 1.5 + Math.random() * 2;
-        ctx.globalAlpha = 0.5 + Math.random() * 0.5;
-        ctx.fillStyle = '#fff';
+      const sC = Math.floor(this.analyzer.metrics.articulation * ps * 5);
+      for (let i = 0; i < sC; i++) {
+        const a = Math.random() * Math.PI * 2, d = 30 + Math.random() * (bR + 20);
+        const sx = cx + Math.cos(a) * d, sy = cy + Math.sin(a) * d, sz = 1.5 + Math.random() * 2;
+        ctx.globalAlpha = 0.5 + Math.random() * 0.5; ctx.fillStyle = '#fff';
         ctx.beginPath();
         for (let j = 0; j < 8; j++) {
-          const sa = (j / 8) * Math.PI * 2;
-          const sr = j % 2 === 0 ? sz : sz * 0.3;
+          const sa = (j / 8) * Math.PI * 2, sr = j % 2 === 0 ? sz : sz * 0.3;
           ctx.lineTo(sx + Math.cos(sa) * sr, sy + Math.sin(sa) * sr);
         }
-        ctx.closePath();
-        ctx.fill();
+        ctx.closePath(); ctx.fill();
       }
       ctx.globalAlpha = 1;
     }
+  }
 
-    // HUD: distance equivalent → just show prosody level
-    ctx.font = '600 14px "Space Mono", monospace';
-    ctx.fillStyle = 'rgba(255,255,255,0.15)';
-    ctx.textAlign = 'right';
-    const pctLabel = Math.round(this.prosodyScore * 100);
-    ctx.fillText(`${pctLabel}%`, w - 16, 28);
+  // ---------- JELLYFISH draw ----------
+  _drawJellyfish(S) {
+    const { ctx, w, h, ps, hue, sat, lit, time } = S;
+    const j = this._jelly, cx = w / 2, cy = h * 0.48 + j.floatY;
+    const bW = j.bellW, bH = j.bellH;
+    // Outer aura glow
+    if (j.glow > 0.05) {
+      const aR = bW * 2.5 + ps * 30;
+      const ag = ctx.createRadialGradient(cx, cy, 5, cx, cy, aR);
+      ag.addColorStop(0, `hsla(${hue},${sat}%,${lit}%,${j.glow * 0.2})`);
+      ag.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = ag; ctx.beginPath(); ctx.arc(cx, cy, aR, 0, Math.PI * 2); ctx.fill();
+    }
+    // Bell dome
+    ctx.save(); ctx.translate(cx, cy);
+    const breathOff = Math.sin(j.breath) * 4;
+    ctx.beginPath(); ctx.moveTo(-bW, 0);
+    // Top dome arc
+    ctx.bezierCurveTo(-bW, -bH * 1.2 + breathOff, bW, -bH * 1.2 + breathOff, bW, 0);
+    // Bottom wavy edge
+    const edgeN = j.bellEdge.length;
+    for (let i = edgeN - 1; i >= 0; i--) {
+      const t = i / (edgeN - 1); // 1 to 0
+      const ex = bW * (1 - 2 * t);
+      const ey = 5 + 6 * Math.sin(j.bellEdge[i].phase + time * j.bellEdge[i].speed) + breathOff * 0.3;
+      ctx.lineTo(ex, ey);
+    }
+    ctx.closePath();
+    // Translucent fill
+    const bg = ctx.createRadialGradient(0, -bH * 0.4, 5, 0, 0, bW * 1.2);
+    bg.addColorStop(0, `hsla(${hue},${sat}%,${Math.min(90, lit + 30)}%,${0.35 + j.glow * 0.3})`);
+    bg.addColorStop(0.5, `hsla(${hue + 20},${sat * 0.8}%,${lit}%,${0.15 + j.glow * 0.15})`);
+    bg.addColorStop(1, `hsla(${hue + 40},${sat * 0.5}%,${lit * 0.7}%,0.05)`);
+    ctx.fillStyle = bg; ctx.fill();
+    ctx.strokeStyle = `hsla(${hue},${sat}%,${lit + 20}%,${0.15 + j.glow * 0.2})`; ctx.lineWidth = 1.5; ctx.stroke();
+    // Internal organs glow
+    const oGlow = j.glow + j.biolumFlash * 0.5;
+    for (let i = 0; i < 3; i++) {
+      const ox = Math.sin(time * 0.5 + i * 2.1) * bW * 0.3;
+      const oy = -bH * (0.2 + i * 0.2) + Math.cos(time * 0.7 + i) * 4;
+      const oR = 6 + i * 3 + oGlow * 5;
+      const og = ctx.createRadialGradient(ox, oy, 0, ox, oy, oR);
+      og.addColorStop(0, `hsla(${hue + 40 + i * 20},70%,80%,${oGlow * 0.6})`);
+      og.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = og; ctx.beginPath(); ctx.arc(ox, oy, oR, 0, Math.PI * 2); ctx.fill();
+    }
+    // Biolum flash
+    if (j.biolumFlash > 0.05) {
+      ctx.globalAlpha = j.biolumFlash * 0.4;
+      const fg = ctx.createRadialGradient(0, -bH * 0.3, 0, 0, -bH * 0.3, bW);
+      fg.addColorStop(0, `hsla(${hue + 60},80%,90%,0.8)`);
+      fg.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = fg; ctx.beginPath(); ctx.arc(0, -bH * 0.3, bW, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+    // Tentacles
+    ctx.save(); ctx.translate(cx, cy);
+    for (const t of j.tentacles) {
+      if (t.length < 3) continue;
+      const segs = 14, segLen = t.length / segs;
+      ctx.beginPath();
+      let px = t.x * bW, py = 3;
+      ctx.moveTo(px, py);
+      let ang = Math.PI / 2 + t.x * 0.3;
+      for (let s = 0; s < segs; s++) {
+        const frac = s / segs;
+        ang += t.curl + 0.12 * Math.sin(t.phase + time * 1.5 + frac * 5);
+        px += Math.cos(ang) * segLen; py += Math.sin(ang) * segLen;
+        ctx.lineTo(px, py);
+      }
+      const alpha = 0.12 + ps * 0.2 + j.glow * 0.15;
+      ctx.strokeStyle = `hsla(${hue + 15},${sat * 0.6}%,${lit + 15}%,${alpha})`;
+      ctx.lineWidth = t.width * (1 + j.transformLevel * 0.5); ctx.lineCap = 'round'; ctx.stroke();
+    }
+    ctx.restore();
+    // Particles drifting down
+    for (const p of j.particles) {
+      ctx.globalAlpha = p.life * 0.3;
+      ctx.fillStyle = `hsl(${hue + 30},${sat * 0.5}%,${lit + 20}%)`;
+      ctx.beginPath(); ctx.arc(cx + p.x, cy + p.y, p.size, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ---------- PHOENIX draw ----------
+  _drawPhoenix(S) {
+    const { ctx, w, h, ps, hue, sat, lit, time } = S;
+    const p = this._phoenix, cx = w / 2, cy = h * 0.52 + p.floatY;
+    // Warm hue override for fire
+    const fHue = 15 + (1 - p.flameIntensity) * 30; // orange to yellow
+    const fSat = 80 + p.flameIntensity * 20;
+    const fLit = 45 + p.flameIntensity * 25;
+    // Heat aura
+    if (p.flameIntensity > 0.05) {
+      const aR = 100 + p.transformLevel * 80 + ps * 30;
+      const ag = ctx.createRadialGradient(cx, cy, 10, cx, cy, aR);
+      ag.addColorStop(0, `hsla(${fHue},${fSat}%,${fLit}%,${p.flameIntensity * 0.2})`);
+      ag.addColorStop(0.5, `hsla(${fHue + 20},${fSat * 0.6}%,30%,${p.flameIntensity * 0.08})`);
+      ag.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = ag; ctx.beginPath(); ctx.arc(cx, cy, aR, 0, Math.PI * 2); ctx.fill();
+    }
+    // Embers (behind body)
+    for (const e of p.embers) {
+      ctx.globalAlpha = Math.max(0, e.life * 0.4);
+      ctx.fillStyle = `hsl(${fHue + 20},90%,60%)`;
+      ctx.beginPath(); ctx.arc(cx + e.x, cy + e.y, e.size, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // Flames
+    for (const f of p.flames) {
+      const alpha = Math.max(0, f.life / 0.9) * p.flameIntensity;
+      const fSize = f.size * (f.life + 0.3);
+      ctx.globalAlpha = alpha * 0.6;
+      ctx.fillStyle = `hsl(${fHue + (1 - f.life) * 40},${fSat}%,${fLit + (1 - f.life) * 20}%)`;
+      ctx.beginPath(); ctx.arc(cx + f.x, cy + f.y, fSize, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // Body + Wings
+    ctx.save(); ctx.translate(cx, cy);
+    const bodyW = 20 + p.transformLevel * 10, bodyH = 25 + p.transformLevel * 8;
+    // Wings
+    const wSpan = 50 + p.wingAngle * 50 + p.transformLevel * 40;
+    const wFlap = 5 * Math.sin(time * 3);
+    for (let side = -1; side <= 1; side += 2) {
+      ctx.beginPath(); ctx.moveTo(0, -5);
+      ctx.bezierCurveTo(side * wSpan * 0.4, -35 + wFlap, side * wSpan * 0.8, -25 + wFlap * 0.5, side * wSpan, 5 + wFlap);
+      ctx.bezierCurveTo(side * wSpan * 0.7, 15, side * wSpan * 0.3, 18, 0, 8);
+      ctx.closePath();
+      const wg = ctx.createLinearGradient(0, 0, side * wSpan, 0);
+      wg.addColorStop(0, `hsla(${fHue},${fSat}%,${fLit}%,${0.5 + p.flameIntensity * 0.3})`);
+      wg.addColorStop(0.5, `hsla(${fHue + 30},${fSat}%,${fLit + 10}%,${0.3 + p.flameIntensity * 0.2})`);
+      wg.addColorStop(1, `hsla(${fHue + 50},${fSat * 0.5}%,${fLit + 20}%,0.05)`);
+      ctx.fillStyle = wg; ctx.fill();
+    }
+    // Body core
+    const bg = ctx.createRadialGradient(0, -3, 3, 0, 0, bodyW);
+    bg.addColorStop(0, `hsla(${fHue},40%,95%,${0.6 + p.flameIntensity * 0.3})`);
+    bg.addColorStop(0.5, `hsla(${fHue},${fSat}%,${fLit}%,${0.4 + p.flameIntensity * 0.2})`);
+    bg.addColorStop(1, `hsla(${fHue + 20},${fSat * 0.6}%,30%,0.1)`);
+    ctx.fillStyle = bg; ctx.beginPath(); ctx.ellipse(0, 0, bodyW, bodyH, 0, 0, Math.PI * 2); ctx.fill();
+    // Tail feathers
+    if (p.tailLen > 5) {
+      for (let i = 0; i < 3; i++) {
+        const tA = Math.PI / 2 + (i - 1) * 0.2 + 0.1 * Math.sin(time * 2 + i);
+        ctx.beginPath(); ctx.moveTo(0, bodyH * 0.6);
+        const tLen = p.tailLen * (0.7 + i * 0.15);
+        const ctrlX = Math.cos(tA) * tLen * 0.5, ctrlY = bodyH * 0.6 + Math.sin(tA) * tLen * 0.5;
+        ctx.quadraticCurveTo(ctrlX, ctrlY, Math.cos(tA) * tLen * 0.3, bodyH * 0.6 + tLen);
+        ctx.strokeStyle = `hsla(${fHue + i * 15},${fSat}%,${fLit + 10}%,${0.3 + p.flameIntensity * 0.3})`;
+        ctx.lineWidth = 2 + p.transformLevel * 2; ctx.lineCap = 'round'; ctx.stroke();
+      }
+    }
+    ctx.restore();
+    // Sparks
+    for (const s of p.sparks) {
+      ctx.globalAlpha = Math.max(0, s.life * 2);
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(cx + s.x, cy + s.y, s.size, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ---------- NEBULA draw ----------
+  _drawNebula(S) {
+    const { ctx, w, h, ps, hue, sat, lit, time } = S;
+    const n = this._nebula, cx = w / 2, cy = h * 0.5;
+    const R = n.radius;
+    // Gas layers — stacked transparent ellipses
+    for (let i = 3; i >= 0; i--) {
+      const layerR = R * (1.2 - i * 0.15);
+      const rotOff = n.breath + i * 0.5;
+      const skewX = Math.sin(rotOff) * layerR * 0.15;
+      const skewY = Math.cos(rotOff * 0.7) * layerR * 0.1;
+      const lHue = hue + i * 25 - n.transformLevel * 30;
+      ctx.globalAlpha = 0.08 + n.coreGlow * 0.08 + (3 - i) * 0.03;
+      ctx.fillStyle = `hsl(${lHue},${sat * 0.7 + i * 5}%,${lit * 0.6 + i * 8}%)`;
+      ctx.beginPath();
+      ctx.ellipse(cx + skewX, cy + skewY, layerR * (1 + n.compression * 0.2), layerR * (0.7 + n.compression * 0.1), rotOff * 0.1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // Spiral arms
+    if (n.spiralLen > 5) {
+      for (let arm = 0; arm < 2; arm++) {
+        ctx.beginPath();
+        const baseA = n.spiralAngle + arm * Math.PI;
+        for (let s = 0; s < 30; s++) {
+          const t = s / 30;
+          const a = baseA + t * 3;
+          const r = R * 0.3 + t * n.spiralLen;
+          const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r * 0.6;
+          if (s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.strokeStyle = `hsla(${hue + arm * 40},${sat * 0.6}%,${lit + 15}%,${0.1 + ps * 0.15})`;
+        ctx.lineWidth = 2 + ps * 2; ctx.lineCap = 'round'; ctx.stroke();
+      }
+    }
+    // Dust motes
+    for (const d of n.dustMotes) {
+      const dx = cx + Math.cos(d.angle) * d.dist, dy = cy + Math.sin(d.angle) * d.dist * 0.6;
+      ctx.globalAlpha = 0.2 + 0.15 * Math.sin(d.phase + time);
+      ctx.fillStyle = `hsl(${hue + 30},${sat * 0.4}%,${lit + 25}%)`;
+      ctx.beginPath(); ctx.arc(dx, dy, d.size, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // Core glow
+    const cR = 10 + n.coreGlow * 20 + n.transformLevel * 25;
+    const cg = ctx.createRadialGradient(cx, cy, 0, cx, cy, cR);
+    cg.addColorStop(0, `hsla(${hue},30%,95%,${0.4 + n.coreGlow * 0.5 + n.transformLevel * 0.3})`);
+    cg.addColorStop(0.4, `hsla(${hue},${sat}%,${lit + 20}%,${0.2 + n.coreGlow * 0.3})`);
+    cg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(cx, cy, cR, 0, Math.PI * 2); ctx.fill();
+    // Ring system (when transformed)
+    if (n.ringAlpha > 0.02) {
+      ctx.globalAlpha = n.ringAlpha * 0.4;
+      for (let r = 0; r < 3; r++) {
+        const rR = cR + 15 + r * 18;
+        ctx.strokeStyle = `hsla(${hue + r * 30},${sat * 0.6}%,${lit + 15}%,0.6)`;
+        ctx.lineWidth = 1 + (2 - r) * 0.5;
+        ctx.beginPath(); ctx.ellipse(cx, cy, rR, rR * 0.25, 0.3 + r * 0.1, 0, Math.PI * 2); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
+    // Flares
+    for (const f of n.flares) {
+      ctx.globalAlpha = f.life * 0.6;
+      ctx.strokeStyle = `hsla(${hue + 60},80%,85%,1)`;
+      ctx.lineWidth = f.width * f.life;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.cos(f.angle) * f.length, cy + Math.sin(f.angle) * f.length * 0.6);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ---------- SPIRIT draw ----------
+  _drawSpirit(S) {
+    const { ctx, w, h, ps, hue, sat, lit, time } = S;
+    const sp = this._spirit, cx = w / 2, cy = h * 0.5 + sp.floatY;
+    const warmHue = 35, coolHue = 190;
+    const sHue = warmHue + (coolHue - warmHue) * sp.colorTemp;
+    // Bokeh particles
+    for (const b of sp.bokeh) {
+      ctx.globalAlpha = b.alpha * (0.5 + 0.5 * Math.sin(b.phase));
+      const bH = sHue + Math.sin(b.phase * 2) * 30;
+      ctx.fillStyle = `hsl(${bH},40%,70%)`;
+      ctx.beginPath(); ctx.arc(cx + b.x, cy + b.y, b.size, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // Outer aura
+    if (sp.glow > 0.05) {
+      const aR = sp.orbR * 5 + ps * 30;
+      const ag = ctx.createRadialGradient(cx, cy, sp.orbR, cx, cy, aR);
+      ag.addColorStop(0, `hsla(${sHue},${sat * 0.7}%,${lit}%,${sp.glow * 0.15})`);
+      ag.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = ag; ctx.beginPath(); ctx.arc(cx, cy, aR, 0, Math.PI * 2); ctx.fill();
+    }
+    // Ribbons
+    ctx.save(); ctx.translate(cx, cy);
+    for (const r of sp.ribbons) {
+      if (r.length < 5) continue;
+      const segs = 20, segLen = r.length / segs;
+      ctx.beginPath();
+      let rx = Math.cos(r.angle) * sp.orbR * 0.9, ry = Math.sin(r.angle) * sp.orbR * 0.9;
+      ctx.moveTo(rx, ry);
+      let ang = r.angle;
+      for (let s = 0; s < segs; s++) {
+        const frac = s / segs;
+        ang += 0.08 + r.amp * 0.01 * Math.sin(r.phase + frac * 6 + time * r.freq);
+        rx += Math.cos(ang) * segLen; ry += Math.sin(ang) * segLen;
+        ctx.lineTo(rx, ry);
+      }
+      const rAlpha = 0.1 + ps * 0.2 + sp.glow * 0.15;
+      const rHue = sHue + Math.sin(r.phase) * 20;
+      ctx.strokeStyle = `hsla(${rHue},50%,70%,${rAlpha})`;
+      ctx.lineWidth = r.width * (1 + sp.transformLevel * 0.8); ctx.lineCap = 'round'; ctx.stroke();
+    }
+    ctx.restore();
+    // Core orb
+    const oR = sp.orbR;
+    const og = ctx.createRadialGradient(cx, cy, 0, cx, cy, oR);
+    og.addColorStop(0, `hsla(${sHue},30%,95%,${0.6 + sp.glow * 0.4})`);
+    og.addColorStop(0.5, `hsla(${sHue},${sat * 0.6}%,${lit + 10}%,${0.3 + sp.glow * 0.3})`);
+    og.addColorStop(1, `hsla(${sHue},${sat * 0.4}%,${lit}%,0.05)`);
+    ctx.fillStyle = og; ctx.beginPath(); ctx.arc(cx, cy, oR, 0, Math.PI * 2); ctx.fill();
+    // Spirit lights
+    for (const l of sp.lights) {
+      ctx.globalAlpha = Math.max(0, l.life) * 0.7;
+      ctx.fillStyle = `hsl(${sHue + 40},60%,80%)`;
+      ctx.beginPath(); ctx.arc(cx + l.x, cy + l.y, l.size, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // Spectral bloom at high transform
+    if (sp.transformLevel > 0.3) {
+      const bA = (sp.transformLevel - 0.3) * 1.4;
+      ctx.globalAlpha = Math.min(0.3, bA);
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 + time * 0.3;
+        const bLen = oR + sp.transformLevel * 60;
+        ctx.strokeStyle = `hsla(${sHue + i * 15},50%,75%,0.5)`;
+        ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(cx, cy);
+        const bx = cx + Math.cos(a) * bLen, by = cy + Math.sin(a) * bLen;
+        const mx = (cx + bx) / 2 + Math.sin(time * 2 + i) * 15;
+        const my = (cy + by) / 2 + Math.cos(time * 1.5 + i) * 12;
+        ctx.quadraticCurveTo(mx, my, bx, by); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // ---------- KOI draw ----------
+  _drawKoi(S) {
+    const { ctx, w, h, ps, hue, sat, lit, time } = S;
+    const k = this._koi, cx = w / 2, cy = h * 0.5 + k.floatY;
+    const bodyL = 50 * k.bodyLen, bodyW = 20 + k.transformLevel * 5;
+    const swimOff = Math.sin(k.swimPhase) * 8 * k.tailAmp;
+    // Water caustics overlay
+    ctx.globalAlpha = 0.03 + ps * 0.02;
+    for (let i = 0; i < 8; i++) {
+      const cx2 = w * 0.1 + i * w * 0.1 + Math.sin(time * 0.3 + i) * 30;
+      const cy2 = h * 0.3 + Math.cos(time * 0.4 + i * 1.3) * h * 0.2;
+      ctx.fillStyle = `hsl(${190 + i * 5},40%,70%)`;
+      ctx.beginPath(); ctx.ellipse(cx2, cy2, 40 + i * 5, 15, time * 0.1 + i, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // Ripples
+    for (const rp of k.ripples) {
+      ctx.strokeStyle = `hsla(${hue},${sat * 0.4}%,${lit + 15}%,${rp.life * 0.25})`;
+      ctx.lineWidth = 1; ctx.beginPath();
+      ctx.ellipse(cx + rp.x, cy + rp.y, rp.r, rp.r * 0.3, 0, 0, Math.PI * 2); ctx.stroke();
+    }
+    // Body
+    ctx.save(); ctx.translate(cx, cy);
+    // Fish body bezier
+    ctx.beginPath();
+    ctx.moveTo(-bodyL, swimOff * 0.5);
+    ctx.bezierCurveTo(-bodyL * 0.6, -bodyW + swimOff * 0.3, bodyL * 0.2, -bodyW * 0.8, bodyL * 0.5, swimOff * 0.3);
+    ctx.bezierCurveTo(bodyL * 0.2, bodyW * 0.8, -bodyL * 0.6, bodyW + swimOff * 0.3, -bodyL, swimOff * 0.5);
+    ctx.closePath();
+    // Iridescent body fill
+    const iHue = hue + k.iridescence * 60 + Math.sin(time * 0.5) * 15;
+    const bg = ctx.createLinearGradient(-bodyL, -bodyW, bodyL, bodyW);
+    bg.addColorStop(0, `hsla(${iHue},${sat * 0.8}%,${lit + 10}%,0.7)`);
+    bg.addColorStop(0.5, `hsla(${iHue + 30},${sat}%,${lit + 15}%,0.6)`);
+    bg.addColorStop(1, `hsla(${iHue + 60},${sat * 0.7}%,${lit}%,0.5)`);
+    ctx.fillStyle = bg; ctx.fill();
+    ctx.strokeStyle = `hsla(${iHue},${sat * 0.6}%,${lit + 20}%,0.3)`; ctx.lineWidth = 1; ctx.stroke();
+    // Scale shimmer
+    const scaleN = 8 + Math.floor(k.transformLevel * 4);
+    for (let i = 0; i < scaleN; i++) {
+      const sx = -bodyL * 0.7 + (i / scaleN) * bodyL * 1.2;
+      for (let j = -1; j <= 1; j += 2) {
+        const sy = j * bodyW * 0.3 * (1 - Math.abs(sx) / bodyL);
+        const shimmer = 0.05 + 0.08 * Math.sin(time * 2 + i * 1.2 + j);
+        ctx.globalAlpha = shimmer + k.transformLevel * 0.05;
+        ctx.fillStyle = `hsl(${iHue + i * 5},60%,85%)`;
+        ctx.beginPath(); ctx.arc(sx, sy + swimOff * (sx / bodyL) * 0.3, 3, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+    // Tail fin
+    const tailX = -bodyL - 5, tailSpread = 15 + k.finExt * 20 + k.tailAmp * 10;
+    const tailWave = swimOff * 1.5;
+    ctx.beginPath(); ctx.moveTo(-bodyL + 5, swimOff * 0.3);
+    ctx.bezierCurveTo(tailX, -tailSpread + tailWave, tailX - 15, -tailSpread * 0.5 + tailWave, tailX - 10, tailWave);
+    ctx.bezierCurveTo(tailX - 15, tailSpread * 0.5 + tailWave, tailX, tailSpread + tailWave, -bodyL + 5, swimOff * 0.3);
+    ctx.fillStyle = `hsla(${iHue + 20},${sat * 0.7}%,${lit + 5}%,${0.4 + k.finExt * 0.2})`;
+    ctx.fill();
+    // Dorsal fin
+    const finH = 12 + k.finExt * 15;
+    ctx.beginPath(); ctx.moveTo(-bodyL * 0.3, -bodyW * 0.7);
+    ctx.quadraticCurveTo(0, -bodyW - finH + swimOff * 0.5, bodyL * 0.3, -bodyW * 0.5);
+    ctx.strokeStyle = `hsla(${iHue},${sat * 0.6}%,${lit + 10}%,${0.3 + k.finExt * 0.2})`;
+    ctx.lineWidth = 2; ctx.stroke();
+    // Eye
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.beginPath(); ctx.arc(bodyL * 0.3, -bodyW * 0.15 + swimOff * 0.2, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#111';
+    ctx.beginPath(); ctx.arc(bodyL * 0.32, -bodyW * 0.15 + swimOff * 0.2, 1.5, 0, Math.PI * 2); ctx.fill();
+    // Dragon whiskers
+    if (k.whiskerLen > 2) {
+      for (let side = -1; side <= 1; side += 2) {
+        ctx.beginPath();
+        ctx.moveTo(bodyL * 0.45, side * bodyW * 0.1 + swimOff * 0.2);
+        const wEnd = bodyL * 0.45 + k.whiskerLen;
+        const wCurve = side * 10 + Math.sin(time * 1.5) * 5;
+        ctx.quadraticCurveTo(wEnd * 0.7, side * bodyW * 0.3 + wCurve, wEnd, side * bodyW * 0.5 + wCurve);
+        ctx.strokeStyle = `hsla(${iHue + 40},50%,75%,${0.3 + k.transformLevel * 0.3})`;
+        ctx.lineWidth = 1.5; ctx.lineCap = 'round'; ctx.stroke();
+      }
+    }
+    ctx.restore();
   }
 
   // ============================================================
@@ -3515,16 +4123,16 @@ class ProsodyBallGame {
       bloom: 0,
       age: 0,       // time since spawned
       maxH: (type === 'tree' ? 80 + srand(1) * 60
-           : type === 'flower' ? 40 + srand(1) * 30
-           : type === 'fern' ? 30 + srand(1) * 20
-           : 18 + srand(1) * 14) * (0.6 + depth * 0.4),
+        : type === 'flower' ? 40 + srand(1) * 30
+          : type === 'fern' ? 30 + srand(1) * 20
+            : 18 + srand(1) * 14) * (0.6 + depth * 0.4),
       swayPhase: srand(2) * Math.PI * 2,
       variant: srand(3),
       seed,
       // Deterministic fruit/spot positions (computed once, not per-frame)
-      fruitAngles: Array.from({length: 6}, (_, i) => srand(10 + i) * Math.PI * 2),
-      fruitDists: Array.from({length: 6}, (_, i) => 0.3 + srand(20 + i) * 0.5),
-      spotAngles: Array.from({length: 4}, (_, i) => -Math.PI + srand(30 + i) * Math.PI),
+      fruitAngles: Array.from({ length: 6 }, (_, i) => srand(10 + i) * Math.PI * 2),
+      fruitDists: Array.from({ length: 6 }, (_, i) => 0.3 + srand(20 + i) * 0.5),
+      spotAngles: Array.from({ length: 4 }, (_, i) => -Math.PI + srand(30 + i) * Math.PI),
     };
   }
 
@@ -3539,7 +4147,7 @@ class ProsodyBallGame {
 
     // Prosody score
     const rawPS = m.bounce * 0.30 + m.tempo * 0.20 + m.vowel * 0.20 +
-                  m.articulation * 0.15 + m.syllable * 0.15;
+      m.articulation * 0.15 + m.syllable * 0.15;
     this.prosodyScore += (rawPS - this.prosodyScore) * 2.0 * dt;
 
     // Vowel → global growth multiplier (sunlight)
@@ -3665,10 +4273,10 @@ class ProsodyBallGame {
 
     // ---- Sky gradient — theme-aware with garden earth tones ----
     const gardenSkies = {
-      playful:      ['#060812','#0a1018','#101820','#182828','#1a3030','#0e1e14'],
-      ocean:        ['#030a10','#061218','#0a1a22','#102428','#122c2c','#0a1a12'],
-      minimal:      ['#08080c','#0c0e12','#111518','#181e20','#1a2222','#101814'],
-      highcontrast: ['#020206','#04060a','#080c10','#101818','#122020','#08120a'],
+      playful: ['#060812', '#0a1018', '#101820', '#182828', '#1a3030', '#0e1e14'],
+      ocean: ['#030a10', '#061218', '#0a1a22', '#102428', '#122c2c', '#0a1a12'],
+      minimal: ['#08080c', '#0c0e12', '#111518', '#181e20', '#1a2222', '#101814'],
+      highcontrast: ['#020206', '#04060a', '#080c10', '#101818', '#122020', '#08120a'],
     };
     const skyColors = gardenSkies[this.themeMode] || gardenSkies.playful;
     const skyGrad = ctx.createLinearGradient(0, 0, 0, h);
@@ -3739,8 +4347,8 @@ class ProsodyBallGame {
     // ---- Undulating terrain ----
     const getTerrainY = (worldX) => {
       return gy + Math.sin(worldX * 0.006) * 8
-                 + Math.sin(worldX * 0.015 + 2.1) * 4
-                 + Math.sin(worldX * 0.003 + 0.7) * 12;
+        + Math.sin(worldX * 0.015 + 2.1) * 4
+        + Math.sin(worldX * 0.003 + 0.7) * 12;
     };
 
     // Ground fill
@@ -3870,7 +4478,7 @@ class ProsodyBallGame {
             const sr = capW * 0.45;
             ctx.beginPath();
             ctx.arc(sway * 0.3 + Math.cos(sa) * sr, capY - capH * 0.25 + Math.sin(sa) * capH * 0.25,
-                    (1.5 + bloom) * depthScale, 0, Math.PI * 2);
+              (1.5 + bloom) * depthScale, 0, Math.PI * 2);
             ctx.fill();
           }
         }
@@ -3901,9 +4509,9 @@ class ProsodyBallGame {
           ctx.beginPath();
           ctx.moveTo(fx, fy);
           ctx.quadraticCurveTo(fx + side * fLen * 0.5 + leafSway, fy - fLen * 0.4,
-                               fx + side * fLen + leafSway, fy - fLen * 0.05);
+            fx + side * fLen + leafSway, fy - fLen * 0.05);
           ctx.quadraticCurveTo(fx + side * fLen * 0.5 + leafSway, fy + fLen * 0.15,
-                               fx, fy);
+            fx, fy);
           ctx.fill();
         }
 
@@ -3937,9 +4545,9 @@ class ProsodyBallGame {
             ctx.beginPath();
             ctx.moveTo(leafSway, leafY);
             ctx.quadraticCurveTo(leafSide * leafLen * 0.7 + leafSway, leafY - 5,
-                                 leafSide * leafLen + leafSway, leafY + 2);
+              leafSide * leafLen + leafSway, leafY + 2);
             ctx.quadraticCurveTo(leafSide * leafLen * 0.4 + leafSway, leafY + 4,
-                                 leafSway, leafY);
+              leafSway, leafY);
             ctx.fill();
           }
         }
@@ -3973,11 +4581,11 @@ class ProsodyBallGame {
             ctx.beginPath();
             ctx.moveTo(0, 0);
             ctx.bezierCurveTo(petalR * 0.4, -petalR * 0.3,
-                              petalR * 0.4, -petalR * 0.8,
-                              0, -petalR);
+              petalR * 0.4, -petalR * 0.8,
+              0, -petalR);
             ctx.bezierCurveTo(-petalR * 0.4, -petalR * 0.8,
-                              -petalR * 0.4, -petalR * 0.3,
-                              0, 0);
+              -petalR * 0.4, -petalR * 0.3,
+              0, 0);
             ctx.fill();
             ctx.restore();
           }
@@ -4015,7 +4623,7 @@ class ProsodyBallGame {
             ctx.beginPath();
             ctx.moveTo(sway * 0.15 * (by / -trunkH), by);
             ctx.quadraticCurveTo(bSide * bLen * 0.5 + bSway, by - bLen * 0.3,
-                                 bSide * bLen + bSway, by - bLen * 0.15);
+              bSide * bLen + bSway, by - bLen * 0.15);
             ctx.stroke();
           }
         }
@@ -4106,7 +4714,7 @@ class ProsodyBallGame {
 
     // Prosody score
     const rawPS = m.bounce * 0.30 + m.tempo * 0.20 + m.vowel * 0.20 +
-                  m.articulation * 0.15 + m.syllable * 0.15;
+      m.articulation * 0.15 + m.syllable * 0.15;
     this.prosodyScore += (rawPS - this.prosodyScore) * 2.0 * dt;
     const ps = this.prosodyScore;
 
@@ -4427,7 +5035,7 @@ class ProsodyBallGame {
           for (let x = margin; x <= w - margin; x += 3) {
             const nx = (x - margin) / (w - margin * 2);
             const y = (wave.yOff + wave.amp * Math.sin(nx * Math.PI * 3 * wave.freq + t * wave.speed + wave.phase)
-                       + 0.02 * Math.sin(nx * 25 + t * 2.5 + wave.phase)) * h;
+              + 0.02 * Math.sin(nx * 25 + t * 2.5 + wave.phase)) * h;
             if (x === margin) ctx.moveTo(x, y); else ctx.lineTo(x, y);
           }
           ctx.stroke();
@@ -4438,7 +5046,7 @@ class ProsodyBallGame {
           for (let x = margin; x <= w - margin; x += 3) {
             const nx = (x - margin) / (w - margin * 2);
             const y = (wave.yOff + wave.amp * Math.sin(nx * Math.PI * 3 * wave.freq + t * wave.speed + wave.phase)
-                       + 0.02 * Math.sin(nx * 25 + t * 2.5 + wave.phase)) * h;
+              + 0.02 * Math.sin(nx * 25 + t * 2.5 + wave.phase)) * h;
             if (x === margin) ctx.moveTo(x, y); else ctx.lineTo(x, y);
           }
           ctx.stroke();
@@ -4449,7 +5057,7 @@ class ProsodyBallGame {
           for (let x = margin; x <= w - margin; x += 4) {
             const nx = (x - margin) / (w - margin * 2);
             const y = (wave.yOff + wave.amp * Math.sin(nx * Math.PI * 3 * wave.freq + t * wave.speed + wave.phase)
-                       + 0.02 * Math.sin(nx * 25 + t * 2.5 + wave.phase)) * h;
+              + 0.02 * Math.sin(nx * 25 + t * 2.5 + wave.phase)) * h;
             if (x === margin) ctx.moveTo(x, y); else ctx.lineTo(x, y);
           }
           ctx.stroke();
@@ -4648,7 +5256,7 @@ class ProsodyBallGame {
     const vib = this.vibration;
 
     if (vib.hasHaptic) {
-      try { navigator.vibrate([40, 30, 40]); } catch (e) {}
+      try { navigator.vibrate([40, 30, 40]); } catch (e) { }
     }
 
     // Screen shake (skip if reduced motion)
@@ -4725,8 +5333,12 @@ class ProsodyBallGame {
       stats.push({ value: `${pct}%`, label: 'Canvas Filled' });
       stats.push({ value: `${strokes}`, label: 'Strokes' });
     } else if (this.gameMode === 'creature') {
-      const tLevel = Math.round(this.creature.transformLevel * 100);
-      stats.push({ value: `${tLevel}%`, label: 'Peak Transform', wide: true });
+      const stateMap = { blob: this.creature, jellyfish: this._jelly, phoenix: this._phoenix, nebula: this._nebula, spirit: this._spirit, koi: this._koi };
+      const st = stateMap[this.creatureStyle] || this.creature;
+      const tLevel = Math.round((st.transformLevel || 0) * 100);
+      const styleName = this.creatureStyle.charAt(0).toUpperCase() + this.creatureStyle.slice(1);
+      stats.push({ value: `${tLevel}%`, label: 'Peak Transform' });
+      stats.push({ value: styleName, label: 'Style' });
     }
 
     // Render stats grid
