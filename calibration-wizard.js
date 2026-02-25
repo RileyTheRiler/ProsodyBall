@@ -52,7 +52,8 @@ export class CalibrationWizard {
   async run(analyzer) {
     if (!this.overlay) return { outcome: 'skipped', skipped: true, reason: 'missing-overlay' };
 
-    this._show();
+    try {
+      this._show();
     this._setStep(
       '🎙 Calibrate Your Mic?',
       'A quick 5-second setup to tune voice tracking to your mic and room. You can also skip and jump right in.',
@@ -116,7 +117,8 @@ export class CalibrationWizard {
     this._showBtn(this.nextBtn, 'Next');
     this._showBtn(this.skipBtn, 'Skip');
 
-    const roomDoneChoice = await this._waitForClick();
+    // Auto-advance if user misses this step so gameplay never appears frozen.
+    const roomDoneChoice = await this._waitForClick(4500, 'next');
     if (roomDoneChoice === 'skip') {
       this._hide();
       return { outcome: 'skipped', skipped: true, reason: 'user-skip-step-2' };
@@ -178,7 +180,8 @@ export class CalibrationWizard {
       await new Promise(r => setTimeout(r, 80));
     }
 
-    const vowelChoice = await this._waitForClick();
+    // Same safeguard for the final confirmation step.
+    const vowelChoice = await this._waitForClick(5000, 'next');
     if (vowelChoice === 'skip') {
       this._hide();
       return { outcome: 'partial', skipped: true, reason: 'user-skip-vowel-step' };
@@ -189,7 +192,14 @@ export class CalibrationWizard {
     this._setStep('🎉 All Set!', 'Calibration complete — enjoy your session!', 100);
 
     await new Promise(r => setTimeout(r, 800));
-    this._hide();
     return { outcome: 'completed', skipped: false, reason: 'completed' };
+    } catch (err) {
+      console.error('Calibration wizard failed:', err);
+      return { outcome: 'incomplete', skipped: true, reason: 'exception' };
+    } finally {
+      this._hide();
+      this._hideBtn(this.nextBtn);
+      this._hideBtn(this.skipBtn);
+    }
   }
 }
