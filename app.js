@@ -1378,6 +1378,20 @@ class ProsodyBallGame {
       driftStrength: 0,
     };
 
+    this.resonanceRoad = {
+      targetTone: 'bright',
+      passageMode: 'balcony',
+      customText: '',
+      centerX: 0,
+      laneHalfWidth: 60,
+      roadHalfWidth: 150,
+      speed: 0,
+      trail: [],
+      score: 0,
+      multiplier: 1,
+      driftStrength: 0,
+    };
+
     // Recording — AnalyserNode polling approach
     this.isRecording = false;
     this._recInterval = null;
@@ -2200,6 +2214,9 @@ class ProsodyBallGame {
       if (this.gameMode === 'road') {
         this._resetResonanceRoadState();
       }
+      if (this.gameMode === 'road') {
+        this._resetResonanceRoadState();
+      }
 
       // Clear vibration alert tripped highlights
       for (const rule of this.vibration.rules) { rule.tripped = false; }
@@ -2375,6 +2392,7 @@ class ProsodyBallGame {
       canvasDetails.classList.toggle('show', mode === 'canvas');
       keyboardDetails.classList.toggle('show', mode === 'keyboard');
       pilotDetails.classList.toggle('show', mode === 'pilot');
+      roadDetails.classList.toggle('show', mode === 'road');
 
       const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT' };
       roadDetails.classList.toggle('show', mode === 'road');

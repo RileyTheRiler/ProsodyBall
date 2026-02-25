@@ -28,16 +28,24 @@ export class CalibrationWizard {
     btn.style.display = 'none';
   }
 
-  _waitForClick() {
+  _waitForClick(timeoutMs = 0, timeoutChoice = 'next') {
     return new Promise(resolve => {
+      let timer = null;
       const onNext = () => { cleanup(); resolve('next'); };
       const onSkip = () => { cleanup(); resolve('skip'); };
       const cleanup = () => {
+        if (timer) clearTimeout(timer);
         this.nextBtn?.removeEventListener('click', onNext);
         this.skipBtn?.removeEventListener('click', onSkip);
       };
       this.nextBtn?.addEventListener('click', onNext);
       this.skipBtn?.addEventListener('click', onSkip);
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          cleanup();
+          resolve(timeoutChoice);
+        }, timeoutMs);
+      }
     });
   }
 
@@ -90,7 +98,9 @@ export class CalibrationWizard {
       );
       this._showBtn(this.nextBtn, 'Continue Anyway');
       this._showBtn(this.skipBtn, 'Cancel');
-      const failChoice = await this._waitForClick();
+      // Never block indefinitely here: auto-continue after a short grace period
+      // so the session does not appear frozen when ambient calibration times out.
+      const failChoice = await this._waitForClick(4500, 'next');
       this._hide();
       if (failChoice === 'skip') {
         return { outcome: 'cancelled', skipped: true, reason: 'user-cancel' };
