@@ -1148,7 +1148,7 @@ class ProsodyBallGame {
     this.sparkles = [];
     this.themeMode = 'playful';
     this.colorblindMode = false;
-    this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas'
+    this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard'
 
     // ====== CREATURE STATE ======
     this.creature = {
@@ -1322,6 +1322,7 @@ class ProsodyBallGame {
 
     this.voiceKeyboard = {
       minMidi: 36, // C2
+      maxMidi: 84, // C6
       maxMidi: 60, // C4
       plasmaTrail: [],
       glowKey: -1,
@@ -1412,6 +1413,7 @@ class ProsodyBallGame {
     this.voiceCanvasVisualStyle = 'artistic';
     this.canvasMode = 'paint'; // 'paint' | 'keyboard'
     this.canvasModeTransition = 0;
+    this.keyboardGameMode = 'mirror'; // 'mirror' | 'target'
     this.keyboardGameMode = 'mirror'; // 'mirror' | 'target' | 'hero'
     this.pitchGuideLabelMode = 'hz';
     this.pitchGridStrength = 'soft';
@@ -1475,6 +1477,15 @@ class ProsodyBallGame {
           c('vowel', 'Vowels → Flow', 'Sustained sounds create smooth, graceful flowing brushstrokes.'),
           c('artic', 'Articulation → Texture', 'Sharp consonants splatter paint and add texture to the canvas.'),
           c('syllable', 'Energy → Width', 'Louder speech creates wider, bolder strokes. Whisper for fine detail.'),
+        ],
+      },
+      keyboard: {
+        title: 'Voice → Keyboard Mapping',
+        items: [
+          c('bounce', 'Pitch Plasma', 'A neon plasma orb tracks exact pitch, including micro-slides between semitones.'),
+          c('tempo', 'Mirror Mode', 'Real-time visual reflection of your voice over an expanded C2–C6 keyboard.'),
+          c('vowel', 'Target Practice', 'Hold the highlighted key steadily for 1 second to score and trigger a success chime.'),
+          c('syllable', 'Range Finding', 'Explore speaking/singing range and identify comfortable pitch zones by octave.'),
         ],
       },
     };
@@ -1970,6 +1981,11 @@ class ProsodyBallGame {
 
     const startGame = async () => {
       this._resetKeyboardModeState();
+      if (this.gameMode === 'keyboard') {
+        this.canvasMode = 'keyboard';
+      } else if (this.gameMode === 'canvas') {
+        this.canvasMode = 'paint';
+      }
       clearError();
       const initialDiag = await getMicDiagnostics(this.analyzer.audioCtx);
       if (diagPanel) {
@@ -2065,7 +2081,7 @@ class ProsodyBallGame {
       this.ball.y = this.getGroundHeight(this.scrollX + this.ball.x) - this.ball.radius;
 
       // Reset voice canvas for new session
-      if (this.gameMode === 'canvas') {
+      if (this.gameMode === 'canvas' || this.gameMode === 'keyboard') {
         const vc = this.voiceCanvas;
         vc.cursorX = 30;
         vc.smoothPitchY = 0.5;
@@ -2146,7 +2162,7 @@ class ProsodyBallGame {
       helpTooltip.classList.remove('show');
       vibPanel.classList.remove('show');
       recordingsDrawer.classList.remove('show');
-      const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas' };
+      const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard' };
       startBtn.textContent = `⏹ Stop ${modeNames[this.gameMode] || ''}`;
       startBtn.classList.add('active');
       recBtn.classList.add('visible');
@@ -2210,7 +2226,7 @@ class ProsodyBallGame {
       // Reset mode selection so user can pick fresh
       modeDetails.classList.remove('show');
       modeCards.forEach(c => c.classList.remove('selected'));
-      [ballDetails, creatureDetails, gardenDetails, canvasDetails]
+      [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails]
         .forEach(p => p.classList.remove('show'));
       this.drawIdleScene();
     });
@@ -2264,9 +2280,10 @@ class ProsodyBallGame {
     const creatureDetails = document.getElementById('creatureDetails');
     const gardenDetails = document.getElementById('gardenDetails');
     const canvasDetails = document.getElementById('canvasDetails');
+    const keyboardDetails = document.getElementById('keyboardDetails');
     const modeCards = modePicker.querySelectorAll('.mode-card');
 
-    document.querySelectorAll('.canvas-only').forEach(el => el.classList.toggle('show', this.gameMode === 'canvas'));
+    document.querySelectorAll('.canvas-only').forEach(el => el.classList.toggle('show', this.gameMode === 'canvas' || this.gameMode === 'keyboard'));
     if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
 
     modeCards.forEach(card => {
@@ -2274,16 +2291,26 @@ class ProsodyBallGame {
         const mode = card.dataset.mode;
 
         this.gameMode = mode;
+        if (mode === 'keyboard') this.canvasMode = 'keyboard';
+        if (mode === 'canvas') this.canvasMode = 'paint';
         modeCards.forEach(c => c.classList.toggle('selected', c === card));
         modeDetails.classList.add('show');
         ballDetails.classList.toggle('show', mode === 'ball');
         creatureDetails.classList.toggle('show', mode === 'creature');
         gardenDetails.classList.toggle('show', mode === 'garden');
         canvasDetails.classList.toggle('show', mode === 'canvas');
-        const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS' };
+        keyboardDetails.classList.toggle('show', mode === 'keyboard');
+        const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD' };
         document.querySelector('.hud-title').textContent = titles[mode] || 'PROSODY BALL';
         const canvasOnly = document.querySelectorAll('.canvas-only');
-        canvasOnly.forEach(el => el.classList.toggle('show', mode === 'canvas'));
+        canvasOnly.forEach(el => el.classList.toggle('show', mode === 'canvas' || mode === 'keyboard'));
+        if (canvasModeSelect) {
+          canvasModeSelect.style.display = mode === 'canvas' ? '' : 'none';
+          canvasModeSelect.value = this.canvasMode;
+        }
+        if (keyboardGameSelect) {
+          keyboardGameSelect.style.display = mode === 'keyboard' ? '' : 'none';
+        }
         if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
         this._updateHelpContent();
         // Restart idle scene for correct mode preview
@@ -2315,6 +2342,8 @@ class ProsodyBallGame {
 
     canvasModeSelect?.addEventListener('change', (e) => {
       this.canvasMode = e.target.value;
+      if (canvasModeSelect) canvasModeSelect.style.display = this.gameMode === 'canvas' ? '' : 'none';
+      if (keyboardGameSelect) keyboardGameSelect.style.display = this.gameMode === 'keyboard' ? '' : 'none';
       if (keyboardGameSelect) keyboardGameSelect.style.display = this.canvasMode === 'keyboard' ? '' : 'none';
       if (!this.isRunning) this.drawIdleScene();
     });
@@ -2324,6 +2353,8 @@ class ProsodyBallGame {
       this._resetKeyboardModeState();
       if (!this.isRunning) this.drawIdleScene();
     });
+    if (canvasModeSelect) canvasModeSelect.style.display = this.gameMode === 'canvas' ? '' : 'none';
+    if (keyboardGameSelect) keyboardGameSelect.style.display = this.gameMode === 'keyboard' ? '' : 'none';
     if (keyboardGameSelect) keyboardGameSelect.style.display = this.canvasMode === 'keyboard' ? '' : 'none';
 
     pitchLabelsSelect?.addEventListener('change', (e) => {
@@ -2764,6 +2795,12 @@ class ProsodyBallGame {
         this.updateCanvasModeTransition(0.016);
         this.voiceCanvas.time += 0.016;
         this.drawVoiceCanvasScene(0);
+      } else if (this.gameMode === 'keyboard') {
+        // Idle keyboard: start from fully keyboard view
+        this.canvasMode = 'keyboard';
+        this.updateCanvasModeTransition(0.016);
+        this.voiceCanvas.time += 0.016;
+        this.drawVoiceCanvasScene(0);
       } else {
         idleScroll.x += 0.5;
         this.scrollX = idleScroll.x;
@@ -2801,6 +2838,11 @@ class ProsodyBallGame {
       this.updateGarden(dt);
       this.drawGardenScene(this.prosodyScore);
     } else if (this.gameMode === 'canvas') {
+      this.updateCanvasModeTransition(dt);
+      this.updateVoiceCanvas(dt);
+      this.drawVoiceCanvasScene(this.prosodyScore);
+    } else if (this.gameMode === 'keyboard') {
+      this.canvasMode = 'keyboard';
       this.updateCanvasModeTransition(dt);
       this.updateVoiceCanvas(dt);
       this.drawVoiceCanvasScene(this.prosodyScore);
@@ -5812,6 +5854,7 @@ class ProsodyBallGame {
     ctx.font = '600 12px "Space Mono", monospace';
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(196,220,255,0.85)';
+    const modeLabel = this.keyboardGameMode === 'mirror' ? 'Mirror Mode' : 'Target Practice';
     const modeLabel = this.keyboardGameMode === 'mirror' ? 'Mirror Mode' : this.keyboardGameMode === 'target' ? 'Target Practice' : 'Vocal Hero';
     ctx.fillText(modeLabel, left, keyboardTop + keyboardH + 20);
     if (this.keyboardGameMode !== 'mirror') {
@@ -5993,6 +6036,9 @@ class ProsodyBallGame {
       const strokes = this.voiceCanvas.strokeCount;
       stats.push({ value: `${pct}%`, label: 'Canvas Filled' });
       stats.push({ value: `${strokes}`, label: 'Strokes' });
+    } else if (this.gameMode === 'keyboard') {
+      stats.push({ value: `${this.keyboardGameMode.toUpperCase()}`, label: 'Keyboard Mode' });
+      stats.push({ value: `${this.voiceKeyboard.score}`, label: 'Score' });
     } else if (this.gameMode === 'creature') {
       const stateMap = { blob: this.creature, jellyfish: this._jelly, phoenix: this._phoenix, nebula: this._nebula, spirit: this._spirit, koi: this._koi };
       const st = stateMap[this.creatureStyle] || this.creature;
