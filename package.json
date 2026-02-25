@@ -1,0 +1,9 @@
+{
+  "name": "prosody-ball",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "check:conflicts": "node check-conflicts.mjs"
+  }
+}
