@@ -847,7 +847,8 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
+      /* Keep content top-anchored so full menu remains reachable when details expand. */
+      justify-content: flex-start;
       z-index: 20;
       background: rgba(10, 10, 18, 0.88);
       backdrop-filter: blur(20px);
