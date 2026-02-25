@@ -105,6 +105,7 @@ class VoiceAnalyzer {
       hfFilter.connect(this.analyserHF);
 
       this.timeDomainData = new Float32Array(this.analyser.fftSize);
+      this.dsTimeDomainData = new Float32Array(this.analyser.fftSize / 2);
       this.frequencyData = new Float32Array(this.analyser.frequencyBinCount);
       this.formantFreqData = new Float32Array(this.analyserFormant.frequencyBinCount);
       this.hfFrequencyData = new Uint8Array(this.analyserHF.frequencyBinCount);
@@ -142,6 +143,7 @@ class VoiceAnalyzer {
     this.analyserRec = null;
     this.source = null;
     this.pitchHistory = [];
+    this.dsTimeDomainData = null;
     this.energyHistory = [];
     this.energyBaselineWindow = [];
     this.energyPercentiles = { p50: 0.002, p75: 0.004, p90: 0.008 };
@@ -193,8 +195,23 @@ class VoiceAnalyzer {
     const silenceThreshold = this.isCalibrated ? this.noiseFloor * 2.5 : 0.015;
     if (rms < silenceThreshold) return 0;
 
-    const minPeriod = Math.floor(sampleRate / 500); // 500 Hz max
-    const maxPeriod = Math.min(Math.floor(sampleRate / 60), Math.floor(n / 2)); // 60 Hz min
+    // Optimization: Downsample by 2x (boxcar averaging)
+    // Reduces complexity from O(W^2) to O((W/2)^2) -> ~4x faster
+    const dsRate = sampleRate * 0.5;
+    const dsN = n >> 1;
+    // Ensure buffer exists (in case it wasn't init in start or cleared)
+    if (!this.dsTimeDomainData || this.dsTimeDomainData.length !== dsN) {
+      this.dsTimeDomainData = new Float32Array(dsN);
+    }
+    const dsBuf = this.dsTimeDomainData;
+
+    // Simple 2-point averaging downsampling
+    for (let i = 0; i < dsN; i++) {
+      dsBuf[i] = (buf[i * 2] + buf[i * 2 + 1]) * 0.5;
+    }
+
+    const minPeriod = Math.floor(dsRate / 500); // 500 Hz max
+    const maxPeriod = Math.min(Math.floor(dsRate / 60), Math.floor(dsN / 2)); // 60 Hz min
     const W = maxPeriod; // integration window
 
     // Step 1 & 2: Difference function d(τ) and CMND d'(τ)
@@ -206,7 +223,7 @@ class VoiceAnalyzer {
     for (let tau = 1; tau <= maxPeriod; tau++) {
       let diff = 0;
       for (let i = 0; i < W; i++) {
-        const delta = buf[i] - buf[i + tau];
+        const delta = dsBuf[i] - dsBuf[i + tau];
         diff += delta * delta;
       }
       runningSum += diff;
@@ -257,7 +274,7 @@ class VoiceAnalyzer {
       }
     }
 
-    const rawHz = sampleRate / period;
+    const rawHz = dsRate / period;
 
     // Pitch confidence: CMND < 0.05 = very confident, > 0.3 = unreliable
     // Map inversely: low CMND → high confidence
