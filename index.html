@@ -1397,45 +1397,75 @@
       }
 
       .overlay-title {
-        font-size: 2.2rem;
-      }
-
-      .overlay-subtitle {
-        font-size: 1.15rem;
-      }
-
-      .overlay {
-        padding: 16px 12px 26px;
-      }
-
-      .mode-picker {
-        grid-template-columns: 1fr;
-        gap: 10px;
-      }
-
-      .mode-icon {
         font-size: 1.6rem;
       }
 
-      .mode-name {
-        font-size: 1.1rem;
+      .overlay-subtitle {
+        font-size: 0.95rem;
+        margin-bottom: 8px;
       }
 
-      .mode-desc {
-        font-size: 0.88rem;
+      /* Allow overlay to scroll on small screens */
+      .overlay {
+        padding: 12px 10px 20px;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        justify-content: flex-start;
       }
 
+      /* Stack the two-column menu vertically on mobile */
+      .menu-split {
+        flex-direction: column;
+        gap: 10px;
+        min-height: 0;
+        flex: none;
+      }
+
+      /* Game card list: becomes a horizontal scrolling row on mobile */
+      .menu-left {
+        width: 100%;
+        flex-direction: row;
+        overflow-x: auto;
+        overflow-y: hidden;
+        flex-shrink: 0;
+        padding-right: 0;
+        padding-bottom: 4px;
+        gap: 6px;
+        scrollbar-width: thin;
+      }
+
+      /* Cards become compact horizontal chips */
       .mode-card {
-        padding: 14px 10px;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        padding: 8px 10px;
+        flex-shrink: 0;
+        min-width: 68px;
+        transform: none !important;
+      }
+
+      .mode-icon {
+        font-size: 1.4rem;
+      }
+
+      .mode-name {
+        font-size: 0.7rem;
+        white-space: normal;
+        text-align: center;
+        line-height: 1.2;
+      }
+
+      /* Detail panel takes full width */
+      .menu-right {
+        padding: 14px 12px;
+        flex: none;
       }
 
       .rules-grid {
         grid-template-columns: 1fr;
-        gap: 10px;
-      }
-
-      .rules-grid {
-        margin-bottom: 18px;
+        gap: 8px;
+        margin-bottom: 12px;
       }
 
       .rule-card:last-child {
@@ -1443,16 +1473,17 @@
       }
 
       .rule-name {
-        font-size: 1.05rem;
+        font-size: 0.9rem;
       }
 
       .rule-desc {
-        font-size: 0.92rem;
+        font-size: 0.82rem;
       }
 
       .btn-big {
-        font-size: 1.2rem;
-        padding: 14px 36px;
+        font-size: 1.1rem;
+        padding: 13px 24px;
+        margin-top: 10px;
       }
 
       .meters-panel {
@@ -1557,6 +1588,17 @@
       .summary-actions .btn {
         width: 100%;
         min-width: 0;
+      }
+
+      /* Creature style picker wraps tighter on mobile */
+      .creature-style-picker {
+        gap: 4px;
+        margin-bottom: 10px;
+      }
+
+      .style-pill {
+        font-size: 0.78rem;
+        padding: 5px 10px;
       }
     }
 
