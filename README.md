@@ -32,6 +32,10 @@ A gamified voice prosody trainer — control a rolling ball with your voice! Pra
 
 Click **Start Speaking** and allow microphone access. Then speak expressively — the ball responds to your prosody in real time!
 
+## Improvement backlog
+
+See [`IMPROVEMENT_SUGGESTIONS.md`](./IMPROVEMENT_SUGGESTIONS.md) for a prioritized list of UX, signal-accuracy, and product iteration ideas.
+
 **Note:** If microphone access is blocked when viewing the Space on huggingface.co, click the expand button (↗) in the top-right corner of the Space to open it in a full browser tab. The app will also detect this automatically and show an "Open in new tab" link.
 
 
