@@ -1320,6 +1320,22 @@ class ProsodyBallGame {
       });
     }
 
+    this.voiceKeyboard = {
+      minMidi: 36, // C2
+      maxMidi: 60, // C4
+      plasmaTrail: [],
+      glowKey: -1,
+      glowStrength: 0,
+      targetMidi: 57,
+      targetHold: 0,
+      score: 0,
+      heroTime: 0,
+      heroSpawn: 0,
+      heroNotes: [],
+      successPulse: 0,
+      missPulse: 0,
+    };
+
     // Recording — AnalyserNode polling approach
     this.isRecording = false;
     this._recInterval = null;
@@ -1391,6 +1407,9 @@ class ProsodyBallGame {
     };
     this.voiceCanvasPaused = false;
     this.voiceCanvasVisualStyle = 'artistic';
+    this.canvasMode = 'paint'; // 'paint' | 'keyboard'
+    this.canvasModeTransition = 0;
+    this.keyboardGameMode = 'mirror'; // 'mirror' | 'target' | 'hero'
     this.pitchGuideLabelMode = 'hz';
     this.pitchGridStrength = 'soft';
     this.teleprompterMode = 'rainbow';
@@ -1885,6 +1904,8 @@ class ProsodyBallGame {
     const helpPanels = Array.from(helpTooltip.querySelectorAll('.help-panel'));
     const themeSelect = document.getElementById('themeSelect');
     const visualStyleSelect = document.getElementById('visualStyleSelect');
+    const canvasModeSelect = document.getElementById('canvasModeSelect');
+    const keyboardGameSelect = document.getElementById('keyboardGameSelect');
     const pitchLabelsSelect = document.getElementById('pitchLabelsSelect');
     const gridContrastBtn = document.getElementById('gridContrastBtn');
     const teleprompterModeSelect = document.getElementById('teleprompterModeSelect');
@@ -1945,6 +1966,7 @@ class ProsodyBallGame {
     };
 
     const startGame = async () => {
+      this._resetKeyboardModeState();
       clearError();
       const initialDiag = await getMicDiagnostics(this.analyzer.audioCtx);
       if (diagPanel) {
@@ -2285,6 +2307,19 @@ class ProsodyBallGame {
     visualStyleSelect?.addEventListener('change', (e) => {
       this.voiceCanvasVisualStyle = e.target.value;
     });
+
+    canvasModeSelect?.addEventListener('change', (e) => {
+      this.canvasMode = e.target.value;
+      if (keyboardGameSelect) keyboardGameSelect.style.display = this.canvasMode === 'keyboard' ? '' : 'none';
+      if (!this.isRunning) this.drawIdleScene();
+    });
+
+    keyboardGameSelect?.addEventListener('change', (e) => {
+      this.keyboardGameMode = e.target.value;
+      this._resetKeyboardModeState();
+      if (!this.isRunning) this.drawIdleScene();
+    });
+    if (keyboardGameSelect) keyboardGameSelect.style.display = this.canvasMode === 'keyboard' ? '' : 'none';
 
     pitchLabelsSelect?.addEventListener('change', (e) => {
       this.pitchGuideLabelMode = e.target.value;
@@ -2703,6 +2738,7 @@ class ProsodyBallGame {
         this.drawGardenScene(0);
       } else if (this.gameMode === 'canvas') {
         // Idle canvas: animated demo brushstrokes
+        this.updateCanvasModeTransition(0.016);
         this.voiceCanvas.time += 0.016;
         this.drawVoiceCanvasScene(0);
       } else {
@@ -2742,6 +2778,7 @@ class ProsodyBallGame {
       this.updateGarden(dt);
       this.drawGardenScene(this.prosodyScore);
     } else if (this.gameMode === 'canvas') {
+      this.updateCanvasModeTransition(dt);
       this.updateVoiceCanvas(dt);
       this.drawVoiceCanvasScene(this.prosodyScore);
     } else {
@@ -5196,6 +5233,7 @@ class ProsodyBallGame {
 
     const vc = this.voiceCanvas;
     const ps = this.prosodyScore;
+    const paintAlpha = Math.max(0.06, 1 - this.canvasModeTransition * 0.94);
 
     // ---- Background — very dark canvas surface ----
     ctx.fillStyle = '#0a0a10';
@@ -5272,6 +5310,7 @@ class ProsodyBallGame {
     // ---- Render offscreen buffer to screen ----
     if (vc.buffer && vc.bufferH > 0) {
       ctx.save();
+      ctx.globalAlpha = paintAlpha;
       ctx.beginPath();
       ctx.roundRect(margin + 1, margin + 1, w - margin * 2 - 2, h - margin * 2 - 2, frameR - 1);
       ctx.clip();
@@ -5331,7 +5370,7 @@ class ProsodyBallGame {
     for (const mo of vc.motes) {
       const sx = mo.x - viewX + margin;
       if (sx < margin || sx > w - margin) continue;
-      const fadeEdge = Math.min(1, mo.life * 3, (1 - mo.life) * 3);
+      const fadeEdge = Math.min(1, mo.life * 3, (1 - mo.life) * 3) * paintAlpha;
       ctx.globalAlpha = fadeEdge * 0.25;
       ctx.fillStyle = `hsl(${mo.hue}, 50%, 65%)`;
       ctx.beginPath();
@@ -5345,7 +5384,9 @@ class ProsodyBallGame {
     ctx.globalAlpha = 1;
 
     // ---- Live cursor when running ----
-    if (this.isRunning) {
+    if (this.isRunning && paintAlpha > 0.1) {
+      ctx.save();
+      ctx.globalAlpha = paintAlpha;
       const screenCursorX = vc.cursorX - viewX + margin;
       const screenCursorY = 40 + vc.smoothPitchY * (h - 80);
 
@@ -5408,7 +5449,10 @@ class ProsodyBallGame {
       }
 
       ctx.restore();
+      ctx.restore();
     }
+
+    this.drawVoiceKeyboardOverlay(prosodyGlow);
 
     // ---- HUD ----
     ctx.font = '600 13px "Space Mono", monospace';
@@ -5420,6 +5464,324 @@ class ProsodyBallGame {
       ctx.textAlign = 'left';
       ctx.fillText(`${vc.strokeCount} stroke${vc.strokeCount !== 1 ? 's' : ''}`, margin + 2, margin - 5);
     }
+  }
+
+  updateCanvasModeTransition(dt) {
+    const target = this.canvasMode === 'keyboard' ? 1 : 0;
+    this.canvasModeTransition += (target - this.canvasModeTransition) * Math.min(1, dt * 8);
+
+    const kb = this.voiceKeyboard;
+    const m = this.analyzer.metrics;
+    const hz = this.analyzer.smoothPitchHz;
+    const conf = this.analyzer.pitchConfidence;
+    const isVoiced = this.isRunning && m.energy > 0.04 && conf > 0.18 && hz > 50;
+    const midi = isVoiced ? 69 + 12 * Math.log2(hz / 440) : NaN;
+
+    kb.glowStrength = Math.max(0, kb.glowStrength - dt * 2.2);
+    kb.successPulse = Math.max(0, kb.successPulse - dt * 2.8);
+    kb.missPulse = Math.max(0, kb.missPulse - dt * 2.5);
+
+    if (isVoiced && Number.isFinite(midi)) {
+      const clamped = Math.max(kb.minMidi, Math.min(kb.maxMidi, midi));
+      kb.plasmaTrail.push({ midi: clamped, life: 1 });
+      kb.glowKey = Math.round(clamped);
+      kb.glowStrength = Math.min(1, kb.glowStrength + dt * 5 + conf * 0.03);
+    }
+
+    for (let i = kb.plasmaTrail.length - 1; i >= 0; i--) {
+      kb.plasmaTrail[i].life -= dt * 3.5;
+      if (kb.plasmaTrail[i].life <= 0) kb.plasmaTrail.splice(i, 1);
+    }
+
+    if (!this.isRunning || this.canvasMode !== 'keyboard') return;
+
+    if (this.keyboardGameMode === 'target') {
+      if (isVoiced && Number.isFinite(midi) && Math.abs(midi - kb.targetMidi) < 0.22) {
+        kb.targetHold += dt;
+        if (kb.targetHold >= 1) {
+          kb.score += 1;
+          kb.targetHold = 0;
+          kb.targetMidi = kb.minMidi + Math.floor(Math.random() * (kb.maxMidi - kb.minMidi + 1));
+          kb.successPulse = 1;
+          this._playKeyboardSuccessChime();
+        }
+      } else {
+        kb.targetHold = Math.max(0, kb.targetHold - dt * 1.6);
+      }
+    }
+
+    if (this.keyboardGameMode === 'hero') {
+      kb.heroTime += dt;
+      kb.heroSpawn += dt;
+      if (kb.heroSpawn >= 0.75) {
+        kb.heroSpawn = 0;
+        const midiTarget = kb.minMidi + Math.floor(Math.random() * (kb.maxMidi - kb.minMidi + 1));
+        kb.heroNotes.push({ midi: midiTarget, y: 0, hit: false });
+      }
+      const speed = this.height * 0.24;
+      for (let i = kb.heroNotes.length - 1; i >= 0; i--) {
+        const n = kb.heroNotes[i];
+        n.y += speed * dt;
+        if (!n.hit && n.y > this.height * 0.7 + 20) {
+          kb.missPulse = 1;
+          kb.heroNotes.splice(i, 1);
+          continue;
+        }
+        if (isVoiced && Number.isFinite(midi) && !n.hit && Math.abs(midi - n.midi) < 0.3 && n.y >= this.height * 0.68 && n.y <= this.height * 0.74) {
+          kb.score += 10;
+          kb.successPulse = 1;
+          this._playKeyboardSuccessChime();
+          kb.heroNotes.splice(i, 1);
+        }
+      }
+    }
+  }
+
+  _resetKeyboardModeState() {
+    const kb = this.voiceKeyboard;
+    kb.score = 0;
+    kb.targetHold = 0;
+    kb.heroTime = 0;
+    kb.heroSpawn = 0;
+    kb.heroNotes = [];
+    kb.successPulse = 0;
+    kb.missPulse = 0;
+  }
+
+  _getKeyboardLayout(left, keyboardTop, keyboardW, keyboardH) {
+    const kb = this.voiceKeyboard;
+    const isBlack = new Set([1, 3, 6, 8, 10]);
+    const whiteKeys = [];
+    const blackKeys = [];
+
+    let whiteCount = 0;
+    for (let midi = kb.minMidi; midi <= kb.maxMidi; midi++) {
+      if (!isBlack.has(((midi % 12) + 12) % 12)) whiteCount++;
+    }
+    const whiteW = keyboardW / Math.max(1, whiteCount);
+    const whiteH = keyboardH * 0.85;
+    const blackW = whiteW * 0.62;
+    const blackH = whiteH * 0.6;
+
+    let wi = 0;
+    const whiteIndexByMidi = new Map();
+    for (let midi = kb.minMidi; midi <= kb.maxMidi; midi++) {
+      const semi = ((midi % 12) + 12) % 12;
+      if (!isBlack.has(semi)) {
+        const x = left + wi * whiteW;
+        whiteKeys.push({ midi, x, y: keyboardTop + keyboardH - whiteH, w: whiteW, h: whiteH });
+        whiteIndexByMidi.set(midi, wi);
+        wi++;
+      }
+    }
+
+    for (let midi = kb.minMidi; midi <= kb.maxMidi; midi++) {
+      const semi = ((midi % 12) + 12) % 12;
+      if (!isBlack.has(semi)) continue;
+      const leftWhite = midi - 1;
+      const idx = whiteIndexByMidi.get(leftWhite);
+      if (idx === undefined) continue;
+      const x = left + (idx + 1) * whiteW;
+      blackKeys.push({ midi, x, y: keyboardTop + keyboardH - whiteH - 4, w: blackW, h: blackH });
+    }
+
+    const keyCenterByMidi = new Map();
+    for (const k of whiteKeys) keyCenterByMidi.set(k.midi, k.x + k.w * 0.5);
+    for (const k of blackKeys) keyCenterByMidi.set(k.midi, k.x);
+
+    return { whiteKeys, blackKeys, whiteW, whiteH, blackW, blackH, keyCenterByMidi };
+  }
+
+  _midiToX(midi, layout, fallbackLeft, fallbackWidth) {
+    const center = layout?.keyCenterByMidi?.get(Math.round(midi));
+    if (Number.isFinite(center)) return center;
+    const kb = this.voiceKeyboard;
+    const t = (midi - kb.minMidi) / (kb.maxMidi - kb.minMidi);
+    return fallbackLeft + Math.max(0, Math.min(1, t)) * fallbackWidth;
+  }
+
+  _playKeyboardSuccessChime() {
+    try {
+      const ctx = this.analyzer?.audioCtx;
+      if (!ctx) return;
+      const now = ctx.currentTime;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.05, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+      gain.connect(ctx.destination);
+
+      const oscA = ctx.createOscillator();
+      oscA.type = 'sine';
+      oscA.frequency.setValueAtTime(660, now);
+      oscA.frequency.exponentialRampToValueAtTime(880, now + 0.12);
+      oscA.connect(gain);
+      oscA.start(now);
+      oscA.stop(now + 0.18);
+
+      const oscB = ctx.createOscillator();
+      oscB.type = 'triangle';
+      oscB.frequency.setValueAtTime(990, now + 0.03);
+      oscB.connect(gain);
+      oscB.start(now + 0.03);
+      oscB.stop(now + 0.2);
+    } catch (e) { }
+  }
+
+  drawVoiceKeyboardOverlay() {
+    const t = this.canvasModeTransition;
+    if (t < 0.01) return;
+    const ctx = this.ctx;
+    const w = this.width;
+    const h = this.height;
+    const kb = this.voiceKeyboard;
+    const energy = this.analyzer.metrics.energy || 0;
+    const hz = this.analyzer.smoothPitchHz;
+    const conf = this.analyzer.pitchConfidence;
+    const voiced = this.isRunning && hz > 50 && conf > 0.18 && energy > 0.04;
+    const currentMidi = voiced ? Math.max(kb.minMidi, Math.min(kb.maxMidi, 69 + 12 * Math.log2(hz / 440))) : NaN;
+
+    const keyboardTop = h * 0.52 + (1 - t) * (h * 0.2);
+    const keyboardH = h * 0.38;
+    const keyboardW = w * 0.92;
+    const left = (w - keyboardW) * 0.5;
+
+    ctx.save();
+    ctx.globalAlpha = t;
+
+    const panel = ctx.createLinearGradient(0, keyboardTop, 0, keyboardTop + keyboardH);
+    panel.addColorStop(0, 'rgba(8,12,26,0.8)');
+    panel.addColorStop(1, 'rgba(4,8,18,0.95)');
+    ctx.fillStyle = panel;
+    ctx.beginPath();
+    ctx.roundRect(left - 10, keyboardTop - 18, keyboardW + 20, keyboardH + 32, 16);
+    ctx.fill();
+
+    if (kb.successPulse > 0.01) {
+      ctx.fillStyle = `rgba(120,255,170,${0.16 * kb.successPulse})`;
+      ctx.beginPath();
+      ctx.roundRect(left - 6, keyboardTop - 14, keyboardW + 12, keyboardH + 24, 14);
+      ctx.fill();
+    }
+    if (kb.missPulse > 0.01) {
+      ctx.fillStyle = `rgba(255,90,120,${0.12 * kb.missPulse})`;
+      ctx.beginPath();
+      ctx.roundRect(left - 6, keyboardTop - 14, keyboardW + 12, keyboardH + 24, 14);
+      ctx.fill();
+    }
+
+    const layout = this._getKeyboardLayout(left, keyboardTop, keyboardW, keyboardH);
+    const { whiteKeys, blackKeys, whiteW, whiteH } = layout;
+
+    for (const key of whiteKeys) {
+      const { midi, x, y } = key;
+      const active = kb.glowKey === midi && kb.glowStrength > 0.05;
+      ctx.fillStyle = 'rgba(170,220,255,0.06)';
+      ctx.strokeStyle = active
+        ? `hsla(${this.colorblindMode ? 190 : 72}, 90%, 62%, ${0.55 + kb.glowStrength * 0.4})`
+        : 'rgba(120,210,255,0.42)';
+      ctx.lineWidth = active ? 2.3 : 1.2;
+      ctx.beginPath();
+      ctx.roundRect(x + 2, y + 2, key.w - 4, key.h - 4, 8);
+      ctx.fill();
+      ctx.stroke();
+
+      if (midi % 12 === 0) {
+        ctx.fillStyle = 'rgba(135,235,255,0.9)';
+        ctx.font = '500 12px "Space Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`C${Math.floor(midi / 12) - 1}`, x + key.w * 0.5, y + key.h - 14);
+      }
+    }
+
+    for (const key of blackKeys) {
+      const { midi, x, y } = key;
+      const active = kb.glowKey === midi && kb.glowStrength > 0.05;
+      ctx.fillStyle = 'rgba(84,38,130,0.2)';
+      ctx.strokeStyle = active
+        ? `hsla(${this.colorblindMode ? 190 : 72}, 90%, 60%, ${0.6 + kb.glowStrength * 0.35})`
+        : 'rgba(180,120,255,0.5)';
+      ctx.lineWidth = active ? 2.1 : 1.1;
+      ctx.beginPath();
+      ctx.roundRect(x - key.w * 0.5, y, key.w, key.h, 7);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    if (this.keyboardGameMode === 'target') {
+      const x = this._midiToX(kb.targetMidi, layout, left, keyboardW);
+      ctx.strokeStyle = 'rgba(255,75,75,0.9)';
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.roundRect(x - whiteW * 0.45, keyboardTop + keyboardH - whiteH + 2, whiteW * 0.9, whiteH - 6, 8);
+      ctx.stroke();
+      if (kb.targetHold > 0) {
+        const p = Math.min(1, kb.targetHold);
+        ctx.fillStyle = 'rgba(120,255,160,0.85)';
+        ctx.fillRect(left, keyboardTop - 3, keyboardW * p, 2);
+      }
+    }
+
+    if (this.keyboardGameMode === 'hero') {
+      const hitLineY = h * 0.72;
+      ctx.strokeStyle = 'rgba(135,235,255,0.38)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(left, hitLineY);
+      ctx.lineTo(left + keyboardW, hitLineY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      for (const n of kb.heroNotes) {
+        const nx = this._midiToX(n.midi, layout, left, keyboardW);
+        const ny = Math.min(hitLineY, keyboardTop - 16 + n.y);
+        const barH = 34;
+        const grad = ctx.createLinearGradient(0, ny - barH, 0, ny);
+        grad.addColorStop(0, 'rgba(102,225,255,0.88)');
+        grad.addColorStop(1, 'rgba(102,225,255,0.18)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.roundRect(nx - whiteW * 0.34, ny - barH, whiteW * 0.68, barH, 6);
+        ctx.fill();
+      }
+    }
+
+    for (const trail of kb.plasmaTrail) {
+      const x = this._midiToX(trail.midi, layout, left, keyboardW);
+      const y = keyboardTop - 12;
+      const r = 12 * trail.life;
+      ctx.fillStyle = `hsla(${this.colorblindMode ? 190 : 72}, 90%, 60%, ${0.18 * trail.life})`;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    if (Number.isFinite(currentMidi)) {
+      const px = this._midiToX(currentMidi, layout, left, keyboardW);
+      const py = keyboardTop - 12;
+      const core = ctx.createRadialGradient(px, py, 0, px, py, 30);
+      core.addColorStop(0, 'rgba(255,255,200,0.95)');
+      core.addColorStop(0.35, this.colorblindMode ? 'rgba(100,240,255,0.88)' : 'rgba(190,255,90,0.88)');
+      core.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = core;
+      ctx.beginPath();
+      ctx.arc(px, py, 30, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.font = '600 12px "Space Mono", monospace';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(196,220,255,0.85)';
+    const modeLabel = this.keyboardGameMode === 'mirror' ? 'Mirror Mode' : this.keyboardGameMode === 'target' ? 'Target Practice' : 'Vocal Hero';
+    ctx.fillText(modeLabel, left, keyboardTop + keyboardH + 20);
+    if (this.keyboardGameMode !== 'mirror') {
+      ctx.textAlign = 'right';
+      ctx.fillStyle = 'rgba(190,240,255,0.9)';
+      ctx.fillText(`Score ${kb.score}`, left + keyboardW, keyboardTop + keyboardH + 20);
+    }
+
+    ctx.restore();
   }
 
   // ============================================================
