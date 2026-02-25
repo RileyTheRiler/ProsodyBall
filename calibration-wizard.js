@@ -28,23 +28,32 @@ export class CalibrationWizard {
     btn.style.display = 'none';
   }
 
-  _waitForClick() {
+  _waitForClick(timeoutMs = 0, timeoutChoice = 'next') {
     return new Promise(resolve => {
+      let timer = null;
       const onNext = () => { cleanup(); resolve('next'); };
       const onSkip = () => { cleanup(); resolve('skip'); };
       const cleanup = () => {
+        if (timer) clearTimeout(timer);
         this.nextBtn?.removeEventListener('click', onNext);
         this.skipBtn?.removeEventListener('click', onSkip);
       };
       this.nextBtn?.addEventListener('click', onNext);
       this.skipBtn?.addEventListener('click', onSkip);
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          cleanup();
+          resolve(timeoutChoice);
+        }, timeoutMs);
+      }
     });
   }
 
   async run(analyzer) {
     if (!this.overlay) return { outcome: 'skipped', skipped: true, reason: 'missing-overlay' };
 
-    this._show();
+    try {
+      this._show();
     this._setStep(
       '🎙 Calibrate Your Mic?',
       'A quick 5-second setup to tune voice tracking to your mic and room. You can also skip and jump right in.',
@@ -90,7 +99,9 @@ export class CalibrationWizard {
       );
       this._showBtn(this.nextBtn, 'Continue Anyway');
       this._showBtn(this.skipBtn, 'Cancel');
-      const failChoice = await this._waitForClick();
+      // Never block indefinitely here: auto-continue after a short grace period
+      // so the session does not appear frozen when ambient calibration times out.
+      const failChoice = await this._waitForClick(4500, 'next');
       this._hide();
       if (failChoice === 'skip') {
         return { outcome: 'cancelled', skipped: true, reason: 'user-cancel' };
@@ -106,7 +117,8 @@ export class CalibrationWizard {
     this._showBtn(this.nextBtn, 'Next');
     this._showBtn(this.skipBtn, 'Skip');
 
-    const roomDoneChoice = await this._waitForClick();
+    // Auto-advance if user misses this step so gameplay never appears frozen.
+    const roomDoneChoice = await this._waitForClick(4500, 'next');
     if (roomDoneChoice === 'skip') {
       this._hide();
       return { outcome: 'skipped', skipped: true, reason: 'user-skip-step-2' };
@@ -168,7 +180,8 @@ export class CalibrationWizard {
       await new Promise(r => setTimeout(r, 80));
     }
 
-    const vowelChoice = await this._waitForClick();
+    // Same safeguard for the final confirmation step.
+    const vowelChoice = await this._waitForClick(5000, 'next');
     if (vowelChoice === 'skip') {
       this._hide();
       return { outcome: 'partial', skipped: true, reason: 'user-skip-vowel-step' };
@@ -179,7 +192,14 @@ export class CalibrationWizard {
     this._setStep('🎉 All Set!', 'Calibration complete — enjoy your session!', 100);
 
     await new Promise(r => setTimeout(r, 800));
-    this._hide();
     return { outcome: 'completed', skipped: false, reason: 'completed' };
+    } catch (err) {
+      console.error('Calibration wizard failed:', err);
+      return { outcome: 'incomplete', skipped: true, reason: 'exception' };
+    } finally {
+      this._hide();
+      this._hideBtn(this.nextBtn);
+      this._hideBtn(this.skipBtn);
+    }
   }
 }
