@@ -1148,7 +1148,7 @@ class ProsodyBallGame {
     this.sparkles = [];
     this.themeMode = 'playful';
     this.colorblindMode = false;
-    this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard'
+    this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot'
 
     // ====== CREATURE STATE ======
     this.creature = {
@@ -1337,6 +1337,32 @@ class ProsodyBallGame {
       missPulse: 0,
     };
 
+    this.pitchPilot = {
+      sparkX: 0,
+      sparkY: 0,
+      sparkTargetY: 0,
+      sparkRadius: 18,
+      sparkGlow: 0.4,
+      trail: [],
+      barriers: [],
+      score: 0,
+      spawnTimer: 0,
+      speed: 170,
+      phase: 'warmup',
+      calibrated: false,
+      calibrationTimer: 0,
+      calibrationDuration: 3.2,
+      lowHz: 120,
+      highHz: 420,
+      observedMinHz: Infinity,
+      observedMaxHz: 0,
+      gameOver: false,
+      ending: false,
+      crashTimer: 0,
+      selectedRangeLabel: 'Auto (Glide Calibration)',
+      awaitingRestartChoice: false,
+    };
+
     // Recording — AnalyserNode polling approach
     this.isRecording = false;
     this._recInterval = null;
@@ -1413,7 +1439,6 @@ class ProsodyBallGame {
     this.voiceCanvasVisualStyle = 'artistic';
     this.canvasMode = 'paint'; // 'paint' | 'keyboard'
     this.canvasModeTransition = 0;
-    this.keyboardGameMode = 'mirror'; // 'mirror' | 'target'
     this.keyboardGameMode = 'mirror'; // 'mirror' | 'target' | 'hero'
     this.pitchGuideLabelMode = 'hz';
     this.pitchGridStrength = 'soft';
@@ -1486,6 +1511,16 @@ class ProsodyBallGame {
           c('tempo', 'Mirror Mode', 'Real-time visual reflection of your voice over an expanded C2–C6 keyboard.'),
           c('vowel', 'Target Practice', 'Hold the highlighted key steadily for 1 second to score and trigger a success chime.'),
           c('syllable', 'Range Finding', 'Explore speaking/singing range and identify comfortable pitch zones by octave.'),
+        ],
+      },
+      pilot: {
+        title: 'Voice → Pitch Pilot Mapping',
+        items: [
+          c('bounce', 'Pitch → Altitude', 'Your spark moves to the note you sing. Hold a steady note to hold altitude.'),
+          c('tempo', 'Calibration Glide', 'Start by gliding from low to high to map your personal vocal range to the cavern.'),
+          c('vowel', 'Silence = Gravity', 'If your voice drops out, the spark slowly falls until you vocalize again.'),
+          c('artic', 'Discord Barriers', 'Navigate glowing crystal gaps with smooth pitch jumps and controlled slides.'),
+          c('syllable', 'Progressive Phases', 'Warm-up starts easy, then interval steps and slalom tunnels increase challenge.'),
         ],
       },
     };
@@ -2129,6 +2164,12 @@ class ProsodyBallGame {
         g.spawnCooldown = 0;
       }
 
+      if (this.gameMode === 'pilot') {
+        this._resetPitchPilotState();
+        const choice = this._offerPitchPilotRange({ allowContinueSame: false });
+        this._applyPitchPilotRangeChoice(choice);
+      }
+
       // Clear vibration alert tripped highlights
       for (const rule of this.vibration.rules) { rule.tripped = false; }
       this.vibration.flashAlpha = 0;
@@ -2162,7 +2203,7 @@ class ProsodyBallGame {
       helpTooltip.classList.remove('show');
       vibPanel.classList.remove('show');
       recordingsDrawer.classList.remove('show');
-      const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard' };
+      const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot' };
       startBtn.textContent = `⏹ Stop ${modeNames[this.gameMode] || ''}`;
       startBtn.classList.add('active');
       recBtn.classList.add('visible');
@@ -2226,7 +2267,7 @@ class ProsodyBallGame {
       // Reset mode selection so user can pick fresh
       modeDetails.classList.remove('show');
       modeCards.forEach(c => c.classList.remove('selected'));
-      [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails]
+      [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails]
         .forEach(p => p.classList.remove('show'));
       this.drawIdleScene();
     });
@@ -2281,6 +2322,7 @@ class ProsodyBallGame {
     const gardenDetails = document.getElementById('gardenDetails');
     const canvasDetails = document.getElementById('canvasDetails');
     const keyboardDetails = document.getElementById('keyboardDetails');
+    const pilotDetails = document.getElementById('pilotDetails');
     const modeCards = modePicker.querySelectorAll('.mode-card');
 
     document.querySelectorAll('.canvas-only').forEach(el => el.classList.toggle('show', this.gameMode === 'canvas' || this.gameMode === 'keyboard'));
@@ -2298,8 +2340,9 @@ class ProsodyBallGame {
       gardenDetails.classList.toggle('show', mode === 'garden');
       canvasDetails.classList.toggle('show', mode === 'canvas');
       keyboardDetails.classList.toggle('show', mode === 'keyboard');
+      pilotDetails.classList.toggle('show', mode === 'pilot');
 
-      const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD' };
+      const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT' };
       document.querySelector('.hud-title').textContent = titles[mode] || 'PROSODY BALL';
       const canvasOnly = document.querySelectorAll('.canvas-only');
       canvasOnly.forEach(el => el.classList.toggle('show', mode === 'canvas' || mode === 'keyboard'));
@@ -2310,6 +2353,7 @@ class ProsodyBallGame {
       if (keyboardGameSelect) keyboardGameSelect.style.display = mode === 'keyboard' ? '' : 'none';
       if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
       this._updateHelpContent();
+      if (mode === 'pilot') this._resetPitchPilotState();
       if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
       if (!this.isRunning) this.drawIdleScene();
     };
@@ -2327,38 +2371,6 @@ class ProsodyBallGame {
     // Default a visible selection so mode tap/click state is always initialized.
     const initialCard = modePicker.querySelector(`.mode-card[data-mode="${this.gameMode}"]`) || modeCards[0];
     if (initialCard) selectMode(initialCard.dataset.mode, initialCard);
-    modeCards.forEach(card => {
-      card.addEventListener('click', () => {
-        const mode = card.dataset.mode;
-
-        this.gameMode = mode;
-        if (mode === 'keyboard') this.canvasMode = 'keyboard';
-        if (mode === 'canvas') this.canvasMode = 'paint';
-        modeCards.forEach(c => c.classList.toggle('selected', c === card));
-        modeDetails.classList.add('show');
-        ballDetails.classList.toggle('show', mode === 'ball');
-        creatureDetails.classList.toggle('show', mode === 'creature');
-        gardenDetails.classList.toggle('show', mode === 'garden');
-        canvasDetails.classList.toggle('show', mode === 'canvas');
-        keyboardDetails.classList.toggle('show', mode === 'keyboard');
-        const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD' };
-        document.querySelector('.hud-title').textContent = titles[mode] || 'PROSODY BALL';
-        const canvasOnly = document.querySelectorAll('.canvas-only');
-        canvasOnly.forEach(el => el.classList.toggle('show', mode === 'canvas' || mode === 'keyboard'));
-        if (canvasModeSelect) {
-          canvasModeSelect.style.display = mode === 'canvas' ? '' : 'none';
-          canvasModeSelect.value = this.canvasMode;
-        }
-        if (keyboardGameSelect) {
-          keyboardGameSelect.style.display = mode === 'keyboard' ? '' : 'none';
-        }
-        if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
-        this._updateHelpContent();
-        // Restart idle scene for correct mode preview
-        if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
-        if (!this.isRunning) this.drawIdleScene();
-      });
-    });
 
     // Creature style picker (both menu + HUD versions)
     const syncStylePickers = (style) => {
@@ -2842,6 +2854,9 @@ class ProsodyBallGame {
         this.updateCanvasModeTransition(0.016);
         this.voiceCanvas.time += 0.016;
         this.drawVoiceCanvasScene(0);
+      } else if (this.gameMode === 'pilot') {
+        this.updatePitchPilot(0.016);
+        this.drawPitchPilotScene();
       } else {
         idleScroll.x += 0.5;
         this.scrollX = idleScroll.x;
@@ -2887,6 +2902,9 @@ class ProsodyBallGame {
       this.updateCanvasModeTransition(dt);
       this.updateVoiceCanvas(dt);
       this.drawVoiceCanvasScene(this.prosodyScore);
+    } else if (this.gameMode === 'pilot') {
+      this.updatePitchPilot(dt);
+      this.drawPitchPilotScene();
     } else {
       this.update(dt);
       this.drawSceneInternal(this.prosodyScore);
@@ -5895,7 +5913,6 @@ class ProsodyBallGame {
     ctx.font = '600 12px "Space Mono", monospace';
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(196,220,255,0.85)';
-    const modeLabel = this.keyboardGameMode === 'mirror' ? 'Mirror Mode' : 'Target Practice';
     const modeLabel = this.keyboardGameMode === 'mirror' ? 'Mirror Mode' : this.keyboardGameMode === 'target' ? 'Target Practice' : 'Vocal Hero';
     ctx.fillText(modeLabel, left, keyboardTop + keyboardH + 20);
     if (this.keyboardGameMode !== 'mirror') {
@@ -5905,6 +5922,391 @@ class ProsodyBallGame {
     }
 
     ctx.restore();
+  }
+
+
+  _resetPitchPilotState() {
+    const pp = this.pitchPilot;
+    pp.sparkX = this.width * 0.24;
+    pp.sparkY = this.height * 0.5;
+    pp.sparkTargetY = pp.sparkY;
+    pp.sparkGlow = 0.4;
+    pp.trail = [];
+    pp.barriers = [];
+    pp.score = 0;
+    pp.spawnTimer = 0;
+    pp.speed = 165;
+    pp.phase = 'warmup';
+    pp.calibrated = false;
+    pp.calibrationTimer = 0;
+    pp.observedMinHz = Infinity;
+    pp.observedMaxHz = 0;
+    pp.lowHz = 120;
+    pp.highHz = 420;
+    pp.gameOver = false;
+    pp.ending = false;
+    pp.crashTimer = 0;
+    pp.selectedRangeLabel = 'Auto (Glide Calibration)';
+    pp.awaitingRestartChoice = false;
+  }
+
+  _pilotNoteForY(y) {
+    const pp = this.pitchPilot;
+    const top = this.height * 0.10;
+    const bottom = this.height * 0.92;
+    const ratio = Math.max(0, Math.min(1, 1 - (y - top) / Math.max(1, bottom - top)));
+    const hz = pp.lowHz * Math.pow(pp.highHz / Math.max(pp.lowHz, 1), ratio);
+    return this._pitchHzToNoteLabel(hz);
+  }
+
+  _pilotSpawnBarrier() {
+    const pp = this.pitchPilot;
+    const w = this.width;
+    const h = this.height;
+    const phaseIndex = pp.phase === 'warmup' ? 0 : pp.phase === 'steps' ? 1 : 2;
+    const gap = phaseIndex === 0 ? h * 0.28 : phaseIndex === 1 ? h * 0.21 : h * 0.17;
+    const midBase = h * 0.52;
+    const swing = phaseIndex === 0 ? h * 0.09 : phaseIndex === 1 ? h * 0.2 : h * 0.26;
+    const t = pp.score + pp.barriers.length * 0.7;
+    let center = midBase + Math.sin(t * 0.9) * swing;
+    if (phaseIndex === 1) {
+      center += (Math.sin(t * 1.9) > 0 ? 1 : -1) * h * 0.08;
+    }
+    if (phaseIndex === 2) {
+      center += Math.sin((pp.score + pp.barriers.length) * 1.8) * h * 0.1;
+    }
+    const pad = h * 0.16 + gap * 0.5;
+    center = Math.max(pad, Math.min(h - pad, center));
+    pp.barriers.push({ x: w + 90, width: 70, gapCenter: center, gapSize: gap, passed: false });
+  }
+
+  _drawCrystalCluster(x, y, width, height, upward = true) {
+    const ctx = this.ctx;
+    const cols = 8;
+    for (let i = 0; i < cols; i++) {
+      const frac = i / (cols - 1);
+      const cx = x + frac * width;
+      const spikeH = height * (0.5 + 0.5 * Math.sin(frac * Math.PI * 2 + x * 0.01));
+      const dir = upward ? 1 : -1;
+      ctx.beginPath();
+      ctx.moveTo(cx - width * 0.065, y);
+      ctx.lineTo(cx, y + dir * spikeH);
+      ctx.lineTo(cx + width * 0.065, y);
+      ctx.closePath();
+      const grad = ctx.createLinearGradient(cx, y, cx, y + dir * spikeH);
+      grad.addColorStop(0, 'rgba(98,132,180,0.55)');
+      grad.addColorStop(1, 'rgba(24,28,52,0.8)');
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(170,220,255,0.15)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+
+
+  _applyPitchPilotRangeChoice(choice, fallbackRange = null) {
+    const pp = this.pitchPilot;
+    if (!choice) return;
+
+    if (choice.type === 'same' && fallbackRange) {
+      pp.lowHz = fallbackRange.lowHz;
+      pp.highHz = fallbackRange.highHz;
+      pp.calibrated = true;
+      pp.selectedRangeLabel = `Same Range (${this._pitchHzToNoteLabel(pp.lowHz)}→${this._pitchHzToNoteLabel(pp.highHz)})`;
+      return;
+    }
+
+    if (choice.type === 'auto') {
+      pp.calibrated = false;
+      pp.calibrationTimer = 0;
+      pp.observedMinHz = Infinity;
+      pp.observedMaxHz = 0;
+      pp.selectedRangeLabel = 'Auto (Glide Calibration)';
+      return;
+    }
+
+    if (choice.type === 'preset' && Number.isFinite(choice.lowHz) && Number.isFinite(choice.highHz)) {
+      pp.lowHz = choice.lowHz;
+      pp.highHz = Math.max(choice.lowHz + 60, choice.highHz);
+      pp.calibrated = true;
+      pp.selectedRangeLabel = `${choice.label} (${this._pitchHzToNoteLabel(pp.lowHz)}→${this._pitchHzToNoteLabel(pp.highHz)})`;
+    }
+  }
+
+  _offerPitchPilotRange(options = {}) {
+    const { allowContinueSame = false } = options;
+    const presets = [
+      { type: 'auto', label: 'Auto (glide calibration at run start)' },
+      { type: 'preset', label: 'Low / Bass', lowHz: 82.41, highHz: 246.94 },
+      { type: 'preset', label: 'Mid / Baritone-Alto', lowHz: 110.0, highHz: 349.23 },
+      { type: 'preset', label: 'High / Tenor-Soprano', lowHz: 164.81, highHz: 523.25 },
+    ];
+
+    const lines = presets.map((p, i) => `${i + 1}. ${p.label}`).join('\n');
+    const header = allowContinueSame
+      ? 'Pitch Pilot crashed. Choose a range for the next run, or continue same range.'
+      : 'Choose a pitch range before starting Pitch Pilot:';
+    const continueLine = allowContinueSame ? '\nC. Continue same range' : '';
+    const input = window.prompt(`${header}\n\n${lines}${continueLine}\n\nEnter option number:`, allowContinueSame ? 'C' : '1');
+
+    if (input === null) return allowContinueSame ? { type: 'same' } : { type: 'auto' };
+    const normalized = input.trim().toLowerCase();
+
+    if (allowContinueSame && (normalized === 'c' || normalized === 'same' || normalized === 'continue')) {
+      return { type: 'same' };
+    }
+
+    const idx = Number.parseInt(normalized, 10) - 1;
+    if (Number.isInteger(idx) && idx >= 0 && idx < presets.length) {
+      return presets[idx];
+    }
+
+    return allowContinueSame ? { type: 'same' } : { type: 'auto' };
+  }
+
+  _handlePitchPilotLossChoice() {
+    const pp = this.pitchPilot;
+    if (!this.isRunning || this.gameMode !== 'pilot' || !pp.gameOver || pp.awaitingRestartChoice) return;
+
+    pp.awaitingRestartChoice = true;
+    const previousRange = { lowHz: pp.lowHz, highHz: pp.highHz, label: pp.selectedRangeLabel };
+
+    setTimeout(() => {
+      if (!this.isRunning || this.gameMode !== 'pilot') {
+        pp.awaitingRestartChoice = false;
+        return;
+      }
+      const choice = this._offerPitchPilotRange({ allowContinueSame: true });
+      this._resetPitchPilotState();
+      this._applyPitchPilotRangeChoice(choice, previousRange);
+    }, 20);
+  }
+
+  updatePitchPilot(dt) {
+    const pp = this.pitchPilot;
+    if (!pp.sparkX) this._resetPitchPilotState();
+
+    pp.sparkX = this.width * 0.24;
+
+    if (!this.isRunning) {
+      pp.spawnTimer += dt;
+      if (pp.spawnTimer > 1.25) {
+        pp.spawnTimer = 0;
+        this._pilotSpawnBarrier();
+      }
+      for (const b of pp.barriers) b.x -= pp.speed * dt * 0.5;
+      pp.barriers = pp.barriers.filter(b => b.x + b.width > -120);
+      pp.sparkTargetY = this.height * (0.5 + Math.sin(performance.now() * 0.0018) * 0.12);
+      pp.sparkY += (pp.sparkTargetY - pp.sparkY) * Math.min(1, dt * 4);
+      pp.trail.push({ x: pp.sparkX, y: pp.sparkY, life: 0.6 });
+      for (let i = pp.trail.length - 1; i >= 0; i--) {
+        pp.trail[i].life -= dt;
+        if (pp.trail[i].life <= 0) pp.trail.splice(i, 1);
+      }
+      return;
+    }
+
+    if (pp.gameOver) {
+      pp.crashTimer += dt;
+      pp.sparkGlow = Math.max(0, pp.sparkGlow - dt * 2.2);
+      return;
+    }
+
+    const m = this.analyzer.metrics;
+    const hz = this.analyzer.smoothPitchHz;
+    const voiced = m.energy > 0.035 && this.analyzer.pitchConfidence > 0.15 && hz > 55;
+
+    if (!pp.calibrated) {
+      pp.calibrationTimer += dt;
+      if (voiced) {
+        pp.observedMinHz = Math.min(pp.observedMinHz, hz);
+        pp.observedMaxHz = Math.max(pp.observedMaxHz, hz);
+      }
+      if (pp.calibrationTimer >= pp.calibrationDuration) {
+        const minHz = Number.isFinite(pp.observedMinHz) ? pp.observedMinHz : 120;
+        const maxHz = Number.isFinite(pp.observedMaxHz) ? pp.observedMaxHz : 400;
+        pp.lowHz = Math.max(70, Math.min(minHz, maxHz * 0.82));
+        pp.highHz = Math.max(pp.lowHz + 80, maxHz * 1.05);
+        pp.calibrated = true;
+      }
+      return;
+    }
+
+    const top = this.height * 0.10;
+    const bottom = this.height * 0.92;
+    if (voiced) {
+      const t = Math.log(hz / pp.lowHz) / Math.log(pp.highHz / pp.lowHz);
+      const clamped = Math.max(0, Math.min(1, Number.isFinite(t) ? t : 0.5));
+      pp.sparkTargetY = bottom - clamped * (bottom - top);
+      pp.sparkGlow = Math.min(1, pp.sparkGlow + dt * 1.8 + m.energy * 0.4);
+    } else {
+      pp.sparkTargetY += dt * 140;
+      pp.sparkGlow = Math.max(0.22, pp.sparkGlow - dt * 1.2);
+    }
+    pp.sparkTargetY = Math.max(top, Math.min(bottom, pp.sparkTargetY));
+    pp.sparkY += (pp.sparkTargetY - pp.sparkY) * Math.min(1, dt * 9);
+
+    pp.spawnTimer += dt;
+    const spacing = pp.phase === 'warmup' ? 1.9 : pp.phase === 'steps' ? 1.5 : 1.2;
+    if (pp.spawnTimer >= spacing) {
+      pp.spawnTimer = 0;
+      this._pilotSpawnBarrier();
+    }
+
+    const speedBoost = pp.phase === 'warmup' ? 0 : pp.phase === 'steps' ? 35 : 70;
+    const speed = pp.speed + speedBoost;
+    for (const b of pp.barriers) {
+      b.x -= speed * dt;
+      const gapTop = b.gapCenter - b.gapSize * 0.5;
+      const gapBottom = b.gapCenter + b.gapSize * 0.5;
+      const inX = pp.sparkX + pp.sparkRadius > b.x && pp.sparkX - pp.sparkRadius < b.x + b.width;
+      if (inX && (pp.sparkY - pp.sparkRadius < gapTop || pp.sparkY + pp.sparkRadius > gapBottom)) {
+        pp.gameOver = true;
+        this._handlePitchPilotLossChoice();
+        break;
+      }
+      if (!b.passed && b.x + b.width < pp.sparkX - pp.sparkRadius) {
+        b.passed = true;
+        pp.score += 1;
+      }
+    }
+    pp.barriers = pp.barriers.filter(b => b.x + b.width > -120);
+
+    if (pp.score >= 16) pp.phase = 'slalom';
+    else if (pp.score >= 7) pp.phase = 'steps';
+
+    pp.trail.push({ x: pp.sparkX, y: pp.sparkY, life: 0.75 });
+    for (let i = pp.trail.length - 1; i >= 0; i--) {
+      pp.trail[i].life -= dt;
+      if (pp.trail[i].life <= 0) pp.trail.splice(i, 1);
+    }
+  }
+
+  drawPitchPilotScene() {
+    const ctx = this.ctx;
+    const w = this.width;
+    const h = this.height;
+    const pp = this.pitchPilot;
+
+    const bg = ctx.createLinearGradient(0, 0, 0, h);
+    bg.addColorStop(0, '#060912');
+    bg.addColorStop(0.5, '#0a1225');
+    bg.addColorStop(1, '#05070f');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
+
+    const gridAlpha = this.reducedMotion ? 0.06 : 0.11;
+    ctx.strokeStyle = `rgba(120,190,255,${gridAlpha})`;
+    ctx.lineWidth = 1;
+    for (let y = h * 0.12; y < h; y += 36) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+    }
+    for (let x = (-performance.now() * 0.04) % 40; x < w; x += 40) {
+      ctx.beginPath();
+      ctx.moveTo(x, h * 0.08);
+      ctx.lineTo(x, h);
+      ctx.stroke();
+    }
+
+    for (const b of pp.barriers) {
+      const gapTop = b.gapCenter - b.gapSize * 0.5;
+      const gapBottom = b.gapCenter + b.gapSize * 0.5;
+
+      this._drawCrystalCluster(b.x, 0, b.width, gapTop, true);
+      this._drawCrystalCluster(b.x, h, b.width, h - gapBottom, false);
+
+      const safe = ctx.createLinearGradient(b.x, gapTop, b.x, gapBottom);
+      safe.addColorStop(0, 'rgba(130,235,255,0.06)');
+      safe.addColorStop(0.5, 'rgba(176,255,160,0.22)');
+      safe.addColorStop(1, 'rgba(130,235,255,0.06)');
+      ctx.fillStyle = safe;
+      ctx.fillRect(b.x, gapTop, b.width, b.gapSize);
+
+      const noteY = b.gapCenter;
+      ctx.strokeStyle = 'rgba(190,235,255,0.35)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(b.x + 4, noteY);
+      ctx.lineTo(b.x + b.width - 4, noteY);
+      ctx.stroke();
+
+      ctx.font = '500 12px "Space Mono", monospace';
+      ctx.fillStyle = 'rgba(220,240,255,0.78)';
+      ctx.textAlign = 'center';
+      ctx.fillText(this._pilotNoteForY(noteY), b.x + b.width * 0.5, noteY - 8);
+    }
+
+    for (const t of pp.trail) {
+      const alpha = Math.max(0, t.life) * 0.45;
+      const r = pp.sparkRadius * (0.35 + t.life * 0.9);
+      ctx.fillStyle = this.colorblindMode
+        ? `rgba(90,235,255,${alpha})`
+        : `rgba(205,255,110,${alpha})`;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const coreHue = this.colorblindMode ? 190 : 72;
+    const orb = ctx.createRadialGradient(pp.sparkX, pp.sparkY, 1, pp.sparkX, pp.sparkY, 52);
+    orb.addColorStop(0, 'rgba(255,255,220,0.98)');
+    orb.addColorStop(0.25, `hsla(${coreHue}, 95%, 64%, ${0.65 + pp.sparkGlow * 0.25})`);
+    orb.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = orb;
+    ctx.beginPath();
+    ctx.arc(pp.sparkX, pp.sparkY, 52, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = 'rgba(255,245,190,0.95)';
+    ctx.beginPath();
+    ctx.arc(pp.sparkX, pp.sparkY, pp.sparkRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.beginPath();
+    ctx.arc(pp.sparkX - 4, pp.sparkY - 5, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.font = '600 28px "Space Mono", monospace';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(235,245,255,0.92)';
+    ctx.fillText('RESONANCE CAVERN', 22, 42);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = 'rgba(245,250,255,0.96)';
+    ctx.fillText(`SCORE: ${pp.score}`, w - 24, 42);
+
+    ctx.font = '600 13px "Space Mono", monospace';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(190,225,255,0.85)';
+    if (!pp.calibrated && this.isRunning) {
+      const remaining = Math.max(0, pp.calibrationDuration - pp.calibrationTimer);
+      ctx.fillText('Calibration: sing low, then glide to your highest comfortable note', 24, h - 24);
+      ctx.textAlign = 'right';
+      ctx.fillText(`${remaining.toFixed(1)}s`, w - 24, h - 24);
+    } else {
+      const phaseLabel = pp.phase === 'warmup' ? 'Warm-up' : pp.phase === 'steps' ? 'Steps' : 'Slalom';
+      ctx.fillText(`Phase: ${phaseLabel}`, 24, h - 24);
+      ctx.fillText(`Range: ${pp.selectedRangeLabel}`, 24, h - 44);
+      ctx.textAlign = 'right';
+      ctx.fillText(`Range ${this._pitchHzToNoteLabel(pp.lowHz)} → ${this._pitchHzToNoteLabel(pp.highHz)}`, w - 24, h - 24);
+    }
+
+    if (pp.gameOver) {
+      ctx.fillStyle = 'rgba(6,8,18,0.72)';
+      ctx.fillRect(0, 0, w, h);
+      ctx.textAlign = 'center';
+      ctx.font = '700 40px "Space Mono", monospace';
+      ctx.fillStyle = 'rgba(255,180,200,0.95)';
+      ctx.fillText('DISCORD COLLISION', w * 0.5, h * 0.45);
+      ctx.font = '600 18px "Space Mono", monospace';
+      ctx.fillStyle = 'rgba(220,235,255,0.92)';
+      ctx.fillText('Choose a new range or continue same to retry.', w * 0.5, h * 0.52);
+    }
   }
 
   // ============================================================
@@ -6080,6 +6482,9 @@ class ProsodyBallGame {
     } else if (this.gameMode === 'keyboard') {
       stats.push({ value: `${this.keyboardGameMode.toUpperCase()}`, label: 'Keyboard Mode' });
       stats.push({ value: `${this.voiceKeyboard.score}`, label: 'Score' });
+    } else if (this.gameMode === 'pilot') {
+      stats.push({ value: `${this.pitchPilot.phase.toUpperCase()}`, label: 'Pilot Phase' });
+      stats.push({ value: `${this.pitchPilot.score}`, label: 'Score' });
     } else if (this.gameMode === 'creature') {
       const stateMap = { blob: this.creature, jellyfish: this._jelly, phoenix: this._phoenix, nebula: this._nebula, spirit: this._spirit, koi: this._koi };
       const st = stateMap[this.creatureStyle] || this.creature;
