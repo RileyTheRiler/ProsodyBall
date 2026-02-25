@@ -4,6 +4,7 @@ emoji: 🎙
 colorFrom: red
 colorTo: purple
 sdk: static
+app_file: index.html
 pinned: false
 license: mit
 short_description: Control a ball with your voice prosody!
