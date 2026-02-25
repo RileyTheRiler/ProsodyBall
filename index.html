@@ -125,26 +125,30 @@
 
     .teleprompter-overlay {
       position: absolute;
-      left: 20px;
-      right: 20px;
-      bottom: 14px;
-      padding: 10px 14px;
-      background: rgba(7, 10, 20, 0.72);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 10px;
-      font-size: 0.9rem;
-      color: rgba(255, 255, 255, 0.72);
+      top: 18px;
+      left: 50%;
+      width: min(860px, calc(100% - 40px));
+      transform: translate(-50%, -8px);
+      padding: 12px 16px;
+      background: rgba(18, 22, 36, 0.76);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      text-align: center;
+      font-size: 0.95rem;
+      color: rgba(255, 255, 255, 0.8);
       line-height: 1.45;
       z-index: 20;
       pointer-events: none;
       opacity: 0;
-      transform: translateY(8px);
       transition: opacity 0.2s ease, transform 0.2s ease;
     }
 
     .teleprompter-overlay.show {
       opacity: 1;
-      transform: translateY(0);
+      transform: translate(-50%, 0);
     }
 
     .teleprompter-overlay .active-word {
@@ -1833,17 +1837,22 @@
           <option value="minimal">Minimal</option>
           <option value="highcontrast">High Contrast</option>
         </select>
-        <select id="visualStyleSelect" class="theme-select" aria-label="Visual style mode">
+        <select id="visualStyleSelect" class="theme-select canvas-only" aria-label="Visual style mode">
           <option value="artistic">🖌️ Artistic</option>
           <option value="analysis">📈 Analysis</option>
         </select>
-        <select id="pitchLabelsSelect" class="theme-select" aria-label="Pitch guide labels">
+        <select id="pitchLabelsSelect" class="theme-select canvas-only" aria-label="Pitch guide labels">
           <option value="off">Labels: Off</option>
           <option value="hz" selected>Labels: Hz</option>
           <option value="notes">Labels: Notes</option>
         </select>
-        <button class="btn btn-help" id="gridContrastBtn" title="Increase or reduce pitch grid contrast">Grid: Soft</button>
-        <button class="btn btn-help" id="teleprompterBtn" title="Toggle Rainbow teleprompter">Teleprompter</button>
+        <button class="btn btn-help canvas-only" id="gridContrastBtn" title="Increase or reduce pitch grid contrast">Grid: Soft</button>
+        <select id="teleprompterModeSelect" class="theme-select" aria-label="Teleprompter mode">
+          <option value="off">Teleprompter: Off</option>
+          <option value="rainbow" selected>Teleprompter: Rainbow Passage</option>
+          <option value="custom">Teleprompter: Custom Text</option>
+        </select>
+        <button class="btn btn-help" id="teleprompterCustomBtn" title="Edit custom teleprompter text">Edit Text</button>
         <button class="btn btn-cb" id="cbToggle" aria-label="Toggle colorblind mode" title="Colorblind mode">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" />
@@ -1861,7 +1870,6 @@
         </button>
         <button class="btn btn-help" id="helpBtn">How to Play</button>
         <button class="btn btn-help" id="recalibrateBtn" title="Run mic calibration again">Recalibrate</button>
-        <button class="btn btn-perf" id="perfBtn" title="Toggle performance overlay">FPS</button>
       </div>
     </div>
 
