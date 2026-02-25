@@ -40,6 +40,12 @@ class VoiceAnalyzer {
     this.formantConfidence = 0;  // how reliable current F1/F2/F3 estimates are
     this.vowelLikelihood = 0;   // 0=not vowel-like, 1=strong vowel formants
 
+    // Spectral tilt diagnostic (light vs heavy vocal weight)
+    this.spectralTiltRawDb = -14;
+    this.spectralTiltSmoothedDb = -14;
+    this.spectralWeight = 0.5; // 0=heavy, 1=light
+    this.spectralTiltConfidence = 0;
+
     // Energy
     this.energyHistory = [];
     this.energyHistoryMax = 40;
@@ -154,6 +160,10 @@ class VoiceAnalyzer {
     this.smoothF3 = 2700;
     this.formantConfidence = 0;
     this.vowelLikelihood = 0;
+    this.spectralTiltRawDb = -14;
+    this.spectralTiltSmoothedDb = -14;
+    this.spectralWeight = 0.5;
+    this.spectralTiltConfidence = 0;
     this.sustainedDuration = 0;
     this.syllableImpulse = 0;
     this.syllableState = 'silent';
@@ -368,13 +378,55 @@ class VoiceAnalyzer {
     // Only gate if WELL below speech level — consonants can be brief and quiet
     if (rms < this.noiseFloor * 1.3) hfEnergy = 0;
 
+    this.analyser.getFloatFrequencyData(this.frequencyData);
+    const fData = this.frequencyData;
+
+    // ====== SPECTRAL TILT (dynamic pitch-aware band ratio) ======
+    // Heavy band tracks lower harmonics around F0, light band samples 2.5k-5k breath/brightness.
+    const fftBinHz = this.audioCtx.sampleRate / this.analyser.fftSize;
+    const eps = 1e-12;
+    const activeF0 = pitch > 0 ? pitch : (this.lastPitch > 0 ? this.lastPitch : this.smoothPitchHz || 160);
+    const lowStartHz = Math.max(70, activeF0 * 0.5);
+    const lowEndHz = Math.min(2200, activeF0 * 3.5);
+    const highStartHz = 2500;
+    const highEndHz = Math.min(5000, this.audioCtx.sampleRate * 0.5 - fftBinHz);
+
+    const sumBandPower = (loHz, hiHz) => {
+      if (hiHz <= loHz) return 0;
+      const startBin = Math.max(0, Math.floor(loHz / fftBinHz));
+      const endBin = Math.min(fData.length - 1, Math.ceil(hiHz / fftBinHz));
+      if (endBin < startBin) return 0;
+      let sum = 0;
+      for (let i = startBin; i <= endBin; i++) {
+        const mag = Math.pow(10, fData[i] / 20);
+        sum += mag * mag;
+      }
+      return sum;
+    };
+
+    const eLowTilt = sumBandPower(lowStartHz, lowEndHz);
+    const eHighTilt = sumBandPower(highStartHz, highEndHz);
+    const rawTiltDb = 10 * Math.log10((eHighTilt + eps) / (eLowTilt + eps));
+    this.spectralTiltRawDb = rawTiltDb;
+
+    // EMA smoothing to reduce frame jitter while preserving control latency.
+    const tiltAlpha = 0.16;
+    this.spectralTiltSmoothedDb += (rawTiltDb - this.spectralTiltSmoothedDb) * tiltAlpha;
+
+    // Calibration-free provisional normalization for real-time control.
+    // Typical speech tilt spans roughly -34dB (heavy) to -4dB (light) on mobile mics.
+    const heavyAnchorDb = -34;
+    const lightAnchorDb = -4;
+    const normalized = (this.spectralTiltSmoothedDb - heavyAnchorDb) / (lightAnchorDb - heavyAnchorDb);
+    const tiltConfidenceGate = rms > this.noiseFloor * 1.35 ? 1 : Math.max(0, (rms - this.noiseFloor) / Math.max(1e-6, this.noiseFloor * 0.5));
+    this.spectralWeight += (Math.max(0, Math.min(1, normalized)) - this.spectralWeight) * (0.12 + tiltConfidenceGate * 0.2);
+    this.spectralTiltConfidence += (tiltConfidenceGate - this.spectralTiltConfidence) * 0.2;
+
     // ====== FORMANT / RESONANCE ANALYSIS ======
     // Two-stage approach:
     //   Stage 1: Band energy ratios for vowel vs consonant detection (fast, always-on)
     //   Stage 2: Harmonic envelope peak-picking for F1/F2 estimation (only during voiced vowels)
-    this.analyser.getFloatFrequencyData(this.frequencyData);
     const binHz = this.audioCtx.sampleRate / this.analyser.fftSize;
-    const fData = this.frequencyData;
 
     // --- Stage 1: Band energy for vowel detection ---
     const bandEnergy = (lo, hi) => {
@@ -1149,6 +1201,7 @@ class ProsodyBallGame {
     this.themeMode = 'playful';
     this.colorblindMode = false;
     this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road'
+    this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road' | 'ascent' | 'prism'
 
     // ====== CREATURE STATE ======
     this.creature = {
@@ -1377,6 +1430,74 @@ class ProsodyBallGame {
       driftStrength: 0,
     };
 
+    this.spectralAscent = {
+      balloonX: 0,
+      balloonY: 0,
+      balloonVy: 0,
+      centerY: 0,
+      worldX: 0,
+      markerY: 0,
+      tetherLagY: 0,
+      gates: [],
+      gateSpeed: 190,
+      score: 0,
+      phase: 0,
+      gateTimer: 0,
+      diagnostics: {
+        driftAccum: 0,
+        driftSamples: 0,
+        transitionLagAccum: 0,
+        transitionCount: 0,
+        prevWeight: 0.5,
+        dynamicMin: 1,
+        dynamicMax: 0,
+      },
+    };
+
+    this.resonanceRoad = {
+      targetTone: 'bright',
+      passageMode: 'balcony',
+      customText: '',
+      centerX: 0,
+      laneHalfWidth: 60,
+      roadHalfWidth: 150,
+      speed: 0,
+      trail: [],
+      score: 0,
+      multiplier: 1,
+      driftStrength: 0,
+    };
+
+    this.resonanceRoad = {
+      targetTone: 'bright',
+      passageMode: 'balcony',
+      customText: '',
+      centerX: 0,
+      laneHalfWidth: 60,
+      roadHalfWidth: 150,
+      speed: 0,
+      trail: [],
+      score: 0,
+      multiplier: 1,
+      driftStrength: 0,
+    };
+
+    // ====== PRISM READER STATE ======
+    this.prismReader = {
+      syllables: [],
+      currentIndex: -1,
+      isActive: false,
+      manualMode: false,
+      lastOnsetTime: 0,
+      accumulationTimer: 0,
+      silenceTimer: 0,
+      completed: false,
+      startTime: 0,
+      overlayBuilt: false,
+      passageMode: 'rainbow',
+      customText: '',
+    };
+
     // Recording — AnalyserNode polling approach
     this.isRecording = false;
     this._recInterval = null;
@@ -1545,6 +1666,26 @@ class ProsodyBallGame {
           c('vowel', 'Target Lane', 'Stay near your selected target posture to remain on the glowing road centerline.'),
           c('artic', 'Hazard Shoulders', 'Drifting off target creates splattered hazard trails and heavy speed drag.'),
           c('syllable', 'Teleprompter Drill', 'Read flowing text while preserving resonance posture through difficult words.'),
+        ],
+      },
+      ascent: {
+        title: 'Voice → Spectral Ascent Mapping',
+        items: [
+          c('bounce', 'Spectral Weight → Altitude', 'Light/breathy tone rises. Heavy/buzzy tone sinks. The balloon tracks normalized tilt directly.'),
+          c('tempo', 'Tilt Gauge', 'A live vertical gauge shows MAX LIGHT, NEUTRAL, and MAX HEAVY with a fast marker tied to the balloon.'),
+          c('vowel', 'Diagnostic Vowel', 'Use a steady "Ah" or "Uh" so changes come from vocal weight, not vowel shape shifts.'),
+          c('artic', 'Spectral Gates', 'Fly through high/low/neutral gate patterns to test extremes, stability, and agility.'),
+          c('syllable', 'Session Diagnostics', 'Post-flight feedback reports latency, stability drift, and light-heavy dynamic range.'),
+        ],
+      },
+      prism: {
+        title: 'Voice → Prism Reader Mapping',
+        items: [
+          c('bounce', 'Pitch → Color', 'Each syllable crystallizes with a hue from blue (low) to pink (high) based on your pitch.'),
+          c('tempo', 'Resonance → Glow', 'Bright, forward resonance creates a luminous text glow. Dark resonance stays flat.'),
+          c('vowel', 'Weight → Edge', 'Heavy vocal weight gives sharp text edges. Breathy voice creates soft, fuzzy syllables.'),
+          c('artic', 'Onset Stepping', 'Each new syllable onset advances the reader. Speak naturally to progress through the text.'),
+          c('syllable', 'Vowel Scoring', 'Vowel-specific resonance targets provide per-syllable scoring feedback via saturation.'),
         ],
       },
     };
@@ -1985,6 +2126,9 @@ class ProsodyBallGame {
     const roadTargetSelect = document.getElementById('roadTargetSelect');
     const roadPassageSelect = document.getElementById('roadPassageSelect');
     const roadCustomText = document.getElementById('roadCustomText');
+    const prismPacingSelect = document.getElementById('prismPacingSelect');
+    const prismPassageSelect = document.getElementById('prismPassageSelect');
+    const prismCustomText = document.getElementById('prismCustomText');
     const teleprompterCustomBtn = document.getElementById('teleprompterCustomBtn');
     const recBtn = document.getElementById('recBtn');
     const recordingsBtn = document.getElementById('recordingsBtn');
@@ -2107,7 +2251,18 @@ class ProsodyBallGame {
       }
 
       if (!this.hasCompletedCalibration) {
-        const calResult = await this.calibrationWizard.run(this.analyzer);
+        let calResult = { outcome: 'incomplete', skipped: true, reason: 'timeout-guard' };
+        try {
+          // Global guard so calibration can never stall session start.
+          const timeoutMs = 15000;
+          calResult = await Promise.race([
+            this.calibrationWizard.run(this.analyzer),
+            new Promise((resolve) => setTimeout(() => resolve({ outcome: 'incomplete', skipped: true, reason: 'wizard-timeout' }), timeoutMs)),
+          ]);
+        } catch (err) {
+          console.error('Calibration flow failed:', err);
+          calResult = { outcome: 'incomplete', skipped: true, reason: 'wizard-exception' };
+        }
         this.hasCompletedCalibration = true;
         showCalibrationOutcome(calResult);
       }
@@ -2199,6 +2354,12 @@ class ProsodyBallGame {
       if (this.gameMode === 'road') {
         this._resetResonanceRoadState();
       }
+      if (this.gameMode === 'ascent') {
+        this._resetSpectralAscentState();
+      }
+      if (this.gameMode === 'prism') {
+        this._resetPrismReaderState();
+      }
 
       // Clear vibration alert tripped highlights
       for (const rule of this.vibration.rules) { rule.tripped = false; }
@@ -2234,6 +2395,7 @@ class ProsodyBallGame {
       vibPanel.classList.remove('show');
       recordingsDrawer.classList.remove('show');
       const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot', road: 'Resonance Road' };
+      const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot', road: 'Resonance Road', ascent: 'Spectral Ascent', prism: 'Prism Reader' };
       startBtn.textContent = `⏹ Stop ${modeNames[this.gameMode] || ''}`;
       startBtn.classList.add('active');
       recBtn.classList.add('visible');
@@ -2256,6 +2418,9 @@ class ProsodyBallGame {
       const hud = document.getElementById('creatureStyleHud');
       if (hud) hud.style.display = 'none';
       this.analyzer.stop();
+      // Hide prism overlay on stop
+      const prismOvl = document.getElementById('prismOverlay');
+      if (prismOvl) prismOvl.classList.remove('show');
       startBtn.textContent = '🎙 Start';
       startBtn.classList.remove('active');
       recBtn.classList.remove('visible');
@@ -2299,6 +2464,8 @@ class ProsodyBallGame {
       modeCards.forEach(c => c.classList.remove('selected'));
       [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails, roadDetails]
         .forEach(p => p.classList.remove('show'));
+      [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails, roadDetails, ascentDetails, prismDetails]
+        .forEach(p => p && p.classList.remove('show'));
       this.drawIdleScene();
     });
     document.getElementById('summaryAgainBtn')?.addEventListener('click', () => {
@@ -2314,6 +2481,10 @@ class ProsodyBallGame {
 
       if (e.code === 'Space') {
         e.preventDefault();
+        if (this.isRunning && this.gameMode === 'prism') {
+          this._advancePrismManual();
+          return;
+        }
         if (document.getElementById('summaryOverlay').classList.contains('show')) {
           // From summary → start again
           document.getElementById('summaryOverlay').classList.remove('show');
@@ -2355,6 +2526,9 @@ class ProsodyBallGame {
     const pilotDetails = document.getElementById('pilotDetails');
     const roadDetails = document.getElementById('roadDetails');
     const modeCards = modePicker ? modePicker.querySelectorAll('.mode-card') : [];
+    const ascentDetails = document.getElementById('ascentDetails');
+    const prismDetails = document.getElementById('prismDetails');
+    const modeCards = modePicker.querySelectorAll('.mode-card');
 
     document.querySelectorAll('.canvas-only').forEach(el => el.classList.toggle('show', this.gameMode === 'canvas' || this.gameMode === 'keyboard'));
     if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
@@ -2377,6 +2551,24 @@ class ProsodyBallGame {
       const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD' };
       const hudTitle = document.querySelector('.hud-title');
       if (hudTitle) hudTitle.textContent = titles[mode] || 'PROSODY BALL';
+
+      const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD' };
+      const hudTitle = document.querySelector('.hud-title');
+      if (hudTitle) hudTitle.textContent = titles[mode] || 'PROSODY BALL';
+      modeDetails.classList.add('show');
+      ballDetails.classList.toggle('show', mode === 'ball');
+      creatureDetails.classList.toggle('show', mode === 'creature');
+      gardenDetails.classList.toggle('show', mode === 'garden');
+      canvasDetails.classList.toggle('show', mode === 'canvas');
+      keyboardDetails.classList.toggle('show', mode === 'keyboard');
+      pilotDetails.classList.toggle('show', mode === 'pilot');
+      roadDetails.classList.toggle('show', mode === 'road');
+      ascentDetails.classList.toggle('show', mode === 'ascent');
+      prismDetails.classList.toggle('show', mode === 'prism');
+
+      const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD' };
+      const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD', ascent: 'SPECTRAL ASCENT', prism: 'PRISM READER' };
+      document.querySelector('.hud-title').textContent = titles[mode] || 'PROSODY BALL';
       const canvasOnly = document.querySelectorAll('.canvas-only');
       canvasOnly.forEach(el => el.classList.toggle('show', mode === 'canvas' || mode === 'keyboard'));
       if (canvasModeSelect) {
@@ -2384,10 +2576,12 @@ class ProsodyBallGame {
         canvasModeSelect.value = this.canvasMode;
       }
       if (keyboardGameSelect) keyboardGameSelect.style.display = mode === 'keyboard' ? '' : 'none';
-      if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
+      if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', mode !== 'prism' && this.teleprompterMode !== 'off');
       this._updateHelpContent();
       if (mode === 'pilot') this._resetPitchPilotState();
       if (mode === 'road') this._resetResonanceRoadState();
+      if (mode === 'ascent') this._resetSpectralAscentState();
+      if (mode === 'prism') this._resetPrismReaderState();
       if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
       if (!this.isRunning) this.drawIdleScene();
     };
@@ -2474,6 +2668,29 @@ class ProsodyBallGame {
     roadCustomText?.addEventListener('input', (e) => {
       this.resonanceRoad.customText = e.target.value;
     });
+
+    prismPacingSelect?.addEventListener('change', (e) => {
+      this.prismReader.manualMode = e.target.value === 'manual';
+    });
+
+    prismPassageSelect?.addEventListener('change', (e) => {
+      this.prismReader.passageMode = e.target.value;
+      if (!this.isRunning && this.gameMode === 'prism') this._resetPrismReaderState();
+    });
+
+    prismCustomText?.addEventListener('input', (e) => {
+      this.prismReader.customText = e.target.value;
+    });
+
+    // Tap-to-advance for prism reader (mobile + desktop click)
+    const prismOverlayEl = document.getElementById('prismOverlay');
+    if (prismOverlayEl) {
+      prismOverlayEl.addEventListener('click', () => {
+        if (this.isRunning && this.gameMode === 'prism') {
+          this._advancePrismManual();
+        }
+      });
+    }
 
     teleprompterModeSelect?.addEventListener('change', (e) => {
       this.teleprompterMode = e.target.value;
@@ -2916,6 +3133,11 @@ class ProsodyBallGame {
       } else if (this.gameMode === 'road') {
         this.updateResonanceRoad(0.016);
         this.drawResonanceRoadScene();
+      } else if (this.gameMode === 'ascent') {
+        this.updateSpectralAscent(0.016);
+        this.drawSpectralAscentScene();
+      } else if (this.gameMode === 'prism') {
+        this.drawPrismReaderScene();
       } else {
         idleScroll.x += 0.5;
         this.scrollX = idleScroll.x;
@@ -2967,6 +3189,12 @@ class ProsodyBallGame {
     } else if (this.gameMode === 'road') {
       this.updateResonanceRoad(dt);
       this.drawResonanceRoadScene();
+    } else if (this.gameMode === 'ascent') {
+      this.updateSpectralAscent(dt);
+      this.drawSpectralAscentScene();
+    } else if (this.gameMode === 'prism') {
+      this.updatePrismReader(dt);
+      this.drawPrismReaderScene();
     } else {
       this.update(dt);
       this.drawSceneInternal(this.prosodyScore);
@@ -6526,6 +6754,693 @@ class ProsodyBallGame {
   }
 
 
+  _spectralAscentPhaseName(phase) {
+    if (phase < 1) return 'TEST PHASE 1: EXTREMES';
+    if (phase < 2) return 'TEST PHASE 2: STABILITY';
+    return 'TEST PHASE 3: AGILITY';
+  }
+
+  _spawnSpectralGate(yNorm = 0.5) {
+    const sa = this.spectralAscent;
+    sa.gates.push({
+      x: this.width + 70,
+      y: Math.max(0.1, Math.min(0.9, yNorm)),
+      r: 40,
+      passed: false,
+    });
+  }
+
+  _resetSpectralAscentState() {
+    const sa = this.spectralAscent;
+    sa.balloonX = this.width * 0.58;
+    sa.centerY = this.height * 0.52;
+    sa.balloonY = sa.centerY;
+    sa.balloonVy = 0;
+    sa.worldX = 0;
+    sa.markerY = sa.centerY;
+    sa.tetherLagY = sa.centerY;
+    sa.gates = [];
+    sa.gateTimer = 0;
+    sa.phase = 0;
+    sa.score = 0;
+    sa.diagnostics = {
+      driftAccum: 0,
+      driftSamples: 0,
+      transitionLagAccum: 0,
+      transitionCount: 0,
+      prevWeight: this.analyzer.spectralWeight || 0.5,
+      dynamicMin: 1,
+      dynamicMax: 0,
+    };
+  }
+
+  updateSpectralAscent(dt) {
+    const sa = this.spectralAscent;
+    const weight = this.analyzer.spectralWeight;
+    const confidence = this.analyzer.spectralTiltConfidence;
+    const centerY = sa.centerY || this.height * 0.52;
+
+    const riseForce = -640;
+    const sinkForce = 640;
+    const control = (weight - 0.5) * 2;
+    const controlForce = control >= 0 ? control * (-riseForce) * -1 : -control * sinkForce;
+    const gravityToCenter = (centerY - sa.balloonY) * 2.2;
+    sa.balloonVy += (controlForce + gravityToCenter * 0.5) * dt;
+    sa.balloonVy *= (0.98 - confidence * 0.01);
+    sa.balloonY += sa.balloonVy * dt;
+    sa.balloonY = Math.max(this.height * 0.15, Math.min(this.height * 0.88, sa.balloonY));
+
+    const gaugeTop = this.height * 0.2;
+    const gaugeBottom = this.height * 0.83;
+    const markerTargetY = gaugeBottom - weight * (gaugeBottom - gaugeTop);
+    sa.markerY += (markerTargetY - sa.markerY) * 0.35;
+    sa.tetherLagY += (sa.balloonY - sa.tetherLagY) * 0.18;
+
+    sa.worldX += sa.gateSpeed * dt;
+    sa.gateTimer += dt;
+
+    if (sa.gateTimer >= 1.15) {
+      sa.gateTimer = 0;
+      const elapsed = this.session && this.session.duration ? this.session.duration : 0;
+      sa.phase = elapsed < 25 ? 0 : elapsed < 50 ? 1 : 2;
+      if (sa.phase === 0) {
+        this._spawnSpectralGate(sa.gates.length % 2 === 0 ? 0.2 : 0.82);
+      } else if (sa.phase === 1) {
+        this._spawnSpectralGate(0.5 + (Math.random() - 0.5) * 0.06);
+      } else {
+        const step = [0.22, 0.78, 0.3, 0.7, 0.4, 0.6];
+        this._spawnSpectralGate(step[Math.floor(performance.now() / 350) % step.length]);
+      }
+    }
+
+    for (let i = sa.gates.length - 1; i >= 0; i--) {
+      const g = sa.gates[i];
+      g.x -= sa.gateSpeed * dt;
+      const gy = this.height * g.y;
+      if (!g.passed && Math.abs(g.x - sa.balloonX) < 26) {
+        const miss = Math.abs(gy - sa.balloonY);
+        const hit = miss < 46;
+        g.passed = true;
+        if (hit) sa.score += 10 + Math.max(0, Math.round((46 - miss) * 0.2));
+      }
+      if (g.x < -90) sa.gates.splice(i, 1);
+    }
+
+    const d = sa.diagnostics;
+    d.dynamicMin = Math.min(d.dynamicMin, weight);
+    d.dynamicMax = Math.max(d.dynamicMax, weight);
+    if (sa.phase === 1) {
+      d.driftAccum += Math.abs(sa.balloonY - centerY) / this.height;
+      d.driftSamples += 1;
+    }
+    const jump = Math.abs(weight - d.prevWeight);
+    if (jump > 0.28) {
+      const lag = Math.abs(sa.markerY - sa.balloonY) / this.height;
+      d.transitionLagAccum += lag;
+      d.transitionCount += 1;
+    }
+    d.prevWeight = weight;
+  }
+
+  drawSpectralAscentScene() {
+    const ctx = this.ctx;
+    const w = this.width;
+    const h = this.height;
+    const sa = this.spectralAscent;
+    const weight = this.analyzer.spectralWeight;
+
+    const sky = ctx.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, '#1b3f7b');
+    sky.addColorStop(0.6, '#3d71ad');
+    sky.addColorStop(1, '#88b5db');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.strokeStyle = 'rgba(200,230,255,0.22)';
+    ctx.lineWidth = 1;
+    for (let y = h * 0.14; y < h * 0.95; y += 52) {
+      ctx.beginPath();
+      ctx.moveTo(w * 0.14, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+    }
+
+    for (const g of sa.gates) {
+      const gy = h * g.y;
+      const grad = ctx.createRadialGradient(g.x, gy, 8, g.x, gy, g.r + 8);
+      grad.addColorStop(0, 'rgba(178,245,255,0.65)');
+      grad.addColorStop(1, 'rgba(86,219,255,0.02)');
+      ctx.strokeStyle = '#8be8ff';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.arc(g.x, gy, g.r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(g.x, gy, g.r + 8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const gaugeX = w * 0.08;
+    const gaugeTop = h * 0.2;
+    const gaugeBottom = h * 0.83;
+    const gaugeW = 26;
+    ctx.fillStyle = 'rgba(9,20,36,0.45)';
+    ctx.fillRect(gaugeX, gaugeTop, gaugeW, gaugeBottom - gaugeTop);
+    const gaugeGrad = ctx.createLinearGradient(0, gaugeTop, 0, gaugeBottom);
+    gaugeGrad.addColorStop(0, '#93eeff');
+    gaugeGrad.addColorStop(0.5, '#d8e3f0');
+    gaugeGrad.addColorStop(1, '#74685f');
+    ctx.fillStyle = gaugeGrad;
+    ctx.fillRect(gaugeX + 5, gaugeTop + 5, gaugeW - 10, gaugeBottom - gaugeTop - 10);
+
+    const midY = (gaugeTop + gaugeBottom) * 0.5;
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(gaugeX - 8, midY);
+    ctx.lineTo(gaugeX + gaugeW + 8, midY);
+    ctx.stroke();
+
+    ctx.fillStyle = '#eaf6ff';
+    ctx.font = '600 13px "Outfit", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('MAX LIGHT', gaugeX + gaugeW + 10, gaugeTop + 4);
+    ctx.fillText('NEUTRAL', gaugeX + gaugeW + 10, midY + 4);
+    ctx.fillText('MAX HEAVY', gaugeX + gaugeW + 10, gaugeBottom - 2);
+    ctx.save();
+    ctx.translate(gaugeX - 28, (gaugeTop + gaugeBottom) * 0.5);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('SPECTRAL TILT GAUGE', -70, 0);
+    ctx.restore();
+
+    ctx.strokeStyle = 'rgba(111,223,255,0.75)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(gaugeX + gaugeW + 2, sa.markerY);
+    ctx.bezierCurveTo(w * 0.24, sa.markerY, w * 0.38, sa.tetherLagY, sa.balloonX - 30, sa.balloonY);
+    ctx.stroke();
+
+    ctx.fillStyle = '#8df4ff';
+    ctx.beginPath();
+    ctx.arc(gaugeX + gaugeW + 2, sa.markerY, 8, 0, Math.PI * 2);
+    ctx.fill();
+
+    const bodyLight = 'rgba(189,244,255,0.92)';
+    const bodyHeavy = 'rgba(145,106,66,0.94)';
+    const blend = Math.max(0, Math.min(1, 1 - weight));
+    ctx.fillStyle = blend > 0.5 ? bodyHeavy : bodyLight;
+    ctx.beginPath();
+    ctx.ellipse(sa.balloonX, sa.balloonY - 8, 44, 58 - blend * 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = '#b1d1e8';
+    ctx.fillRect(sa.balloonX - 10, sa.balloonY + 48, 20, 14);
+    ctx.strokeStyle = 'rgba(20,40,60,0.4)';
+    ctx.strokeRect(sa.balloonX - 10, sa.balloonY + 48, 20, 14);
+
+    ctx.font = '700 30px "Outfit", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(234,248,255,0.94)';
+    ctx.fillText('SPECTRAL ASCENT', 22, 42);
+    ctx.font = '600 16px "Outfit", sans-serif';
+    ctx.fillStyle = 'rgba(220,240,255,0.92)';
+    ctx.fillText(this._spectralAscentPhaseName(sa.phase), w * 0.34, 42);
+
+    ctx.textAlign = 'right';
+    ctx.font = '600 22px "Space Mono", monospace';
+    ctx.fillStyle = 'rgba(245,250,255,0.95)';
+    ctx.fillText(`SCORE: ${Math.round(sa.score)}`, w - 24, 40);
+
+    const drift = sa.diagnostics.driftSamples > 0 ? sa.diagnostics.driftAccum / sa.diagnostics.driftSamples : 0;
+    const latency = sa.diagnostics.transitionCount > 0 ? sa.diagnostics.transitionLagAccum / sa.diagnostics.transitionCount : 0;
+    const dynamic = Math.max(0, sa.diagnostics.dynamicMax - sa.diagnostics.dynamicMin);
+    const latencyLabel = latency < 0.02 ? 'Low' : latency < 0.04 ? 'Medium' : 'High';
+    const stabilityLabel = drift < 0.05 ? 'High' : drift < 0.09 ? 'Medium' : 'Low';
+    const dynamicLabel = dynamic > 0.55 ? 'Excellent' : dynamic > 0.35 ? 'Good' : 'Limited';
+
+    ctx.textAlign = 'left';
+    ctx.font = '500 13px "Outfit", sans-serif';
+    ctx.fillStyle = 'rgba(236,248,255,0.92)';
+    ctx.fillText(`Spectral Latency: ${latencyLabel}`, 24, h - 66);
+    ctx.fillText(`Stability: ${stabilityLabel}`, 24, h - 46);
+    ctx.fillText(`Dynamic Range: ${dynamicLabel}`, 24, h - 26);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = 'rgba(226,240,255,0.9)';
+    ctx.fillText(`Tilt ${this.analyzer.spectralTiltSmoothedDb.toFixed(1)} dB · Weight ${(weight * 100).toFixed(0)}%`, w - 20, h - 24);
+  }
+
+  // ============================================================
+  // PRISM READER
+  // ============================================================
+
+  _syllabify(word) {
+    const clean = word.replace(/[^a-zA-Z]/g, '').toLowerCase();
+    if (clean.length === 0) return [word];
+    if (clean.length <= 2) return [word];
+
+    const vowels = 'aeiouy';
+    const isVowel = (ch) => vowels.includes(ch);
+
+    const nuclei = [];
+    let i = 0;
+    while (i < clean.length) {
+      if (isVowel(clean[i])) {
+        const start = i;
+        while (i < clean.length && isVowel(clean[i])) i++;
+        nuclei.push({ start, end: i });
+      } else {
+        i++;
+      }
+    }
+
+    // Handle silent-e: if last nucleus is just 'e' at word end and there are other nuclei, remove it
+    if (nuclei.length > 1) {
+      const last = nuclei[nuclei.length - 1];
+      if (last.end === clean.length && clean.slice(last.start, last.end) === 'e') {
+        nuclei.pop();
+      }
+    }
+
+    if (nuclei.length <= 1) return [word];
+
+    // Map clean indices back to original word indices
+    const cleanToOrig = [];
+    let ci = 0;
+    for (let oi = 0; oi < word.length; oi++) {
+      if (/[a-zA-Z]/.test(word[oi]) && ci < clean.length) {
+        cleanToOrig[ci] = oi;
+        ci++;
+      }
+    }
+    cleanToOrig[clean.length] = word.length;
+
+    const syllables = [];
+    let prevEnd = 0;
+
+    for (let n = 0; n < nuclei.length - 1; n++) {
+      const gapStart = nuclei[n].end;
+      const gapEnd = nuclei[n + 1].start;
+      const gapLen = gapEnd - gapStart;
+
+      let splitClean;
+      if (gapLen <= 1) {
+        splitClean = gapStart;
+      } else {
+        splitClean = gapEnd - 1;
+      }
+
+      const splitOrig = cleanToOrig[splitClean] || word.length;
+      syllables.push(word.slice(prevEnd, splitOrig));
+      prevEnd = splitOrig;
+    }
+    syllables.push(word.slice(prevEnd));
+
+    return syllables.filter(s => s.length > 0);
+  }
+
+  _buildPrismSyllables(text) {
+    const words = text.trim().split(/\s+/).filter(Boolean);
+    const syllables = [];
+    for (const word of words) {
+      const parts = this._syllabify(word);
+      for (let i = 0; i < parts.length; i++) {
+        syllables.push({
+          text: parts[i],
+          isWordStart: i === 0,
+          isWordEnd: i === parts.length - 1,
+          pitchSamples: [],
+          f2Samples: [],
+          centroidSamples: [],
+          weightSamples: [],
+          vowelLikelihoodSamples: [],
+          energySamples: [],
+          durationMs: 0,
+          startTime: 0,
+          avgF0: 0,
+          avgF2_vowelOnly: 0,
+          avgCentroid: 0,
+          avgWeight: 0,
+          vowelType: null,
+          vowelScore: 0,
+          strainFlag: false,
+          confidence: 0,
+          state: 'pre-read',
+          hue: 0,
+          glowRadius: 0,
+          strokeOrBlur: 'none',
+          blurAmount: 0,
+          strokeWidth: 0,
+        });
+      }
+    }
+    return syllables;
+  }
+
+  _resetPrismReaderState() {
+    const pr = this.prismReader;
+    const text = pr.passageMode === 'custom' && pr.customText.trim()
+      ? pr.customText
+      : this.teleprompterRainbowText;
+
+    pr.syllables = this._buildPrismSyllables(text);
+    pr.currentIndex = -1;
+    pr.isActive = false;
+    pr.completed = false;
+    pr.lastOnsetTime = 0;
+    pr.accumulationTimer = 0;
+    pr.silenceTimer = 0;
+    pr.startTime = performance.now();
+
+    const container = document.getElementById('prismScrollContainer');
+    if (container) {
+      container.innerHTML = '';
+      for (let i = 0; i < pr.syllables.length; i++) {
+        const syl = pr.syllables[i];
+        const span = document.createElement('span');
+        span.className = 'prism-syl pre-read';
+        span.dataset.sylIndex = String(i);
+        span.textContent = syl.text;
+        if (syl.isWordEnd) {
+          span.style.marginRight = '0.3em';
+        }
+        container.appendChild(span);
+      }
+      container.scrollTop = 0;
+    }
+
+    const fill = document.getElementById('prismProgressFill');
+    if (fill) fill.style.width = '0%';
+
+    const keepReading = document.getElementById('prismKeepReading');
+    if (keepReading) keepReading.classList.remove('show');
+  }
+
+  // ---- Pitch → Hue (logarithmic for musical perception) ----
+  _mapPitchToHue(hz) {
+    if (hz <= 0) return 240;
+    const minHz = 80;
+    const maxHz = 400;
+    const clamped = Math.max(minHz, Math.min(maxHz, hz));
+    const t = Math.log(clamped / minHz) / Math.log(maxHz / minHz);
+    return 240 + t * 80; // 240 (blue) → 320 (pink)
+  }
+
+  // ---- Resonance → Glow radius (quadratic with dead zone) ----
+  _mapResonanceToGlow(centroidNormalized) {
+    const t = Math.max(0, (centroidNormalized - 0.2) / 0.8);
+    return t * t * 20;
+  }
+
+  // ---- Vocal Weight → Edge texture (threshold switch) ----
+  _mapWeightToEdge(spectralWeight) {
+    if (spectralWeight < 0.4) {
+      const intensity = 1 - (spectralWeight / 0.4);
+      return { type: 'stroke', strokeWidth: 0.5 + intensity * 1.5, blur: 0 };
+    } else if (spectralWeight > 0.6) {
+      const intensity = (spectralWeight - 0.6) / 0.4;
+      return { type: 'blur', strokeWidth: 0, blur: 0.5 + intensity * 2.5 };
+    }
+    return { type: 'none', strokeWidth: 0, blur: 0 };
+  }
+
+  // ---- Vowel classification from F2 ----
+  _classifyPrismVowel(avgF0, avgF2) {
+    if (avgF2 <= 0) return null;
+    const normFactor = avgF0 > 200 ? 0.85 : 1.0;
+    const f2n = avgF2 * normFactor;
+    if (f2n >= 2200) return 'IY';
+    if (f2n >= 1800) return 'IH';
+    if (f2n >= 1500) return 'EH';
+    if (f2n >= 1100) return 'AH';
+    if (f2n >= 750)  return 'UW';
+    return 'AH';
+  }
+
+  // ---- Vowel-specific F2 target scoring (Gaussian) ----
+  _scorePrismVowelF2(vowelType, measuredF2) {
+    if (!vowelType || measuredF2 <= 0) return 0.5;
+    const targets = {
+      'IY': { center: 2600, halfWidth: 400 },
+      'IH': { center: 2000, halfWidth: 200 },
+      'EH': { center: 1750, halfWidth: 150 },
+      'AH': { center: 1400, halfWidth: 200 },
+      'UW': { center: 950,  halfWidth: 200 },
+    };
+    const t = targets[vowelType];
+    if (!t) return 0.5;
+    const distance = Math.abs(measuredF2 - t.center);
+    const normalized = distance / t.halfWidth;
+    return Math.max(0, Math.min(1, Math.exp(-0.5 * normalized * normalized)));
+  }
+
+  _applyPrismVisuals(index) {
+    const syl = this.prismReader.syllables[index];
+    syl.hue = this._mapPitchToHue(syl.avgF0);
+    syl.glowRadius = this._mapResonanceToGlow(syl.avgCentroid);
+    const edge = this._mapWeightToEdge(syl.avgWeight);
+    syl.strokeOrBlur = edge.type;
+    syl.strokeWidth = edge.strokeWidth;
+    syl.blurAmount = edge.blur;
+  }
+
+  _crystallizePrismSyllable(index) {
+    const syl = this.prismReader.syllables[index];
+    if (!syl || syl.state === 'crystallized') return;
+
+    const avg = (arr) => arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+    const median = (arr) => {
+      if (arr.length === 0) return 0;
+      const s = [...arr].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+    };
+
+    syl.avgF0 = median(syl.pitchSamples);
+    syl.avgF2_vowelOnly = avg(syl.f2Samples);
+    syl.avgCentroid = avg(syl.centroidSamples);
+    syl.avgWeight = avg(syl.weightSamples);
+
+    syl.vowelType = this._classifyPrismVowel(syl.avgF0, syl.avgF2_vowelOnly);
+    syl.vowelScore = this._scorePrismVowelF2(syl.vowelType, syl.avgF2_vowelOnly);
+
+    const avgEnergy = avg(syl.energySamples);
+    const avgVowelLike = avg(syl.vowelLikelihoodSamples);
+    syl.strainFlag = (syl.avgWeight < 0.25 && avgEnergy > 0.06);
+
+    const pitchConf = syl.pitchSamples.length > 2 ? 1 : syl.pitchSamples.length / 2;
+    const durationConf = Math.min(1, syl.durationMs / 300);
+    const vowelConf = avgVowelLike;
+    syl.confidence = Math.min(1, pitchConf * 0.3 + durationConf * 0.3 + vowelConf * 0.4);
+
+    this._applyPrismVisuals(index);
+    syl.state = 'crystallized';
+    this._updatePrismSylDOM(index);
+  }
+
+  _updatePrismSylDOM(index) {
+    const container = document.getElementById('prismScrollContainer');
+    if (!container) return;
+    const span = container.querySelector(`.prism-syl[data-syl-index="${index}"]`);
+    if (!span) return;
+
+    const syl = this.prismReader.syllables[index];
+    span.classList.remove('pre-read', 'active', 'crystallized', 'strain');
+    span.classList.add(syl.state);
+
+    if (syl.state === 'crystallized') {
+      // Vowel score modulates saturation: 30% (off-target) to 85% (on-target)
+      const sat = Math.round(30 + syl.vowelScore * 55);
+      const hsl = `hsl(${Math.round(syl.hue)}, ${sat}%, 65%)`;
+      let shadow = 'none';
+      if (syl.glowRadius > 0.5) {
+        const r = Math.round(syl.glowRadius);
+        shadow = `0 0 ${r}px hsla(${Math.round(syl.hue)}, 80%, 70%, 0.6), ` +
+                 `0 0 ${r * 2}px hsla(${Math.round(syl.hue)}, 60%, 50%, 0.25)`;
+      }
+
+      let filterStr = 'none';
+      let strokeStr = '';
+      if (syl.strokeOrBlur === 'stroke') {
+        strokeStr = `${syl.strokeWidth.toFixed(1)}px hsla(${Math.round(syl.hue)}, 50%, 40%, 0.8)`;
+      } else if (syl.strokeOrBlur === 'blur') {
+        filterStr = `blur(${syl.blurAmount.toFixed(1)}px)`;
+      }
+
+      span.style.color = hsl;
+      span.style.textShadow = shadow;
+      span.style.filter = filterStr;
+      span.style.webkitTextStroke = strokeStr;
+
+      if (syl.strainFlag) {
+        span.classList.add('strain');
+      }
+    } else if (syl.state === 'active') {
+      span.style.color = '';
+      span.style.textShadow = '';
+      span.style.filter = '';
+      span.style.webkitTextStroke = '';
+    }
+  }
+
+  updatePrismReader(dt) {
+    const pr = this.prismReader;
+    if (pr.completed) return;
+
+    const a = this.analyzer;
+    const now = performance.now() / 1000;
+
+    // Accumulate acoustic data for current syllable
+    if (pr.isActive && pr.currentIndex >= 0 && pr.currentIndex < pr.syllables.length) {
+      const syl = pr.syllables[pr.currentIndex];
+      syl.durationMs += dt * 1000;
+      pr.accumulationTimer += dt;
+
+      if (a.metrics.energy > 0.02) {
+        if (a.lastPitch > 0 && a.pitchConfidence > 0.4) {
+          syl.pitchSamples.push(a.smoothPitchHz);
+        }
+        if (a.vowelLikelihood > 0.25) {
+          syl.f2Samples.push(a.smoothF2);
+          syl.centroidSamples.push(a.smoothResonance);
+        }
+        syl.weightSamples.push(a.spectralWeight);
+        syl.energySamples.push(a.smoothEnergy);
+        syl.vowelLikelihoodSamples.push(a.vowelLikelihood);
+      }
+    }
+
+    // Track silence
+    if (a.metrics.energy > 0.02) {
+      pr.silenceTimer = 0;
+    } else {
+      pr.silenceTimer += dt;
+    }
+
+    // Show "keep reading" prompt on extended silence
+    const keepReading = document.getElementById('prismKeepReading');
+    if (keepReading) {
+      keepReading.classList.toggle('show', pr.isActive && pr.silenceTimer > 3.0);
+    }
+
+    // Manual mode: onset stepping is disabled, spacebar advances instead
+    if (pr.manualMode) return;
+
+    // Detect syllable onset
+    const onsetDetected = a.syllableImpulse > 0.85;
+    const timeSinceLastOnset = now - pr.lastOnsetTime;
+    const debounceOk = timeSinceLastOnset > 0.12;
+
+    if (onsetDetected && debounceOk) {
+      pr.lastOnsetTime = now;
+
+      // Crystallize previous syllable
+      if (pr.currentIndex >= 0 && pr.currentIndex < pr.syllables.length) {
+        this._crystallizePrismSyllable(pr.currentIndex);
+      }
+
+      pr.currentIndex++;
+      pr.accumulationTimer = 0;
+
+      if (pr.currentIndex >= pr.syllables.length) {
+        pr.completed = true;
+        pr.isActive = false;
+        return;
+      }
+
+      pr.isActive = true;
+      pr.syllables[pr.currentIndex].state = 'active';
+      pr.syllables[pr.currentIndex].startTime = performance.now();
+      this._updatePrismSylDOM(pr.currentIndex);
+    }
+
+    // Timeout: crystallize if stuck for > 2s during silence
+    if (pr.isActive && pr.accumulationTimer > 2.0 && pr.silenceTimer > 0.5) {
+      this._crystallizePrismSyllable(pr.currentIndex);
+      pr.isActive = false;
+    }
+  }
+
+  _advancePrismManual() {
+    const pr = this.prismReader;
+    if (pr.completed) return;
+
+    if (pr.currentIndex >= 0) {
+      this._crystallizePrismSyllable(pr.currentIndex);
+    }
+
+    pr.currentIndex++;
+    pr.accumulationTimer = 0;
+
+    if (pr.currentIndex >= pr.syllables.length) {
+      pr.completed = true;
+      pr.isActive = false;
+      return;
+    }
+
+    pr.isActive = true;
+    pr.syllables[pr.currentIndex].state = 'active';
+    pr.syllables[pr.currentIndex].startTime = performance.now();
+    this._updatePrismSylDOM(pr.currentIndex);
+  }
+
+  drawPrismReaderScene() {
+    const ctx = this.ctx;
+    const w = this.width;
+    const h = this.height;
+
+    const bg = ctx.createLinearGradient(0, 0, 0, h);
+    bg.addColorStop(0, '#080816');
+    bg.addColorStop(0.5, '#0c0a1e');
+    bg.addColorStop(1, '#0a0818');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
+
+    const pr = this.prismReader;
+    if (pr.syllables.length > 0) {
+      const crystallized = pr.syllables.filter(s => s.state === 'crystallized');
+      if (crystallized.length > 0) {
+        const avgHue = crystallized.reduce((s, c) => s + c.hue, 0) / crystallized.length;
+        const grad = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w * 0.6);
+        grad.addColorStop(0, `hsla(${avgHue}, 40%, 15%, 0.15)`);
+        grad.addColorStop(1, 'transparent');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, w, h);
+      }
+    }
+  }
+
+  renderPrismOverlay(dt) {
+    const overlay = document.getElementById('prismOverlay');
+    if (!overlay) return;
+
+    const pr = this.prismReader;
+    overlay.classList.toggle('show', true);
+
+    // Update progress bar
+    const progressFill = document.getElementById('prismProgressFill');
+    if (progressFill && pr.syllables.length > 0) {
+      const pct = Math.max(0, (pr.currentIndex + 1) / pr.syllables.length * 100);
+      progressFill.style.width = `${Math.min(100, pct)}%`;
+    }
+
+    // Scroll to keep active syllable visible
+    if (pr.currentIndex >= 0) {
+      const container = document.getElementById('prismScrollContainer');
+      const activeSpan = container?.querySelector(`.prism-syl[data-syl-index="${pr.currentIndex}"]`);
+      if (activeSpan && container) {
+        const spanTop = activeSpan.offsetTop;
+        const containerH = container.clientHeight;
+        const targetScroll = spanTop - containerH * 0.4;
+        container.scrollTop += (targetScroll - container.scrollTop) * 0.1;
+      }
+    }
+  }
+
   // ============================================================
   // VIBRATION ALERT ENGINE
   // ============================================================
@@ -6706,6 +7621,24 @@ class ProsodyBallGame {
       const rr = this.resonanceRoad;
       stats.push({ value: `${rr.targetTone.toUpperCase()}`, label: 'Target Tone' });
       stats.push({ value: `${Math.round(rr.score)}`, label: 'Score' });
+    } else if (this.gameMode === 'ascent') {
+      const sa = this.spectralAscent;
+      const dyn = Math.round((sa.diagnostics.dynamicMax - sa.diagnostics.dynamicMin) * 100);
+      stats.push({ value: `${Math.round(sa.score)}`, label: 'Score' });
+      stats.push({ value: `${Math.max(0, dyn)}%`, label: 'Dynamic Range' });
+    } else if (this.gameMode === 'prism') {
+      const pr = this.prismReader;
+      const crystallized = pr.syllables.filter(s => s.state === 'crystallized');
+      const total = pr.syllables.length;
+      const scored = crystallized.filter(s => s.vowelScore > 0);
+      const avgScore = scored.length > 0
+        ? scored.reduce((sum, s) => sum + s.vowelScore, 0) / scored.length : 0;
+      const strainCount = crystallized.filter(s => s.strainFlag).length;
+      stats.push({ value: `${crystallized.length}/${total}`, label: 'Syllables Read' });
+      stats.push({ value: `${Math.round(avgScore * 100)}%`, label: 'Avg Vowel Score' });
+      if (strainCount > 0) {
+        stats.push({ value: `${strainCount}`, label: 'Strain Flags' });
+      }
     } else if (this.gameMode === 'creature') {
       const stateMap = { blob: this.creature, jellyfish: this._jelly, phoenix: this._phoenix, nebula: this._nebula, spirit: this._spirit, koi: this._koi };
       const st = stateMap[this.creatureStyle] || this.creature;
@@ -6750,6 +7683,11 @@ class ProsodyBallGame {
   renderTeleprompter(dt) {
     const overlay = document.getElementById('teleprompterOverlay');
     if (!overlay) return;
+    if (this.gameMode === 'prism') {
+      overlay.classList.remove('show');
+      this.renderPrismOverlay(dt);
+      return;
+    }
     const roadMode = this.gameMode === 'road';
     const enabled = roadMode || this.teleprompterMode !== 'off';
     overlay.classList.toggle('show', enabled);
