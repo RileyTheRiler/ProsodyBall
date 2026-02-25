@@ -1974,6 +1974,109 @@
       padding: 4px 10px;
     }
 
+    /* ====== PRISM READER SETTINGS PANEL ====== */
+    .prism-settings {
+      margin-top: 14px;
+      position: relative;
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 18px 16px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow: hidden;
+    }
+
+    .prism-settings::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, hsl(260, 70%, 65%), hsl(320, 70%, 65%), hsl(40, 90%, 65%));
+    }
+
+    .prism-settings-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+    }
+
+    .prism-settings-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .prism-settings-full {
+      width: 100%;
+    }
+
+    .prism-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.55);
+    }
+
+    .prism-label-icon {
+      font-size: 0.9rem;
+      line-height: 1;
+    }
+
+    .prism-label-hint {
+      margin-left: auto;
+      font-size: 0.65rem;
+      font-weight: 400;
+      letter-spacing: 0.02em;
+      text-transform: none;
+      color: rgba(255, 255, 255, 0.28);
+      font-style: italic;
+    }
+
+    .prism-select {
+      width: 100%;
+      cursor: pointer;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .prism-select:hover {
+      border-color: rgba(180, 130, 255, 0.45);
+      box-shadow: 0 0 0 3px rgba(160, 100, 255, 0.1);
+    }
+
+    .prism-select:focus {
+      outline: none;
+      border-color: hsl(260, 70%, 65%);
+      box-shadow: 0 0 0 3px rgba(160, 100, 255, 0.2);
+    }
+
+    .prism-textarea {
+      width: 100%;
+      resize: vertical;
+      min-height: 72px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      box-sizing: border-box;
+      line-height: 1.55;
+    }
+
+    .prism-textarea:hover {
+      border-color: rgba(180, 130, 255, 0.45);
+      box-shadow: 0 0 0 3px rgba(160, 100, 255, 0.1);
+    }
+
+    .prism-textarea:focus {
+      outline: none;
+      border-color: hsl(260, 70%, 65%);
+      box-shadow: 0 0 0 3px rgba(160, 100, 255, 0.2);
+    }
+
     /* ====== PRISM READER ====== */
     .prism-overlay {
       position: absolute;
@@ -2570,24 +2673,37 @@
                       misaligns.</div>
                   </div>
                 </div>
-                <div
-                  style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
-                  <label>Pacing Mode
-                    <select id="prismPacingSelect" class="theme-select" aria-label="Prism Reader pacing mode">
-                      <option value="auto">Auto (Onset Detection)</option>
-                      <option value="manual">Manual (Spacebar/Tap)</option>
-                    </select>
-                  </label>
-                  <label>Passage
-                    <select id="prismPassageSelect" class="theme-select" aria-label="Prism Reader passage">
-                      <option value="rainbow">Rainbow Passage</option>
-                      <option value="custom">Custom Text</option>
-                    </select>
-                  </label>
-                  <label style="grid-column:1 / -1;">Custom Text
-                    <textarea id="prismCustomText" class="theme-select" rows="3" placeholder="Paste your own text here.
-                      Used only when Passage=Custom."></textarea>
-                  </label>
+                <div class="prism-settings">
+                  <div class="prism-settings-row">
+                    <div class="prism-settings-field">
+                      <label class="prism-label" for="prismPacingSelect">
+                        <span class="prism-label-icon">⏱</span>Pacing Mode
+                      </label>
+                      <select id="prismPacingSelect" class="theme-select prism-select"
+                        aria-label="Prism Reader pacing mode">
+                        <option value="auto">Auto (Onset Detection)</option>
+                        <option value="manual">Manual (Spacebar / Tap)</option>
+                      </select>
+                    </div>
+                    <div class="prism-settings-field">
+                      <label class="prism-label" for="prismPassageSelect">
+                        <span class="prism-label-icon">📖</span>Passage
+                      </label>
+                      <select id="prismPassageSelect" class="theme-select prism-select"
+                        aria-label="Prism Reader passage">
+                        <option value="rainbow">Rainbow Passage</option>
+                        <option value="custom">Custom Text</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="prism-settings-field prism-settings-full">
+                    <label class="prism-label" for="prismCustomText">
+                      <span class="prism-label-icon">✏️</span>Custom Text
+                      <span class="prism-label-hint">Used only when Passage = Custom</span>
+                    </label>
+                    <textarea id="prismCustomText" class="theme-select prism-textarea" rows="3"
+                      placeholder="Paste your own text here…"></textarea>
+                  </div>
                 </div>
               </div>
               <button class="btn-big" id="playBtn">🎙 Start Speaking</button>
