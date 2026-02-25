@@ -1148,6 +1148,7 @@ class ProsodyBallGame {
     this.sparkles = [];
     this.themeMode = 'playful';
     this.colorblindMode = false;
+    this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot'
     this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road'
 
     // ====== CREATURE STATE ======
@@ -1359,6 +1360,22 @@ class ProsodyBallGame {
       gameOver: false,
       ending: false,
       crashTimer: 0,
+      selectedRangeLabel: 'Auto (Glide Calibration)',
+      awaitingRestartChoice: false,
+    };
+
+    this.resonanceRoad = {
+      targetTone: 'bright',
+      passageMode: 'balcony',
+      customText: '',
+      centerX: 0,
+      laneHalfWidth: 60,
+      roadHalfWidth: 150,
+      speed: 0,
+      trail: [],
+      score: 0,
+      multiplier: 1,
+      driftStrength: 0,
     };
 
     this.resonanceRoad = {
@@ -2191,6 +2208,11 @@ class ProsodyBallGame {
 
       if (this.gameMode === 'pilot') {
         this._resetPitchPilotState();
+        const choice = this._offerPitchPilotRange({ allowContinueSame: false });
+        this._applyPitchPilotRangeChoice(choice);
+      }
+      if (this.gameMode === 'road') {
+        this._resetResonanceRoadState();
       }
       if (this.gameMode === 'road') {
         this._resetResonanceRoadState();
@@ -2229,6 +2251,7 @@ class ProsodyBallGame {
       helpTooltip.classList.remove('show');
       vibPanel.classList.remove('show');
       recordingsDrawer.classList.remove('show');
+      const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot' };
       const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot', road: 'Resonance Road' };
       startBtn.textContent = `⏹ Stop ${modeNames[this.gameMode] || ''}`;
       startBtn.classList.add('active');
@@ -2293,6 +2316,7 @@ class ProsodyBallGame {
       // Reset mode selection so user can pick fresh
       modeDetails.classList.remove('show');
       modeCards.forEach(c => c.classList.remove('selected'));
+      [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails]
       [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails, roadDetails]
         .forEach(p => p.classList.remove('show'));
       this.drawIdleScene();
@@ -2368,6 +2392,9 @@ class ProsodyBallGame {
       canvasDetails.classList.toggle('show', mode === 'canvas');
       keyboardDetails.classList.toggle('show', mode === 'keyboard');
       pilotDetails.classList.toggle('show', mode === 'pilot');
+      roadDetails.classList.toggle('show', mode === 'road');
+
+      const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT' };
       roadDetails.classList.toggle('show', mode === 'road');
 
       const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD' };
@@ -5994,6 +6021,8 @@ class ProsodyBallGame {
     pp.gameOver = false;
     pp.ending = false;
     pp.crashTimer = 0;
+    pp.selectedRangeLabel = 'Auto (Glide Calibration)';
+    pp.awaitingRestartChoice = false;
   }
 
   _pilotNoteForY(y) {
@@ -6048,6 +6077,85 @@ class ProsodyBallGame {
       ctx.lineWidth = 1;
       ctx.stroke();
     }
+  }
+
+
+  _applyPitchPilotRangeChoice(choice, fallbackRange = null) {
+    const pp = this.pitchPilot;
+    if (!choice) return;
+
+    if (choice.type === 'same' && fallbackRange) {
+      pp.lowHz = fallbackRange.lowHz;
+      pp.highHz = fallbackRange.highHz;
+      pp.calibrated = true;
+      pp.selectedRangeLabel = `Same Range (${this._pitchHzToNoteLabel(pp.lowHz)}→${this._pitchHzToNoteLabel(pp.highHz)})`;
+      return;
+    }
+
+    if (choice.type === 'auto') {
+      pp.calibrated = false;
+      pp.calibrationTimer = 0;
+      pp.observedMinHz = Infinity;
+      pp.observedMaxHz = 0;
+      pp.selectedRangeLabel = 'Auto (Glide Calibration)';
+      return;
+    }
+
+    if (choice.type === 'preset' && Number.isFinite(choice.lowHz) && Number.isFinite(choice.highHz)) {
+      pp.lowHz = choice.lowHz;
+      pp.highHz = Math.max(choice.lowHz + 60, choice.highHz);
+      pp.calibrated = true;
+      pp.selectedRangeLabel = `${choice.label} (${this._pitchHzToNoteLabel(pp.lowHz)}→${this._pitchHzToNoteLabel(pp.highHz)})`;
+    }
+  }
+
+  _offerPitchPilotRange(options = {}) {
+    const { allowContinueSame = false } = options;
+    const presets = [
+      { type: 'auto', label: 'Auto (glide calibration at run start)' },
+      { type: 'preset', label: 'Low / Bass', lowHz: 82.41, highHz: 246.94 },
+      { type: 'preset', label: 'Mid / Baritone-Alto', lowHz: 110.0, highHz: 349.23 },
+      { type: 'preset', label: 'High / Tenor-Soprano', lowHz: 164.81, highHz: 523.25 },
+    ];
+
+    const lines = presets.map((p, i) => `${i + 1}. ${p.label}`).join('\n');
+    const header = allowContinueSame
+      ? 'Pitch Pilot crashed. Choose a range for the next run, or continue same range.'
+      : 'Choose a pitch range before starting Pitch Pilot:';
+    const continueLine = allowContinueSame ? '\nC. Continue same range' : '';
+    const input = window.prompt(`${header}\n\n${lines}${continueLine}\n\nEnter option number:`, allowContinueSame ? 'C' : '1');
+
+    if (input === null) return allowContinueSame ? { type: 'same' } : { type: 'auto' };
+    const normalized = input.trim().toLowerCase();
+
+    if (allowContinueSame && (normalized === 'c' || normalized === 'same' || normalized === 'continue')) {
+      return { type: 'same' };
+    }
+
+    const idx = Number.parseInt(normalized, 10) - 1;
+    if (Number.isInteger(idx) && idx >= 0 && idx < presets.length) {
+      return presets[idx];
+    }
+
+    return allowContinueSame ? { type: 'same' } : { type: 'auto' };
+  }
+
+  _handlePitchPilotLossChoice() {
+    const pp = this.pitchPilot;
+    if (!this.isRunning || this.gameMode !== 'pilot' || !pp.gameOver || pp.awaitingRestartChoice) return;
+
+    pp.awaitingRestartChoice = true;
+    const previousRange = { lowHz: pp.lowHz, highHz: pp.highHz, label: pp.selectedRangeLabel };
+
+    setTimeout(() => {
+      if (!this.isRunning || this.gameMode !== 'pilot') {
+        pp.awaitingRestartChoice = false;
+        return;
+      }
+      const choice = this._offerPitchPilotRange({ allowContinueSame: true });
+      this._resetPitchPilotState();
+      this._applyPitchPilotRangeChoice(choice, previousRange);
+    }, 20);
   }
 
   updatePitchPilot(dt) {
@@ -6130,6 +6238,7 @@ class ProsodyBallGame {
       const inX = pp.sparkX + pp.sparkRadius > b.x && pp.sparkX - pp.sparkRadius < b.x + b.width;
       if (inX && (pp.sparkY - pp.sparkRadius < gapTop || pp.sparkY + pp.sparkRadius > gapBottom)) {
         pp.gameOver = true;
+        this._handlePitchPilotLossChoice();
         break;
       }
       if (!b.passed && b.x + b.width < pp.sparkX - pp.sparkRadius) {
@@ -6257,6 +6366,7 @@ class ProsodyBallGame {
     } else {
       const phaseLabel = pp.phase === 'warmup' ? 'Warm-up' : pp.phase === 'steps' ? 'Steps' : 'Slalom';
       ctx.fillText(`Phase: ${phaseLabel}`, 24, h - 24);
+      ctx.fillText(`Range: ${pp.selectedRangeLabel}`, 24, h - 44);
       ctx.textAlign = 'right';
       ctx.fillText(`Range ${this._pitchHzToNoteLabel(pp.lowHz)} → ${this._pitchHzToNoteLabel(pp.highHz)}`, w - 24, h - 24);
     }
@@ -6270,6 +6380,10 @@ class ProsodyBallGame {
       ctx.fillText('DISCORD COLLISION', w * 0.5, h * 0.45);
       ctx.font = '600 18px "Space Mono", monospace';
       ctx.fillStyle = 'rgba(220,235,255,0.92)';
+      ctx.fillText('Choose a new range or continue same to retry.', w * 0.5, h * 0.52);
+    }
+  }
+
       ctx.fillText('Stop and press Start for another run.', w * 0.5, h * 0.52);
     }
   }
