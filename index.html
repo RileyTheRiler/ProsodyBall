@@ -1814,6 +1814,116 @@
       font-size: 0.75rem;
       padding: 4px 10px;
     }
+
+    /* ====== PRISM READER ====== */
+    .prism-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 20;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      overflow: hidden;
+    }
+
+    .prism-overlay.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .prism-scroll-container {
+      width: min(860px, calc(100% - 40px));
+      max-height: 70%;
+      margin-top: 60px;
+      padding: 24px 28px;
+      background: rgba(10, 10, 18, 0.82);
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      border-radius: 16px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      overflow-y: auto;
+      scroll-behavior: smooth;
+      line-height: 2.2;
+      font-size: 1.35rem;
+      text-align: left;
+      word-wrap: break-word;
+    }
+
+    .prism-syl {
+      display: inline;
+      transition: color 0.15s ease, text-shadow 0.15s ease, filter 0.15s ease;
+    }
+
+    .prism-syl.pre-read {
+      color: rgba(255, 255, 255, 0.18);
+    }
+
+    .prism-syl.active {
+      color: rgba(255, 255, 255, 0.85);
+      text-shadow: 0 0 8px rgba(255, 217, 61, 0.5);
+      animation: prism-pulse 0.8s ease-in-out infinite alternate;
+    }
+
+    @keyframes prism-pulse {
+      from { text-shadow: 0 0 6px rgba(255, 217, 61, 0.3); }
+      to   { text-shadow: 0 0 14px rgba(255, 217, 61, 0.7); }
+    }
+
+    .prism-syl.crystallized {
+      transition: color 0.4s ease, text-shadow 0.4s ease, filter 0.4s ease;
+    }
+
+    .prism-syl.strain {
+      text-decoration: underline wavy rgba(255, 80, 80, 0.6);
+      text-underline-offset: 4px;
+    }
+
+    .prism-progress {
+      width: min(400px, calc(100% - 60px));
+      height: 4px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 2px;
+      margin-top: 12px;
+      overflow: hidden;
+    }
+
+    .prism-progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, hsl(240, 70%, 60%), hsl(280, 70%, 60%), hsl(320, 70%, 60%));
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+
+    .prism-keep-reading {
+      color: rgba(255, 217, 61, 0.5);
+      font-size: 0.85rem;
+      text-align: center;
+      margin-top: 8px;
+      opacity: 0;
+      transition: opacity 0.5s ease;
+    }
+
+    .prism-keep-reading.show {
+      opacity: 1;
+    }
+
+    @media (max-width: 600px) {
+      .prism-scroll-container {
+        margin-top: 40px;
+        padding: 16px 18px;
+        font-size: 1.1rem;
+        line-height: 2.0;
+        max-height: 60%;
+      }
+    }
   </style>
 </head>
 
@@ -1886,6 +1996,13 @@
     <div class="game-area">
       <canvas id="gameCanvas"></canvas>
       <div class="teleprompter-overlay" id="teleprompterOverlay"></div>
+      <div class="prism-overlay" id="prismOverlay">
+        <div class="prism-scroll-container" id="prismScrollContainer"></div>
+        <div class="prism-keep-reading" id="prismKeepReading">Keep reading...</div>
+        <div class="prism-progress" id="prismProgress">
+          <div class="prism-progress-fill" id="prismProgressFill"></div>
+        </div>
+      </div>
 
       <div class="creature-style-hud" id="creatureStyleHud">
         <button class="style-pill selected" data-style="jellyfish">🦑</button>
@@ -1948,6 +2065,11 @@
             <div class="mode-icon">🎈</div>
             <div class="mode-name">Spectral Ascent</div>
             <div class="mode-desc">A diagnostic flight mode: vocal weight directly drives altitude while a live spectral tilt gauge exposes the raw interpretation.</div>
+          </div>
+          <div class="mode-card" data-mode="prism">
+            <div class="mode-icon">🔮</div>
+            <div class="mode-name">Prism Reader</div>
+            <div class="mode-desc">Read text aloud and watch each syllable crystallize with color, glow, and texture from your voice.</div>
           </div>
         </div>
 
@@ -2152,31 +2274,72 @@
               </label>
             </div>
           </div>
-          <div class="mode-detail-panel" id="ascentDetails">
-            <div class="rules-grid">
-              <div class="rule-card rule-bounce">
-                <div class="rule-name">Spectral Weight → Altitude</div>
-                <div class="rule-desc">Light/breathy phonation lifts the balloon, heavy/buzzy phonation sinks it with direct 1-to-1 mapping.</div>
+          <div class=”mode-detail-panel” id=”ascentDetails”>
+            <div class=”rules-grid”>
+              <div class=”rule-card rule-bounce”>
+                <div class=”rule-name”>Spectral Weight → Altitude</div>
+                <div class=”rule-desc”>Light/breathy phonation lifts the balloon, heavy/buzzy phonation sinks it with direct 1-to-1 mapping.</div>
               </div>
-              <div class="rule-card rule-tempo">
-                <div class="rule-name">Live Tilt Gauge</div>
-                <div class="rule-desc">A vertical gauge shows MAX LIGHT, NEUTRAL, and MAX HEAVY with a tethered marker linked to the balloon.</div>
+              <div class=”rule-card rule-tempo”>
+                <div class=”rule-name”>Live Tilt Gauge</div>
+                <div class=”rule-desc”>A vertical gauge shows MAX LIGHT, NEUTRAL, and MAX HEAVY with a tethered marker linked to the balloon.</div>
               </div>
-              <div class="rule-card rule-vowel">
-                <div class="rule-name">Single Vowel Constraint</div>
-                <div class="rule-desc">Hold one neutral vowel (“Ah”/“Uh”) and vary only vocal weight for cleaner spectral tilt diagnostics.</div>
+              <div class=”rule-card rule-vowel”>
+                <div class=”rule-name”>Single Vowel Constraint</div>
+                <div class=”rule-desc”>Hold one neutral vowel (“Ah”/”Uh”) and vary only vocal weight for cleaner spectral tilt diagnostics.</div>
               </div>
-              <div class="rule-card rule-artic">
-                <div class="rule-name">Spectral Gates</div>
-                <div class="rule-desc">Fly through high, low, neutral, and staircase gate patterns to stress-test calibration, drift, and response speed.</div>
+              <div class=”rule-card rule-artic”>
+                <div class=”rule-name”>Spectral Gates</div>
+                <div class=”rule-desc”>Fly through high, low, neutral, and staircase gate patterns to stress-test calibration, drift, and response speed.</div>
               </div>
-              <div class="rule-card rule-syllable">
-                <div class="rule-name">Post-Flight Diagnostics</div>
-                <div class="rule-desc">Run reports Spectral Latency, Stability, and Dynamic Range so users can inspect algorithm behavior directly.</div>
+              <div class=”rule-card rule-syllable”>
+                <div class=”rule-name”>Post-Flight Diagnostics</div>
+                <div class=”rule-desc”>Run reports Spectral Latency, Stability, and Dynamic Range so users can inspect algorithm behavior directly.</div>
               </div>
             </div>
           </div>
-          <button class="btn-big" id="playBtn">🎙 Start Speaking</button>
+          <div class=”mode-detail-panel” id=”prismDetails”>
+            <div class=”rules-grid”>
+              <div class=”rule-card rule-bounce”>
+                <div class=”rule-name”>Pitch → Hue</div>
+                <div class=”rule-desc”>Low pitch crystallizes blue. High pitch crystallizes pink. Each syllable gets a permanent color from your voice.</div>
+              </div>
+              <div class=”rule-card rule-tempo”>
+                <div class=”rule-name”>Resonance → Glow</div>
+                <div class=”rule-desc”>Forward, bright resonance creates luminous text glow. Dark resonance stays flat and matte.</div>
+              </div>
+              <div class=”rule-card rule-vowel”>
+                <div class=”rule-name”>Weight → Edge</div>
+                <div class=”rule-desc”>Heavy vocal weight gives sharp, crisp text edges. Breathy voice creates soft, fuzzy syllable outlines.</div>
+              </div>
+              <div class=”rule-card rule-artic”>
+                <div class=”rule-name”>Onset Stepping</div>
+                <div class=”rule-desc”>Each syllable onset in your speech advances the reader. Speak naturally to progress through the text.</div>
+              </div>
+              <div class=”rule-card rule-syllable”>
+                <div class=”rule-name”>Manual Mode</div>
+                <div class=”rule-desc”>Press spacebar or tap to manually advance syllables. Use this if onset detection misaligns.</div>
+              </div>
+            </div>
+            <div style=”margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;”>
+              <label>Pacing Mode
+                <select id=”prismPacingSelect” class=”theme-select” aria-label=”Prism Reader pacing mode”>
+                  <option value=”auto”>Auto (Onset Detection)</option>
+                  <option value=”manual”>Manual (Spacebar/Tap)</option>
+                </select>
+              </label>
+              <label>Passage
+                <select id=”prismPassageSelect” class=”theme-select” aria-label=”Prism Reader passage”>
+                  <option value=”rainbow”>Rainbow Passage</option>
+                  <option value=”custom”>Custom Text</option>
+                </select>
+              </label>
+              <label style=”grid-column:1 / -1;”>Custom Text
+                <textarea id=”prismCustomText” class=”theme-select” rows=”3” placeholder=”Paste your own text here. Used only when Passage = Custom.”></textarea>
+              </label>
+            </div>
+          </div>
+          <button class=”btn-big” id=”playBtn”>🎙 Start Speaking</button>
           <div class="mic-note">Requires microphone access · All processing is local</div>
         </div>
         <div class="error-banner" id="errorBanner"></div>
