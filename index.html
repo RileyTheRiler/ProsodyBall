@@ -1944,6 +1944,11 @@
             <div class="mode-name">Resonance Road</div>
             <div class="mode-desc">Steer a sonic speeder with vocal timbre while reading a teleprompter. Stay on-tone or skid into the hazard lane.</div>
           </div>
+          <div class="mode-card" data-mode="ascent">
+            <div class="mode-icon">🎈</div>
+            <div class="mode-name">Spectral Ascent</div>
+            <div class="mode-desc">A diagnostic flight mode: vocal weight directly drives altitude while a live spectral tilt gauge exposes the raw interpretation.</div>
+          </div>
         </div>
 
         <div class="mode-details" id="modeDetails">
@@ -2145,6 +2150,30 @@
               <label style="grid-column:1 / -1;">Custom Text
                 <textarea id="roadCustomText" class="theme-select" rows="3" placeholder="Paste your own script here. Used only when Passage = Custom."></textarea>
               </label>
+            </div>
+          </div>
+          <div class="mode-detail-panel" id="ascentDetails">
+            <div class="rules-grid">
+              <div class="rule-card rule-bounce">
+                <div class="rule-name">Spectral Weight → Altitude</div>
+                <div class="rule-desc">Light/breathy phonation lifts the balloon, heavy/buzzy phonation sinks it with direct 1-to-1 mapping.</div>
+              </div>
+              <div class="rule-card rule-tempo">
+                <div class="rule-name">Live Tilt Gauge</div>
+                <div class="rule-desc">A vertical gauge shows MAX LIGHT, NEUTRAL, and MAX HEAVY with a tethered marker linked to the balloon.</div>
+              </div>
+              <div class="rule-card rule-vowel">
+                <div class="rule-name">Single Vowel Constraint</div>
+                <div class="rule-desc">Hold one neutral vowel (“Ah”/“Uh”) and vary only vocal weight for cleaner spectral tilt diagnostics.</div>
+              </div>
+              <div class="rule-card rule-artic">
+                <div class="rule-name">Spectral Gates</div>
+                <div class="rule-desc">Fly through high, low, neutral, and staircase gate patterns to stress-test calibration, drift, and response speed.</div>
+              </div>
+              <div class="rule-card rule-syllable">
+                <div class="rule-name">Post-Flight Diagnostics</div>
+                <div class="rule-desc">Run reports Spectral Latency, Stability, and Dynamic Range so users can inspect algorithm behavior directly.</div>
+              </div>
             </div>
           </div>
           <button class="btn-big" id="playBtn">🎙 Start Speaking</button>

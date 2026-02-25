@@ -40,6 +40,12 @@ class VoiceAnalyzer {
     this.formantConfidence = 0;  // how reliable current F1/F2/F3 estimates are
     this.vowelLikelihood = 0;   // 0=not vowel-like, 1=strong vowel formants
 
+    // Spectral tilt diagnostic (light vs heavy vocal weight)
+    this.spectralTiltRawDb = -14;
+    this.spectralTiltSmoothedDb = -14;
+    this.spectralWeight = 0.5; // 0=heavy, 1=light
+    this.spectralTiltConfidence = 0;
+
     // Energy
     this.energyHistory = [];
     this.energyHistoryMax = 40;
@@ -154,6 +160,10 @@ class VoiceAnalyzer {
     this.smoothF3 = 2700;
     this.formantConfidence = 0;
     this.vowelLikelihood = 0;
+    this.spectralTiltRawDb = -14;
+    this.spectralTiltSmoothedDb = -14;
+    this.spectralWeight = 0.5;
+    this.spectralTiltConfidence = 0;
     this.sustainedDuration = 0;
     this.syllableImpulse = 0;
     this.syllableState = 'silent';
@@ -368,13 +378,55 @@ class VoiceAnalyzer {
     // Only gate if WELL below speech level — consonants can be brief and quiet
     if (rms < this.noiseFloor * 1.3) hfEnergy = 0;
 
+    this.analyser.getFloatFrequencyData(this.frequencyData);
+    const fData = this.frequencyData;
+
+    // ====== SPECTRAL TILT (dynamic pitch-aware band ratio) ======
+    // Heavy band tracks lower harmonics around F0, light band samples 2.5k-5k breath/brightness.
+    const fftBinHz = this.audioCtx.sampleRate / this.analyser.fftSize;
+    const eps = 1e-12;
+    const activeF0 = pitch > 0 ? pitch : (this.lastPitch > 0 ? this.lastPitch : this.smoothPitchHz || 160);
+    const lowStartHz = Math.max(70, activeF0 * 0.5);
+    const lowEndHz = Math.min(2200, activeF0 * 3.5);
+    const highStartHz = 2500;
+    const highEndHz = Math.min(5000, this.audioCtx.sampleRate * 0.5 - fftBinHz);
+
+    const sumBandPower = (loHz, hiHz) => {
+      if (hiHz <= loHz) return 0;
+      const startBin = Math.max(0, Math.floor(loHz / fftBinHz));
+      const endBin = Math.min(fData.length - 1, Math.ceil(hiHz / fftBinHz));
+      if (endBin < startBin) return 0;
+      let sum = 0;
+      for (let i = startBin; i <= endBin; i++) {
+        const mag = Math.pow(10, fData[i] / 20);
+        sum += mag * mag;
+      }
+      return sum;
+    };
+
+    const eLowTilt = sumBandPower(lowStartHz, lowEndHz);
+    const eHighTilt = sumBandPower(highStartHz, highEndHz);
+    const rawTiltDb = 10 * Math.log10((eHighTilt + eps) / (eLowTilt + eps));
+    this.spectralTiltRawDb = rawTiltDb;
+
+    // EMA smoothing to reduce frame jitter while preserving control latency.
+    const tiltAlpha = 0.16;
+    this.spectralTiltSmoothedDb += (rawTiltDb - this.spectralTiltSmoothedDb) * tiltAlpha;
+
+    // Calibration-free provisional normalization for real-time control.
+    // Typical speech tilt spans roughly -34dB (heavy) to -4dB (light) on mobile mics.
+    const heavyAnchorDb = -34;
+    const lightAnchorDb = -4;
+    const normalized = (this.spectralTiltSmoothedDb - heavyAnchorDb) / (lightAnchorDb - heavyAnchorDb);
+    const tiltConfidenceGate = rms > this.noiseFloor * 1.35 ? 1 : Math.max(0, (rms - this.noiseFloor) / Math.max(1e-6, this.noiseFloor * 0.5));
+    this.spectralWeight += (Math.max(0, Math.min(1, normalized)) - this.spectralWeight) * (0.12 + tiltConfidenceGate * 0.2);
+    this.spectralTiltConfidence += (tiltConfidenceGate - this.spectralTiltConfidence) * 0.2;
+
     // ====== FORMANT / RESONANCE ANALYSIS ======
     // Two-stage approach:
     //   Stage 1: Band energy ratios for vowel vs consonant detection (fast, always-on)
     //   Stage 2: Harmonic envelope peak-picking for F1/F2 estimation (only during voiced vowels)
-    this.analyser.getFloatFrequencyData(this.frequencyData);
     const binHz = this.audioCtx.sampleRate / this.analyser.fftSize;
-    const fData = this.frequencyData;
 
     // --- Stage 1: Band energy for vowel detection ---
     const bandEnergy = (lo, hi) => {
@@ -1149,7 +1201,7 @@ class ProsodyBallGame {
     this.themeMode = 'playful';
     this.colorblindMode = false;
     this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot'
-    this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road'
+    this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road' | 'ascent'
 
     // ====== CREATURE STATE ======
     this.creature = {
@@ -1378,6 +1430,30 @@ class ProsodyBallGame {
       driftStrength: 0,
     };
 
+    this.spectralAscent = {
+      balloonX: 0,
+      balloonY: 0,
+      balloonVy: 0,
+      centerY: 0,
+      worldX: 0,
+      markerY: 0,
+      tetherLagY: 0,
+      gates: [],
+      gateSpeed: 190,
+      score: 0,
+      phase: 0,
+      gateTimer: 0,
+      diagnostics: {
+        driftAccum: 0,
+        driftSamples: 0,
+        transitionLagAccum: 0,
+        transitionCount: 0,
+        prevWeight: 0.5,
+        dynamicMin: 1,
+        dynamicMax: 0,
+      },
+    };
+
     this.resonanceRoad = {
       targetTone: 'bright',
       passageMode: 'balcony',
@@ -1574,6 +1650,16 @@ class ProsodyBallGame {
           c('vowel', 'Target Lane', 'Stay near your selected target posture to remain on the glowing road centerline.'),
           c('artic', 'Hazard Shoulders', 'Drifting off target creates splattered hazard trails and heavy speed drag.'),
           c('syllable', 'Teleprompter Drill', 'Read flowing text while preserving resonance posture through difficult words.'),
+        ],
+      },
+      ascent: {
+        title: 'Voice → Spectral Ascent Mapping',
+        items: [
+          c('bounce', 'Spectral Weight → Altitude', 'Light/breathy tone rises. Heavy/buzzy tone sinks. The balloon tracks normalized tilt directly.'),
+          c('tempo', 'Tilt Gauge', 'A live vertical gauge shows MAX LIGHT, NEUTRAL, and MAX HEAVY with a fast marker tied to the balloon.'),
+          c('vowel', 'Diagnostic Vowel', 'Use a steady "Ah" or "Uh" so changes come from vocal weight, not vowel shape shifts.'),
+          c('artic', 'Spectral Gates', 'Fly through high/low/neutral gate patterns to test extremes, stability, and agility.'),
+          c('syllable', 'Session Diagnostics', 'Post-flight feedback reports latency, stability drift, and light-heavy dynamic range.'),
         ],
       },
     };
@@ -2239,8 +2325,8 @@ class ProsodyBallGame {
       if (this.gameMode === 'road') {
         this._resetResonanceRoadState();
       }
-      if (this.gameMode === 'road') {
-        this._resetResonanceRoadState();
+      if (this.gameMode === 'ascent') {
+        this._resetSpectralAscentState();
       }
 
       // Clear vibration alert tripped highlights
@@ -2276,7 +2362,7 @@ class ProsodyBallGame {
       helpTooltip.classList.remove('show');
       vibPanel.classList.remove('show');
       recordingsDrawer.classList.remove('show');
-      const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot', road: 'Resonance Road' };
+      const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot', road: 'Resonance Road', ascent: 'Spectral Ascent' };
       startBtn.textContent = `⏹ Stop ${modeNames[this.gameMode] || ''}`;
       startBtn.classList.add('active');
       recBtn.classList.add('visible');
@@ -2398,6 +2484,7 @@ class ProsodyBallGame {
     const keyboardDetails = document.getElementById('keyboardDetails');
     const pilotDetails = document.getElementById('pilotDetails');
     const roadDetails = document.getElementById('roadDetails');
+    const ascentDetails = document.getElementById('ascentDetails');
     const modeCards = modePicker.querySelectorAll('.mode-card');
 
     document.querySelectorAll('.canvas-only').forEach(el => el.classList.toggle('show', this.gameMode === 'canvas' || this.gameMode === 'keyboard'));
@@ -2417,8 +2504,9 @@ class ProsodyBallGame {
       keyboardDetails.classList.toggle('show', mode === 'keyboard');
       pilotDetails.classList.toggle('show', mode === 'pilot');
       roadDetails.classList.toggle('show', mode === 'road');
+      ascentDetails.classList.toggle('show', mode === 'ascent');
 
-      const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD' };
+      const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD', ascent: 'SPECTRAL ASCENT' };
       document.querySelector('.hud-title').textContent = titles[mode] || 'PROSODY BALL';
       const canvasOnly = document.querySelectorAll('.canvas-only');
       canvasOnly.forEach(el => el.classList.toggle('show', mode === 'canvas' || mode === 'keyboard'));
@@ -2431,6 +2519,7 @@ class ProsodyBallGame {
       this._updateHelpContent();
       if (mode === 'pilot') this._resetPitchPilotState();
       if (mode === 'road') this._resetResonanceRoadState();
+      if (mode === 'ascent') this._resetSpectralAscentState();
       if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
       if (!this.isRunning) this.drawIdleScene();
     };
@@ -2950,6 +3039,9 @@ class ProsodyBallGame {
       } else if (this.gameMode === 'road') {
         this.updateResonanceRoad(0.016);
         this.drawResonanceRoadScene();
+      } else if (this.gameMode === 'ascent') {
+        this.updateSpectralAscent(0.016);
+        this.drawSpectralAscentScene();
       } else {
         idleScroll.x += 0.5;
         this.scrollX = idleScroll.x;
@@ -3001,6 +3093,9 @@ class ProsodyBallGame {
     } else if (this.gameMode === 'road') {
       this.updateResonanceRoad(dt);
       this.drawResonanceRoadScene();
+    } else if (this.gameMode === 'ascent') {
+      this.updateSpectralAscent(dt);
+      this.drawSpectralAscentScene();
     } else {
       this.update(dt);
       this.drawSceneInternal(this.prosodyScore);
@@ -6560,6 +6655,247 @@ class ProsodyBallGame {
   }
 
 
+  _spectralAscentPhaseName(phase) {
+    if (phase < 1) return 'TEST PHASE 1: EXTREMES';
+    if (phase < 2) return 'TEST PHASE 2: STABILITY';
+    return 'TEST PHASE 3: AGILITY';
+  }
+
+  _spawnSpectralGate(yNorm = 0.5) {
+    const sa = this.spectralAscent;
+    sa.gates.push({
+      x: this.width + 70,
+      y: Math.max(0.1, Math.min(0.9, yNorm)),
+      r: 40,
+      passed: false,
+    });
+  }
+
+  _resetSpectralAscentState() {
+    const sa = this.spectralAscent;
+    sa.balloonX = this.width * 0.58;
+    sa.centerY = this.height * 0.52;
+    sa.balloonY = sa.centerY;
+    sa.balloonVy = 0;
+    sa.worldX = 0;
+    sa.markerY = sa.centerY;
+    sa.tetherLagY = sa.centerY;
+    sa.gates = [];
+    sa.gateTimer = 0;
+    sa.phase = 0;
+    sa.score = 0;
+    sa.diagnostics = {
+      driftAccum: 0,
+      driftSamples: 0,
+      transitionLagAccum: 0,
+      transitionCount: 0,
+      prevWeight: this.analyzer.spectralWeight || 0.5,
+      dynamicMin: 1,
+      dynamicMax: 0,
+    };
+  }
+
+  updateSpectralAscent(dt) {
+    const sa = this.spectralAscent;
+    const weight = this.analyzer.spectralWeight;
+    const confidence = this.analyzer.spectralTiltConfidence;
+    const centerY = sa.centerY || this.height * 0.52;
+
+    const riseForce = -640;
+    const sinkForce = 640;
+    const control = (weight - 0.5) * 2;
+    const controlForce = control >= 0 ? control * (-riseForce) * -1 : -control * sinkForce;
+    const gravityToCenter = (centerY - sa.balloonY) * 2.2;
+    sa.balloonVy += (controlForce + gravityToCenter * 0.5) * dt;
+    sa.balloonVy *= (0.98 - confidence * 0.01);
+    sa.balloonY += sa.balloonVy * dt;
+    sa.balloonY = Math.max(this.height * 0.15, Math.min(this.height * 0.88, sa.balloonY));
+
+    const gaugeTop = this.height * 0.2;
+    const gaugeBottom = this.height * 0.83;
+    const markerTargetY = gaugeBottom - weight * (gaugeBottom - gaugeTop);
+    sa.markerY += (markerTargetY - sa.markerY) * 0.35;
+    sa.tetherLagY += (sa.balloonY - sa.tetherLagY) * 0.18;
+
+    sa.worldX += sa.gateSpeed * dt;
+    sa.gateTimer += dt;
+
+    if (sa.gateTimer >= 1.15) {
+      sa.gateTimer = 0;
+      const elapsed = this.session && this.session.duration ? this.session.duration : 0;
+      sa.phase = elapsed < 25 ? 0 : elapsed < 50 ? 1 : 2;
+      if (sa.phase === 0) {
+        this._spawnSpectralGate(sa.gates.length % 2 === 0 ? 0.2 : 0.82);
+      } else if (sa.phase === 1) {
+        this._spawnSpectralGate(0.5 + (Math.random() - 0.5) * 0.06);
+      } else {
+        const step = [0.22, 0.78, 0.3, 0.7, 0.4, 0.6];
+        this._spawnSpectralGate(step[Math.floor(performance.now() / 350) % step.length]);
+      }
+    }
+
+    for (let i = sa.gates.length - 1; i >= 0; i--) {
+      const g = sa.gates[i];
+      g.x -= sa.gateSpeed * dt;
+      const gy = this.height * g.y;
+      if (!g.passed && Math.abs(g.x - sa.balloonX) < 26) {
+        const miss = Math.abs(gy - sa.balloonY);
+        const hit = miss < 46;
+        g.passed = true;
+        if (hit) sa.score += 10 + Math.max(0, Math.round((46 - miss) * 0.2));
+      }
+      if (g.x < -90) sa.gates.splice(i, 1);
+    }
+
+    const d = sa.diagnostics;
+    d.dynamicMin = Math.min(d.dynamicMin, weight);
+    d.dynamicMax = Math.max(d.dynamicMax, weight);
+    if (sa.phase === 1) {
+      d.driftAccum += Math.abs(sa.balloonY - centerY) / this.height;
+      d.driftSamples += 1;
+    }
+    const jump = Math.abs(weight - d.prevWeight);
+    if (jump > 0.28) {
+      const lag = Math.abs(sa.markerY - sa.balloonY) / this.height;
+      d.transitionLagAccum += lag;
+      d.transitionCount += 1;
+    }
+    d.prevWeight = weight;
+  }
+
+  drawSpectralAscentScene() {
+    const ctx = this.ctx;
+    const w = this.width;
+    const h = this.height;
+    const sa = this.spectralAscent;
+    const weight = this.analyzer.spectralWeight;
+
+    const sky = ctx.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, '#1b3f7b');
+    sky.addColorStop(0.6, '#3d71ad');
+    sky.addColorStop(1, '#88b5db');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.strokeStyle = 'rgba(200,230,255,0.22)';
+    ctx.lineWidth = 1;
+    for (let y = h * 0.14; y < h * 0.95; y += 52) {
+      ctx.beginPath();
+      ctx.moveTo(w * 0.14, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+    }
+
+    for (const g of sa.gates) {
+      const gy = h * g.y;
+      const grad = ctx.createRadialGradient(g.x, gy, 8, g.x, gy, g.r + 8);
+      grad.addColorStop(0, 'rgba(178,245,255,0.65)');
+      grad.addColorStop(1, 'rgba(86,219,255,0.02)');
+      ctx.strokeStyle = '#8be8ff';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.arc(g.x, gy, g.r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(g.x, gy, g.r + 8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const gaugeX = w * 0.08;
+    const gaugeTop = h * 0.2;
+    const gaugeBottom = h * 0.83;
+    const gaugeW = 26;
+    ctx.fillStyle = 'rgba(9,20,36,0.45)';
+    ctx.fillRect(gaugeX, gaugeTop, gaugeW, gaugeBottom - gaugeTop);
+    const gaugeGrad = ctx.createLinearGradient(0, gaugeTop, 0, gaugeBottom);
+    gaugeGrad.addColorStop(0, '#93eeff');
+    gaugeGrad.addColorStop(0.5, '#d8e3f0');
+    gaugeGrad.addColorStop(1, '#74685f');
+    ctx.fillStyle = gaugeGrad;
+    ctx.fillRect(gaugeX + 5, gaugeTop + 5, gaugeW - 10, gaugeBottom - gaugeTop - 10);
+
+    const midY = (gaugeTop + gaugeBottom) * 0.5;
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(gaugeX - 8, midY);
+    ctx.lineTo(gaugeX + gaugeW + 8, midY);
+    ctx.stroke();
+
+    ctx.fillStyle = '#eaf6ff';
+    ctx.font = '600 13px "Outfit", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('MAX LIGHT', gaugeX + gaugeW + 10, gaugeTop + 4);
+    ctx.fillText('NEUTRAL', gaugeX + gaugeW + 10, midY + 4);
+    ctx.fillText('MAX HEAVY', gaugeX + gaugeW + 10, gaugeBottom - 2);
+    ctx.save();
+    ctx.translate(gaugeX - 28, (gaugeTop + gaugeBottom) * 0.5);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('SPECTRAL TILT GAUGE', -70, 0);
+    ctx.restore();
+
+    ctx.strokeStyle = 'rgba(111,223,255,0.75)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(gaugeX + gaugeW + 2, sa.markerY);
+    ctx.bezierCurveTo(w * 0.24, sa.markerY, w * 0.38, sa.tetherLagY, sa.balloonX - 30, sa.balloonY);
+    ctx.stroke();
+
+    ctx.fillStyle = '#8df4ff';
+    ctx.beginPath();
+    ctx.arc(gaugeX + gaugeW + 2, sa.markerY, 8, 0, Math.PI * 2);
+    ctx.fill();
+
+    const bodyLight = 'rgba(189,244,255,0.92)';
+    const bodyHeavy = 'rgba(145,106,66,0.94)';
+    const blend = Math.max(0, Math.min(1, 1 - weight));
+    ctx.fillStyle = blend > 0.5 ? bodyHeavy : bodyLight;
+    ctx.beginPath();
+    ctx.ellipse(sa.balloonX, sa.balloonY - 8, 44, 58 - blend * 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = '#b1d1e8';
+    ctx.fillRect(sa.balloonX - 10, sa.balloonY + 48, 20, 14);
+    ctx.strokeStyle = 'rgba(20,40,60,0.4)';
+    ctx.strokeRect(sa.balloonX - 10, sa.balloonY + 48, 20, 14);
+
+    ctx.font = '700 30px "Outfit", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(234,248,255,0.94)';
+    ctx.fillText('SPECTRAL ASCENT', 22, 42);
+    ctx.font = '600 16px "Outfit", sans-serif';
+    ctx.fillStyle = 'rgba(220,240,255,0.92)';
+    ctx.fillText(this._spectralAscentPhaseName(sa.phase), w * 0.34, 42);
+
+    ctx.textAlign = 'right';
+    ctx.font = '600 22px "Space Mono", monospace';
+    ctx.fillStyle = 'rgba(245,250,255,0.95)';
+    ctx.fillText(`SCORE: ${Math.round(sa.score)}`, w - 24, 40);
+
+    const drift = sa.diagnostics.driftSamples > 0 ? sa.diagnostics.driftAccum / sa.diagnostics.driftSamples : 0;
+    const latency = sa.diagnostics.transitionCount > 0 ? sa.diagnostics.transitionLagAccum / sa.diagnostics.transitionCount : 0;
+    const dynamic = Math.max(0, sa.diagnostics.dynamicMax - sa.diagnostics.dynamicMin);
+    const latencyLabel = latency < 0.02 ? 'Low' : latency < 0.04 ? 'Medium' : 'High';
+    const stabilityLabel = drift < 0.05 ? 'High' : drift < 0.09 ? 'Medium' : 'Low';
+    const dynamicLabel = dynamic > 0.55 ? 'Excellent' : dynamic > 0.35 ? 'Good' : 'Limited';
+
+    ctx.textAlign = 'left';
+    ctx.font = '500 13px "Outfit", sans-serif';
+    ctx.fillStyle = 'rgba(236,248,255,0.92)';
+    ctx.fillText(`Spectral Latency: ${latencyLabel}`, 24, h - 66);
+    ctx.fillText(`Stability: ${stabilityLabel}`, 24, h - 46);
+    ctx.fillText(`Dynamic Range: ${dynamicLabel}`, 24, h - 26);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = 'rgba(226,240,255,0.9)';
+    ctx.fillText(`Tilt ${this.analyzer.spectralTiltSmoothedDb.toFixed(1)} dB · Weight ${(weight * 100).toFixed(0)}%`, w - 20, h - 24);
+  }
+
+
   // ============================================================
   // VIBRATION ALERT ENGINE
   // ============================================================
@@ -6740,6 +7076,11 @@ class ProsodyBallGame {
       const rr = this.resonanceRoad;
       stats.push({ value: `${rr.targetTone.toUpperCase()}`, label: 'Target Tone' });
       stats.push({ value: `${Math.round(rr.score)}`, label: 'Score' });
+    } else if (this.gameMode === 'ascent') {
+      const sa = this.spectralAscent;
+      const dyn = Math.round((sa.diagnostics.dynamicMax - sa.diagnostics.dynamicMin) * 100);
+      stats.push({ value: `${Math.round(sa.score)}`, label: 'Score' });
+      stats.push({ value: `${Math.max(0, dyn)}%`, label: 'Dynamic Range' });
     } else if (this.gameMode === 'creature') {
       const stateMap = { blob: this.creature, jellyfish: this._jelly, phoenix: this._phoenix, nebula: this._nebula, spirit: this._spirit, koi: this._koi };
       const st = stateMap[this.creatureStyle] || this.creature;
