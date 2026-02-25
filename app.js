@@ -1148,7 +1148,6 @@ class ProsodyBallGame {
     this.sparkles = [];
     this.themeMode = 'playful';
     this.colorblindMode = false;
-    this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot'
     this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road'
 
     // ====== CREATURE STATE ======
@@ -1362,20 +1361,6 @@ class ProsodyBallGame {
       crashTimer: 0,
       selectedRangeLabel: 'Auto (Glide Calibration)',
       awaitingRestartChoice: false,
-    };
-
-    this.resonanceRoad = {
-      targetTone: 'bright',
-      passageMode: 'balcony',
-      customText: '',
-      centerX: 0,
-      laneHalfWidth: 60,
-      roadHalfWidth: 150,
-      speed: 0,
-      trail: [],
-      score: 0,
-      multiplier: 1,
-      driftStrength: 0,
     };
 
     this.resonanceRoad = {
@@ -2214,9 +2199,6 @@ class ProsodyBallGame {
       if (this.gameMode === 'road') {
         this._resetResonanceRoadState();
       }
-      if (this.gameMode === 'road') {
-        this._resetResonanceRoadState();
-      }
 
       // Clear vibration alert tripped highlights
       for (const rule of this.vibration.rules) { rule.tripped = false; }
@@ -2251,7 +2233,6 @@ class ProsodyBallGame {
       helpTooltip.classList.remove('show');
       vibPanel.classList.remove('show');
       recordingsDrawer.classList.remove('show');
-      const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot' };
       const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot', road: 'Resonance Road' };
       startBtn.textContent = `⏹ Stop ${modeNames[this.gameMode] || ''}`;
       startBtn.classList.add('active');
@@ -2316,7 +2297,6 @@ class ProsodyBallGame {
       // Reset mode selection so user can pick fresh
       modeDetails.classList.remove('show');
       modeCards.forEach(c => c.classList.remove('selected'));
-      [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails]
       [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails, roadDetails]
         .forEach(p => p.classList.remove('show'));
       this.drawIdleScene();
@@ -2392,9 +2372,6 @@ class ProsodyBallGame {
       canvasDetails.classList.toggle('show', mode === 'canvas');
       keyboardDetails.classList.toggle('show', mode === 'keyboard');
       pilotDetails.classList.toggle('show', mode === 'pilot');
-      roadDetails.classList.toggle('show', mode === 'road');
-
-      const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT' };
       roadDetails.classList.toggle('show', mode === 'road');
 
       const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD' };
@@ -6381,10 +6358,6 @@ class ProsodyBallGame {
       ctx.font = '600 18px "Space Mono", monospace';
       ctx.fillStyle = 'rgba(220,235,255,0.92)';
       ctx.fillText('Choose a new range or continue same to retry.', w * 0.5, h * 0.52);
-    }
-  }
-
-      ctx.fillText('Stop and press Start for another run.', w * 0.5, h * 0.52);
     }
   }
 
