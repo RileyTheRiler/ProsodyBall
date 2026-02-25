@@ -2286,6 +2286,47 @@ class ProsodyBallGame {
     document.querySelectorAll('.canvas-only').forEach(el => el.classList.toggle('show', this.gameMode === 'canvas' || this.gameMode === 'keyboard'));
     if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
 
+    const selectMode = (mode, card) => {
+      this.gameMode = mode;
+      if (mode === 'keyboard') this.canvasMode = 'keyboard';
+      if (mode === 'canvas') this.canvasMode = 'paint';
+
+      modeCards.forEach(c => c.classList.toggle('selected', c === card));
+      modeDetails.classList.add('show');
+      ballDetails.classList.toggle('show', mode === 'ball');
+      creatureDetails.classList.toggle('show', mode === 'creature');
+      gardenDetails.classList.toggle('show', mode === 'garden');
+      canvasDetails.classList.toggle('show', mode === 'canvas');
+      keyboardDetails.classList.toggle('show', mode === 'keyboard');
+
+      const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD' };
+      document.querySelector('.hud-title').textContent = titles[mode] || 'PROSODY BALL';
+      const canvasOnly = document.querySelectorAll('.canvas-only');
+      canvasOnly.forEach(el => el.classList.toggle('show', mode === 'canvas' || mode === 'keyboard'));
+      if (canvasModeSelect) {
+        canvasModeSelect.style.display = mode === 'canvas' ? '' : 'none';
+        canvasModeSelect.value = this.canvasMode;
+      }
+      if (keyboardGameSelect) keyboardGameSelect.style.display = mode === 'keyboard' ? '' : 'none';
+      if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
+      this._updateHelpContent();
+      if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
+      if (!this.isRunning) this.drawIdleScene();
+    };
+
+    const activateFromEvent = (event, preventDefault = false) => {
+      const card = event.target.closest('.mode-card');
+      if (!card || !modePicker.contains(card)) return;
+      if (preventDefault) event.preventDefault();
+      selectMode(card.dataset.mode, card);
+    };
+
+    modePicker.addEventListener('click', (event) => activateFromEvent(event, false));
+    modePicker.addEventListener('touchend', (event) => activateFromEvent(event, true), { passive: false });
+
+    // Default a visible selection so mode tap/click state is always initialized.
+    const initialCard = modePicker.querySelector(`.mode-card[data-mode="${this.gameMode}"]`) || modeCards[0];
+    if (initialCard) selectMode(initialCard.dataset.mode, initialCard);
     modeCards.forEach(card => {
       card.addEventListener('click', () => {
         const mode = card.dataset.mode;
