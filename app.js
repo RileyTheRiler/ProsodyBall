@@ -1393,10 +1393,11 @@ class ProsodyBallGame {
     this.voiceCanvasVisualStyle = 'artistic';
     this.pitchGuideLabelMode = 'hz';
     this.pitchGridStrength = 'soft';
-    this.showTeleprompter = true;
-    this.teleprompterWords = (`When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. ` +
+    this.teleprompterMode = 'rainbow';
+    this.teleprompterCustomText = '';
+    this.teleprompterRainbowText = (`When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. ` +
       `The rainbow is a division of white light into many beautiful colors. These take the shape of a long round arch, ` +
-      `with its path high above, and its two ends apparently beyond the horizon. There is, according to legend, a boiling pot of gold at one end.`).split(/\s+/);
+      `with its path high above, and its two ends apparently beyond the horizon. There is, according to legend, a boiling pot of gold at one end.`);
     this.teleprompterIndex = 0;
     this.metricHighlightTimers = { bounce: 0, tempo: 0, vowel: 0, articulation: 0, syllable: 0 };
     this.metricExtremeLatch = { bounce: false, tempo: false, vowel: false, articulation: false, syllable: false };
@@ -1886,7 +1887,8 @@ class ProsodyBallGame {
     const visualStyleSelect = document.getElementById('visualStyleSelect');
     const pitchLabelsSelect = document.getElementById('pitchLabelsSelect');
     const gridContrastBtn = document.getElementById('gridContrastBtn');
-    const teleprompterBtn = document.getElementById('teleprompterBtn');
+    const teleprompterModeSelect = document.getElementById('teleprompterModeSelect');
+    const teleprompterCustomBtn = document.getElementById('teleprompterCustomBtn');
     const recBtn = document.getElementById('recBtn');
     const recordingsBtn = document.getElementById('recordingsBtn');
     const recordingsDrawer = document.getElementById('recordingsDrawer');
@@ -2209,7 +2211,7 @@ class ProsodyBallGame {
       if (e.code === 'KeyP') {
         e.preventDefault();
         this.perfMonitor.toggle();
-        perfBtn.classList.toggle('active', this.perfMonitor.enabled);
+        perfBtn?.classList.toggle('active', this.perfMonitor.enabled);
       }
       if (e.code === 'KeyR' && this.isRunning) {
         e.preventDefault();
@@ -2238,7 +2240,7 @@ class ProsodyBallGame {
     const modeCards = modePicker.querySelectorAll('.mode-card');
 
     document.querySelectorAll('.canvas-only').forEach(el => el.classList.toggle('show', this.gameMode === 'canvas'));
-    if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.gameMode === 'canvas' && this.showTeleprompter);
+    if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
 
     modeCards.forEach(card => {
       card.addEventListener('click', () => {
@@ -2255,7 +2257,7 @@ class ProsodyBallGame {
         document.querySelector('.hud-title').textContent = titles[mode] || 'PROSODY BALL';
         const canvasOnly = document.querySelectorAll('.canvas-only');
         canvasOnly.forEach(el => el.classList.toggle('show', mode === 'canvas'));
-        if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', mode === 'canvas' && this.showTeleprompter);
+        if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
         this._updateHelpContent();
         // Restart idle scene for correct mode preview
         if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
@@ -2293,10 +2295,27 @@ class ProsodyBallGame {
       gridContrastBtn.textContent = this.pitchGridStrength === 'soft' ? 'Grid: Soft' : 'Grid: Strong';
     });
 
-    teleprompterBtn?.addEventListener('click', () => {
-      this.showTeleprompter = !this.showTeleprompter;
-      teleprompterBtn.classList.toggle('active', this.showTeleprompter);
-      if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.showTeleprompter && this.gameMode === 'canvas');
+    teleprompterModeSelect?.addEventListener('change', (e) => {
+      this.teleprompterMode = e.target.value;
+      this.teleprompterIndex = 0;
+      if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
+      teleprompterCustomBtn?.classList.toggle('active', this.teleprompterMode === 'custom');
+    });
+
+    teleprompterCustomBtn?.addEventListener('click', () => {
+      const existing = this.teleprompterCustomText || '';
+      const input = window.prompt('Paste or type your teleprompter text:', existing);
+      if (input === null) return;
+      this.teleprompterCustomText = input.trim();
+      if (!this.teleprompterCustomText) {
+        this.teleprompterMode = 'rainbow';
+      } else {
+        this.teleprompterMode = 'custom';
+      }
+      if (teleprompterModeSelect) teleprompterModeSelect.value = this.teleprompterMode;
+      this.teleprompterIndex = 0;
+      if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
+      teleprompterCustomBtn.classList.toggle('active', this.teleprompterMode === 'custom');
     });
 
     pauseCanvasBtn?.addEventListener('click', () => {
@@ -5617,11 +5636,12 @@ class ProsodyBallGame {
   renderTeleprompter(dt) {
     const overlay = document.getElementById('teleprompterOverlay');
     if (!overlay) return;
-    const enabled = this.gameMode === 'canvas' && this.showTeleprompter;
+    const enabled = this.teleprompterMode !== 'off';
     overlay.classList.toggle('show', enabled);
     if (!enabled) return;
 
-    const words = this.teleprompterWords;
+    const sourceText = this.teleprompterMode === 'custom' ? this.teleprompterCustomText : this.teleprompterRainbowText;
+    const words = sourceText.trim().split(/\s+/).filter(Boolean);
     if (!words.length) return;
     if (this.isRunning && this.analyzer.metrics.energy > 0.03) {
       const rate = 1.6 + this.analyzer.metrics.tempo * 2.4;
