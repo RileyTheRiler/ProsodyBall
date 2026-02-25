@@ -1149,6 +1149,7 @@ class ProsodyBallGame {
     this.themeMode = 'playful';
     this.colorblindMode = false;
     this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot'
+    this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road'
 
     // ====== CREATURE STATE ======
     this.creature = {
@@ -1363,6 +1364,20 @@ class ProsodyBallGame {
       awaitingRestartChoice: false,
     };
 
+    this.resonanceRoad = {
+      targetTone: 'bright',
+      passageMode: 'balcony',
+      customText: '',
+      centerX: 0,
+      laneHalfWidth: 60,
+      roadHalfWidth: 150,
+      speed: 0,
+      trail: [],
+      score: 0,
+      multiplier: 1,
+      driftStrength: 0,
+    };
+
     // Recording — AnalyserNode polling approach
     this.isRecording = false;
     this._recInterval = null;
@@ -1521,6 +1536,16 @@ class ProsodyBallGame {
           c('vowel', 'Silence = Gravity', 'If your voice drops out, the spark slowly falls until you vocalize again.'),
           c('artic', 'Discord Barriers', 'Navigate glowing crystal gaps with smooth pitch jumps and controlled slides.'),
           c('syllable', 'Progressive Phases', 'Warm-up starts easy, then interval steps and slalom tunnels increase challenge.'),
+        ],
+      },
+      road: {
+        title: 'Voice → Resonance Road Mapping',
+        items: [
+          c('bounce', 'Timbre → Steering', 'Bright vs dark resonance steers the speeder left and right in real time.'),
+          c('tempo', 'Energy → Speed', 'Speaking energy powers forward motion. Silence slows to a crawl.'),
+          c('vowel', 'Target Lane', 'Stay near your selected target posture to remain on the glowing road centerline.'),
+          c('artic', 'Hazard Shoulders', 'Drifting off target creates splattered hazard trails and heavy speed drag.'),
+          c('syllable', 'Teleprompter Drill', 'Read flowing text while preserving resonance posture through difficult words.'),
         ],
       },
     };
@@ -1958,6 +1983,9 @@ class ProsodyBallGame {
     const pitchLabelsSelect = document.getElementById('pitchLabelsSelect');
     const gridContrastBtn = document.getElementById('gridContrastBtn');
     const teleprompterModeSelect = document.getElementById('teleprompterModeSelect');
+    const roadTargetSelect = document.getElementById('roadTargetSelect');
+    const roadPassageSelect = document.getElementById('roadPassageSelect');
+    const roadCustomText = document.getElementById('roadCustomText');
     const teleprompterCustomBtn = document.getElementById('teleprompterCustomBtn');
     const recBtn = document.getElementById('recBtn');
     const recordingsBtn = document.getElementById('recordingsBtn');
@@ -2169,6 +2197,9 @@ class ProsodyBallGame {
         const choice = this._offerPitchPilotRange({ allowContinueSame: false });
         this._applyPitchPilotRangeChoice(choice);
       }
+      if (this.gameMode === 'road') {
+        this._resetResonanceRoadState();
+      }
 
       // Clear vibration alert tripped highlights
       for (const rule of this.vibration.rules) { rule.tripped = false; }
@@ -2204,6 +2235,7 @@ class ProsodyBallGame {
       vibPanel.classList.remove('show');
       recordingsDrawer.classList.remove('show');
       const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot' };
+      const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot', road: 'Resonance Road' };
       startBtn.textContent = `⏹ Stop ${modeNames[this.gameMode] || ''}`;
       startBtn.classList.add('active');
       recBtn.classList.add('visible');
@@ -2268,6 +2300,7 @@ class ProsodyBallGame {
       modeDetails.classList.remove('show');
       modeCards.forEach(c => c.classList.remove('selected'));
       [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails]
+      [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails, roadDetails]
         .forEach(p => p.classList.remove('show'));
       this.drawIdleScene();
     });
@@ -2323,6 +2356,7 @@ class ProsodyBallGame {
     const canvasDetails = document.getElementById('canvasDetails');
     const keyboardDetails = document.getElementById('keyboardDetails');
     const pilotDetails = document.getElementById('pilotDetails');
+    const roadDetails = document.getElementById('roadDetails');
     const modeCards = modePicker.querySelectorAll('.mode-card');
 
     document.querySelectorAll('.canvas-only').forEach(el => el.classList.toggle('show', this.gameMode === 'canvas' || this.gameMode === 'keyboard'));
@@ -2343,6 +2377,9 @@ class ProsodyBallGame {
       pilotDetails.classList.toggle('show', mode === 'pilot');
 
       const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT' };
+      roadDetails.classList.toggle('show', mode === 'road');
+
+      const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD' };
       document.querySelector('.hud-title').textContent = titles[mode] || 'PROSODY BALL';
       const canvasOnly = document.querySelectorAll('.canvas-only');
       canvasOnly.forEach(el => el.classList.toggle('show', mode === 'canvas' || mode === 'keyboard'));
@@ -2354,6 +2391,7 @@ class ProsodyBallGame {
       if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
       this._updateHelpContent();
       if (mode === 'pilot') this._resetPitchPilotState();
+      if (mode === 'road') this._resetResonanceRoadState();
       if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
       if (!this.isRunning) this.drawIdleScene();
     };
@@ -2417,6 +2455,19 @@ class ProsodyBallGame {
     gridContrastBtn?.addEventListener('click', () => {
       this.pitchGridStrength = this.pitchGridStrength === 'soft' ? 'strong' : 'soft';
       gridContrastBtn.textContent = this.pitchGridStrength === 'soft' ? 'Grid: Soft' : 'Grid: Strong';
+    });
+
+    roadTargetSelect?.addEventListener('change', (e) => {
+      this.resonanceRoad.targetTone = e.target.value;
+      if (!this.isRunning && this.gameMode === 'road') this.drawIdleScene();
+    });
+
+    roadPassageSelect?.addEventListener('change', (e) => {
+      this.resonanceRoad.passageMode = e.target.value;
+    });
+
+    roadCustomText?.addEventListener('input', (e) => {
+      this.resonanceRoad.customText = e.target.value;
     });
 
     teleprompterModeSelect?.addEventListener('change', (e) => {
@@ -2857,6 +2908,9 @@ class ProsodyBallGame {
       } else if (this.gameMode === 'pilot') {
         this.updatePitchPilot(0.016);
         this.drawPitchPilotScene();
+      } else if (this.gameMode === 'road') {
+        this.updateResonanceRoad(0.016);
+        this.drawResonanceRoadScene();
       } else {
         idleScroll.x += 0.5;
         this.scrollX = idleScroll.x;
@@ -2905,6 +2959,9 @@ class ProsodyBallGame {
     } else if (this.gameMode === 'pilot') {
       this.updatePitchPilot(dt);
       this.drawPitchPilotScene();
+    } else if (this.gameMode === 'road') {
+      this.updateResonanceRoad(dt);
+      this.drawResonanceRoadScene();
     } else {
       this.update(dt);
       this.drawSceneInternal(this.prosodyScore);
@@ -6309,6 +6366,165 @@ class ProsodyBallGame {
     }
   }
 
+      ctx.fillText('Stop and press Start for another run.', w * 0.5, h * 0.52);
+    }
+  }
+
+  _getResonanceRoadPassageText() {
+    const presets = {
+      balcony: 'But soft! What light through yonder window breaks? It is the east, and Juliet is the sun. Arise, fair sun, and kill the envious moon.',
+      news: "Good evening. In today's update, city leaders announced a major transit expansion focused on safer streets and faster commutes for local residents.",
+    };
+    if (this.resonanceRoad.passageMode === 'custom') {
+      return this.resonanceRoad.customText || presets.balcony;
+    }
+    return presets[this.resonanceRoad.passageMode] || presets.balcony;
+  }
+
+  _resetResonanceRoadState() {
+    const rr = this.resonanceRoad;
+    rr.centerX = this.width * 0.5;
+    rr.laneHalfWidth = this.width * 0.09;
+    rr.roadHalfWidth = this.width * 0.22;
+    rr.speed = 0;
+    rr.score = 0;
+    rr.multiplier = 1;
+    rr.driftStrength = 0;
+    rr.trail = [];
+  }
+
+  updateResonanceRoad(dt) {
+    const rr = this.resonanceRoad;
+    const m = this.analyzer.metrics;
+    const targetRes = rr.targetTone === 'bright' ? 0.72 : 0.28;
+    const diff = this.analyzer.smoothResonance - targetRes;
+    const drift = Math.max(-1, Math.min(1, diff * 3.2));
+    rr.driftStrength = drift;
+
+    const speaking = m.energy > 0.028;
+    const targetSpeed = speaking ? 70 + m.energy * 360 : 12;
+    rr.speed += (targetSpeed - rr.speed) * Math.min(1, dt * 3.8);
+
+    const steerPower = 320;
+    rr.centerX += drift * steerPower * dt;
+    const pad = rr.roadHalfWidth * 0.5;
+    rr.centerX = Math.max(pad, Math.min(this.width - pad, rr.centerX));
+
+    const onRoad = Math.abs(rr.centerX - this.width * 0.5) <= rr.laneHalfWidth;
+    if (!onRoad) {
+      rr.speed *= 0.72;
+      rr.multiplier = 1;
+      this._triggerVibrationFeedback('Resonance Drift');
+    } else if (speaking) {
+      rr.multiplier = Math.min(6, rr.multiplier + dt * 0.5);
+      rr.score += rr.speed * dt * rr.multiplier * 0.08;
+    }
+
+    rr.trail.push({
+      x: rr.centerX,
+      y: this.height * 0.74,
+      offroad: !onRoad,
+      life: 1,
+      w: 5 + m.energy * 12,
+    });
+    for (let i = rr.trail.length - 1; i >= 0; i--) {
+      rr.trail[i].life -= dt * 0.35;
+      rr.trail[i].y -= rr.speed * dt * 0.36;
+      if (rr.trail[i].life <= 0 || rr.trail[i].y < -40) rr.trail.splice(i, 1);
+    }
+    if (rr.trail.length > 900) rr.trail.splice(0, rr.trail.length - 900);
+  }
+
+  drawResonanceRoadScene() {
+    const ctx = this.ctx;
+    const w = this.width;
+    const h = this.height;
+    const rr = this.resonanceRoad;
+
+    const bright = rr.targetTone === 'bright';
+    const roadA = bright ? '#d8ff4f' : '#7f6bff';
+    const roadB = bright ? '#52f2b8' : '#2942d7';
+    const hazardA = bright ? '#30134f' : '#fff5a0';
+    const hazardB = bright ? '#0d1130' : '#fff';
+
+    const bg = ctx.createLinearGradient(0, 0, 0, h);
+    bg.addColorStop(0, bright ? '#080b1f' : '#0b0b16');
+    bg.addColorStop(1, bright ? '#120c30' : '#130e26');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
+
+    const roadTopY = h * 0.18;
+    const roadBottomY = h * 0.95;
+    const topHalf = w * 0.06;
+    const botHalf = rr.roadHalfWidth;
+
+    const hazard = ctx.createLinearGradient(0, 0, w, h);
+    hazard.addColorStop(0, hazardA);
+    hazard.addColorStop(1, hazardB);
+    ctx.fillStyle = hazard;
+    ctx.beginPath();
+    ctx.moveTo(0, roadBottomY);
+    ctx.lineTo(w * 0.5 - botHalf, roadBottomY);
+    ctx.lineTo(w * 0.5 - topHalf, roadTopY);
+    ctx.lineTo(0, roadTopY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(w, roadBottomY);
+    ctx.lineTo(w * 0.5 + botHalf, roadBottomY);
+    ctx.lineTo(w * 0.5 + topHalf, roadTopY);
+    ctx.lineTo(w, roadTopY);
+    ctx.closePath();
+    ctx.fill();
+
+    const road = ctx.createLinearGradient(0, roadTopY, 0, roadBottomY);
+    road.addColorStop(0, roadA);
+    road.addColorStop(1, roadB);
+    ctx.fillStyle = road;
+    ctx.beginPath();
+    ctx.moveTo(w * 0.5 - botHalf, roadBottomY);
+    ctx.lineTo(w * 0.5 + botHalf, roadBottomY);
+    ctx.lineTo(w * 0.5 + topHalf, roadTopY);
+    ctx.lineTo(w * 0.5 - topHalf, roadTopY);
+    ctx.closePath();
+    ctx.fill();
+
+    for (const t of rr.trail) {
+      ctx.strokeStyle = t.offroad
+        ? `rgba(${bright ? '165,95,255' : '255,250,180'},${Math.max(0.08, t.life)})`
+        : `rgba(${bright ? '215,255,110' : '138,122,255'},${Math.max(0.12, t.life)})`;
+      ctx.lineWidth = t.offroad ? t.w * 1.35 : t.w;
+      ctx.beginPath();
+      ctx.moveTo(t.x, t.y + 8);
+      ctx.lineTo(t.x + (Math.random() - 0.5) * (t.offroad ? 9 : 2), t.y - 6);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = bright ? 'rgba(230,255,140,0.95)' : 'rgba(210,200,255,0.95)';
+    ctx.beginPath();
+    ctx.ellipse(rr.centerX, h * 0.78, 30, 14, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = 'rgba(245,248,255,0.95)';
+    ctx.font = '600 30px "Space Mono", monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('RESONANCE ROAD', 22, 44);
+
+    ctx.font = '600 14px "Space Mono", monospace';
+    ctx.fillStyle = 'rgba(190,225,255,0.88)';
+    ctx.fillText(`TARGET: ${rr.targetTone.toUpperCase()}`, 24, 70);
+    ctx.fillText(`MULTIPLIER: ${rr.multiplier.toFixed(1)}x`, 24, 92);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = 'rgba(245,250,255,0.95)';
+    ctx.font = '600 24px "Space Mono", monospace';
+    ctx.fillText(`SCORE: ${Math.round(rr.score)}`, w - 22, 44);
+    ctx.font = '600 13px "Space Mono", monospace';
+    ctx.fillStyle = 'rgba(215,235,255,0.82)';
+    ctx.fillText(`SPEED ${Math.round(rr.speed)}`, w - 22, 68);
+  }
+
+
   // ============================================================
   // VIBRATION ALERT ENGINE
   // ============================================================
@@ -6485,6 +6701,10 @@ class ProsodyBallGame {
     } else if (this.gameMode === 'pilot') {
       stats.push({ value: `${this.pitchPilot.phase.toUpperCase()}`, label: 'Pilot Phase' });
       stats.push({ value: `${this.pitchPilot.score}`, label: 'Score' });
+    } else if (this.gameMode === 'road') {
+      const rr = this.resonanceRoad;
+      stats.push({ value: `${rr.targetTone.toUpperCase()}`, label: 'Target Tone' });
+      stats.push({ value: `${Math.round(rr.score)}`, label: 'Score' });
     } else if (this.gameMode === 'creature') {
       const stateMap = { blob: this.creature, jellyfish: this._jelly, phoenix: this._phoenix, nebula: this._nebula, spirit: this._spirit, koi: this._koi };
       const st = stateMap[this.creatureStyle] || this.creature;
@@ -6529,11 +6749,14 @@ class ProsodyBallGame {
   renderTeleprompter(dt) {
     const overlay = document.getElementById('teleprompterOverlay');
     if (!overlay) return;
-    const enabled = this.teleprompterMode !== 'off';
+    const roadMode = this.gameMode === 'road';
+    const enabled = roadMode || this.teleprompterMode !== 'off';
     overlay.classList.toggle('show', enabled);
     if (!enabled) return;
 
-    const sourceText = this.teleprompterMode === 'custom' ? this.teleprompterCustomText : this.teleprompterRainbowText;
+    const sourceText = roadMode
+      ? this._getResonanceRoadPassageText()
+      : (this.teleprompterMode === 'custom' ? this.teleprompterCustomText : this.teleprompterRainbowText);
     const words = sourceText.trim().split(/\s+/).filter(Boolean);
     if (!words.length) return;
     if (this.isRunning && this.analyzer.metrics.energy > 0.03) {
