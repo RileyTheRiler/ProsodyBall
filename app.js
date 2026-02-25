@@ -2287,6 +2287,14 @@ class ProsodyBallGame {
     if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
 
     modeCards.forEach(card => {
+      // Accessibility: keyboard activation
+      card.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          card.click();
+        }
+      });
+
       card.addEventListener('click', () => {
         const mode = card.dataset.mode;
 
@@ -2323,7 +2331,9 @@ class ProsodyBallGame {
     const syncStylePickers = (style) => {
       this.creatureStyle = style;
       document.querySelectorAll('#creatureStylePicker .style-pill, #creatureStyleHud .style-pill').forEach(b => {
-        b.classList.toggle('selected', b.dataset.style === style);
+        const isSelected = b.dataset.style === style;
+        b.classList.toggle('selected', isSelected);
+        b.setAttribute('aria-pressed', isSelected);
       });
       if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
       if (!this.isRunning) this.drawIdleScene();
@@ -5854,7 +5864,6 @@ class ProsodyBallGame {
     ctx.font = '600 12px "Space Mono", monospace';
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(196,220,255,0.85)';
-    const modeLabel = this.keyboardGameMode === 'mirror' ? 'Mirror Mode' : 'Target Practice';
     const modeLabel = this.keyboardGameMode === 'mirror' ? 'Mirror Mode' : this.keyboardGameMode === 'target' ? 'Target Practice' : 'Vocal Hero';
     ctx.fillText(modeLabel, left, keyboardTop + keyboardH + 20);
     if (this.keyboardGameMode !== 'mirror') {

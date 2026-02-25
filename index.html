@@ -901,11 +901,19 @@
       text-align: center;
     }
 
-    .mode-card:hover {
+    .mode-card:hover,
+    .mode-card:focus-visible {
       background: rgba(255, 255, 255, 0.06);
       border-color: rgba(192, 132, 252, 0.3);
       transform: translateY(-3px);
       box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+      outline: none;
+    }
+
+    .mode-card:focus-visible {
+      border-color: rgba(192, 132, 252, 0.8);
+      background: rgba(192, 132, 252, 0.08);
+      box-shadow: 0 0 0 2px rgba(192, 132, 252, 0.4), 0 8px 30px rgba(0, 0, 0, 0.3);
     }
 
     .mode-card.selected {
@@ -1903,31 +1911,31 @@
         </div>
 
         <div class="mode-picker" id="modePicker">
-          <div class="mode-card" data-mode="ball">
+          <div class="mode-card" data-mode="ball" role="button" tabindex="0">
             <div class="mode-icon">⚽</div>
             <div class="mode-name">Prosody Ball</div>
             <div class="mode-desc">Control a bouncing ball with your voice. Pitch bounces, tempo changes speed, vowels
               leave trails.</div>
           </div>
-          <div class="mode-card" data-mode="creature">
+          <div class="mode-card" data-mode="creature" role="button" tabindex="0">
             <div class="mode-icon">🐉</div>
             <div class="mode-name">Voice Creature</div>
             <div class="mode-desc">Your voice becomes a living being. Resonance shapes its body, prosody transforms it.
             </div>
           </div>
-          <div class="mode-card" data-mode="garden">
+          <div class="mode-card" data-mode="garden" role="button" tabindex="0">
             <div class="mode-icon">🌱</div>
             <div class="mode-name">Voice Garden</div>
             <div class="mode-desc">Grow a living ecosystem with your voice. Every session adds plants that accumulate.
             </div>
           </div>
-          <div class="mode-card" data-mode="canvas">
+          <div class="mode-card" data-mode="canvas" role="button" tabindex="0">
             <div class="mode-icon">🎨</div>
             <div class="mode-name">Voice Canvas</div>
             <div class="mode-desc">Paint generative art with your voice. Each session creates a unique piece you can
               save.</div>
           </div>
-          <div class="mode-card" data-mode="keyboard">
+          <div class="mode-card" data-mode="keyboard" role="button" tabindex="0">
             <div class="mode-icon">🎹</div>
             <div class="mode-name">Vocal Keyboard</div>
             <div class="mode-desc">A neon vocal synth keyboard for pitch exploration, target-note training, and
