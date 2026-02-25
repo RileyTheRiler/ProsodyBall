@@ -1,1459 +1,2111 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Prosody Training — Voice Training Game</title>
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Space+Mono:wght@400;700&display=swap');
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prosody Training — Voice Training Game</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Space+Mono:wght@400;700&display=swap');
+
+    :root {
+      --bg-deep: #0a0a12;
+      --bg-surface: #12121f;
+      --accent-bounce: #ff6b6b;
+      --accent-tempo: #ffd93d;
+      --accent-vowel: #6bcb77;
+      --accent-artic: #4d96ff;
+      --accent-syllable: #c084fc;
+      --text-primary: #e8e6f0;
+      --text-muted: #7a7890;
+    }
+
+    /* Okabe-Ito colorblind-safe palette overrides */
+    :root.colorblind {
+      --accent-bounce: #D55E00;
+      --accent-tempo: #F0E442;
+      --accent-vowel: #009E73;
+      --accent-artic: #56B4E9;
+      --accent-syllable: #CC79A7;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: var(--bg-deep);
+      color: var(--text-primary);
+      font-family: 'Outfit', sans-serif;
+      overflow: hidden;
+      height: 100vh;
+      min-height: 100vh;
+      height: 100dvh;
+      width: 100vw;
+    }
 
-  :root {
-    --bg-deep: #0a0a12;
-    --bg-surface: #12121f;
-    --accent-bounce: #ff6b6b;
-    --accent-tempo: #ffd93d;
-    --accent-vowel: #6bcb77;
-    --accent-artic: #4d96ff;
-    --accent-syllable: #c084fc;
-    --text-primary: #e8e6f0;
-    --text-muted: #7a7890;
-  }
-
-  /* Okabe-Ito colorblind-safe palette overrides */
-  :root.colorblind {
-    --accent-bounce: #D55E00;
-    --accent-tempo: #F0E442;
-    --accent-vowel: #009E73;
-    --accent-artic: #56B4E9;
-    --accent-syllable: #CC79A7;
-  }
-
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-
-  body {
-    background: var(--bg-deep);
-    color: var(--text-primary);
-    font-family: 'Outfit', sans-serif;
-    overflow: hidden;
-    height: 100vh;
-    min-height: 100vh;
-    height: 100dvh;
-    width: 100vw;
-  }
-
-  #app {
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    min-height: 100vh;
-    height: 100dvh;
-    width: 100vw;
-  }
-
-  .hud {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 20px;
-    background: linear-gradient(180deg, rgba(18,18,31,0.95) 0%, rgba(18,18,31,0.7) 100%);
-    backdrop-filter: blur(12px);
-    z-index: 10;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
-    flex-shrink: 0;
-  }
-
-  .hud-title {
-    font-weight: 800;
-    font-size: 1.1rem;
-    letter-spacing: 0.02em;
-    background: linear-gradient(135deg, #ff6b6b, #c084fc, #4d96ff);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-  :root.colorblind .hud-title {
-    background: linear-gradient(135deg, #D55E00, #CC79A7, #56B4E9);
-    -webkit-background-clip: text; background-clip: text;
-  }
-  :root.colorblind .overlay-title {
-    background: linear-gradient(135deg, #D55E00, #CC79A7, #56B4E9);
-    -webkit-background-clip: text; background-clip: text;
-  }
-
-  .hud-controls { display: flex; gap: 10px; align-items: center; }
-
-  .theme-select {
-    background: rgba(255,255,255,0.06);
-    color: var(--text-primary);
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 8px;
-    padding: 7px 10px;
-    font-family: 'Outfit', sans-serif;
-    font-size: 0.78rem;
-    font-weight: 600;
-  }
-
-  .btn {
-    font-family: 'Outfit', sans-serif;
-    font-weight: 600;
-    font-size: 0.85rem;
-    padding: 8px 18px;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s;
-    letter-spacing: 0.02em;
-  }
-
-  .btn-start {
-    background: linear-gradient(135deg, #ff6b6b, #ff8e53);
-    color: #fff;
-    box-shadow: 0 2px 12px rgba(255,107,107,0.3);
-  }
-  .btn-start:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(255,107,107,0.4); }
-  .btn-start.active {
-    background: linear-gradient(135deg, #555, #444);
-    box-shadow: none;
-  }
-  :root.colorblind .btn-start {
-    background: linear-gradient(135deg, #D55E00, #E69F00);
-    box-shadow: 0 2px 12px rgba(213,94,0,0.3);
-  }
-
-  .btn-help {
-    background: rgba(255,255,255,0.06);
-    color: var(--text-muted);
-    border: 1px solid rgba(255,255,255,0.08);
-  }
-  .btn-help:hover { background: rgba(255,255,255,0.1); color: var(--text-primary); }
-
-  .btn-cb {
-    background: rgba(255,255,255,0.06);
-    color: var(--text-muted);
-    border: 1px solid rgba(255,255,255,0.08);
-    padding: 6px 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .btn-cb:hover { background: rgba(255,255,255,0.1); color: var(--text-primary); }
-  .btn-cb.active {
-    background: rgba(86,180,233,0.15);
-    border-color: rgba(86,180,233,0.4);
-    color: #56B4E9;
-  }
-
-  .btn-vib {
-    background: rgba(255,255,255,0.06);
-    color: var(--text-muted);
-    border: 1px solid rgba(255,255,255,0.08);
-    padding: 6px 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .btn-vib:hover { background: rgba(255,255,255,0.1); color: var(--text-primary); }
-  .btn-vib.active {
-    background: rgba(255,160,60,0.15);
-    border-color: rgba(255,160,60,0.4);
-    color: #ffa03c;
-  }
-
-  /* Vibration settings panel */
-  .vib-panel {
-    position: absolute;
-    top: 60px;
-    right: 16px;
-    background: var(--bg-surface);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 12px;
-    padding: 16px 18px;
-    max-width: 340px;
-    width: 92vw;
-    z-index: 35;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-    font-size: 0.8rem;
-    line-height: 1.5;
-    color: var(--text-muted);
-    display: none;
-    max-height: 70vh;
-    overflow-y: auto;
-  }
-  .vib-panel.show { display: block; }
-  .vib-panel h3 {
-    color: var(--text-primary);
-    font-size: 0.88rem;
-    margin: 0 0 4px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .vib-panel-sub {
-    color: var(--text-muted);
-    font-size: 0.72rem;
-    margin-bottom: 14px;
-    line-height: 1.4;
-  }
-
-  .vib-master {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 14px;
-    padding: 8px 10px;
-    background: rgba(255,255,255,0.03);
-    border-radius: 8px;
-    border: 1px solid rgba(255,255,255,0.06);
-  }
-  .vib-master label {
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--text-primary);
-    flex: 1;
-  }
-
-  .vib-rules-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-bottom: 12px;
-  }
-
-  .vib-rule {
-    display: grid;
-    grid-template-columns: 1fr auto auto auto;
-    gap: 6px;
-    align-items: center;
-    padding: 8px 10px;
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 8px;
-    font-size: 0.72rem;
-  }
-  .vib-rule.tripped {
-    border-color: rgba(255,160,60,0.5);
-    background: rgba(255,160,60,0.06);
-  }
-
-  .vib-rule-config {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .vib-rule-top {
-    display: flex;
-    gap: 5px;
-    align-items: center;
-  }
-  .vib-rule select, .vib-rule input[type="number"] {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.68rem;
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 5px;
-    color: var(--text-primary);
-    padding: 4px 5px;
-  }
-  .vib-rule select { min-width: 78px; }
-  .vib-rule input[type="number"] { width: 58px; text-align: center; }
-  .vib-rule-unit {
-    font-size: 0.62rem;
-    color: var(--text-muted);
-    opacity: 0.6;
-    white-space: nowrap;
-  }
-
-  .vib-rule-del {
-    background: none;
-    border: none;
-    color: rgba(255,100,100,0.5);
-    cursor: pointer;
-    font-size: 1rem;
-    padding: 2px 4px;
-    border-radius: 4px;
-    line-height: 1;
-  }
-  .vib-rule-del:hover { color: #ff6b6b; background: rgba(255,100,100,0.1); }
-
-  .vib-add-btn {
-    font-family: 'Outfit', sans-serif;
-    font-size: 0.72rem;
-    font-weight: 600;
-    padding: 7px 14px;
-    border-radius: 8px;
-    border: 1px dashed rgba(255,255,255,0.15);
-    background: rgba(255,255,255,0.03);
-    color: var(--text-muted);
-    cursor: pointer;
-    width: 100%;
-    transition: all 0.2s;
-  }
-  .vib-add-btn:hover {
-    background: rgba(255,255,255,0.06);
-    border-color: rgba(255,255,255,0.25);
-    color: var(--text-primary);
-  }
-
-  /* Toggle switch */
-  .toggle-switch {
-    position: relative;
-    width: 36px;
-    height: 20px;
-    flex-shrink: 0;
-  }
-  .toggle-switch input { opacity: 0; width: 0; height: 0; }
-  .toggle-slider {
-    position: absolute;
-    cursor: pointer;
-    inset: 0;
-    background: rgba(255,255,255,0.1);
-    border-radius: 20px;
-    transition: 0.2s;
-  }
-  .toggle-slider::before {
-    content: '';
-    position: absolute;
-    height: 14px; width: 14px;
-    left: 3px; bottom: 3px;
-    background: rgba(255,255,255,0.4);
-    border-radius: 50%;
-    transition: 0.2s;
-  }
-  .toggle-switch input:checked + .toggle-slider {
-    background: rgba(255,160,60,0.35);
-  }
-  .toggle-switch input:checked + .toggle-slider::before {
-    transform: translateX(16px);
-    background: #ffa03c;
-  }
-
-  /* Screen shake for desktop vibration feedback */
-  @keyframes vibShake {
-    0%, 100% { transform: translate(0, 0); }
-    15% { transform: translate(-2px, 1px); }
-    30% { transform: translate(2px, -1px); }
-    45% { transform: translate(-1px, 2px); }
-    60% { transform: translate(1px, -1px); }
-    75% { transform: translate(-1px, 0); }
-  }
-  .game-area.vib-shake {
-    animation: vibShake 0.15s ease-in-out;
-  }
-
-  /* Reduced motion: disable shake, tone down transitions */
-  @media (prefers-reduced-motion: reduce) {
-    .game-area.vib-shake { animation: none !important; }
-    .meter-bar-fill { transition: none !important; }
-    .meter-pitch .meter-bar-fill { transition: none !important; }
-    .meter-resonance .meter-bar-fill { transition: none !important; }
-    * { transition-duration: 0.01ms !important; }
-  }
-
-  /* Session timer in HUD */
-  .session-timer {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.72rem;
-    color: rgba(255,255,255,0.35);
-    margin-left: 10px;
-    letter-spacing: 0.05em;
-    display: none;
-  }
-  .session-timer.active {
-    display: inline;
-  }
-
-  /* Session summary overlay */
-  .summary-overlay {
-    position: absolute;
-    inset: 0;
-    z-index: 25;
-    display: none;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    background: rgba(10,10,18,0.92);
-    backdrop-filter: blur(16px);
-    padding: 24px;
-    overflow-y: auto;
-  }
-  .summary-overlay.show { display: flex; }
-  .summary-title {
-    font-size: 1.5rem;
-    font-weight: 800;
-    letter-spacing: 0.02em;
-    margin-bottom: 4px;
-    background: linear-gradient(135deg, #ff6b6b, #c084fc, #4d96ff);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
-  }
-  :root.colorblind .summary-title {
-    background: linear-gradient(135deg, #D55E00, #CC79A7, #56B4E9);
-    -webkit-background-clip: text; background-clip: text;
-  }
-  .summary-duration {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.85rem;
-    color: rgba(255,255,255,0.4);
-    margin-bottom: 20px;
-  }
-  .summary-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    max-width: 400px;
-    width: 100%;
-    margin-bottom: 20px;
-  }
-  .summary-stat {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 10px;
-    padding: 12px 14px;
-    text-align: center;
-  }
-  .summary-stat-value {
-    font-family: 'Space Mono', monospace;
-    font-size: 1.3rem;
-    font-weight: 700;
-    color: var(--text-primary);
-    line-height: 1.2;
-  }
-  .summary-stat-label {
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    margin-top: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  .summary-stat.wide {
-    grid-column: 1 / -1;
-  }
-  .summary-prosody-bar {
-    width: 100%;
-    height: 32px;
-    border-radius: 6px;
-    overflow: hidden;
-    display: flex;
-    align-items: flex-end;
-    gap: 1px;
-    background: rgba(255,255,255,0.03);
-    margin-top: 6px;
-  }
-  .summary-prosody-bar .bar-seg {
-    flex: 1;
-    border-radius: 2px 2px 0 0;
-    min-height: 2px;
-    transition: height 0.3s ease-out;
-  }
-  .summary-actions {
-    display: flex;
-    gap: 12px;
-    margin-top: 6px;
-  }
-  .summary-actions .btn {
-    min-width: 140px;
-    text-align: center;
-  }
-  @media (max-width: 600px) {
-    .summary-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
-    .summary-title { font-size: 1.2rem; }
-    .summary-stat { padding: 10px; }
-    .summary-stat-value { font-size: 1.1rem; }
-  }
-
-  .game-area {
-    flex: 1;
-    position: relative;
-    overflow: hidden;
-    min-height: 0;
-  }
-
-  #gameCanvas { display: block; width: 100%; height: 100%; }
-
-  .meters-panel {
-    display: flex;
-    gap: 4px;
-    padding: 10px 16px 14px;
-    background: linear-gradient(0deg, rgba(18,18,31,0.98) 0%, rgba(18,18,31,0.8) 100%);
-    backdrop-filter: blur(12px);
-    border-top: 1px solid rgba(255,255,255,0.05);
-    z-index: 10;
-    flex-shrink: 0;
-  }
-
-  .meter {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 5px;
-  }
-
-  .meter-label {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.6rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    opacity: 0.7;
-  }
-
-  .meter-bar-bg {
-    width: 100%;
-    height: 6px;
-    background: rgba(255,255,255,0.06);
-    border-radius: 3px;
-    overflow: hidden;
-  }
-
-  .meter-bar-fill {
-    height: 100%;
-    border-radius: 3px;
-    transition: width 0.1s ease-out;
-    width: 0%;
-  }
-
-  .meter-bounce .meter-bar-fill { background: var(--accent-bounce); box-shadow: 0 0 8px rgba(255,107,107,0.4); }
-  .meter-tempo .meter-bar-fill { background: var(--accent-tempo); box-shadow: 0 0 8px rgba(255,217,61,0.4); }
-  .meter-vowel .meter-bar-fill { background: var(--accent-vowel); box-shadow: 0 0 8px rgba(107,203,119,0.4); }
-  .meter-artic .meter-bar-fill { background: var(--accent-artic); box-shadow: 0 0 8px rgba(77,150,255,0.4); }
-  .meter-syllable .meter-bar-fill { background: var(--accent-syllable); box-shadow: 0 0 8px rgba(192,132,252,0.4); }
-
-  /* Colorblind: fix hardcoded box-shadow colors to match Okabe-Ito palette */
-  :root.colorblind .meter-bounce .meter-bar-fill { box-shadow: 0 0 8px rgba(213,94,0,0.5); }
-  :root.colorblind .meter-tempo .meter-bar-fill { box-shadow: 0 0 8px rgba(240,228,66,0.5); }
-  :root.colorblind .meter-vowel .meter-bar-fill { box-shadow: 0 0 8px rgba(0,158,115,0.5); }
-  :root.colorblind .meter-artic .meter-bar-fill { box-shadow: 0 0 8px rgba(86,180,233,0.5); }
-  :root.colorblind .meter-syllable .meter-bar-fill { box-shadow: 0 0 8px rgba(204,121,167,0.5); }
-
-  /* Colorblind: pitch gradient → blue-cyan-yellow (luminance-safe) */
-  :root.colorblind .meter-bar-pitch-bg {
-    background: linear-gradient(90deg, #2060B0 0%, #56B4E9 35%, #A0D8A0 55%, #F0E442 80%, #F0E442 100%) !important;
-  }
-  /* Colorblind: resonance gradient → blue-cyan-yellow */
-  :root.colorblind .meter-bar-res-bg {
-    background: linear-gradient(90deg, #2060B0 0%, #56B4E9 30%, #A0D8A0 55%, #F0E442 80%, #F0E442 100%) !important;
-  }
-
-  /* Pitch meter — gradient background shows full range, fill acts as position indicator */
-  .meter-bar-pitch-bg {
-    background: linear-gradient(90deg, #4d96ff 0%, #7b68ee 40%, #c084fc 55%, #ff6b9d 80%, #ff4d8d 100%) !important;
-    position: relative;
-  }
-  .meter-pitch .meter-bar-fill {
-    position: absolute;
-    width: 3px !important;
-    height: 100%;
-    background: #fff;
-    box-shadow: 0 0 6px rgba(255,255,255,0.8);
-    border-radius: 2px;
-    left: 0%;
-    transition: left 0.12s ease-out, width 0s;
-  }
-
-  /* Resonance meter — cool blue → warm gold gradient */
-  .meter-bar-res-bg {
-    background: linear-gradient(90deg, #4466cc 0%, #7b68ee 30%, #cc88ff 50%, #ffaa44 75%, #ffdd66 100%) !important;
-    position: relative;
-  }
-  .meter-resonance .meter-bar-fill {
-    position: absolute;
-    width: 3px !important;
-    height: 100%;
-    background: #fff;
-    box-shadow: 0 0 6px rgba(255,255,255,0.8);
-    border-radius: 2px;
-    left: 50%;
-    transition: left 0.15s ease-out, width 0s;
-  }
-
-  .meter-resonance {
-    flex: 1.4;
-  }
-
-  .meter-value {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.65rem;
-    opacity: 0.5;
-  }
-
-  .res-method-select {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.5rem;
-    background: rgba(255,255,255,0.08);
-    color: var(--text-muted);
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 4px;
-    padding: 1px 2px;
-    margin-left: 4px;
-    cursor: pointer;
-    vertical-align: middle;
-    outline: none;
-  }
-  .res-method-select:focus { border-color: rgba(192,132,252,0.5); }
-  .res-method-select option { background: var(--bg-surface); color: var(--text-primary); }
-
-  /* Overlay */
-  .overlay {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    z-index: 20;
-    background: rgba(10,10,18,0.88);
-    backdrop-filter: blur(20px);
-    transition: opacity 0.4s;
-    padding: 20px;
-    overflow-y: auto;
-  }
-
-  .overlay.hidden { opacity: 0; pointer-events: none; }
-
-  .overlay-title {
-    font-size: 2.8rem;
-    font-weight: 800;
-    margin-bottom: 10px;
-    background: linear-gradient(135deg, #ff6b6b, #c084fc, #4d96ff);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-
-  .overlay-subtitle {
-    font-size: 1.15rem;
-    color: rgba(255,255,255,0.6);
-    margin-bottom: 36px;
-    text-align: center;
-    max-width: 560px;
-    line-height: 1.6;
-  }
-
-  .mode-picker {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    max-width: 580px;
-    width: 94%;
-    margin-bottom: 24px;
-  }
-  .mode-card {
-    padding: 18px 14px;
-    border-radius: 14px;
-    background: rgba(255,255,255,0.03);
-    border: 2px solid rgba(255,255,255,0.06);
-    cursor: pointer;
-    transition: all 0.25s;
-    text-align: center;
-  }
-  .mode-card:hover {
-    background: rgba(255,255,255,0.06);
-    border-color: rgba(192,132,252,0.3);
-    transform: translateY(-3px);
-    box-shadow: 0 8px 30px rgba(0,0,0,0.3);
-  }
-  .mode-card.selected {
-    border-color: rgba(192,132,252,0.6);
-    background: rgba(192,132,252,0.08);
-    box-shadow: 0 0 20px rgba(192,132,252,0.15);
-  }
-  :root.colorblind .mode-card.selected {
-    border-color: rgba(86,180,233,0.6);
-    background: rgba(86,180,233,0.08);
-    box-shadow: 0 0 20px rgba(86,180,233,0.15);
-  }
-  .mode-icon { font-size: 2.2rem; margin-bottom: 10px; }
-  .mode-name { font-weight: 700; font-size: 1.15rem; margin-bottom: 8px; color: var(--text-primary); }
-  .mode-desc { font-size: 0.85rem; color: rgba(255,255,255,0.5); line-height: 1.5; }
-
-  .mode-details {
-    display: none;
-    flex-direction: column;
-    align-items: center;
-    width: 100%;
-    animation: fadeSlideIn 0.3s ease-out;
-  }
-  .mode-details.show { display: flex; }
-  .mode-detail-panel { display: none; width: 100%; }
-  .mode-detail-panel.show { display: flex; flex-direction: column; align-items: center; }
-
-  @keyframes fadeSlideIn {
-    from { opacity: 0; transform: translateY(12px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-
-  .rules-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
-    max-width: 640px;
-    width: 92%;
-    margin-bottom: 36px;
-  }
-
-  .rule-card {
-    padding: 18px 20px;
-    border-radius: 12px;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.06);
-  }
-
-  .rule-card:last-child {
-    grid-column: 1 / -1;
-    max-width: 310px;
-    justify-self: center;
-  }
-
-  .rule-name { font-weight: 700; font-size: 1.05rem; margin-bottom: 6px; }
-  .rule-desc { font-size: 0.92rem; color: rgba(255,255,255,0.55); line-height: 1.5; }
-
-  .rule-bounce .rule-name { color: var(--accent-bounce); }
-  .rule-tempo .rule-name { color: var(--accent-tempo); }
-  .rule-vowel .rule-name { color: var(--accent-vowel); }
-  .rule-artic .rule-name { color: var(--accent-artic); }
-  .rule-syllable .rule-name { color: var(--accent-syllable); }
-
-  .btn-big {
-    font-family: 'Outfit', sans-serif;
-    font-weight: 700;
-    font-size: 1.2rem;
-    padding: 16px 48px;
-    border: none;
-    border-radius: 14px;
-    cursor: pointer;
-    background: linear-gradient(135deg, #ff6b6b, #ff8e53);
-    color: #fff;
-    box-shadow: 0 4px 24px rgba(255,107,107,0.35);
-    transition: all 0.2s;
-  }
-  .btn-big:hover { transform: translateY(-2px); box-shadow: 0 6px 30px rgba(255,107,107,0.5); }
-  :root.colorblind .btn-big {
-    background: linear-gradient(135deg, #D55E00, #E69F00);
-    box-shadow: 0 4px 24px rgba(213,94,0,0.35);
-  }
-
-  .mic-note {
-    margin-top: 16px;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    opacity: 0.6;
-  }
-
-  .tooltip {
-    position: absolute;
-    top: 60px;
-    right: 16px;
-    background: var(--bg-surface);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 12px;
-    padding: 16px 20px;
-    max-width: 320px;
-    z-index: 30;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-    font-size: 0.8rem;
-    line-height: 1.6;
-    color: var(--text-muted);
-    display: none;
-  }
-
-  .tooltip.show { display: block; }
-  .tooltip h3 { color: var(--text-primary); font-size: 0.9rem; margin-bottom: 8px; }
-
-  .help-tabs {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 12px;
-  }
-
-  .help-tab {
-    flex: 1;
-    font-family: 'Outfit', sans-serif;
-    font-size: 0.72rem;
-    font-weight: 700;
-    padding: 8px 10px;
-    border-radius: 8px;
-    border: 1px solid rgba(255,255,255,0.12);
-    background: rgba(255,255,255,0.04);
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .help-tab.active {
-    color: var(--text-primary);
-    background: rgba(77,150,255,0.2);
-    border-color: rgba(77,150,255,0.6);
-  }
-
-  .help-panel { display: none; }
-  .help-panel.active { display: block; }
-
-
-  .btn-perf {
-    background: rgba(255,255,255,0.06);
-    color: var(--text-muted);
-    border: 1px solid rgba(255,255,255,0.08);
-    padding: 6px 8px;
-  }
-  .btn-perf.active { color: #56B4E9; border-color: rgba(86,180,233,0.5); }
-
-  .calibration-overlay {
-    position: absolute;
-    inset: 0;
-    z-index: 28;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    background: rgba(10,10,18,0.86);
-    backdrop-filter: blur(8px);
-  }
-  .calibration-overlay.show { display: flex; }
-  .calibration-card {
-    width: min(520px, 92vw);
-    background: var(--bg-surface);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 14px;
-    padding: 18px;
-  }
-  .calibration-title { font-weight: 700; margin-bottom: 8px; }
-  .calibration-desc { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 10px; }
-  .cal-progress { height: 6px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; }
-  .cal-progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #4d96ff, #c084fc); }
-  .cal-actions { margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px; }
-
-  .perf-panel {
-    position: absolute;
-    left: 10px;
-    bottom: 76px;
-    z-index: 26;
-    display: none;
-    background: rgba(8,8,12,0.86);
-    border: 1px solid rgba(255,255,255,0.14);
-    border-radius: 8px;
-    padding: 8px 10px;
-    font-family: 'Space Mono', monospace;
-    font-size: 0.68rem;
-    line-height: 1.4;
-    min-width: 130px;
-  }
-  .perf-panel.show { display: block; }
-
-  .error-banner {
-    display: none;
-    background: rgba(255,80,80,0.12);
-    border: 1px solid rgba(255,80,80,0.25);
-    border-radius: 10px;
-    padding: 14px 18px;
-    max-width: 500px;
-    width: 90%;
-    margin-bottom: 20px;
-    text-align: center;
-    font-size: 0.85rem;
-    line-height: 1.5;
-    color: #ffa0a0;
-  }
-  .error-banner.show { display: block; }
-  .error-banner a {
-    color: #fff;
-    text-decoration: underline;
-    font-weight: 600;
-  }
-  .error-banner a:hover { color: #ffd93d; }
-
-  .iframe-notice {
-    display: none;
-    background: rgba(77,150,255,0.12);
-    border: 1px solid rgba(77,150,255,0.25);
-    border-radius: 10px;
-    padding: 14px 18px;
-    max-width: 500px;
-    width: 90%;
-    margin-bottom: 20px;
-    text-align: center;
-    font-size: 0.85rem;
-    line-height: 1.5;
-    color: #a0c4ff;
-  }
-  .iframe-notice.show { display: block; }
-  .iframe-notice a {
-    display: inline-block;
-    margin-top: 8px;
-    padding: 8px 20px;
-    background: linear-gradient(135deg, #4d96ff, #6bcb77);
-    color: #fff;
-    border-radius: 8px;
-    text-decoration: none;
-    font-weight: 600;
-    font-size: 0.85rem;
-  }
-  .iframe-notice a:hover { opacity: 0.9; }
-  :root.colorblind .iframe-notice a { background: linear-gradient(135deg, #56B4E9, #009E73); }
-
-  @media (max-width: 600px) {
-    body,
     #app {
-      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      min-height: 100vh;
+      height: 100dvh;
+      width: 100vw;
     }
-    .overlay-title { font-size: 2rem; }
-    .overlay-subtitle { font-size: 1rem; }
-    .overlay { padding: 16px 12px 26px; }
-    .mode-picker { grid-template-columns: 1fr; gap: 10px; }
-    .mode-icon { font-size: 1.6rem; }
-    .mode-name { font-size: 1rem; }
-    .mode-desc { font-size: 0.8rem; }
-    .mode-card { padding: 14px 10px; }
-    .rules-grid { grid-template-columns: 1fr; gap: 10px; }
-    .rules-grid { margin-bottom: 18px; }
-    .rule-card:last-child { max-width: 100%; }
-    .rule-name { font-size: 0.95rem; }
-    .rule-desc { font-size: 0.85rem; }
-    .btn-big { font-size: 1.1rem; padding: 14px 36px; }
-    .meters-panel {
-      padding: 8px 10px 10px;
-      gap: 8px;
-      overflow-x: auto;
-      scrollbar-width: thin;
-    }
-    .meter { min-width: 72px; }
-    .meter-label { font-size: 0.52rem; }
-    .meter-value { font-size: 0.55rem; }
-    .theme-select { display: none; }
-    .res-method-select { font-size: 0.42rem; padding: 0 1px; }
-    .recordings-drawer { max-width: 100%; right: 0; left: 0; border-radius: 12px 12px 0 0; }
-    .vib-panel { right: 4px; left: 4px; max-width: 100%; }
-    .vib-rule { grid-template-columns: 1fr auto; }
+
     .hud {
-      padding: 8px 10px;
-      flex-wrap: wrap;
-      gap: 8px;
-      align-items: flex-start;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      background: linear-gradient(180deg, rgba(18, 18, 31, 0.95) 0%, rgba(18, 18, 31, 0.7) 100%);
+      backdrop-filter: blur(12px);
+      z-index: 10;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      flex-shrink: 0;
     }
-    .hud > .hud-title {
+
+    .hud-title {
+      font-weight: 800;
+      font-size: 1.25rem;
+      letter-spacing: 0.02em;
+      background: linear-gradient(135deg, #ff6b6b, #c084fc, #4d96ff);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    :root.colorblind .hud-title {
+      background: linear-gradient(135deg, #D55E00, #CC79A7, #56B4E9);
+      -webkit-background-clip: text;
+      background-clip: text;
+    }
+
+    :root.colorblind .overlay-title {
+      background: linear-gradient(135deg, #D55E00, #CC79A7, #56B4E9);
+      -webkit-background-clip: text;
+      background-clip: text;
+    }
+
+    .hud-controls {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .theme-select {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-primary);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.88rem;
+      font-weight: 600;
+    }
+
+    .btn {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 600;
+      font-size: 0.95rem;
+      padding: 8px 18px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+      letter-spacing: 0.02em;
+    }
+
+    .btn-start {
+      background: linear-gradient(135deg, #ff6b6b, #ff8e53);
+      color: #fff;
+      box-shadow: 0 2px 12px rgba(255, 107, 107, 0.3);
+    }
+
+    .btn-start:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 20px rgba(255, 107, 107, 0.4);
+    }
+
+    .btn-start.active {
+      background: linear-gradient(135deg, #555, #444);
+      box-shadow: none;
+    }
+
+    :root.colorblind .btn-start {
+      background: linear-gradient(135deg, #D55E00, #E69F00);
+      box-shadow: 0 2px 12px rgba(213, 94, 0, 0.3);
+    }
+
+    .btn-help {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .btn-help:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text-primary);
+    }
+
+    .btn-cb {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 6px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn-cb:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text-primary);
+    }
+
+    .btn-cb.active {
+      background: rgba(86, 180, 233, 0.15);
+      border-color: rgba(86, 180, 233, 0.4);
+      color: #56B4E9;
+    }
+
+    .btn-vib {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 6px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn-vib:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text-primary);
+    }
+
+    .btn-vib.active {
+      background: rgba(255, 160, 60, 0.15);
+      border-color: rgba(255, 160, 60, 0.4);
+      color: #ffa03c;
+    }
+
+    /* Vibration settings panel */
+    .vib-panel {
+      position: absolute;
+      top: 60px;
+      right: 16px;
+      background: var(--bg-surface);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 16px 18px;
+      max-width: 340px;
+      width: 92vw;
+      z-index: 35;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      font-size: 0.9rem;
+      line-height: 1.5;
+      color: var(--text-muted);
+      display: none;
+      max-height: 70vh;
+      overflow-y: auto;
+    }
+
+    .vib-panel.show {
+      display: block;
+    }
+
+    .vib-panel h3 {
+      color: var(--text-primary);
+      font-size: 1rem;
+      margin: 0 0 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .vib-panel-sub {
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      margin-bottom: 14px;
+      line-height: 1.4;
+    }
+
+    .vib-master {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+      padding: 8px 10px;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .vib-master label {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      flex: 1;
+    }
+
+    .vib-rules-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .vib-rule {
+      display: grid;
+      grid-template-columns: 1fr auto auto auto;
+      gap: 6px;
+      align-items: center;
+      padding: 8px 10px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 8px;
+      font-size: 0.82rem;
+    }
+
+    .vib-rule.tripped {
+      border-color: rgba(255, 160, 60, 0.5);
+      background: rgba(255, 160, 60, 0.06);
+    }
+
+    .vib-rule-config {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .vib-rule-top {
+      display: flex;
+      gap: 5px;
+      align-items: center;
+    }
+
+    .vib-rule select,
+    .vib-rule input[type="number"] {
+      font-family: 'Space Mono', monospace;
+      font-size: 0.78rem;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 5px;
+      color: var(--text-primary);
+      padding: 4px 5px;
+    }
+
+    .vib-rule select {
+      min-width: 78px;
+    }
+
+    .vib-rule input[type="number"] {
+      width: 58px;
+      text-align: center;
+    }
+
+    .vib-rule-unit {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      opacity: 0.6;
+      white-space: nowrap;
+    }
+
+    .vib-rule-del {
+      background: none;
+      border: none;
+      color: rgba(255, 100, 100, 0.5);
+      cursor: pointer;
+      font-size: 1rem;
+      padding: 2px 4px;
+      border-radius: 4px;
+      line-height: 1;
+    }
+
+    .vib-rule-del:hover {
+      color: #ff6b6b;
+      background: rgba(255, 100, 100, 0.1);
+    }
+
+    .vib-add-btn {
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 7px 14px;
+      border-radius: 8px;
+      border: 1px dashed rgba(255, 255, 255, 0.15);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-muted);
+      cursor: pointer;
+      width: 100%;
+      transition: all 0.2s;
+    }
+
+    .vib-add-btn:hover {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: rgba(255, 255, 255, 0.25);
+      color: var(--text-primary);
+    }
+
+    /* Toggle switch */
+    .toggle-switch {
+      position: relative;
+      width: 36px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      inset: 0;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 20px;
+      transition: 0.2s;
+    }
+
+    .toggle-slider::before {
+      content: '';
+      position: absolute;
+      height: 14px;
+      width: 14px;
+      left: 3px;
+      bottom: 3px;
+      background: rgba(255, 255, 255, 0.4);
+      border-radius: 50%;
+      transition: 0.2s;
+    }
+
+    .toggle-switch input:checked+.toggle-slider {
+      background: rgba(255, 160, 60, 0.35);
+    }
+
+    .toggle-switch input:checked+.toggle-slider::before {
+      transform: translateX(16px);
+      background: #ffa03c;
+    }
+
+    /* Screen shake for desktop vibration feedback */
+    @keyframes vibShake {
+
+      0%,
+      100% {
+        transform: translate(0, 0);
+      }
+
+      15% {
+        transform: translate(-2px, 1px);
+      }
+
+      30% {
+        transform: translate(2px, -1px);
+      }
+
+      45% {
+        transform: translate(-1px, 2px);
+      }
+
+      60% {
+        transform: translate(1px, -1px);
+      }
+
+      75% {
+        transform: translate(-1px, 0);
+      }
+    }
+
+    .game-area.vib-shake {
+      animation: vibShake 0.15s ease-in-out;
+    }
+
+    /* Reduced motion: disable shake, tone down transitions */
+    @media (prefers-reduced-motion: reduce) {
+      .game-area.vib-shake {
+        animation: none !important;
+      }
+
+      .meter-bar-fill {
+        transition: none !important;
+      }
+
+      .meter-pitch .meter-bar-fill {
+        transition: none !important;
+      }
+
+      .meter-resonance .meter-bar-fill {
+        transition: none !important;
+      }
+
+      * {
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    /* Session timer in HUD */
+    .session-timer {
+      font-family: 'Space Mono', monospace;
+      font-size: 0.82rem;
+      color: rgba(255, 255, 255, 0.35);
+      margin-left: 10px;
+      letter-spacing: 0.05em;
+      display: none;
+    }
+
+    .session-timer.active {
+      display: inline;
+    }
+
+    /* Session summary overlay */
+    .summary-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 25;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(10, 10, 18, 0.92);
+      backdrop-filter: blur(16px);
+      padding: 24px;
+      overflow-y: auto;
+    }
+
+    .summary-overlay.show {
+      display: flex;
+    }
+
+    .summary-title {
+      font-size: 1.5rem;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      margin-bottom: 4px;
+      background: linear-gradient(135deg, #ff6b6b, #c084fc, #4d96ff);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    :root.colorblind .summary-title {
+      background: linear-gradient(135deg, #D55E00, #CC79A7, #56B4E9);
+      -webkit-background-clip: text;
+      background-clip: text;
+    }
+
+    .summary-duration {
+      font-family: 'Space Mono', monospace;
+      font-size: 0.95rem;
+      color: rgba(255, 255, 255, 0.4);
+      margin-bottom: 20px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      max-width: 400px;
+      width: 100%;
+      margin-bottom: 20px;
+    }
+
+    .summary-stat {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 10px;
+      padding: 12px 14px;
+      text-align: center;
+    }
+
+    .summary-stat-value {
+      font-family: 'Space Mono', monospace;
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      line-height: 1.2;
+    }
+
+    .summary-stat-label {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .summary-stat.wide {
+      grid-column: 1 / -1;
+    }
+
+    .summary-prosody-bar {
+      width: 100%;
+      height: 32px;
+      border-radius: 6px;
+      overflow: hidden;
+      display: flex;
+      align-items: flex-end;
+      gap: 1px;
+      background: rgba(255, 255, 255, 0.03);
+      margin-top: 6px;
+    }
+
+    .summary-prosody-bar .bar-seg {
+      flex: 1;
+      border-radius: 2px 2px 0 0;
+      min-height: 2px;
+      transition: height 0.3s ease-out;
+    }
+
+    .summary-actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 6px;
+    }
+
+    .summary-actions .btn {
+      min-width: 140px;
+      text-align: center;
+    }
+
+    @media (max-width: 600px) {
+      .summary-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .summary-title {
+        font-size: 1.2rem;
+      }
+
+      .summary-stat {
+        padding: 10px;
+      }
+
+      .summary-stat-value {
+        font-size: 1.1rem;
+      }
+    }
+
+    .game-area {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    #gameCanvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .meters-panel {
+      display: flex;
+      gap: 4px;
+      padding: 10px 16px 14px;
+      background: linear-gradient(0deg, rgba(18, 18, 31, 0.98) 0%, rgba(18, 18, 31, 0.8) 100%);
+      backdrop-filter: blur(12px);
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      z-index: 10;
+      flex-shrink: 0;
+    }
+
+    .meter {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .meter-label {
+      font-family: 'Space Mono', monospace;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      opacity: 0.7;
+    }
+
+    .meter-bar-bg {
+      width: 100%;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .meter-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.1s ease-out;
+      width: 0%;
+    }
+
+    .meter-bounce .meter-bar-fill {
+      background: var(--accent-bounce);
+      box-shadow: 0 0 8px rgba(255, 107, 107, 0.4);
+    }
+
+    .meter-tempo .meter-bar-fill {
+      background: var(--accent-tempo);
+      box-shadow: 0 0 8px rgba(255, 217, 61, 0.4);
+    }
+
+    .meter-vowel .meter-bar-fill {
+      background: var(--accent-vowel);
+      box-shadow: 0 0 8px rgba(107, 203, 119, 0.4);
+    }
+
+    .meter-artic .meter-bar-fill {
+      background: var(--accent-artic);
+      box-shadow: 0 0 8px rgba(77, 150, 255, 0.4);
+    }
+
+    .meter-syllable .meter-bar-fill {
+      background: var(--accent-syllable);
+      box-shadow: 0 0 8px rgba(192, 132, 252, 0.4);
+    }
+
+    /* Colorblind: fix hardcoded box-shadow colors to match Okabe-Ito palette */
+    :root.colorblind .meter-bounce .meter-bar-fill {
+      box-shadow: 0 0 8px rgba(213, 94, 0, 0.5);
+    }
+
+    :root.colorblind .meter-tempo .meter-bar-fill {
+      box-shadow: 0 0 8px rgba(240, 228, 66, 0.5);
+    }
+
+    :root.colorblind .meter-vowel .meter-bar-fill {
+      box-shadow: 0 0 8px rgba(0, 158, 115, 0.5);
+    }
+
+    :root.colorblind .meter-artic .meter-bar-fill {
+      box-shadow: 0 0 8px rgba(86, 180, 233, 0.5);
+    }
+
+    :root.colorblind .meter-syllable .meter-bar-fill {
+      box-shadow: 0 0 8px rgba(204, 121, 167, 0.5);
+    }
+
+    /* Colorblind: pitch gradient → blue-cyan-yellow (luminance-safe) */
+    :root.colorblind .meter-bar-pitch-bg {
+      background: linear-gradient(90deg, #2060B0 0%, #56B4E9 35%, #A0D8A0 55%, #F0E442 80%, #F0E442 100%) !important;
+    }
+
+    /* Colorblind: resonance gradient → blue-cyan-yellow */
+    :root.colorblind .meter-bar-res-bg {
+      background: linear-gradient(90deg, #2060B0 0%, #56B4E9 30%, #A0D8A0 55%, #F0E442 80%, #F0E442 100%) !important;
+    }
+
+    /* Pitch meter — gradient background shows full range, fill acts as position indicator */
+    .meter-bar-pitch-bg {
+      background: linear-gradient(90deg, #4d96ff 0%, #7b68ee 40%, #c084fc 55%, #ff6b9d 80%, #ff4d8d 100%) !important;
+      position: relative;
+    }
+
+    .meter-pitch .meter-bar-fill {
+      position: absolute;
+      width: 3px !important;
+      height: 100%;
+      background: #fff;
+      box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
+      border-radius: 2px;
+      left: 0%;
+      transition: left 0.12s ease-out, width 0s;
+    }
+
+    /* Resonance meter — cool blue → warm gold gradient */
+    .meter-bar-res-bg {
+      background: linear-gradient(90deg, #4466cc 0%, #7b68ee 30%, #cc88ff 50%, #ffaa44 75%, #ffdd66 100%) !important;
+      position: relative;
+    }
+
+    .meter-resonance .meter-bar-fill {
+      position: absolute;
+      width: 3px !important;
+      height: 100%;
+      background: #fff;
+      box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
+      border-radius: 2px;
+      left: 50%;
+      transition: left 0.15s ease-out, width 0s;
+    }
+
+    .meter-resonance {
+      flex: 1.4;
+    }
+
+    .meter-value {
+      font-family: 'Space Mono', monospace;
+      font-size: 0.78rem;
+      opacity: 0.5;
+    }
+
+    .res-method-select {
+      font-family: 'Space Mono', monospace;
+      font-size: 0.62rem;
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-muted);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 4px;
+      padding: 1px 2px;
+      margin-left: 4px;
+      cursor: pointer;
+      vertical-align: middle;
+      outline: none;
+    }
+
+    .res-method-select:focus {
+      border-color: rgba(192, 132, 252, 0.5);
+    }
+
+    .res-method-select option {
+      background: var(--bg-surface);
+      color: var(--text-primary);
+    }
+
+    /* Overlay */
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 20;
+      background: rgba(10, 10, 18, 0.88);
+      backdrop-filter: blur(20px);
+      transition: opacity 0.4s;
+      padding: 20px;
+      padding-bottom: 40px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .overlay-title {
+      font-size: 2.8rem;
+      font-weight: 800;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #ff6b6b, #c084fc, #4d96ff);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .overlay-subtitle {
+      font-size: 1.3rem;
+      color: rgba(255, 255, 255, 0.6);
+      margin-bottom: 36px;
+      text-align: center;
+      max-width: 560px;
+      line-height: 1.6;
+    }
+
+    .mode-picker {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      max-width: 580px;
+      width: 94%;
+      margin-bottom: 24px;
+    }
+
+    .mode-card {
+      padding: 18px 14px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 2px solid rgba(255, 255, 255, 0.06);
+      cursor: pointer;
+      transition: all 0.25s;
+      text-align: center;
+    }
+
+    .mode-card:hover {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: rgba(192, 132, 252, 0.3);
+      transform: translateY(-3px);
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+    }
+
+    .mode-card.selected {
+      border-color: rgba(192, 132, 252, 0.6);
+      background: rgba(192, 132, 252, 0.08);
+      box-shadow: 0 0 20px rgba(192, 132, 252, 0.15);
+    }
+
+    :root.colorblind .mode-card.selected {
+      border-color: rgba(86, 180, 233, 0.6);
+      background: rgba(86, 180, 233, 0.08);
+      box-shadow: 0 0 20px rgba(86, 180, 233, 0.15);
+    }
+
+    .mode-icon {
+      font-size: 2.2rem;
+      margin-bottom: 10px;
+    }
+
+    .mode-name {
+      font-weight: 700;
+      font-size: 1.25rem;
+      margin-bottom: 8px;
+      color: var(--text-primary);
+    }
+
+    .mode-desc {
+      font-size: 0.95rem;
+      color: rgba(255, 255, 255, 0.5);
+      line-height: 1.5;
+    }
+
+    .mode-details {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      width: 100%;
+      animation: fadeSlideIn 0.3s ease-out;
+    }
+
+    .mode-details.show {
+      display: flex;
+    }
+
+    .mode-detail-panel {
+      display: none;
+      width: 100%;
+    }
+
+    .mode-detail-panel.show {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    @keyframes fadeSlideIn {
+      from {
+        opacity: 0;
+        transform: translateY(12px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .rules-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      max-width: 640px;
+      width: 92%;
+      margin-bottom: 36px;
+    }
+
+    .rule-card {
+      padding: 18px 20px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .rule-card:last-child {
+      grid-column: 1 / -1;
+      max-width: 310px;
+      justify-self: center;
+    }
+
+    .rule-name {
+      font-weight: 700;
+      font-size: 1.15rem;
+      margin-bottom: 6px;
+    }
+
+    .rule-desc {
+      font-size: 1rem;
+      color: rgba(255, 255, 255, 0.55);
+      line-height: 1.5;
+    }
+
+    .rule-bounce .rule-name {
+      color: var(--accent-bounce);
+    }
+
+    .rule-tempo .rule-name {
+      color: var(--accent-tempo);
+    }
+
+    .rule-vowel .rule-name {
+      color: var(--accent-vowel);
+    }
+
+    .rule-artic .rule-name {
+      color: var(--accent-artic);
+    }
+
+    .rule-syllable .rule-name {
+      color: var(--accent-syllable);
+    }
+
+    .btn-big {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 700;
+      font-size: 1.3rem;
+      padding: 16px 48px;
+      border: none;
+      border-radius: 14px;
+      cursor: pointer;
+      background: linear-gradient(135deg, #ff6b6b, #ff8e53);
+      color: #fff;
+      box-shadow: 0 4px 24px rgba(255, 107, 107, 0.35);
+      transition: all 0.2s;
+    }
+
+    .btn-big:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 30px rgba(255, 107, 107, 0.5);
+    }
+
+    :root.colorblind .btn-big {
+      background: linear-gradient(135deg, #D55E00, #E69F00);
+      box-shadow: 0 4px 24px rgba(213, 94, 0, 0.35);
+    }
+
+    .mic-note {
+      margin-top: 16px;
+      margin-bottom: 24px;
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      opacity: 0.6;
+    }
+
+    .tooltip {
+      position: absolute;
+      top: 60px;
+      right: 16px;
+      background: var(--bg-surface);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 16px 20px;
+      max-width: 320px;
+      z-index: 30;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      font-size: 0.9rem;
+      line-height: 1.6;
+      color: var(--text-muted);
+      display: none;
+    }
+
+    .tooltip.show {
+      display: block;
+    }
+
+    .tooltip h3 {
+      color: var(--text-primary);
+      font-size: 1rem;
+      margin-bottom: 8px;
+    }
+
+    .help-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .help-tab {
+      flex: 1;
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.82rem;
+      font-weight: 700;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .help-tab.active {
+      color: var(--text-primary);
+      background: rgba(77, 150, 255, 0.2);
+      border-color: rgba(77, 150, 255, 0.6);
+    }
+
+    .help-panel {
+      display: none;
+    }
+
+    .help-panel.active {
+      display: block;
+    }
+
+
+    .btn-perf {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 6px 8px;
+    }
+
+    .btn-perf.active {
+      color: #56B4E9;
+      border-color: rgba(86, 180, 233, 0.5);
+    }
+
+    .calibration-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 28;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(10, 10, 18, 0.86);
+      backdrop-filter: blur(8px);
+    }
+
+    .calibration-overlay.show {
+      display: flex;
+    }
+
+    .calibration-card {
+      width: min(520px, 92vw);
+      background: var(--bg-surface);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 14px;
+      padding: 18px;
+    }
+
+    .calibration-title {
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .calibration-desc {
+      color: var(--text-muted);
+      font-size: 1rem;
+      margin-bottom: 10px;
+    }
+
+    .cal-progress {
+      height: 6px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .cal-progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #4d96ff, #c084fc);
+      transition: width 0.3s ease-out;
+    }
+
+    .cal-actions {
+      margin-top: 16px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .cal-btn-primary {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 700;
+      font-size: 1.05rem;
+      padding: 10px 28px;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      background: linear-gradient(135deg, #4d96ff, #c084fc);
+      color: #fff;
+      box-shadow: 0 3px 16px rgba(77, 150, 255, 0.3);
+      transition: all 0.2s;
+    }
+
+    .cal-btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 5px 20px rgba(77, 150, 255, 0.45);
+    }
+
+    .cal-btn-secondary {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 600;
+      font-size: 0.95rem;
+      padding: 10px 20px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 10px;
+      cursor: pointer;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
+      transition: all 0.2s;
+    }
+
+    .cal-btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text-primary);
+    }
+
+    .perf-panel {
+      position: absolute;
+      left: 10px;
+      bottom: 76px;
+      z-index: 26;
+      display: none;
+      background: rgba(8, 8, 12, 0.86);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-family: 'Space Mono', monospace;
+      font-size: 0.78rem;
+      line-height: 1.4;
+      min-width: 130px;
+    }
+
+    .perf-panel.show {
+      display: block;
+    }
+
+    .error-banner {
+      display: none;
+      background: rgba(255, 80, 80, 0.12);
+      border: 1px solid rgba(255, 80, 80, 0.25);
+      border-radius: 10px;
+      padding: 14px 18px;
+      max-width: 500px;
+      width: 90%;
+      margin-bottom: 20px;
+      text-align: center;
+      font-size: 0.95rem;
+      line-height: 1.5;
+      color: #ffa0a0;
+    }
+
+    .error-banner.show {
+      display: block;
+    }
+
+    .error-banner a {
+      color: #fff;
+      text-decoration: underline;
+      font-weight: 600;
+    }
+
+    .error-banner a:hover {
+      color: #ffd93d;
+    }
+
+    .iframe-notice {
+      display: none;
+      background: rgba(77, 150, 255, 0.12);
+      border: 1px solid rgba(77, 150, 255, 0.25);
+      border-radius: 10px;
+      padding: 14px 18px;
+      max-width: 500px;
+      width: 90%;
+      margin-bottom: 20px;
+      text-align: center;
+      font-size: 0.95rem;
+      line-height: 1.5;
+      color: #a0c4ff;
+    }
+
+    .iframe-notice.show {
+      display: block;
+    }
+
+    .iframe-notice a {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 8px 20px;
+      background: linear-gradient(135deg, #4d96ff, #6bcb77);
+      color: #fff;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .iframe-notice a:hover {
+      opacity: 0.9;
+    }
+
+    :root.colorblind .iframe-notice a {
+      background: linear-gradient(135deg, #56B4E9, #009E73);
+    }
+
+    @media (max-width: 600px) {
+
+      body,
+      #app {
+        overflow: auto;
+      }
+
+      .overlay-title {
+        font-size: 2.2rem;
+      }
+
+      .overlay-subtitle {
+        font-size: 1.15rem;
+      }
+
+      .overlay {
+        padding: 16px 12px 26px;
+      }
+
+      .mode-picker {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+
+      .mode-icon {
+        font-size: 1.6rem;
+      }
+
+      .mode-name {
+        font-size: 1.1rem;
+      }
+
+      .mode-desc {
+        font-size: 0.88rem;
+      }
+
+      .mode-card {
+        padding: 14px 10px;
+      }
+
+      .rules-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+
+      .rules-grid {
+        margin-bottom: 18px;
+      }
+
+      .rule-card:last-child {
+        max-width: 100%;
+      }
+
+      .rule-name {
+        font-size: 1.05rem;
+      }
+
+      .rule-desc {
+        font-size: 0.92rem;
+      }
+
+      .btn-big {
+        font-size: 1.2rem;
+        padding: 14px 36px;
+      }
+
+      .meters-panel {
+        padding: 8px 10px 10px;
+        gap: 8px;
+        overflow-x: auto;
+        scrollbar-width: thin;
+      }
+
+      .meter {
+        min-width: 72px;
+      }
+
+      .meter-label {
+        font-size: 0.62rem;
+      }
+
+      .meter-value {
+        font-size: 0.65rem;
+      }
+
+      .theme-select {
+        display: none;
+      }
+
+      .res-method-select {
+        font-size: 0.52rem;
+        padding: 0 1px;
+      }
+
+      .recordings-drawer {
+        max-width: 100%;
+        right: 0;
+        left: 0;
+        border-radius: 12px 12px 0 0;
+      }
+
+      .vib-panel {
+        right: 4px;
+        left: 4px;
+        max-width: 100%;
+      }
+
+      .vib-rule {
+        grid-template-columns: 1fr auto;
+      }
+
+      .hud {
+        padding: 8px 10px;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: flex-start;
+      }
+
+      .hud>.hud-title {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .hud-title {
+        font-size: 1.05rem;
+      }
+
+      .session-timer {
+        font-size: 0.72rem;
+        margin-left: 0;
+        order: 2;
+        flex: 0 0 auto;
+        align-self: center;
+      }
+
+      .hud-controls {
+        gap: 6px;
+        flex-wrap: wrap;
+        justify-content: flex-start;
+        width: 100%;
+        order: 3;
+      }
+
+      .hud-controls .btn {
+        font-size: 0.85rem;
+        padding: 6px 10px;
+      }
+
+      .btn-help {
+        display: none;
+      }
+
+      .btn-recordings span:first-child {
+        display: none;
+      }
+
+      .meter-resonance {
+        flex: 1.2;
+      }
+
+      .summary-actions {
+        width: 100%;
+        flex-direction: column;
+      }
+
+      .summary-actions .btn {
+        width: 100%;
+        min-width: 0;
+      }
+    }
+
+    @media (max-width: 420px) {
+      .hud-title {
+        font-size: 0.88rem;
+        letter-spacing: 0;
+      }
+
+      .hud-controls .btn {
+        padding: 6px 8px;
+        font-size: 0.8rem;
+      }
+
+      .btn-start {
+        flex: 1 1 auto;
+        justify-content: center;
+      }
+
+      .overlay-subtitle {
+        margin-bottom: 20px;
+        line-height: 1.45;
+      }
+
+      .btn-big {
+        width: 100%;
+        max-width: 320px;
+        padding: 13px 16px;
+        font-size: 1.1rem;
+      }
+    }
+
+    /* Recording button */
+    .btn-rec {
+      display: none;
+      position: relative;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .btn-rec.visible {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-rec .rec-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #888;
+      transition: background 0.2s;
+    }
+
+    .btn-rec.recording {
+      background: rgba(255, 60, 60, 0.15);
+      border-color: rgba(255, 60, 60, 0.4);
+      color: #ff6b6b;
+    }
+
+    :root.colorblind .btn-rec.recording {
+      background: rgba(213, 94, 0, 0.15);
+      border-color: rgba(213, 94, 0, 0.4);
+      color: #D55E00;
+    }
+
+    .btn-rec.recording .rec-dot {
+      background: #ff4444;
+      animation: rec-pulse 1s ease-in-out infinite;
+    }
+
+    @keyframes rec-pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: 0.4;
+        transform: scale(0.7);
+      }
+    }
+
+    /* Recordings drawer */
+    .btn-recordings {
+      display: none;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      position: relative;
+    }
+
+    .btn-recordings.visible {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-recordings .badge {
+      font-size: 0.78rem;
+      background: var(--accent-syllable);
+      color: #fff;
+      border-radius: 10px;
+      padding: 1px 6px;
+      min-width: 16px;
+      text-align: center;
+      font-weight: 700;
+    }
+
+    .recordings-drawer {
+      position: absolute;
+      top: 60px;
+      right: 16px;
+      background: var(--bg-surface);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 0;
+      max-width: 360px;
+      width: 90vw;
+      max-height: 60vh;
+      z-index: 35;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      display: none;
+      overflow: hidden;
+      flex-direction: column;
+    }
+
+    .recordings-drawer.show {
+      display: flex;
+    }
+
+    .recordings-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .recordings-header h3 {
+      color: var(--text-primary);
+      font-size: 1rem;
+      font-weight: 700;
+      margin: 0;
+    }
+
+    .recordings-header .btn-clear-all {
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      background: none;
+      border: none;
+      cursor: pointer;
+      opacity: 0.6;
+      transition: opacity 0.2s;
+    }
+
+    .recordings-header .btn-clear-all:hover {
+      opacity: 1;
+      color: #ff6b6b;
+    }
+
+    .recordings-list {
+      overflow-y: auto;
+      padding: 8px;
+      flex: 1;
+    }
+
+    .recordings-empty {
+      text-align: center;
+      padding: 24px 16px;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      opacity: 0.6;
+    }
+
+    .rec-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      margin-bottom: 6px;
+      transition: background 0.15s;
+    }
+
+    .rec-item:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .rec-item-info {
       flex: 1;
       min-width: 0;
     }
-    .hud-title { font-size: 0.9rem; }
-    .session-timer {
-      font-size: 0.62rem;
-      margin-left: 0;
-      order: 2;
-      flex: 0 0 auto;
-      align-self: center;
-    }
-    .hud-controls {
-      gap: 6px;
-      flex-wrap: wrap;
-      justify-content: flex-start;
-      width: 100%;
-      order: 3;
-    }
-    .hud-controls .btn { font-size: 0.75rem; padding: 6px 10px; }
-    .btn-help { display: none; }
-    .btn-recordings span:first-child { display: none; }
-    .meter-resonance { flex: 1.2; }
-    .summary-actions {
-      width: 100%;
-      flex-direction: column;
-    }
-    .summary-actions .btn {
-      width: 100%;
-      min-width: 0;
-    }
-  }
 
-  @media (max-width: 420px) {
-    .hud-title {
+    .rec-item-name {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .rec-item-meta {
       font-size: 0.78rem;
-      letter-spacing: 0;
+      color: var(--text-muted);
+      font-family: 'Space Mono', monospace;
     }
-    .hud-controls .btn {
-      padding: 6px 8px;
-      font-size: 0.7rem;
+
+    .rec-item-actions {
+      display: flex;
+      gap: 4px;
+      flex-shrink: 0;
     }
-    .btn-start {
-      flex: 1 1 auto;
+
+    .rec-btn {
+      width: 30px;
+      height: 30px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
       justify-content: center;
+      font-size: 0.85rem;
+      transition: all 0.15s;
+      padding: 0;
     }
-    .overlay-subtitle {
-      margin-bottom: 20px;
-      line-height: 1.45;
+
+    .rec-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text-primary);
     }
-    .btn-big {
+
+    .rec-btn.playing {
+      background: rgba(77, 150, 255, 0.2);
+      border-color: rgba(77, 150, 255, 0.4);
+      color: #4d96ff;
+    }
+
+    .rec-btn.delete:hover {
+      background: rgba(255, 60, 60, 0.15);
+      border-color: rgba(255, 60, 60, 0.3);
+      color: #ff6b6b;
+    }
+
+    /* Audio progress bar */
+    .rec-progress {
       width: 100%;
-      max-width: 320px;
-      padding: 13px 16px;
-      font-size: 1rem;
+      height: 3px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 2px;
+      margin-top: 4px;
+      overflow: hidden;
     }
-  }
 
-  /* Recording button */
-  .btn-rec {
-    display: none;
-    position: relative;
-    background: rgba(255,255,255,0.06);
-    color: var(--text-muted);
-    border: 1px solid rgba(255,255,255,0.08);
-  }
-  .btn-rec.visible { display: inline-flex; align-items: center; gap: 6px; }
-  .btn-rec .rec-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: #888;
-    transition: background 0.2s;
-  }
-  .btn-rec.recording { background: rgba(255,60,60,0.15); border-color: rgba(255,60,60,0.4); color: #ff6b6b; }
-  :root.colorblind .btn-rec.recording { background: rgba(213,94,0,0.15); border-color: rgba(213,94,0,0.4); color: #D55E00; }
-  .btn-rec.recording .rec-dot {
-    background: #ff4444;
-    animation: rec-pulse 1s ease-in-out infinite;
-  }
-  @keyframes rec-pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.4; transform: scale(0.7); }
-  }
+    .rec-progress-fill {
+      height: 100%;
+      background: var(--accent-artic);
+      border-radius: 2px;
+      width: 0%;
+      transition: width 0.1s linear;
+    }
 
-  /* Recordings drawer */
-  .btn-recordings {
-    display: none;
-    background: rgba(255,255,255,0.06);
-    color: var(--text-muted);
-    border: 1px solid rgba(255,255,255,0.08);
-    position: relative;
-  }
-  .btn-recordings.visible { display: inline-flex; align-items: center; gap: 6px; }
-  .btn-recordings .badge {
-    font-size: 0.65rem;
-    background: var(--accent-syllable);
-    color: #fff;
-    border-radius: 10px;
-    padding: 1px 6px;
-    min-width: 16px;
-    text-align: center;
-    font-weight: 700;
-  }
+    /* Creature Style Picker */
+    .creature-style-picker {
+      display: flex;
+      gap: 6px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
 
-  .recordings-drawer {
-    position: absolute;
-    top: 60px;
-    right: 16px;
-    background: var(--bg-surface);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 12px;
-    padding: 0;
-    max-width: 360px;
-    width: 90vw;
-    max-height: 60vh;
-    z-index: 35;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-    display: none;
-    overflow: hidden;
-    flex-direction: column;
-  }
-  .recordings-drawer.show { display: flex; }
+    .style-pill {
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 600;
+      padding: 7px 14px;
+      border-radius: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+    }
 
-  .recordings-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 16px 10px;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-  }
-  .recordings-header h3 {
-    color: var(--text-primary);
-    font-size: 0.9rem;
-    font-weight: 700;
-    margin: 0;
-  }
-  .recordings-header .btn-clear-all {
-    font-family: 'Outfit', sans-serif;
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    background: none;
-    border: none;
-    cursor: pointer;
-    opacity: 0.6;
-    transition: opacity 0.2s;
-  }
-  .recordings-header .btn-clear-all:hover { opacity: 1; color: #ff6b6b; }
+    .style-pill:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+      color: var(--text-primary);
+    }
 
-  .recordings-list {
-    overflow-y: auto;
-    padding: 8px;
-    flex: 1;
-  }
+    .style-pill.selected {
+      background: rgba(138, 100, 255, 0.2);
+      border-color: rgba(138, 100, 255, 0.5);
+      color: #c8b4ff;
+      box-shadow: 0 0 12px rgba(138, 100, 255, 0.15);
+    }
 
-  .recordings-empty {
-    text-align: center;
-    padding: 24px 16px;
-    color: var(--text-muted);
-    font-size: 0.8rem;
-    opacity: 0.6;
-  }
+    .creature-style-hud {
+      position: absolute;
+      top: 52px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: none;
+      gap: 4px;
+      z-index: 20;
+      padding: 4px 8px;
+      border-radius: 24px;
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
 
-  .rec-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 10px;
-    border-radius: 8px;
-    background: rgba(255,255,255,0.02);
-    border: 1px solid rgba(255,255,255,0.04);
-    margin-bottom: 6px;
-    transition: background 0.15s;
-  }
-  .rec-item:hover { background: rgba(255,255,255,0.05); }
+    .creature-style-hud.visible {
+      display: flex;
+    }
 
-  .rec-item-info {
-    flex: 1;
-    min-width: 0;
-  }
-  .rec-item-name {
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--text-primary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .rec-item-meta {
-    font-size: 0.65rem;
-    color: var(--text-muted);
-    font-family: 'Space Mono', monospace;
-  }
-
-  .rec-item-actions {
-    display: flex;
-    gap: 4px;
-    flex-shrink: 0;
-  }
-
-  .rec-btn {
-    width: 30px; height: 30px;
-    border-radius: 6px;
-    border: 1px solid rgba(255,255,255,0.08);
-    background: rgba(255,255,255,0.04);
-    color: var(--text-muted);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.85rem;
-    transition: all 0.15s;
-    padding: 0;
-  }
-  .rec-btn:hover { background: rgba(255,255,255,0.1); color: var(--text-primary); }
-  .rec-btn.playing { background: rgba(77,150,255,0.2); border-color: rgba(77,150,255,0.4); color: #4d96ff; }
-  .rec-btn.delete:hover { background: rgba(255,60,60,0.15); border-color: rgba(255,60,60,0.3); color: #ff6b6b; }
-
-  /* Audio progress bar */
-  .rec-progress {
-    width: 100%;
-    height: 3px;
-    background: rgba(255,255,255,0.06);
-    border-radius: 2px;
-    margin-top: 4px;
-    overflow: hidden;
-  }
-  .rec-progress-fill {
-    height: 100%;
-    background: var(--accent-artic);
-    border-radius: 2px;
-    width: 0%;
-    transition: width 0.1s linear;
-  }
-</style>
+    .creature-style-hud .style-pill {
+      font-size: 0.75rem;
+      padding: 4px 10px;
+    }
+  </style>
 </head>
+
 <body>
-<div id="app">
-  <div class="hud">
-    <div class="hud-title">PROSODY TRAINING</div>
-    <span class="session-timer" id="sessionTimer">0:00</span>
-    <div class="hud-controls">
-      <select id="themeSelect" class="theme-select" aria-label="Theme preset">
-        <option value="playful">Playful</option>
-        <option value="ocean">Ocean</option>
-        <option value="minimal">Minimal</option>
-        <option value="highcontrast">High Contrast</option>
-      </select>
-      <button class="btn btn-cb" id="cbToggle" aria-label="Toggle colorblind mode" title="Colorblind mode">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
-      </button>
-      <button class="btn btn-vib" id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><rect x="8" y="4" width="8" height="16" rx="2"/><path d="M4 8v8"/><path d="M20 8v8"/><path d="M2 10v4"/><path d="M22 10v4"/></svg>
-      </button>
-      <button class="btn btn-help" id="helpBtn">How to Play</button>
-      <button class="btn btn-perf" id="perfBtn" title="Toggle performance overlay">FPS</button>
-      <button class="btn btn-recordings" id="recordingsBtn"><span>Clips</span><span class="badge" id="recBadge">0</span></button>
-      <button class="btn btn-rec" id="recBtn"><span class="rec-dot"></span><span class="rec-label">Rec</span></button>
-      <button class="btn btn-start" id="startBtn">🎙 Start</button>
-    </div>
-  </div>
-
-  <div class="game-area">
-    <canvas id="gameCanvas"></canvas>
-
-    <div class="overlay" id="welcomeOverlay">
-      <div class="overlay-title">Prosody Training</div>
-      <div class="overlay-subtitle">
-        Practice expressive speech with real-time voice feedback.
-        Choose your training mode:
-      </div>
-
-      <div class="mode-picker" id="modePicker">
-        <div class="mode-card" data-mode="ball">
-          <div class="mode-icon">⚽</div>
-          <div class="mode-name">Prosody Ball</div>
-          <div class="mode-desc">Control a bouncing ball with your voice. Pitch bounces, tempo changes speed, vowels leave trails.</div>
-        </div>
-        <div class="mode-card" data-mode="creature">
-          <div class="mode-icon">🐉</div>
-          <div class="mode-name">Voice Creature</div>
-          <div class="mode-desc">Your voice becomes a living being. Resonance shapes its body, prosody transforms it.</div>
-        </div>
-        <div class="mode-card" data-mode="garden">
-          <div class="mode-icon">🌱</div>
-          <div class="mode-name">Voice Garden</div>
-          <div class="mode-desc">Grow a living ecosystem with your voice. Every session adds plants that accumulate.</div>
-        </div>
-        <div class="mode-card" data-mode="canvas">
-          <div class="mode-icon">🎨</div>
-          <div class="mode-name">Voice Canvas</div>
-          <div class="mode-desc">Paint generative art with your voice. Each session creates a unique piece you can save.</div>
-        </div>
-      </div>
-
-      <div class="mode-details" id="modeDetails">
-        <div class="mode-detail-panel" id="ballDetails">
-          <div class="rules-grid">
-            <div class="rule-card rule-bounce">
-              <div class="rule-name">① Bounciness</div>
-              <div class="rule-desc">Vary your pitch up and down. Bigger pitch swings = higher bounces.</div>
-            </div>
-            <div class="rule-card rule-tempo">
-              <div class="rule-name">② Tempo Variance</div>
-              <div class="rule-desc">Change your speaking speed. Fast→slow→fast makes the ball accelerate and decelerate.</div>
-            </div>
-            <div class="rule-card rule-vowel">
-              <div class="rule-name">③ Vowel Elongation</div>
-              <div class="rule-desc">Stretch your vowels ("hellooo"). Sustained sounds create a glowing trail.</div>
-            </div>
-            <div class="rule-card rule-artic">
-              <div class="rule-name">④ Articulation</div>
-              <div class="rule-desc">Crisp consonants create sparkle effects. Pronounce clearly!</div>
-            </div>
-            <div class="rule-card rule-syllable">
-              <div class="rule-name">⑤ Syllable Separation</div>
-              <div class="rule-desc">Distinct syllable breaks trigger individual bounce events. E-NUN-CI-ATE!</div>
-            </div>
-          </div>
-        </div>
-        <div class="mode-detail-panel" id="creatureDetails">
-          <div class="rules-grid">
-            <div class="rule-card rule-bounce">
-              <div class="rule-name">Pitch → Float</div>
-              <div class="rule-desc">Higher pitch lifts the creature. It floats when your voice rises.</div>
-            </div>
-            <div class="rule-card rule-tempo">
-              <div class="rule-name">Resonance → Form</div>
-              <div class="rule-desc">Resonance shapes its body — dark/compact to bright/tall. It IS your vocal tract.</div>
-            </div>
-            <div class="rule-card rule-vowel">
-              <div class="rule-name">Vowels → Tendrils</div>
-              <div class="rule-desc">Sustained sounds grow flowing tendrils. The longer you hold, the more they extend.</div>
-            </div>
-            <div class="rule-card rule-artic">
-              <div class="rule-name">Articulation → Spark</div>
-              <div class="rule-desc">Sharp consonants make the surface crackle with light. Be crisp!</div>
-            </div>
-            <div class="rule-card rule-syllable">
-              <div class="rule-name">Prosody → Transform</div>
-              <div class="rule-desc">Sustained expressiveness unlocks wings, glow, and luminous patterns.</div>
-            </div>
-          </div>
-        </div>
-        <div class="mode-detail-panel" id="gardenDetails">
-          <div class="rules-grid">
-            <div class="rule-card rule-bounce">
-              <div class="rule-name">Pitch → Species</div>
-              <div class="rule-desc">Low pitch grows mushrooms, mid grows flowers, high grows tall trees. Vary to diversify!</div>
-            </div>
-            <div class="rule-card rule-tempo">
-              <div class="rule-name">Resonance → Color</div>
-              <div class="rule-desc">Bright resonance makes vivid, warm plants. Dark resonance grows cool, blue-toned flora.</div>
-            </div>
-            <div class="rule-card rule-vowel">
-              <div class="rule-name">Vowels → Sunlight</div>
-              <div class="rule-desc">Sustained sounds are photosynthesis — they accelerate growth. Hold vowels to watch plants surge.</div>
-            </div>
-            <div class="rule-card rule-artic">
-              <div class="rule-name">Articulation → Pollen</div>
-              <div class="rule-desc">Crisp consonants scatter pollen and firefly particles through the garden.</div>
-            </div>
-            <div class="rule-card rule-syllable">
-              <div class="rule-name">Syllables → Seeds</div>
-              <div class="rule-desc">Each distinct syllable plants a new seed. More syllables = denser garden.</div>
-            </div>
-          </div>
-        </div>
-        <div class="mode-detail-panel" id="canvasDetails">
-          <div class="rules-grid">
-            <div class="rule-card rule-bounce">
-              <div class="rule-name">Pitch → Y Position</div>
-              <div class="rule-desc">Your pitch paints vertically — low voice at the bottom, high voice sweeps to the top.</div>
-            </div>
-            <div class="rule-card rule-tempo">
-              <div class="rule-name">Resonance → Color</div>
-              <div class="rule-desc">Dark resonance paints cool blues, bright resonance paints warm golds and pinks.</div>
-            </div>
-            <div class="rule-card rule-vowel">
-              <div class="rule-name">Vowels → Curves</div>
-              <div class="rule-desc">Sustained sounds create smooth flowing brushstrokes. Hold vowels for long, graceful lines.</div>
-            </div>
-            <div class="rule-card rule-artic">
-              <div class="rule-name">Articulation → Texture</div>
-              <div class="rule-desc">Sharp consonants splatter paint droplets and add texture to the canvas.</div>
-            </div>
-            <div class="rule-card rule-syllable">
-              <div class="rule-name">Energy → Width</div>
-              <div class="rule-desc">Louder, more energetic speech creates wider, bolder strokes. Whisper for fine detail.</div>
-            </div>
-          </div>
-        </div>
-        <button class="btn-big" id="playBtn">🎙 Start Speaking</button>
-        <div class="mic-note">Requires microphone access · All processing is local</div>
-      </div>
-      <div class="error-banner" id="errorBanner"></div>
-      <div class="iframe-notice" id="iframeNotice"></div>
-      <div class="calibration-overlay" id="calibrationOverlay">
-        <div class="calibration-card">
-          <div class="calibration-title" id="calStepTitle">Preparing calibration</div>
-          <div class="calibration-desc" id="calStepDesc">We'll quickly tune to your mic and voice.</div>
-          <div class="cal-progress"><div class="cal-progress-fill" id="calProgressFill"></div></div>
-          <div class="cal-actions">
-            <button class="btn btn-help" id="calSkipBtn">Skip</button>
-          </div>
-        </div>
-      </div>
-      <div class="perf-panel" id="perfPanel"></div>
-    </div>
-
-    <!-- Session summary overlay (shown on stop) -->
-    <div class="summary-overlay" id="summaryOverlay">
-      <div class="summary-title">Session Complete</div>
-      <div class="summary-duration" id="summaryDuration">0:00</div>
-      <div class="summary-grid" id="summaryGrid"></div>
-      <div class="summary-stat wide" id="summaryProsodyWrap" style="max-width:400px;width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px 14px">
-        <div class="summary-stat-label" style="margin-top:0;margin-bottom:6px">Prosody Score Over Time</div>
-        <div class="summary-prosody-bar" id="summaryProsodyBar"></div>
-      </div>
-      <div class="summary-actions">
-        <button class="btn btn-start" id="summaryBackBtn">↩ Menu</button>
-        <button class="btn btn-start" id="summaryAgainBtn">🎙 Again</button>
-      </div>
-    </div>
-
-    <div class="tooltip" id="helpTooltip">
-      <div class="help-tabs">
-        <button class="help-tab active" data-tab="howto">How To Play</button>
-        <button class="help-tab" data-tab="rainbow">Rainbow Passage</button>
-      </div>
-
-      <div class="help-panel active" data-panel="howto" id="helpHowTo">
-        <!-- Populated dynamically per mode -->
-      </div>
-
-      <div class="help-panel" data-panel="rainbow">
-        <h3>Rainbow Passage</h3>
-        <p>When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is a division of white light into many beautiful colors. These take the shape of a long round arch, with its path high above, and its two ends apparently beyond the horizon. There is, according to legend, a boiling pot of gold at one end. People look, but no one ever finds it.</p>
-      </div>
-    </div>
-
-    <div class="vib-panel" id="vibPanel">
-      <h3>📳 Vibration Alerts</h3>
-      <div class="vib-panel-sub">
-        Get haptic or visual feedback when your voice goes outside target ranges.
-        Add rules below — each triggers a brief vibration when the condition is met.
-      </div>
-
-      <div class="vib-master">
-        <label>Vibration alerts</label>
-        <div class="toggle-switch">
-          <input type="checkbox" id="vibMasterToggle">
-          <span class="toggle-slider"></span>
-        </div>
-      </div>
-
-      <div id="vibEmptyHint" style="text-align:center;padding:12px 0 6px;font-size:0.72rem;color:rgba(255,255,255,0.25);line-height:1.5">
-        No alert rules yet.<br>Add a rule or use a preset below.
-      </div>
-
-      <div class="vib-rules-list" id="vibRulesList"></div>
-      <button class="vib-add-btn" id="vibAddRule">+ Add Alert Rule</button>
-      <div style="display:flex;gap:6px;margin-top:8px">
-        <button class="vib-add-btn" id="vibPresetFem" style="flex:1;font-size:0.66rem">♀ Feminine preset</button>
-        <button class="vib-add-btn" id="vibPresetMasc" style="flex:1;font-size:0.66rem">♂ Masculine preset</button>
-      </div>
-      <button class="vib-add-btn" id="vibTestBtn" style="margin-top:8px;border-style:solid;opacity:0.7">📳 Test Vibration</button>
-    </div>
-
-    <div class="recordings-drawer" id="recordingsDrawer">
-      <div class="recordings-header">
-        <h3>Recordings</h3>
-        <button class="btn-clear-all" id="clearAllRecs">Clear all</button>
-      </div>
-      <div class="recordings-list" id="recordingsList">
-        <div class="recordings-empty" id="recsEmpty">No recordings yet. Hit <b>Rec</b> while playing!</div>
-      </div>
-    </div>
-  </div>
-
-  <div class="meters-panel">
-    <div class="meter meter-pitch">
-      <div class="meter-label">Pitch</div>
-      <div class="meter-bar-bg meter-bar-pitch-bg"><div class="meter-bar-fill" id="meterPitch"></div></div>
-      <div class="meter-value" id="valPitch">— Hz</div>
-    </div>
-    <div class="meter meter-resonance">
-      <div class="meter-label">
-        Resonance
-        <select id="resMethodSelect" class="res-method-select" aria-label="Resonance method">
-          <option value="harmonic">A: Harmonic Env</option>
-          <option value="cepstral">B: Cepstral</option>
-          <option value="lpc">C: LPC</option>
-          <option value="centroid">D: Centroid</option>
+  <div id="app">
+    <div class="hud">
+      <div class="hud-title">PROSODY TRAINING</div>
+      <span class="session-timer" id="sessionTimer">0:00</span>
+      <div class="hud-controls">
+        <select id="themeSelect" class="theme-select" aria-label="Theme preset">
+          <option value="playful">Playful</option>
+          <option value="ocean">Ocean</option>
+          <option value="minimal">Minimal</option>
+          <option value="highcontrast">High Contrast</option>
         </select>
+        <button class="btn btn-cb" id="cbToggle" aria-label="Toggle colorblind mode" title="Colorblind mode">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+        </button>
+        <button class="btn btn-vib" id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round">
+            <rect x="8" y="4" width="8" height="16" rx="2" />
+            <path d="M4 8v8" />
+            <path d="M20 8v8" />
+            <path d="M2 10v4" />
+            <path d="M22 10v4" />
+          </svg>
+        </button>
+        <button class="btn btn-help" id="helpBtn">How to Play</button>
+        <button class="btn btn-perf" id="perfBtn" title="Toggle performance overlay">FPS</button>
+        <button class="btn btn-recordings" id="recordingsBtn"><span>Clips</span><span class="badge"
+            id="recBadge">0</span></button>
+        <button class="btn btn-rec" id="recBtn"><span class="rec-dot"></span><span class="rec-label">Rec</span></button>
+        <button class="btn btn-start" id="startBtn">🎙 Start</button>
       </div>
-      <div class="meter-bar-bg meter-bar-res-bg"><div class="meter-bar-fill" id="meterResonance"></div></div>
-      <div class="meter-value" id="valResonance">—</div>
     </div>
-    <div class="meter meter-bounce">
-      <div class="meter-label">Bounce</div>
-      <div class="meter-bar-bg"><div class="meter-bar-fill" id="meterBounce"></div></div>
-      <div class="meter-value" id="valBounce">0</div>
+
+    <div class="game-area">
+      <canvas id="gameCanvas"></canvas>
+
+      <div class="creature-style-hud" id="creatureStyleHud">
+        <button class="style-pill selected" data-style="jellyfish">🦑</button>
+        <button class="style-pill" data-style="phoenix">🔥</button>
+        <button class="style-pill" data-style="nebula">🌌</button>
+        <button class="style-pill" data-style="spirit">👻</button>
+        <button class="style-pill" data-style="koi">🐟</button>
+        <button class="style-pill" data-style="blob">🫧</button>
+      </div>
+
+      <div class="overlay" id="welcomeOverlay">
+        <div class="overlay-title">Prosody Training</div>
+        <div class="overlay-subtitle">
+          Practice expressive speech with real-time voice feedback.
+          Choose your training mode:
+        </div>
+
+        <div class="mode-picker" id="modePicker">
+          <div class="mode-card" data-mode="ball">
+            <div class="mode-icon">⚽</div>
+            <div class="mode-name">Prosody Ball</div>
+            <div class="mode-desc">Control a bouncing ball with your voice. Pitch bounces, tempo changes speed, vowels
+              leave trails.</div>
+          </div>
+          <div class="mode-card" data-mode="creature">
+            <div class="mode-icon">🐉</div>
+            <div class="mode-name">Voice Creature</div>
+            <div class="mode-desc">Your voice becomes a living being. Resonance shapes its body, prosody transforms it.
+            </div>
+          </div>
+          <div class="mode-card" data-mode="garden">
+            <div class="mode-icon">🌱</div>
+            <div class="mode-name">Voice Garden</div>
+            <div class="mode-desc">Grow a living ecosystem with your voice. Every session adds plants that accumulate.
+            </div>
+          </div>
+          <div class="mode-card" data-mode="canvas">
+            <div class="mode-icon">🎨</div>
+            <div class="mode-name">Voice Canvas</div>
+            <div class="mode-desc">Paint generative art with your voice. Each session creates a unique piece you can
+              save.</div>
+          </div>
+        </div>
+
+        <div class="mode-details" id="modeDetails">
+          <div class="mode-detail-panel" id="ballDetails">
+            <div class="rules-grid">
+              <div class="rule-card rule-bounce">
+                <div class="rule-name">① Bounciness</div>
+                <div class="rule-desc">Vary your pitch up and down. Bigger pitch swings = higher bounces.</div>
+              </div>
+              <div class="rule-card rule-tempo">
+                <div class="rule-name">② Tempo Variance</div>
+                <div class="rule-desc">Change your speaking speed. Fast→slow→fast makes the ball accelerate and
+                  decelerate.</div>
+              </div>
+              <div class="rule-card rule-vowel">
+                <div class="rule-name">③ Vowel Elongation</div>
+                <div class="rule-desc">Stretch your vowels ("hellooo"). Sustained sounds create a glowing trail.</div>
+              </div>
+              <div class="rule-card rule-artic">
+                <div class="rule-name">④ Articulation</div>
+                <div class="rule-desc">Crisp consonants create sparkle effects. Pronounce clearly!</div>
+              </div>
+              <div class="rule-card rule-syllable">
+                <div class="rule-name">⑤ Syllable Separation</div>
+                <div class="rule-desc">Distinct syllable breaks trigger individual bounce events. E-NUN-CI-ATE!</div>
+              </div>
+            </div>
+          </div>
+          <div class="mode-detail-panel" id="creatureDetails">
+            <div class="creature-style-picker" id="creatureStylePicker">
+              <button class="style-pill selected" data-style="jellyfish">🦑 Jellyfish</button>
+              <button class="style-pill" data-style="phoenix">🔥 Phoenix</button>
+              <button class="style-pill" data-style="nebula">🌌 Nebula</button>
+              <button class="style-pill" data-style="spirit">👻 Spirit</button>
+              <button class="style-pill" data-style="koi">🐟 Koi</button>
+              <button class="style-pill" data-style="blob">🫧 Classic</button>
+            </div>
+            <div class="rules-grid">
+              <div class="rule-card rule-bounce">
+                <div class="rule-name">Pitch → Float</div>
+                <div class="rule-desc">Higher pitch lifts the creature. It floats when your voice rises.</div>
+              </div>
+              <div class="rule-card rule-tempo">
+                <div class="rule-name">Resonance → Form</div>
+                <div class="rule-desc">Resonance shapes its body — dark/compact to bright/tall. It IS your vocal tract.
+                </div>
+              </div>
+              <div class="rule-card rule-vowel">
+                <div class="rule-name">Vowels → Tendrils</div>
+                <div class="rule-desc">Sustained sounds grow flowing tendrils. The longer you hold, the more they
+                  extend.</div>
+              </div>
+              <div class="rule-card rule-artic">
+                <div class="rule-name">Articulation → Spark</div>
+                <div class="rule-desc">Sharp consonants make the surface crackle with light. Be crisp!</div>
+              </div>
+              <div class="rule-card rule-syllable">
+                <div class="rule-name">Prosody → Transform</div>
+                <div class="rule-desc">Sustained expressiveness unlocks wings, glow, and luminous patterns.</div>
+              </div>
+            </div>
+          </div>
+          <div class="mode-detail-panel" id="gardenDetails">
+            <div class="rules-grid">
+              <div class="rule-card rule-bounce">
+                <div class="rule-name">Pitch → Species</div>
+                <div class="rule-desc">Low pitch grows mushrooms, mid grows flowers, high grows tall trees. Vary to
+                  diversify!</div>
+              </div>
+              <div class="rule-card rule-tempo">
+                <div class="rule-name">Resonance → Color</div>
+                <div class="rule-desc">Bright resonance makes vivid, warm plants. Dark resonance grows cool, blue-toned
+                  flora.</div>
+              </div>
+              <div class="rule-card rule-vowel">
+                <div class="rule-name">Vowels → Sunlight</div>
+                <div class="rule-desc">Sustained sounds are photosynthesis — they accelerate growth. Hold vowels to
+                  watch plants surge.</div>
+              </div>
+              <div class="rule-card rule-artic">
+                <div class="rule-name">Articulation → Pollen</div>
+                <div class="rule-desc">Crisp consonants scatter pollen and firefly particles through the garden.</div>
+              </div>
+              <div class="rule-card rule-syllable">
+                <div class="rule-name">Syllables → Seeds</div>
+                <div class="rule-desc">Each distinct syllable plants a new seed. More syllables = denser garden.</div>
+              </div>
+            </div>
+          </div>
+          <div class="mode-detail-panel" id="canvasDetails">
+            <div class="rules-grid">
+              <div class="rule-card rule-bounce">
+                <div class="rule-name">Pitch → Y Position</div>
+                <div class="rule-desc">Your pitch paints vertically — low voice at the bottom, high voice sweeps to the
+                  top.</div>
+              </div>
+              <div class="rule-card rule-tempo">
+                <div class="rule-name">Resonance → Color</div>
+                <div class="rule-desc">Dark resonance paints cool blues, bright resonance paints warm golds and pinks.
+                </div>
+              </div>
+              <div class="rule-card rule-vowel">
+                <div class="rule-name">Vowels → Curves</div>
+                <div class="rule-desc">Sustained sounds create smooth flowing brushstrokes. Hold vowels for long,
+                  graceful lines.</div>
+              </div>
+              <div class="rule-card rule-artic">
+                <div class="rule-name">Articulation → Texture</div>
+                <div class="rule-desc">Sharp consonants splatter paint droplets and add texture to the canvas.</div>
+              </div>
+              <div class="rule-card rule-syllable">
+                <div class="rule-name">Energy → Width</div>
+                <div class="rule-desc">Louder, more energetic speech creates wider, bolder strokes. Whisper for fine
+                  detail.</div>
+              </div>
+            </div>
+          </div>
+          <button class="btn-big" id="playBtn">🎙 Start Speaking</button>
+          <div class="mic-note">Requires microphone access · All processing is local</div>
+        </div>
+        <div class="error-banner" id="errorBanner"></div>
+        <div class="iframe-notice" id="iframeNotice"></div>
+        <div class="calibration-overlay" id="calibrationOverlay">
+          <div class="calibration-card">
+            <div class="calibration-title" id="calStepTitle">Preparing calibration</div>
+            <div class="calibration-desc" id="calStepDesc">We'll quickly tune to your mic and voice.</div>
+            <div class="cal-progress">
+              <div class="cal-progress-fill" id="calProgressFill"></div>
+            </div>
+            <div class="cal-actions">
+              <button class="cal-btn-secondary" id="calSkipBtn">Skip</button>
+              <button class="cal-btn-primary" id="calNextBtn" style="display:none">Next</button>
+            </div>
+          </div>
+        </div>
+        <div class="perf-panel" id="perfPanel"></div>
+      </div>
+
+      <!-- Session summary overlay (shown on stop) -->
+      <div class="summary-overlay" id="summaryOverlay">
+        <div class="summary-title">Session Complete</div>
+        <div class="summary-duration" id="summaryDuration">0:00</div>
+        <div class="summary-grid" id="summaryGrid"></div>
+        <div class="summary-stat wide" id="summaryProsodyWrap"
+          style="max-width:400px;width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px 14px">
+          <div class="summary-stat-label" style="margin-top:0;margin-bottom:6px">Prosody Score Over Time</div>
+          <div class="summary-prosody-bar" id="summaryProsodyBar"></div>
+        </div>
+        <div class="summary-actions">
+          <button class="btn btn-start" id="summaryBackBtn">↩ Menu</button>
+          <button class="btn btn-start" id="summaryAgainBtn">🎙 Again</button>
+        </div>
+      </div>
+
+      <div class="tooltip" id="helpTooltip">
+        <div class="help-tabs">
+          <button class="help-tab active" data-tab="howto">How To Play</button>
+          <button class="help-tab" data-tab="rainbow">Rainbow Passage</button>
+        </div>
+
+        <div class="help-panel active" data-panel="howto" id="helpHowTo">
+          <!-- Populated dynamically per mode -->
+        </div>
+
+        <div class="help-panel" data-panel="rainbow">
+          <h3>Rainbow Passage</h3>
+          <p>When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is a
+            division of white light into many beautiful colors. These take the shape of a long round arch, with its path
+            high above, and its two ends apparently beyond the horizon. There is, according to legend, a boiling pot of
+            gold at one end. People look, but no one ever finds it.</p>
+        </div>
+      </div>
+
+      <div class="vib-panel" id="vibPanel">
+        <h3>📳 Vibration Alerts</h3>
+        <div class="vib-panel-sub">
+          Get haptic or visual feedback when your voice goes outside target ranges.
+          Add rules below — each triggers a brief vibration when the condition is met.
+        </div>
+
+        <div class="vib-master">
+          <label>Vibration alerts</label>
+          <div class="toggle-switch">
+            <input type="checkbox" id="vibMasterToggle">
+            <span class="toggle-slider"></span>
+          </div>
+        </div>
+
+        <div id="vibEmptyHint"
+          style="text-align:center;padding:12px 0 6px;font-size:0.72rem;color:rgba(255,255,255,0.25);line-height:1.5">
+          No alert rules yet.<br>Add a rule or use a preset below.
+        </div>
+
+        <div class="vib-rules-list" id="vibRulesList"></div>
+        <button class="vib-add-btn" id="vibAddRule">+ Add Alert Rule</button>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button class="vib-add-btn" id="vibPresetFem" style="flex:1;font-size:0.66rem">♀ Feminine preset</button>
+          <button class="vib-add-btn" id="vibPresetMasc" style="flex:1;font-size:0.66rem">♂ Masculine preset</button>
+        </div>
+        <button class="vib-add-btn" id="vibTestBtn" style="margin-top:8px;border-style:solid;opacity:0.7">📳 Test
+          Vibration</button>
+      </div>
+
+      <div class="recordings-drawer" id="recordingsDrawer">
+        <div class="recordings-header">
+          <h3>Recordings</h3>
+          <button class="btn-clear-all" id="clearAllRecs">Clear all</button>
+        </div>
+        <div class="recordings-list" id="recordingsList">
+          <div class="recordings-empty" id="recsEmpty">No recordings yet. Hit <b>Rec</b> while playing!</div>
+        </div>
+      </div>
     </div>
-    <div class="meter meter-tempo">
-      <div class="meter-label">Tempo</div>
-      <div class="meter-bar-bg"><div class="meter-bar-fill" id="meterTempo"></div></div>
-      <div class="meter-value" id="valTempo">0</div>
-    </div>
-    <div class="meter meter-vowel">
-      <div class="meter-label">Vowels</div>
-      <div class="meter-bar-bg"><div class="meter-bar-fill" id="meterVowel"></div></div>
-      <div class="meter-value" id="valVowel">0</div>
-    </div>
-    <div class="meter meter-artic">
-      <div class="meter-label">Artic.</div>
-      <div class="meter-bar-bg"><div class="meter-bar-fill" id="meterArtic"></div></div>
-      <div class="meter-value" id="valArtic">0</div>
-    </div>
-    <div class="meter meter-syllable">
-      <div class="meter-label">Syllables</div>
-      <div class="meter-bar-bg"><div class="meter-bar-fill" id="meterSyllable"></div></div>
-      <div class="meter-value" id="valSyllable">0</div>
+
+    <div class="meters-panel">
+      <div class="meter meter-pitch">
+        <div class="meter-label">Pitch</div>
+        <div class="meter-bar-bg meter-bar-pitch-bg">
+          <div class="meter-bar-fill" id="meterPitch"></div>
+        </div>
+        <div class="meter-value" id="valPitch">— Hz</div>
+      </div>
+      <div class="meter meter-resonance">
+        <div class="meter-label">
+          Resonance
+          <select id="resMethodSelect" class="res-method-select" aria-label="Resonance method">
+            <option value="harmonic">A: Harmonic Env</option>
+            <option value="cepstral">B: Cepstral</option>
+            <option value="lpc">C: LPC</option>
+            <option value="centroid">D: Centroid</option>
+          </select>
+        </div>
+        <div class="meter-bar-bg meter-bar-res-bg">
+          <div class="meter-bar-fill" id="meterResonance"></div>
+        </div>
+        <div class="meter-value" id="valResonance">—</div>
+      </div>
+      <div class="meter meter-bounce">
+        <div class="meter-label">Bounce</div>
+        <div class="meter-bar-bg">
+          <div class="meter-bar-fill" id="meterBounce"></div>
+        </div>
+        <div class="meter-value" id="valBounce">0</div>
+      </div>
+      <div class="meter meter-tempo">
+        <div class="meter-label">Tempo</div>
+        <div class="meter-bar-bg">
+          <div class="meter-bar-fill" id="meterTempo"></div>
+        </div>
+        <div class="meter-value" id="valTempo">0</div>
+      </div>
+      <div class="meter meter-vowel">
+        <div class="meter-label">Vowels</div>
+        <div class="meter-bar-bg">
+          <div class="meter-bar-fill" id="meterVowel"></div>
+        </div>
+        <div class="meter-value" id="valVowel">0</div>
+      </div>
+      <div class="meter meter-artic">
+        <div class="meter-label">Artic.</div>
+        <div class="meter-bar-bg">
+          <div class="meter-bar-fill" id="meterArtic"></div>
+        </div>
+        <div class="meter-value" id="valArtic">0</div>
+      </div>
+      <div class="meter meter-syllable">
+        <div class="meter-label">Syllables</div>
+        <div class="meter-bar-bg">
+          <div class="meter-bar-fill" id="meterSyllable"></div>
+        </div>
+        <div class="meter-value" id="valSyllable">0</div>
+      </div>
     </div>
   </div>
-</div>
 
-<script type="module" src="app.js"></script>
+  <script type="module" src="app.js"></script>
 
 </body>
+
 </html>
