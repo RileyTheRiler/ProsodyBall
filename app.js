@@ -2110,7 +2110,7 @@ class ProsodyBallGame {
     const helpTooltip = document.getElementById('helpTooltip');
     const helpTabs = Array.from(helpTooltip?.querySelectorAll('.help-tab') || []);
     const helpPanels = Array.from(helpTooltip?.querySelectorAll('.help-panel') || []);
-    const themeSelect = document.getElementById('themeSelect');
+
     const visualStyleSelect = document.getElementById('visualStyleSelect');
     const canvasModeSelect = document.getElementById('canvasModeSelect');
     const keyboardGameSelect = document.getElementById('keyboardGameSelect');
@@ -2613,9 +2613,7 @@ class ProsodyBallGame {
       btn.addEventListener('click', () => syncStylePickers(btn.dataset.style));
     });
 
-    themeSelect.addEventListener('change', (e) => {
-      this.themeMode = e.target.value;
-    });
+
 
     visualStyleSelect?.addEventListener('change', (e) => {
       this.voiceCanvasVisualStyle = e.target.value;
