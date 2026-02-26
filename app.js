@@ -32,6 +32,7 @@ class VoiceAnalyzer {
     this.hfFrequencyData = null;
     this.frequencyData = null; // full-spectrum for formant/resonance analysis
     this.formantFreqData = null; // dedicated low-smoothing spectrum for formant peaks
+    this.pitchBuf = null; // Downsampled buffer for optimized pitch detection
 
     // Pitch
     this.pitchHistory = [];
@@ -121,6 +122,7 @@ class VoiceAnalyzer {
       hfFilter.connect(this.analyserHF);
 
       this.timeDomainData = new Float32Array(this.analyser.fftSize);
+      this.pitchBuf = new Float32Array(this.analyser.fftSize / 2); // 2x downsampling buffer
       this.frequencyData = new Float32Array(this.analyser.frequencyBinCount);
       this.formantFreqData = new Float32Array(this.analyserFormant.frequencyBinCount);
       this.hfFrequencyData = new Uint8Array(this.analyserHF.frequencyBinCount);
@@ -157,6 +159,7 @@ class VoiceAnalyzer {
     this.analyserHF = null;
     this.analyserRec = null;
     this.source = null;
+    this.pitchBuf = null;
     this.pitchHistory = [];
     this.energyHistory = [];
     this.energyBaselineWindow = [];
@@ -206,19 +209,34 @@ class VoiceAnalyzer {
     const n = buf.length;
     const sampleRate = this.audioCtx.sampleRate;
 
-    // RMS gate
+    // RMS gate (calculated on full buffer for accuracy)
     let rms = 0;
     for (let i = 0; i < n; i++) rms += buf[i] * buf[i];
     rms = Math.sqrt(rms / n);
     const silenceThreshold = this.isCalibrated ? this.noiseFloor * 2.5 : 0.015;
     if (rms < silenceThreshold) return 0;
 
-    const minPeriod = Math.floor(sampleRate / 500); // 500 Hz max
-    const maxPeriod = Math.min(Math.floor(sampleRate / 60), Math.floor(n / 2)); // 60 Hz min
+    // OPTIMIZATION: Downsample by 2x for faster YIN calculation
+    // Reduces complexity by ~4x (N^2 -> (N/2)^2)
+    const dsRate = sampleRate / 2;
+    // Use pre-allocated buffer
+    if (!this.pitchBuf || this.pitchBuf.length !== Math.floor(n / 2)) {
+      this.pitchBuf = new Float32Array(Math.floor(n / 2));
+    }
+    const dsBuf = this.pitchBuf;
+    const dsN = dsBuf.length;
+
+    // Simple 2x decimation with averaging (low-pass filter)
+    for (let i = 0; i < dsN; i++) {
+      dsBuf[i] = (buf[2 * i] + buf[2 * i + 1]) * 0.5;
+    }
+
+    // Adjust params for downsampled rate
+    const minPeriod = Math.floor(dsRate / 500); // 500 Hz max
+    const maxPeriod = Math.min(Math.floor(dsRate / 60), Math.floor(dsN / 2)); // 60 Hz min
     const W = maxPeriod; // integration window
 
     // Step 1 & 2: Difference function d(τ) and CMND d'(τ)
-    // Compute both in one pass for efficiency
     const cmnd = new Float32Array(maxPeriod + 1);
     cmnd[0] = 1.0;
     let runningSum = 0;
@@ -226,7 +244,7 @@ class VoiceAnalyzer {
     for (let tau = 1; tau <= maxPeriod; tau++) {
       let diff = 0;
       for (let i = 0; i < W; i++) {
-        const delta = buf[i] - buf[i + tau];
+        const delta = dsBuf[i] - dsBuf[i + tau];
         diff += delta * delta;
       }
       runningSum += diff;
@@ -277,7 +295,7 @@ class VoiceAnalyzer {
       }
     }
 
-    const rawHz = sampleRate / period;
+    const rawHz = dsRate / period;
 
     // Pitch confidence: CMND < 0.05 = very confident, > 0.3 = unreliable
     // Map inversely: low CMND → high confidence
