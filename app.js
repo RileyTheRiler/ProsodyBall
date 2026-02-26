@@ -7697,7 +7697,7 @@ class ProsodyBallGame {
     const words = sourceText.trim().split(/\s+/).filter(Boolean);
     if (!words.length) return;
     if (this.isRunning && this.analyzer.metrics.energy > 0.03) {
-      const rate = 1.6 + this.analyzer.metrics.tempo * 2.4;
+      const rate = 2.5 + this.analyzer.metrics.tempo * 3.5;
       this.teleprompterIndex += dt * rate;
       if (this.teleprompterIndex >= words.length) this.teleprompterIndex = 0;
     }
