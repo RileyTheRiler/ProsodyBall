@@ -3,6 +3,16 @@ import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { getMicDiagnostics, ensureAudioContextRunning } from './reliability.js';
 
+function escapeHtml(text) {
+  if (!text) return text;
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 // ============================================================
 // VOICE ANALYZER
 // ============================================================
@@ -7707,7 +7717,7 @@ class ProsodyBallGame {
     const view = [];
     for (let i = start; i < end; i++) {
       const cls = i === active ? 'active-word' : '';
-      view.push(`<span class="${cls}">${words[i]}</span>`);
+      view.push(`<span class="${cls}">${escapeHtml(words[i])}</span>`);
     }
     overlay.innerHTML = view.join(' ');
   }
