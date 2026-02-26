@@ -1524,6 +1524,14 @@ class ProsodyBallGame {
       overlayBuilt: false,
       passageMode: 'rainbow',
       customText: '',
+      processMode: 'realtime',
+      mediaRecorder: null,
+      audioChunks: [],
+      audioBlob: null,
+      audioPlayer: new Audio(),
+      isRecording: false,
+      isPlayingBack: false,
+      playbackIndex: 0
     };
 
     // Recording — AnalyserNode polling approach
@@ -2129,6 +2137,66 @@ class ProsodyBallGame {
     };
   }
 
+  updateRecordingsUI() {
+    // ... existing ... (we don't modify this, just defining the new method under it)
+  }
+
+  _updatePrismRecBtnVisibility() {
+    const recBtn = document.getElementById('recBtn');
+    const clearBtn = document.getElementById('prismClearRecBtn');
+    const saveBtn = document.getElementById('prismSaveRecBtn');
+    const idlePrompt = document.getElementById('prismIdlePrompt');
+
+    if (!recBtn) return;
+    if (this.gameMode === 'prism' && this.prismReader.processMode === 'record') {
+      recBtn.classList.add('show');
+
+      const hasRecording = this.prismReader.audioBlob && !this.prismReader.isPlayingBack;
+
+      if (clearBtn) {
+        if (hasRecording) {
+          clearBtn.style.display = 'inline-flex';
+          setTimeout(() => { clearBtn.style.opacity = '1'; clearBtn.style.transform = 'scale(1)'; }, 10);
+        } else {
+          clearBtn.style.opacity = '0';
+          clearBtn.style.transform = 'scale(0.95)';
+          setTimeout(() => { if (clearBtn.style.opacity === '0') clearBtn.style.display = 'none'; }, 300);
+        }
+      }
+      if (saveBtn) {
+        if (hasRecording) {
+          saveBtn.style.display = 'inline-flex';
+          setTimeout(() => { saveBtn.style.opacity = '1'; saveBtn.style.transform = 'scale(1)'; }, 10);
+        } else {
+          saveBtn.style.opacity = '0';
+          saveBtn.style.transform = 'scale(0.95)';
+          setTimeout(() => { if (saveBtn.style.opacity === '0') saveBtn.style.display = 'none'; }, 300);
+        }
+      }
+
+      if (idlePrompt) {
+        idlePrompt.classList.toggle('show', !this.prismReader.isRecording && !this.prismReader.isPlayingBack && !this.prismReader.audioBlob);
+      }
+    } else {
+      recBtn.classList.remove('show');
+      recBtn.classList.remove('recording');
+      const label = recBtn.querySelector('.rec-label');
+      if (label) label.textContent = 'Rec';
+
+      if (clearBtn) {
+        clearBtn.style.opacity = '0';
+        clearBtn.style.transform = 'scale(0.95)';
+        setTimeout(() => { if (clearBtn.style.opacity === '0') clearBtn.style.display = 'none'; }, 300);
+      }
+      if (saveBtn) {
+        saveBtn.style.opacity = '0';
+        saveBtn.style.transform = 'scale(0.95)';
+        setTimeout(() => { if (saveBtn.style.opacity === '0') saveBtn.style.display = 'none'; }, 300);
+      }
+      if (idlePrompt) idlePrompt.classList.remove('show');
+    }
+  }
+
   setupUI() {
     const startBtn = document.getElementById('startBtn');
     const playBtn = document.getElementById('playBtn');
@@ -2152,7 +2220,7 @@ class ProsodyBallGame {
     const prismPassageSelect = document.getElementById('prismPassageSelect');
     const prismCustomText = document.getElementById('prismCustomText');
     const teleprompterCustomBtn = document.getElementById('teleprompterCustomBtn');
-    const recBtn = document.getElementById('recBtn');
+    const hudRecBtn = document.getElementById('recBtn');
     const recordingsBtn = document.getElementById('recordingsBtn');
     const recordingsDrawer = document.getElementById('recordingsDrawer');
     const clearAllRecs = document.getElementById('clearAllRecs');
@@ -2579,6 +2647,7 @@ class ProsodyBallGame {
       if (keyboardGameSelect) keyboardGameSelect.style.display = mode === 'keyboard' ? '' : 'none';
       if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', mode !== 'prism' && this.teleprompterMode !== 'off');
       this._updateHelpContent();
+      this._updatePrismRecBtnVisibility();
       if (mode === 'pilot') this._resetPitchPilotState();
       if (mode === 'road') this._resetResonanceRoadState();
       if (mode === 'ascent') this._resetSpectralAscentState();
@@ -2697,6 +2766,64 @@ class ProsodyBallGame {
 
     prismCustomText?.addEventListener('input', (e) => {
       this.prismReader.customText = e.target.value;
+    });
+
+    const prismModeSelect = document.getElementById('prismModeSelect');
+    prismModeSelect?.addEventListener('change', (e) => {
+      this.prismReader.processMode = e.target.value;
+      this._updatePrismRecBtnVisibility();
+      if (!this.isRunning && this.gameMode === 'prism') this._resetPrismReaderState();
+    });
+
+    hudRecBtn?.addEventListener('click', () => {
+      if (this.gameMode === 'prism' && this.prismReader.processMode === 'record') {
+        this._togglePrismRecording();
+      }
+    });
+
+    const prismClearRecBtn = document.getElementById('prismClearRecBtn');
+    prismClearRecBtn?.addEventListener('click', () => {
+      if (this.gameMode === 'prism' && this.prismReader.processMode === 'record') {
+        if (this.prismReader.isPlayingBack) this._stopPrismPlayback();
+        if (this.prismReader.isRecording) this._stopPrismRecording();
+        this.prismReader.audioBlob = null;
+        if (this.prismReader.audioPlayer) {
+          this.prismReader.audioPlayer.pause();
+          this.prismReader.audioPlayer.src = '';
+        }
+        this.prismReader.audioChunks = [];
+        this._updatePrismRecBtnVisibility();
+        this._resetPrismReaderState();
+      }
+    });
+
+    const prismSaveRecBtn = document.getElementById('prismSaveRecBtn');
+    prismSaveRecBtn?.addEventListener('click', () => {
+      const pr = this.prismReader;
+      if (this.gameMode === 'prism' && pr.processMode === 'record' && pr.audioBlob) {
+        const now = new Date();
+        const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const fileTs = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const duration = pr.audioPlayer?.duration || 0;
+
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          this.recordings.push({
+            blob: pr.audioBlob,
+            dataUrl: reader.result,
+            duration: duration,
+            timestamp: ts,
+            name: `prism-reading-${fileTs}`,
+            mimeType: 'audio/webm'
+          });
+          this.updateRecordingsUI();
+
+          const ogText = prismSaveRecBtn.textContent;
+          prismSaveRecBtn.textContent = 'Saved!';
+          setTimeout(() => { if (prismSaveRecBtn) prismSaveRecBtn.textContent = ogText; }, 2000);
+        };
+        reader.readAsDataURL(pr.audioBlob);
+      }
     });
 
     // Tap-to-advance for prism reader (mobile + desktop click)
@@ -7142,6 +7269,17 @@ class ProsodyBallGame {
     pr.silenceTimer = 0;
     pr.startTime = performance.now();
 
+    // Clear any existing recordings if not explicitly retained
+    if (pr.isPlayingBack) this._stopPrismPlayback();
+    if (pr.isRecording) this._stopPrismRecording();
+    pr.audioBlob = null;
+    if (pr.audioPlayer) {
+      pr.audioPlayer.pause();
+      pr.audioPlayer.src = '';
+    }
+    pr.audioChunks = [];
+    this._updatePrismRecBtnVisibility();
+
     const container = document.getElementById('prismScrollContainer');
     if (container) {
       container.innerHTML = '';
@@ -7265,6 +7403,16 @@ class ProsodyBallGame {
 
     this._applyPrismVisuals(index);
     syl.state = 'crystallized';
+
+    if (this.prismReader.processMode === 'record') {
+      if (!this.prismReader.isPlayingBack) {
+        // Sync timestamp to when they STARTED saying the word, not when the word ended.
+        syl.playbackTimestamp = (syl.startTime / 1000) - this.prismReader.startTime;
+        syl.playbackRevealed = false;
+        return;
+      }
+    }
+
     this._updatePrismSylDOM(index);
   }
 
@@ -7313,9 +7461,150 @@ class ProsodyBallGame {
     }
   }
 
+  _togglePrismRecording() {
+    const pr = this.prismReader;
+    if (pr.isRecording) {
+      this._stopPrismRecording();
+    } else if (pr.isPlayingBack) {
+      this._stopPrismPlayback();
+    } else {
+      this._startPrismRecording();
+    }
+  }
+
+  _startPrismRecording() {
+    const pr = this.prismReader;
+    if (!this.analyzer || !this.analyzer.stream) return;
+
+    this._resetPrismReaderState();
+
+    pr.audioChunks = [];
+    try {
+      pr.mediaRecorder = new MediaRecorder(this.analyzer.stream);
+      pr.mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) pr.audioChunks.push(e.data);
+      };
+      pr.mediaRecorder.onstop = () => {
+        pr.audioBlob = new Blob(pr.audioChunks, { type: 'audio/webm' });
+        pr.audioPlayer.src = URL.createObjectURL(pr.audioBlob);
+        this._startPrismPlayback();
+      };
+
+      pr.mediaRecorder.start();
+      pr.isRecording = true;
+      pr.recordingStream = this.analyzer.stream;
+      pr.startTime = performance.now() / 1000;
+
+      const recBtn = document.getElementById('recBtn');
+      if (recBtn) {
+        recBtn.classList.add('recording');
+        const label = recBtn.querySelector('.rec-label');
+        if (label) label.textContent = 'Stop';
+      }
+    } catch (e) {
+      console.error('Failed to start Prism MediaRecorder:', e);
+    }
+  }
+
+  _stopPrismRecording() {
+    const pr = this.prismReader;
+    if (!pr.isRecording || !pr.mediaRecorder) return;
+    pr.mediaRecorder.stop();
+    pr.isRecording = false;
+
+    const recBtn = document.getElementById('recBtn');
+    if (recBtn) {
+      recBtn.classList.remove('recording');
+      const label = recBtn.querySelector('.rec-label');
+      if (label) label.textContent = 'Play';
+    }
+  }
+
+  _startPrismPlayback() {
+    const pr = this.prismReader;
+    if (!pr.audioBlob) return;
+
+    document.querySelectorAll('.prism-syl').forEach(s => {
+      s.className = 'prism-syl pre-read';
+      s.style = '';
+    });
+
+    for (const syl of pr.syllables) {
+      if (syl.state === 'crystallized' || syl.state === 'active') {
+        syl.playbackRevealed = false;
+      }
+    }
+
+    pr.playbackIndex = 0;
+    pr.isPlayingBack = true;
+
+    const container = document.getElementById('prismScrollContainer');
+    if (container) container.scrollTop = 0;
+
+    pr.audioPlayer.currentTime = 0;
+    pr.audioPlayer.play().catch(e => console.error("Playback failed", e));
+
+    pr.audioPlayer.onended = () => {
+      this._stopPrismPlayback();
+    };
+
+    const recBtn = document.getElementById('recBtn');
+    if (recBtn) {
+      recBtn.classList.add('recording');
+      const label = recBtn.querySelector('.rec-label');
+      if (label) label.textContent = 'Stop';
+    }
+  }
+
+  _stopPrismPlayback() {
+    const pr = this.prismReader;
+    pr.isPlayingBack = false;
+    pr.audioPlayer.pause();
+
+    const recBtn = document.getElementById('recBtn');
+    if (recBtn) {
+      recBtn.classList.remove('recording');
+      const label = recBtn.querySelector('.rec-label');
+      if (label) label.textContent = 'Replay';
+    }
+  }
+
+  updatePrismPlayback(dt) {
+    const pr = this.prismReader;
+    const ct = pr.audioPlayer.currentTime;
+
+    // Smooth out early timestamps that might have slightly negative values 
+    // due to DOM/audio init mismatches
+    for (let i = 0; i < pr.syllables.length; i++) {
+      const syl = pr.syllables[i];
+      if (syl.state === 'crystallized' && !syl.playbackRevealed) {
+        // Add a +60ms pad to slightly delay visual reveal, tightening the sync feel.
+        const syncTime = Math.max(0, syl.playbackTimestamp + 0.06);
+        if (ct >= syncTime) {
+          syl.playbackRevealed = true;
+          this._updatePrismSylDOM(i);
+          pr.playbackIndex = Math.max(pr.playbackIndex || 0, i);
+        }
+      }
+    }
+  }
+
   updatePrismReader(dt) {
     const pr = this.prismReader;
-    if (pr.completed) return;
+
+    if (pr.processMode === 'record') {
+      if (pr.isPlayingBack) {
+        this.updatePrismPlayback(dt);
+        return;
+      }
+      if (!pr.isRecording) {
+        return;
+      }
+    }
+
+    // Explicitly do not return if completed = true in record mode because we stop recording
+    // playback when we are done, but we MIGHT crystallize early.
+    if (pr.completed && pr.processMode !== 'record') return;
 
     const a = this.analyzer;
     const now = performance.now() / 1000;
@@ -7344,13 +7633,13 @@ class ProsodyBallGame {
     if (a.metrics.energy > 0.02) {
       pr.silenceTimer = 0;
     } else {
-      pr.silenceTimer += dt;
+      if (!pr.isPlayingBack) pr.silenceTimer += dt;
     }
 
     // Show "keep reading" prompt on extended silence
     const keepReading = document.getElementById('prismKeepReading');
     if (keepReading) {
-      keepReading.classList.toggle('show', pr.isActive && pr.silenceTimer > 3.0);
+      keepReading.classList.toggle('show', pr.isActive && !pr.isPlayingBack && pr.silenceTimer > 3.0);
     }
 
     // Manual mode: onset stepping is disabled, spacebar advances instead
@@ -7381,7 +7670,9 @@ class ProsodyBallGame {
       pr.isActive = true;
       pr.syllables[pr.currentIndex].state = 'active';
       pr.syllables[pr.currentIndex].startTime = performance.now();
-      this._updatePrismSylDOM(pr.currentIndex);
+      if (pr.processMode !== 'record') {
+        this._updatePrismSylDOM(pr.currentIndex);
+      }
     }
 
     // Timeout: crystallize if stuck for > 2s during silence
@@ -7411,7 +7702,9 @@ class ProsodyBallGame {
     pr.isActive = true;
     pr.syllables[pr.currentIndex].state = 'active';
     pr.syllables[pr.currentIndex].startTime = performance.now();
-    this._updatePrismSylDOM(pr.currentIndex);
+    if (pr.processMode !== 'record') {
+      this._updatePrismSylDOM(pr.currentIndex);
+    }
   }
 
   drawPrismReaderScene() {
@@ -7450,14 +7743,20 @@ class ProsodyBallGame {
     // Update progress bar
     const progressFill = document.getElementById('prismProgressFill');
     if (progressFill && pr.syllables.length > 0) {
-      const pct = Math.max(0, (pr.currentIndex + 1) / pr.syllables.length * 100);
-      progressFill.style.width = `${Math.min(100, pct)}%`;
+      if (pr.isPlayingBack && pr.audioPlayer && pr.audioPlayer.duration) {
+        const pct = Math.max(0, (pr.audioPlayer.currentTime / pr.audioPlayer.duration) * 100);
+        progressFill.style.width = `${Math.min(100, pct)}%`;
+      } else {
+        const pct = Math.max(0, (pr.currentIndex + 1) / pr.syllables.length * 100);
+        progressFill.style.width = `${Math.min(100, pct)}%`;
+      }
     }
 
     // Scroll to keep active syllable visible
-    if (pr.currentIndex >= 0) {
+    const activeIndex = pr.isPlayingBack ? pr.playbackIndex : pr.currentIndex;
+    if (activeIndex >= 0) {
       const container = document.getElementById('prismScrollContainer');
-      const activeSpan = container?.querySelector(`.prism-syl[data-syl-index="${pr.currentIndex}"]`);
+      const activeSpan = container?.querySelector(`.prism-syl[data-syl-index="${activeIndex}"]`);
       if (activeSpan && container) {
         const spanTop = activeSpan.offsetTop;
         const containerH = container.clientHeight;

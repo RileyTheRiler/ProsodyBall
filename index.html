@@ -212,6 +212,62 @@
       box-shadow: none;
     }
 
+    .btn-rec {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      background: rgba(255, 107, 107, 0.1);
+      color: var(--accent-bounce);
+      border: 1px solid rgba(255, 107, 107, 0.3);
+      opacity: 0;
+      transform: scale(0.95);
+      transition: all 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+    }
+
+    .btn-rec.show {
+      display: inline-flex;
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    .btn-rec:hover {
+      background: rgba(255, 107, 107, 0.15);
+      border-color: rgba(255, 107, 107, 0.5);
+    }
+
+    .btn-rec.recording {
+      background: rgba(255, 107, 107, 0.2);
+      border-color: rgba(255, 107, 107, 0.8);
+      color: #fff;
+    }
+
+    .rec-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent-bounce);
+      display: inline-block;
+    }
+
+    .btn-rec.recording .rec-dot {
+      animation: pulse-dot 1.5s infinite;
+    }
+
+    @keyframes pulse-dot {
+      0% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.2;
+      }
+
+      100% {
+        opacity: 1;
+      }
+    }
+
     :root.colorblind .btn-start {
       background: linear-gradient(135deg, #D55E00, #E69F00);
       box-shadow: 0 2px 12px rgba(213, 94, 0, 0.3);
@@ -1958,6 +2014,36 @@
       box-shadow: 0 0 12px rgba(138, 100, 255, 0.15);
     }
 
+    .prism-keep-reading,
+    .prism-idle-prompt {
+      position: absolute;
+      bottom: 25px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(8px);
+      padding: 6px 14px;
+      border-radius: 12px;
+      color: rgba(255, 255, 255, 0.8);
+      font-size: 0.9rem;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .prism-keep-reading.show,
+    .prism-idle-prompt.show {
+      opacity: 1;
+    }
+
+    .prism-idle-prompt {
+      bottom: 60px;
+      /* Position slightly above the keep reading prompt */
+      color: rgba(180, 220, 255, 0.9);
+      border: 1px solid rgba(180, 220, 255, 0.15);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    }
+
     .creature-style-hud {
       position: absolute;
       top: 52px;
@@ -2213,6 +2299,11 @@
       <div class="hud-controls hud-primary" aria-label="Primary session controls">
         <button class="btn btn-start" id="startBtn">🎙 Start</button>
         <button class="btn btn-rec" id="recBtn"><span class="rec-dot"></span><span class="rec-label">Rec</span></button>
+        <button class="btn btn-help" id="prismClearRecBtn"
+          style="display: none; opacity: 0; transform: scale(0.95); transition: all 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);">Clear</button>
+        <button class="btn btn-help" id="prismSaveRecBtn"
+          style="display: none; opacity: 0; transform: scale(0.95); transition: all 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);">Save
+          Clip</button>
         <button class="btn btn-recordings" id="recordingsBtn"><span>Clips</span><span class="badge"
             id="recBadge">0</span></button>
         <button class="btn btn-help canvas-only" id="pauseCanvasBtn" title="Pause paint updates">Pause</button>
@@ -2273,6 +2364,7 @@
       <div class="teleprompter-overlay" id="teleprompterOverlay"></div>
       <div class="prism-overlay" id="prismOverlay">
         <div class="prism-scroll-container" id="prismScrollContainer"></div>
+        <div class="prism-idle-prompt" id="prismIdlePrompt">Click Rec to start reading</div>
         <div class="prism-keep-reading" id="prismKeepReading">Keep reading...</div>
         <div class="prism-progress" id="prismProgress">
           <div class="prism-progress-fill" id="prismProgressFill"></div>
@@ -2280,7 +2372,8 @@
       </div>
 
       <div class="creature-style-hud" id="creatureStyleHud">
-        <button class="style-pill selected" data-style="jellyfish" aria-label="Jellyfish style" title="Jellyfish">🦑</button>
+        <button class="style-pill selected" data-style="jellyfish" aria-label="Jellyfish style"
+          title="Jellyfish">🦑</button>
         <button class="style-pill" data-style="phoenix" aria-label="Phoenix style" title="Phoenix">🔥</button>
         <button class="style-pill" data-style="nebula" aria-label="Nebula style" title="Nebula">🌌</button>
         <button class="style-pill" data-style="spirit" aria-label="Spirit style" title="Spirit">👻</button>
@@ -2679,6 +2772,16 @@
                 </div>
                 <div class="prism-settings">
                   <div class="prism-settings-row">
+                    <div class="prism-settings-field">
+                      <label class="prism-label" for="prismModeSelect">
+                        <span class="prism-label-icon">🎙️</span>Mode
+                      </label>
+                      <select id="prismModeSelect" class="theme-select prism-select"
+                        aria-label="Prism Reader process mode">
+                        <option value="realtime">Real-Time</option>
+                        <option value="record">Record & Process</option>
+                      </select>
+                    </div>
                     <div class="prism-settings-field">
                       <label class="prism-label" for="prismPacingSelect">
                         <span class="prism-label-icon">⏱</span>Pacing Mode
