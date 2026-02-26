@@ -165,7 +165,7 @@
     }
 
     .theme-select {
-      background: rgba(255, 255, 255, 0.06);
+      background: #1a1a2e;
       color: var(--text-primary);
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 8px;
@@ -173,6 +173,11 @@
       font-family: 'Outfit', sans-serif;
       font-size: 0.88rem;
       font-weight: 600;
+    }
+
+    .theme-select option {
+      background: #1a1a2e;
+      color: #e8e6f0;
     }
 
     .btn {
@@ -851,7 +856,7 @@
     .res-method-select {
       font-family: 'Space Mono', monospace;
       font-size: 0.62rem;
-      background: rgba(255, 255, 255, 0.08);
+      background: #1a1a2e;
       color: var(--text-muted);
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 4px;
@@ -2211,9 +2216,6 @@
       </div>
       <div class="hud-controls hud-secondary" aria-label="Secondary settings">
         <select id="themeSelect" class="theme-select" aria-label="Theme preset">
-          <option value="playful">Playful</option>
-          <option value="ocean">Ocean</option>
-          <option value="minimal">Minimal</option>
           <option value="highcontrast">High Contrast</option>
         </select>
         <select id="visualStyleSelect" class="theme-select canvas-only" aria-label="Visual style mode">

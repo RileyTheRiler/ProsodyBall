@@ -1198,7 +1198,7 @@ class ProsodyBallGame {
     this.particles = [];
     this.trailPoints = [];
     this.sparkles = [];
-    this.themeMode = 'playful';
+    this.themeMode = 'highcontrast';
     this.colorblindMode = false;
     this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road'
     this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road' | 'ascent' | 'prism'
@@ -1773,22 +1773,16 @@ class ProsodyBallGame {
     }
     // Theme-aware mountain + ground colors
     const mtnColors = {
-      playful: ['#1a1a35', '#151530', '#111128'],
-      ocean: ['#0c2a38', '#0a2230', '#081c28'],
-      minimal: ['#181c24', '#14181f', '#10141a'],
       highcontrast: ['#12122a', '#0e0e22', '#0a0a1a'],
     };
     const groundColors = {
-      playful: ['#1e1e3a', '#191932', '#121228'],
-      ocean: ['#0e3040', '#0b2836', '#081e2c'],
-      minimal: ['#1a1e28', '#161a22', '#12161c'],
       highcontrast: ['#14142a', '#101024', '#0c0c1e'],
     };
-    const mc = mtnColors[this.themeMode] || mtnColors.playful;
+    const mc = mtnColors[this.themeMode] || mtnColors.highcontrast;
     this.mountainLayers[0].color = mc[0];
     this.mountainLayers[1].color = mc[1];
     this.mountainLayers[2].color = mc[2];
-    this._groundColors = groundColors[this.themeMode] || groundColors.playful;
+    this._groundColors = groundColors[this.themeMode] || groundColors.highcontrast;
 
     if (!this.isRunning) this.drawIdleScene();
   }
@@ -3607,12 +3601,9 @@ class ProsodyBallGame {
 
     // Background — theme-aware
     const themePresets = {
-      playful: ['#0c0c20', '#10102a', '#161638', '#1a1a3a'],
-      ocean: ['#040e18', '#081a2a', '#0c2636', '#103040'],
-      minimal: ['#0f1117', '#131722', '#161a25', '#191d28'],
       highcontrast: ['#030305', '#080814', '#0c0c1f', '#12122a']
     };
-    const colors = themePresets[this.themeMode] || themePresets.playful;
+    const colors = themePresets[this.themeMode] || themePresets.highcontrast;
     const bgGrad = ctx.createLinearGradient(0, 0, 0, h);
     bgGrad.addColorStop(0, colors[0]);
     bgGrad.addColorStop(0.4, colors[1]);
@@ -3627,7 +3618,7 @@ class ProsodyBallGame {
       const sx = ((star.x - this.scrollX * 0.05) % (w + 100) + w + 100) % (w + 100);
       const twinkle = 0.4 + 0.6 * Math.sin(time * 2.2 + star.twinkle + prosodyGlow * 2);
       ctx.globalAlpha = twinkle * 0.6;
-      ctx.fillStyle = this.themeMode === 'ocean' ? '#8ad8d8' : '#e8e6f0';
+      ctx.fillStyle = '#e8e6f0';
       ctx.beginPath();
       ctx.arc(sx, star.y, star.size, 0, Math.PI * 2);
       ctx.fill();
@@ -3664,7 +3655,7 @@ class ProsodyBallGame {
           const gy = baseY - Math.abs(my);
           if (x === -20) ctx.moveTo(x, gy); else ctx.lineTo(x, gy);
         }
-        ctx.strokeStyle = this.themeMode === 'ocean' ? 'rgba(100,200,200,0.04)' : 'rgba(255,255,255,0.03)';
+        ctx.strokeStyle = 'rgba(255,255,255,0.03)';
         ctx.lineWidth = 1;
         ctx.stroke();
       }
@@ -3704,9 +3695,7 @@ class ProsodyBallGame {
       const gy = this.getGroundHeight(this.scrollX + x);
       if (x === -margin) ctx.moveTo(x, gy); else ctx.lineTo(x, gy);
     }
-    ctx.strokeStyle = (this.themeMode === 'highcontrast') ? 'rgba(255,255,255,0.28)'
-      : (this.themeMode === 'ocean') ? 'rgba(130,210,210,0.14)'
-        : 'rgba(255,255,255,0.12)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.28)';
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
@@ -4226,17 +4215,16 @@ class ProsodyBallGame {
     const time = performance.now() / 1000;
     // --- Shared background ---
     const tp = {
-      playful: ['#0c0c20', '#10102a', '#161638', '#1a1a3a'], ocean: ['#040e18', '#081a2a', '#0c2636', '#103040'],
-      minimal: ['#0f1117', '#131722', '#161a25', '#191d28'], highcontrast: ['#030305', '#080814', '#0c0c1f', '#12122a']
+      highcontrast: ['#030305', '#080814', '#0c0c1f', '#12122a']
     };
-    const cols = tp[this.themeMode] || tp.playful;
+    const cols = tp[this.themeMode] || tp.highcontrast;
     const bg = ctx.createLinearGradient(0, 0, 0, h);
     bg.addColorStop(0, cols[0]); bg.addColorStop(0.4, cols[1]); bg.addColorStop(0.7, cols[2]); bg.addColorStop(1, cols[3]);
     ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h);
     if (this.stars) {
       for (const s of this.stars) {
         ctx.globalAlpha = (0.3 + 0.4 * Math.sin(time * 1.5 + s.twinkle)) * 0.35;
-        ctx.fillStyle = this.themeMode === 'ocean' ? '#6abfbf' : '#c8c6d8';
+        ctx.fillStyle = '#c8c6d8';
         ctx.beginPath(); ctx.arc(s.x, s.y, s.size * 0.8, 0, Math.PI * 2); ctx.fill();
       }
       ctx.globalAlpha = 1;
@@ -4946,12 +4934,9 @@ class ProsodyBallGame {
 
     // ---- Sky gradient — theme-aware with garden earth tones ----
     const gardenSkies = {
-      playful: ['#060812', '#0a1018', '#101820', '#182828', '#1a3030', '#0e1e14'],
-      ocean: ['#030a10', '#061218', '#0a1a22', '#102428', '#122c2c', '#0a1a12'],
-      minimal: ['#08080c', '#0c0e12', '#111518', '#181e20', '#1a2222', '#101814'],
       highcontrast: ['#020206', '#04060a', '#080c10', '#101818', '#122020', '#08120a'],
     };
-    const skyColors = gardenSkies[this.themeMode] || gardenSkies.playful;
+    const skyColors = gardenSkies[this.themeMode] || gardenSkies.highcontrast;
     const skyGrad = ctx.createLinearGradient(0, 0, 0, h);
     skyGrad.addColorStop(0, skyColors[0]);
     skyGrad.addColorStop(0.35, skyColors[1]);
