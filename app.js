@@ -2344,9 +2344,15 @@ class VoxBallGame {
           directUrl = window.location.href;
         }
       } catch (e) { }
-      iframeNotice.innerHTML =
-        'This app needs microphone access, which may be blocked when embedded.<br>' +
-        '<a href="' + directUrl + '" target="_blank" rel="noopener">Open in new tab for full access ↗</a>';
+      iframeNotice.textContent = '';
+      iframeNotice.appendChild(document.createTextNode('This app needs microphone access, which may be blocked when embedded.'));
+      iframeNotice.appendChild(document.createElement('br'));
+      const link = document.createElement('a');
+      link.href = directUrl;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = 'Open in new tab for full access ↗';
+      iframeNotice.appendChild(link);
       iframeNotice.classList.add('show');
     }
 
