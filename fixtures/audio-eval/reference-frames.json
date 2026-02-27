@@ -1,0 +1,95 @@
+{
+  "description": "Reference frame-level analyzer signals captured from stable sample sessions. Used to detect scoring drift.",
+  "frames": [
+    {
+      "name": "clean_voiced",
+      "pitchConfidence": 0.91,
+      "formantConfidence": 0.78,
+      "spectralTiltConfidence": 0.83,
+      "voicedStrength": 0.87,
+      "gatedRms": 0.058,
+      "energyP50": 0.012,
+      "energyP90": 0.052,
+      "hfEnergy": 0.11,
+      "hfNoiseFloor": 0.014,
+      "expected": {
+        "confidenceGate": [
+          0.75,
+          1.0
+        ],
+        "voicedGate": [
+          0.75,
+          1.0
+        ],
+        "energy": [
+          0.8,
+          1.0
+        ],
+        "articulation": [
+          0.6,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "breathy_low_confidence",
+      "pitchConfidence": 0.18,
+      "formantConfidence": 0.22,
+      "spectralTiltConfidence": 0.2,
+      "voicedStrength": 0.27,
+      "gatedRms": 0.018,
+      "energyP50": 0.01,
+      "energyP90": 0.045,
+      "hfEnergy": 0.03,
+      "hfNoiseFloor": 0.016,
+      "expected": {
+        "confidenceGate": [
+          0.2,
+          0.4
+        ],
+        "voicedGate": [
+          0.25,
+          0.4
+        ],
+        "energy": [
+          0.2,
+          0.5
+        ],
+        "articulation": [
+          0.0,
+          0.45
+        ]
+      }
+    },
+    {
+      "name": "noise_only",
+      "pitchConfidence": 0.02,
+      "formantConfidence": 0.03,
+      "spectralTiltConfidence": 0.05,
+      "voicedStrength": 0.03,
+      "gatedRms": 0.006,
+      "energyP50": 0.008,
+      "energyP90": 0.04,
+      "hfEnergy": 0.012,
+      "hfNoiseFloor": 0.011,
+      "expected": {
+        "confidenceGate": [
+          0.2,
+          0.28
+        ],
+        "voicedGate": [
+          0.25,
+          0.3
+        ],
+        "energy": [
+          0.0,
+          0.15
+        ],
+        "articulation": [
+          0.0,
+          0.12
+        ]
+      }
+    }
+  ]
+}
