@@ -27,6 +27,7 @@ export class VoiceAnalyzer {
     this.recTimeDomainData = null;
     this.source = null;
     this.stream = null;
+    this.audioElement = null; // store audio element for cleanup
     this.isActive = false;
 
     this.timeDomainData = null;
@@ -114,14 +115,31 @@ export class VoiceAnalyzer {
     };
   }
 
-  async start() {
+  async start(audioFile = null) {
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-      });
-
       this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      this.source = this.audioCtx.createMediaStreamSource(this.stream);
+
+      if (audioFile) {
+        // Handle audio file input
+        this.audioElement = new Audio();
+        this.audioElement.src = URL.createObjectURL(audioFile);
+        this.audioElement.loop = false;
+
+        // ensure AudioContext is running before playing
+        if (this.audioCtx.state === 'suspended') {
+          await this.audioCtx.resume();
+        }
+
+        this.source = this.audioCtx.createMediaElementSource(this.audioElement);
+        // Connect to destination so user can hear it
+        this.source.connect(this.audioCtx.destination);
+      } else {
+        // Handle microphone input
+        this.stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
+        this.source = this.audioCtx.createMediaStreamSource(this.stream);
+      }
 
       this.analyser = this.audioCtx.createAnalyser();
       this.analyser.fftSize = 4096; // Larger window → better low-freq pitch resolution
@@ -157,15 +175,35 @@ export class VoiceAnalyzer {
       this.recTimeDomainData = new Float32Array(512);
 
       this.isActive = true;
-      return { ok: true };
+
+      // We must play it to get logic processing
+      if (this.audioElement) {
+        try {
+          await this.audioElement.play();
+        } catch (playErr) {
+          console.error("Autoplay prevented:", playErr);
+          // Provide error response if play fails
+          return { ok: false, error: "AutoPlayError", message: playErr.message };
+        }
+      }
+
+      return { ok: true, audioElement: this.audioElement };
     } catch (e) {
-      console.error('Mic access denied:', e);
+      console.error('Mic/Audio access denied:', e);
       return { ok: false, error: e.name, message: e.message };
     }
   }
 
   stop() {
     this.isActive = false;
+
+    if (this.audioElement) {
+      this.audioElement.pause();
+      URL.revokeObjectURL(this.audioElement.src);
+      this.audioElement.src = "";
+      this.audioElement = null;
+    }
+
     if (this.source) { try { this.source.disconnect(); } catch (e) { } }
     // FIX: stop stream tracks so mic LED turns off
     if (this.stream) {
@@ -1712,7 +1750,7 @@ class VoxBallGame {
     this.canvasModeTransition = 0;
     this.keyboardGameMode = 'mirror'; // 'mirror' | 'target' | 'hero'
     this.pitchGuideLabelMode = 'hz';
-    this.pitchGridStrength = 'soft';
+    this.pitchGridStrength = 'strong';
     this.teleprompterMode = 'off';
     this.voiceProfilePreset = 'auto';
     this.teleprompterCustomText = '';
@@ -2322,7 +2360,7 @@ class VoxBallGame {
     const canvasModeSelect = document.getElementById('canvasModeSelect');
     const keyboardGameSelect = document.getElementById('keyboardGameSelect');
     const pitchLabelsSelect = document.getElementById('pitchLabelsSelect');
-    const gridContrastBtn = document.getElementById('gridContrastBtn');
+
     const teleprompterModeSelect = document.getElementById('teleprompterModeSelect');
     const voiceProfileSelect = document.getElementById('voiceProfileSelect');
     const motionToggle = document.getElementById('motionToggle');
@@ -2409,6 +2447,23 @@ class VoxBallGame {
 
     recoverMicBtn?.addEventListener('click', recoverMicSession);
 
+    // Audio file upload handling
+    const audioUploadInput = document.getElementById('audioUploadInput');
+    let selectedAudioFile = null;
+
+    audioUploadInput?.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files.length > 0) {
+        selectedAudioFile = e.target.files[0];
+
+        // if a game is running, stop it and start again with file
+        if (this.isRunning) {
+          stopGame().then(() => startGame());
+        } else {
+          startGame();
+        }
+      }
+    });
+
     const startGame = async () => {
       this._resetKeyboardModeState();
       if (this.gameMode === 'keyboard') {
@@ -2426,10 +2481,10 @@ class VoxBallGame {
         this.idleAnimId = null;
       }
 
-      // Check if getUserMedia is available at all
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      // Check if we have an audio file OR microphone
+      if (!selectedAudioFile && (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)) {
         showError(
-          '🎙 Microphone API not available.<br>' +
+          '🎙 Microphone API not available and no audio file selected.<br>' +
           'This requires HTTPS and a modern browser. ' +
           (isInIframe
             ? '<a href="' + window.location.href + '" target="_blank">Try opening in a new tab ↗</a>'
@@ -2439,7 +2494,13 @@ class VoxBallGame {
         return;
       }
 
-      const result = await this.analyzer.start();
+      const result = await this.analyzer.start(selectedAudioFile);
+
+      // Clear the selected file after starting so it doesn't persistently start with the file
+      // if the user later clicks the normal Start button.
+      selectedAudioFile = null;
+      if (audioUploadInput) audioUploadInput.value = "";
+
       if (!result.ok) {
         let msg = '';
         if (result.error === 'NotAllowedError') {
@@ -2935,10 +2996,7 @@ class VoxBallGame {
       this.pitchGuideLabelMode = e.target.value;
     });
 
-    gridContrastBtn?.addEventListener('click', () => {
-      this.pitchGridStrength = this.pitchGridStrength === 'soft' ? 'strong' : 'soft';
-      gridContrastBtn.textContent = this.pitchGridStrength === 'soft' ? 'Grid: Soft' : 'Grid: Strong';
-    });
+
 
     roadTargetSelect?.addEventListener('change', (e) => {
       this.resonanceRoad.targetTone = e.target.value;
@@ -5852,15 +5910,22 @@ class VoxBallGame {
     // Advance cursor — ONLY while speaking (slow drift in silence)
     const tempoMod = 0.6 + m.tempo * 0.8; // tempo modulates speed
     if (!this.voiceCanvasPaused) {
-      if (vc.isSpeaking && !this.voiceCanvasPaused) {
-        vc.cursorX += (35 + ps * 25) * tempoMod * dt;
+      if (this.canvasMode === 'freepaint') {
+        const resNorm = this.analyzer.smoothResonance;
+        const targetX = 30 + resNorm * (this.width - 60);
+        const lerpSpeed = vc.isSpeaking ? 5 * dt : 2 * dt;
+        vc.cursorX += (targetX - vc.cursorX) * lerpSpeed;
       } else {
-        vc.cursorX += 4 * dt; // tiny drift so it's not totally frozen
+        if (vc.isSpeaking) {
+          vc.cursorX += (35 + ps * 25) * tempoMod * dt;
+        } else {
+          vc.cursorX += 4 * dt; // tiny drift so it's not totally frozen
+        }
       }
     }
 
     // Wrap buffer
-    if (vc.cursorX >= vc.bufferW - 50) {
+    if (this.canvasMode !== 'freepaint' && vc.cursorX >= vc.bufferW - 50) {
       vc.cursorX = 30;
       if (vc.bufferCtx) vc.bufferCtx.clearRect(0, 0, vc.bufferW, vc.bufferH);
     }
@@ -5906,13 +5971,24 @@ class VoxBallGame {
       const cpX = (vc.lastPaintX + x) / 2;
       const cpY = vc.lastCtrlY + (targetY - vc.lastCtrlY) * 0.5;
 
-      // Main stroke
+      // Main stroke with visibility outline
       const analysisMode = this.voiceCanvasVisualStyle === 'analysis';
       const mainAlpha = analysisMode ? Math.min(0.95, alpha + 0.1) : Math.min(0.85, alpha);
-      bCtx.strokeStyle = `hsla(${vc.strokeHue}, ${vc.strokeSat}%, ${vc.strokeLit}%, ${mainAlpha})`;
-      bCtx.lineWidth = analysisMode ? Math.max(2, 1.5 + vc.smoothEnergy * 8) : strokeW;
+      const baseWidth = analysisMode ? Math.max(2, 1.5 + vc.smoothEnergy * 8) : strokeW;
+
+      // Dark outline for visibility against grid/background
+      bCtx.strokeStyle = `rgba(0,0,0,${mainAlpha * 0.75})`;
+      bCtx.lineWidth = baseWidth + 2.5;
       bCtx.lineCap = 'round';
       bCtx.lineJoin = 'round';
+      bCtx.beginPath();
+      bCtx.moveTo(vc.lastPaintX, vc.lastScreenY);
+      bCtx.quadraticCurveTo(cpX, cpY, x, targetY);
+      bCtx.stroke();
+
+      // Main color stroke
+      bCtx.strokeStyle = `hsla(${vc.strokeHue}, ${vc.strokeSat}%, ${vc.strokeLit}%, ${mainAlpha})`;
+      bCtx.lineWidth = baseWidth;
       bCtx.beginPath();
       bCtx.moveTo(vc.lastPaintX, vc.lastScreenY);
       bCtx.quadraticCurveTo(cpX, cpY, x, targetY);
@@ -6153,9 +6229,14 @@ class VoxBallGame {
     ctx.setLineDash([]);
 
     // ---- Smooth viewport camera ----
-    const targetViewX = Math.max(0, vc.cursorX - w * 0.7 + margin);
-    vc.smoothViewX += (targetViewX - vc.smoothViewX) * (this.isRunning ? 4 : 1) * (1 / 60);
-    const viewX = Math.max(0, vc.smoothViewX);
+    let viewX = 0;
+    if (this.canvasMode === 'freepaint') {
+      vc.smoothViewX = 0;
+    } else {
+      const targetViewX = Math.max(0, vc.cursorX - w * 0.7 + margin);
+      vc.smoothViewX += (targetViewX - vc.smoothViewX) * (this.isRunning ? 4 : 1) * (1 / 60);
+      viewX = Math.max(0, vc.smoothViewX);
+    }
 
     // ---- Render offscreen buffer to screen ----
     if (vc.buffer && vc.bufferH > 0) {
