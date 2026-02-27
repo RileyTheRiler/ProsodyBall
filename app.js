@@ -3118,11 +3118,36 @@ class VoxBallGame {
     const vibAddBtn = document.getElementById('vibAddRule');
     const gameArea = document.querySelector('.game-area');
 
+    // ---- Settings Panel UI ----
+    const settingsBtn = document.getElementById('settingsBtn');
+    const settingsPanel = document.getElementById('settingsPanel');
+
+    settingsBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      settingsPanel.classList.toggle('show');
+      helpTooltip.classList.remove('show');
+      recordingsDrawer.classList.remove('show');
+      vibPanel.classList.remove('show');
+    });
+
+    // Global click-to-close for all overlays
+    document.addEventListener('click', (e) => {
+      // Settings panel
+      if (settingsPanel && !settingsPanel.contains(e.target) && e.target !== settingsBtn) {
+        settingsPanel.classList.remove('show');
+      }
+      // Vibration panel
+      if (vibPanel && !vibPanel.contains(e.target) && e.target !== vibBtn) {
+        vibPanel.classList.remove('show');
+      }
+    });
+
     vibBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       vibPanel.classList.toggle('show');
       helpTooltip.classList.remove('show');
       recordingsDrawer.classList.remove('show');
+      settingsPanel.classList.remove('show');
     });
 
     vibMaster.addEventListener('change', () => {

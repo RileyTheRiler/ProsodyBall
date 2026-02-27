@@ -2511,12 +2511,15 @@
         </select>
         <button class="btn btn-help canvas-only" id="gridContrastBtn"
           title="Increase or reduce pitch grid contrast">Grid: Soft</button>
-        <select id="voiceProfileSelect" class="theme-select" aria-label="Voice profile preset">
-          <option value="auto" selected>Profile: Auto</option>
-          <option value="deeper">Profile: Deeper Voice</option>
-          <option value="lighter">Profile: Lighter Voice</option>
-          <option value="expressive">Profile: Expressive Practice</option>
-        </select>
+        <button class="btn btn-help" id="settingsBtn" title="Open Settings">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round">
+            <circle cx="12" cy="12" r="3" />
+            <path
+              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+          Settings
+        </button>
         <select id="teleprompterModeSelect" class="theme-select" aria-label="Teleprompter mode">
           <option value="off" selected>Teleprompter: Off</option>
           <option value="rainbow">Teleprompter: Rainbow Passage</option>
@@ -2530,8 +2533,6 @@
             <circle cx="12" cy="12" r="3" />
           </svg>
         </button>
-        <button class="btn btn-help" id="motionToggle" aria-label="Toggle low motion mode"
-          title="Low motion mode">Motion: Auto</button>
         <button class="btn btn-vib" id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
@@ -2551,9 +2552,34 @@
           </svg>
           Menu
         </button>
-        <button class="btn btn-help" id="recalibrateBtn" title="Run mic calibration again">Recalibrate</button>
         <button class="btn btn-help" id="recoverMicBtn" title="Recover microphone session" style="display:none;">Recover
           Mic</button>
+      </div>
+    </div>
+
+    <div id="settingsPanel" class="settings-panel">
+      <h3>Session Settings</h3>
+
+      <div class="settings-group">
+        <span class="settings-label">Voice Tracking</span>
+        <select id="voiceProfileSelect" class="theme-select" style="width:100%" aria-label="Voice profile preset">
+          <option value="auto" selected>Profile: Auto</option>
+          <option value="deeper">Profile: Deeper Voice</option>
+          <option value="lighter">Profile: Lighter Voice</option>
+          <option value="expressive">Profile: Expressive Practice</option>
+        </select>
+      </div>
+
+      <div class="settings-group">
+        <span class="settings-label">Performance</span>
+        <button class="btn btn-help" style="width:100%" id="motionToggle" aria-label="Toggle low motion mode"
+          title="Low motion mode">Motion: Auto</button>
+      </div>
+
+      <div class="settings-group">
+        <span class="settings-label">Calibration</span>
+        <button class="btn btn-help" style="width:100%" id="recalibrateBtn"
+          title="Run mic calibration again">Recalibrate</button>
       </div>
     </div>
 
