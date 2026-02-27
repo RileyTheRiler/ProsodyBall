@@ -1512,6 +1512,7 @@ class VoxBallGame {
       successPulse: 0,
       missPulse: 0,
     };
+    this.activePointerNotes = new Map(); // pointerId -> { oscillator, gain }
 
     this.pitchPilot = {
       sparkX: 0,
@@ -2695,7 +2696,7 @@ class VoxBallGame {
         const hud = document.getElementById('creatureStyleHud');
         if (hud) hud.style.display = 'none';
         this.analyzer.stop();
-      setRecoverMicVisible(false);
+        setRecoverMicVisible(false);
         const prismOvl = document.getElementById('prismOverlay');
         if (prismOvl) prismOvl.classList.remove('show');
         startBtn.textContent = '🎙 Start';
@@ -3392,6 +3393,17 @@ class VoxBallGame {
       if (this.recordings.length === 0) return;
       this.clearAllRecordings();
     });
+
+    this.canvas.addEventListener('pointerdown', (e) => this._handleKeyboardPointer(e));
+    this.canvas.addEventListener('pointermove', (e) => this._handleKeyboardPointer(e));
+    this.canvas.addEventListener('pointerup', (e) => this._stopPointerNote(e.pointerId));
+    this.canvas.addEventListener('pointercancel', (e) => this._stopPointerNote(e.pointerId));
+    this.canvas.addEventListener('contextmenu', (e) => {
+      if (this.gameMode === 'keyboard' || (this.gameMode === 'canvas' && this.canvasMode === 'keyboard')) {
+        e.preventDefault();
+      }
+    });
+
   }
 
   // FIX: Idle scene animation behind the overlay
@@ -6594,6 +6606,95 @@ class VoxBallGame {
     }
 
     ctx.restore();
+  }
+
+  _handleKeyboardPointer(e) {
+    if (this.gameMode !== 'keyboard' && !(this.gameMode === 'canvas' && this.canvasMode === 'keyboard')) return;
+    if (e.type === 'pointermove' && !this.activePointerNotes.has(e.pointerId)) return;
+
+    const rect = this.canvas.getBoundingClientRect();
+    const rx = (e.clientX - rect.left) * (this.width / rect.width);
+    const ry = (e.clientY - rect.top) * (this.height / rect.height);
+
+    const t = this.canvasModeTransition;
+    const keyboardTop = this.height * 0.52 + (1 - t) * (this.height * 0.2);
+    const keyboardH = this.height * 0.38;
+    const keyboardW = this.width * 0.92;
+    const left = (this.width - keyboardW) * 0.5;
+
+    const layout = this._getKeyboardLayout(left, keyboardTop, keyboardW, keyboardH);
+
+    let hitKey = null;
+    // Check black keys first (they are on top)
+    for (const k of layout.blackKeys) {
+      if (rx >= k.x - k.w * 0.5 && rx <= k.x + k.w * 0.5 && ry >= k.y && ry <= k.y + k.h) {
+        hitKey = k;
+        break;
+      }
+    }
+    if (!hitKey) {
+      for (const k of layout.whiteKeys) {
+        if (rx >= k.x && rx <= k.x + k.w && ry >= k.y && ry <= k.y + k.h) {
+          hitKey = k;
+          break;
+        }
+      }
+    }
+
+    const current = this.activePointerNotes.get(e.pointerId);
+    if (hitKey) {
+      if (current && current.midi === hitKey.midi) {
+        return;
+      }
+      if (current) this._stopPointerNote(e.pointerId);
+
+      const midi = hitKey.midi;
+      const hz = 440 * Math.pow(2, (midi - 69) / 12);
+
+      try {
+        const audioCtx = this.analyzer.audioCtx;
+        if (!audioCtx) return;
+
+        const now = audioCtx.currentTime;
+        const gain = audioCtx.createGain();
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.linearRampToValueAtTime(0.12, now + 0.02);
+        gain.connect(audioCtx.destination);
+
+        const osc = audioCtx.createOscillator();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(hz, now);
+        osc.connect(gain);
+        osc.start(now);
+
+        this.activePointerNotes.set(e.pointerId, { midi, osc, gain });
+
+        this.voiceKeyboard.glowKey = midi;
+        this.voiceKeyboard.glowStrength = 1.0;
+
+      } catch (err) { console.error("Synthesis failed", err); }
+    } else {
+      if (current) this._stopPointerNote(e.pointerId);
+    }
+  }
+
+  _stopPointerNote(pointerId) {
+    const note = this.activePointerNotes.get(pointerId);
+    if (!note) return;
+
+    try {
+      const audioCtx = this.analyzer.audioCtx;
+      const now = audioCtx?.currentTime || 0;
+      note.gain.gain.cancelScheduledValues(now);
+      note.gain.gain.setValueAtTime(note.gain.gain.value, now);
+      note.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.1);
+      note.osc.stop(now + 0.15);
+    } catch (e) { }
+
+    this.activePointerNotes.delete(pointerId);
+    if (this.activePointerNotes.size === 0) {
+      this.voiceKeyboard.glowKey = -1;
+    }
   }
 
 
