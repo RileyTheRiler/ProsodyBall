@@ -2,6 +2,7 @@ import { computeProsodyScore, pitchHzToPosition } from './dsp-utils.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { getMicDiagnostics, ensureAudioContextRunning } from './reliability.js';
+import { computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange } from './voice-analyzer-core.js';
 
 function escapeHtml(text) {
   if (!text) return text;
@@ -74,6 +75,7 @@ export class VoiceAnalyzer {
     // Vowel
     this.sustainedDuration = 0;
     this.sustainedThreshold = 0.02;
+    this.defaultSustainedThreshold = 0.02;
 
     // Adaptive Pitch Range
     this.pitchProfile = {
@@ -506,9 +508,9 @@ export class VoiceAnalyzer {
     // Typical speech tilt spans roughly -34dB (heavy) to -4dB (light) on mobile mics.
     const heavyAnchorDb = this.tiltProfile.isLearned ? this.tiltProfile.min : -34;
     const lightAnchorDb = this.tiltProfile.isLearned ? this.tiltProfile.max : -4;
-    const normalized = (this.spectralTiltSmoothedDb - heavyAnchorDb) / (lightAnchorDb - heavyAnchorDb + 0.0001);
+    const normalized = normalizeAgainstRange(this.spectralTiltSmoothedDb, heavyAnchorDb, lightAnchorDb);
     const tiltConfidenceGate = rms > this.noiseFloor * 1.35 ? 1 : Math.max(0, (rms - this.noiseFloor) / Math.max(1e-6, this.noiseFloor * 0.5));
-    this.spectralWeight += (Math.max(0, Math.min(1, normalized)) - this.spectralWeight) * (0.12 + tiltConfidenceGate * 0.2);
+    this.spectralWeight += (normalized - this.spectralWeight) * (0.12 + tiltConfidenceGate * 0.2);
     this.spectralTiltConfidence += (tiltConfidenceGate - this.spectralTiltConfidence) * 0.2;
 
     // ====== FORMANT / RESONANCE ANALYSIS ======
@@ -662,7 +664,7 @@ export class VoiceAnalyzer {
     this.metrics.vowel = Math.min(1, Math.max(0, this.sustainedDuration - 0.15) / 0.6);
 
     // 4. ARTICULATION — HF bursts (boosted sensitivity for consonant detection)
-    const articTarget = Math.min(1, hfEnergy * 14);
+    const articTarget = normalizeAgainstPercentiles(hfEnergy, this.hfNoiseFloor, Math.max(this.hfNoiseFloor + 0.02, this.hfNoiseFloor * 3.5), 1.2);
     this.metrics.articulation += (articTarget - this.metrics.articulation) * 0.3;
 
     // 5. SYLLABLE SEPARATION — energy onset detection (uses gated energy)
@@ -682,14 +684,17 @@ export class VoiceAnalyzer {
     this.syllableImpulse *= 0.88;
     this.metrics.syllable = this.syllableImpulse;
 
-    const voicedStrength = Math.max(0, Math.min(1, (gatedRms - this.energyPercentiles.p50) / Math.max(0.003, this.energyPercentiles.p90 - this.energyPercentiles.p50 + 0.0001)));
+    const voicedStrength = normalizeAgainstPercentiles(gatedRms, this.energyPercentiles.p50, this.energyPercentiles.p90, 1);
     const pitchGate = pitch > 0 ? 1 : 0.35;
-    const confidenceGate = Math.max(0.2, Math.min(1, this.pitchConfidence * 0.7 + this.formantConfidence * 0.3));
-    const voicedGate = Math.max(0.25, Math.min(1, voicedStrength * 0.75 + this.pitchConfidence * 0.25));
+    const { confidenceGate, voicedGate, reliableFrame } = computeFrameReliability({
+      pitchConfidence: this.pitchConfidence,
+      formantConfidence: this.formantConfidence,
+      voicedStrength,
+      spectralTiltConfidence: this.spectralTiltConfidence
+    });
 
     // Stricter confidence gating
-    const isReliableFrame = this.pitchConfidence > 0.3 || this.formantConfidence > 0.35;
-    if (!isReliableFrame && gatedRms < this.energyPercentiles.p75) {
+    if (!reliableFrame && gatedRms < this.energyPercentiles.p75) {
       // Freeze/slow-decay updates when signal is muddy or user is breathing
       this.metrics.bounce *= 0.95;
       this.metrics.tempo *= 0.98;
@@ -703,7 +708,7 @@ export class VoiceAnalyzer {
 
     const pitchRange = Math.max(50, this.pitchProfile.max - this.pitchProfile.min);
     this.metrics.pitch = pitch > 0 ? Math.max(0, Math.min(1, (pitch - this.pitchProfile.min) / pitchRange)) : this.metrics.pitch * 0.95;
-    this.metrics.energy = Math.min(1, gatedRms * 12);
+    this.metrics.energy = normalizeAgainstPercentiles(gatedRms, this.energyPercentiles.p50, this.energyPercentiles.p90, 1.1);
     this.metrics.resonance = this.smoothResonance;
   }
 
@@ -1660,11 +1665,15 @@ class VoxBallGame {
     };
 
     // ====== ACCESSIBILITY ======
+    this.userMotionPreference = localStorage.getItem('vox:motionPreference') || 'auto';
     this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    this.particleScale = this.reducedMotion ? 0.15 : 1;
+    this.baseParticleScale = 1;
+    this.particleScale = 1;
+    this.dynamicQualityScale = 1;
+    this._applyMotionPreferences();
     window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', (e) => {
       this.reducedMotion = e.matches;
-      this.particleScale = e.matches ? 0.15 : 1;
+      this._applyMotionPreferences();
     });
 
     // ====== RUNTIME TOOLS ======
@@ -1689,6 +1698,7 @@ class VoxBallGame {
     this.pitchGuideLabelMode = 'hz';
     this.pitchGridStrength = 'soft';
     this.teleprompterMode = 'off';
+    this.voiceProfilePreset = 'auto';
     this.teleprompterCustomText = '';
     this.teleprompterRainbowText = (`When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. ` +
       `The rainbow is a division of white light into many beautiful colors. These take the shape of a long round arch, ` +
@@ -1702,6 +1712,14 @@ class VoxBallGame {
     this.setupUI();
     this._updateHelpContent();
     this.drawIdleScene();
+  }
+
+
+  _applyMotionPreferences() {
+    const lowMotion = this.userMotionPreference === 'low' || (this.userMotionPreference === 'auto' && this.reducedMotion);
+    this.baseParticleScale = lowMotion ? 0.15 : 1;
+    this.particleScale = this.baseParticleScale * this.dynamicQualityScale;
+    document.body.classList.toggle('low-motion', lowMotion);
   }
 
   _updateHelpContent() {
@@ -2277,6 +2295,7 @@ class VoxBallGame {
     const playBtn = document.getElementById('playBtn');
     const helpBtn = document.getElementById('helpBtn');
     const recalibrateBtn = document.getElementById('recalibrateBtn');
+    const recoverMicBtn = document.getElementById('recoverMicBtn');
     const homeBtn = document.getElementById('homeBtn');
     const welcomeOverlay = document.getElementById('welcomeOverlay');
     const helpTooltip = document.getElementById('helpTooltip');
@@ -2289,6 +2308,8 @@ class VoxBallGame {
     const pitchLabelsSelect = document.getElementById('pitchLabelsSelect');
     const gridContrastBtn = document.getElementById('gridContrastBtn');
     const teleprompterModeSelect = document.getElementById('teleprompterModeSelect');
+    const voiceProfileSelect = document.getElementById('voiceProfileSelect');
+    const motionToggle = document.getElementById('motionToggle');
     const roadTargetSelect = document.getElementById('roadTargetSelect');
     const roadPassageSelect = document.getElementById('roadPassageSelect');
     const roadCustomText = document.getElementById('roadCustomText');
@@ -2307,6 +2328,7 @@ class VoxBallGame {
     const diagPanel = document.getElementById('diagPanel');
 
     const errorBanner = document.getElementById('errorBanner');
+    const statusLiveRegion = document.getElementById('statusLiveRegion');
     const iframeNotice = document.getElementById('iframeNotice');
     const isInIframe = window.self !== window.top;
 
@@ -2331,9 +2353,17 @@ class VoxBallGame {
     const showError = (msg) => {
       errorBanner.innerHTML = msg;
       errorBanner.classList.add('show');
+      if (statusLiveRegion) statusLiveRegion.textContent = String(msg).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     };
     const clearError = () => {
       errorBanner.classList.remove('show');
+      if (statusLiveRegion) statusLiveRegion.textContent = '';
+    };
+
+    const setRecoverMicVisible = (visible) => {
+      if (!recoverMicBtn) return;
+      recoverMicBtn.style.display = visible ? '' : 'none';
+      recoverMicBtn.classList.toggle('active', visible);
     };
 
     const showCalibrationOutcome = (calResult) => {
@@ -2350,6 +2380,18 @@ class VoxBallGame {
         showError('ℹ Calibration skipped. Next action: tap Recalibrate in the top bar for more stable tracking.');
       }
     };
+
+
+    const recoverMicSession = async () => {
+      clearError();
+      setRecoverMicVisible(false);
+      const wasRunning = this.isRunning;
+      if (wasRunning) await stopGame();
+      await startGame();
+      startBtn?.focus();
+    };
+
+    recoverMicBtn?.addEventListener('click', recoverMicSession);
 
     const startGame = async () => {
       this._resetKeyboardModeState();
@@ -2410,6 +2452,16 @@ class VoxBallGame {
       if (!resumed.ok) {
         showError('🔊 Audio context could not be resumed automatically. Tap Start again after interacting with the page.');
       }
+
+      const audioTracks = this.analyzer.stream?.getAudioTracks?.() || [];
+      audioTracks.forEach((track) => {
+        track.onended = () => {
+          showError('🎙 Microphone stream ended unexpectedly. Click Recover Mic to resume without losing your selected mode.');
+          setRecoverMicVisible(true);
+        };
+      });
+
+      setRecoverMicVisible(false);
 
       const activeDiag = await getMicDiagnostics(this.analyzer.audioCtx);
       if (diagPanel) {
@@ -2583,6 +2635,7 @@ class VoxBallGame {
       const hud = document.getElementById('creatureStyleHud');
       if (hud) hud.style.display = 'none';
       this.analyzer.stop();
+      setRecoverMicVisible(false);
       // Hide prism overlay on stop
       const prismOvl = document.getElementById('prismOverlay');
       if (prismOvl) prismOvl.classList.remove('show');
@@ -2627,6 +2680,7 @@ class VoxBallGame {
         const hud = document.getElementById('creatureStyleHud');
         if (hud) hud.style.display = 'none';
         this.analyzer.stop();
+      setRecoverMicVisible(false);
         const prismOvl = document.getElementById('prismOverlay');
         if (prismOvl) prismOvl.classList.remove('show');
         startBtn.textContent = '🎙 Start';
@@ -2739,8 +2793,8 @@ class VoxBallGame {
       ascentDetails?.classList.toggle('show', mode === 'ascent');
       prismDetails?.classList.toggle('show', mode === 'prism');
 
-      const titles = { ball: 'VOX BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD', ascent: 'SPECTRAL ASCENT', prism: 'PRISM READER' };
-      document.querySelector('.hud-title').textContent = titles[mode] || 'VOX BALL';
+      const titles = { ball: 'VOX ARCADE', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD', ascent: 'SPECTRAL ASCENT', prism: 'PRISM READER' };
+      document.querySelector('.hud-title').textContent = titles[mode] || 'VOX ARCADE';
       const canvasOnly = document.querySelectorAll('.canvas-only');
       canvasOnly.forEach(el => el.classList.toggle('show', mode === 'canvas' || mode === 'keyboard'));
       if (canvasModeSelect) {
@@ -2817,6 +2871,31 @@ class VoxBallGame {
 
     visualStyleSelect?.addEventListener('change', (e) => {
       this.voiceCanvasVisualStyle = e.target.value;
+    });
+
+
+    const applyVoiceProfilePreset = (preset) => {
+      this.voiceProfilePreset = preset;
+      const profiles = {
+        auto: { min: 80, max: 380, sustainMul: 1, tiltShift: 0 },
+        deeper: { min: 60, max: 260, sustainMul: 0.95, tiltShift: -2 },
+        lighter: { min: 120, max: 520, sustainMul: 1.05, tiltShift: 2 },
+        expressive: { min: 70, max: 460, sustainMul: 1.15, tiltShift: 0 }
+      };
+      const cfg = profiles[preset] || profiles.auto;
+      this.analyzer.pitchProfile.min = cfg.min;
+      this.analyzer.pitchProfile.max = cfg.max;
+      this.analyzer.pitchProfile.isLearned = false;
+      this.analyzer.pitchProfile.samples = [];
+      this.analyzer.tiltProfile.isLearned = false;
+      this.analyzer.tiltProfile.samples = [];
+      const baseSustain = this.analyzer.defaultSustainedThreshold || this.analyzer.sustainedThreshold || 0.02;
+      this.analyzer.sustainedThreshold = Math.max(0.01, baseSustain * cfg.sustainMul);
+      this.analyzer.spectralTiltSmoothedDb += cfg.tiltShift;
+    };
+
+    voiceProfileSelect?.addEventListener('change', (e) => {
+      applyVoiceProfilePreset(e.target.value);
     });
 
     canvasModeSelect?.addEventListener('change', (e) => {
@@ -2996,6 +3075,23 @@ class VoxBallGame {
       this.colorblindMode = !this.colorblindMode;
       document.documentElement.classList.toggle('colorblind', this.colorblindMode);
       cbBtn.classList.toggle('active', this.colorblindMode);
+    });
+
+
+    const syncMotionToggleLabel = () => {
+      if (!motionToggle) return;
+      const next = this.userMotionPreference === 'auto' ? 'Auto' : this.userMotionPreference === 'low' ? 'Low' : 'Full';
+      motionToggle.textContent = `Motion: ${next}`;
+      motionToggle.classList.toggle('active', this.userMotionPreference === 'low');
+    };
+    syncMotionToggleLabel();
+    motionToggle?.addEventListener('click', () => {
+      const order = ['auto', 'low', 'full'];
+      const idx = order.indexOf(this.userMotionPreference);
+      this.userMotionPreference = order[(idx + 1) % order.length];
+      localStorage.setItem('vox:motionPreference', this.userMotionPreference);
+      this._applyMotionPreferences();
+      syncMotionToggleLabel();
     });
 
     // ---- Vibration alert UI ----
@@ -3254,6 +3350,22 @@ class VoxBallGame {
       }
     });
 
+
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState !== 'visible' || !this.isRunning) return;
+      try {
+        if (navigator.permissions?.query) {
+          const mic = await navigator.permissions.query({ name: 'microphone' });
+          if (mic.state === 'denied') {
+            showError('🎙 Microphone permission changed to denied. Re-enable browser mic permission, then click Recover Mic.');
+            setRecoverMicVisible(true);
+          }
+        }
+      } catch (e) {
+        // non-blocking permissions probe
+      }
+    });
+
     recordingsBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       recordingsDrawer.classList.toggle('show');
@@ -3414,6 +3526,10 @@ class VoxBallGame {
 
     this.analyzer.update(dt);
     this.perfMonitor.sample(dt);
+
+    const targetQualityScale = this.perfMonitor.fps > 0 && this.perfMonitor.fps < 30 ? 0.55 : this.perfMonitor.fps > 0 && this.perfMonitor.fps < 42 ? 0.75 : 1;
+    this.dynamicQualityScale += (targetQualityScale - this.dynamicQualityScale) * 0.08;
+    this.particleScale = this.baseParticleScale * this.dynamicQualityScale;
 
     if (this.gameMode === 'creature') {
       this.updateCreature(dt);
