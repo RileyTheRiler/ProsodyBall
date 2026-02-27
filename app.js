@@ -85,6 +85,16 @@ export class VoiceAnalyzer {
       learningDuration: 5.0
     };
 
+    // Adaptive Spectral Tilt Range
+    this.tiltProfile = {
+      samples: [],
+      min: -34,    // Default heavy fallback
+      max: -4,     // Default light fallback
+      isLearned: false,
+      voicedTime: 0,
+      learningDuration: 5.0
+    };
+
     // Noise floor calibration
     this.noiseFloor = 0.015; // default, will be calibrated
     this.hfNoiseFloor = 0; // HF baseline for fans/AC
@@ -197,6 +207,7 @@ export class VoiceAnalyzer {
     this.noiseFloor = 0.015;
     this.hfNoiseFloor = 0;
     this.pitchProfile = { samples: [], min: 80, max: 380, isLearned: false, voicedTime: 0, learningDuration: 5.0 };
+    this.tiltProfile = { samples: [], min: -34, max: -4, isLearned: false, voicedTime: 0, learningDuration: 5.0 };
     for (const k in this.metrics) this.metrics[k] = 0;
   }
 
@@ -416,7 +427,7 @@ export class VoiceAnalyzer {
             this.pitchProfile.min = Math.max(50, p05 * 0.85);
             this.pitchProfile.max = Math.min(800, p95 * 1.25);
             this.pitchProfile.isLearned = true;
-            console.log(`[ProsodyBall] Learned User Pitch Range: ${this.pitchProfile.min.toFixed(0)}Hz - ${this.pitchProfile.max.toFixed(0)}Hz`);
+            console.log(`[VoxBall] Learned User Pitch Range: ${this.pitchProfile.min.toFixed(0)}Hz - ${this.pitchProfile.max.toFixed(0)}Hz`);
           }
         }
       }
@@ -469,11 +480,33 @@ export class VoiceAnalyzer {
     const tiltAlpha = 0.16;
     this.spectralTiltSmoothedDb += (rawTiltDb - this.spectralTiltSmoothedDb) * tiltAlpha;
 
-    // Calibration-free provisional normalization for real-time control.
+    // --- ADAPTIVE TILT RANGE LEARNING ---
+    if (pitch > 0 && this.pitchConfidence > 0.4) {
+      if (!this.tiltProfile.isLearned) {
+        this.tiltProfile.samples.push(this.spectralTiltSmoothedDb);
+        this.tiltProfile.voicedTime += dt;
+        if (this.tiltProfile.voicedTime >= this.tiltProfile.learningDuration || this.tiltProfile.samples.length > 200) {
+          const sorted = [...this.tiltProfile.samples].sort((a, b) => a - b);
+          // Remove extreme outliers
+          const p10 = sorted[Math.floor(sorted.length * 0.10)];
+          const p90 = sorted[Math.floor(sorted.length * 0.90)];
+
+          // Ensure a decent spread so control isn't overly twitchy
+          const median = sorted[Math.floor(sorted.length * 0.5)];
+          const spread = Math.max(16, p90 - p10); // Minimum 16dB range
+
+          this.tiltProfile.min = median - spread * 0.55;
+          this.tiltProfile.max = median + spread * 0.45;
+          this.tiltProfile.isLearned = true;
+          console.log(`[VoxBall] Learned User Tilt Range: ${this.tiltProfile.min.toFixed(1)}dB to ${this.tiltProfile.max.toFixed(1)}dB`);
+        }
+      }
+    }
+
     // Typical speech tilt spans roughly -34dB (heavy) to -4dB (light) on mobile mics.
-    const heavyAnchorDb = -34;
-    const lightAnchorDb = -4;
-    const normalized = (this.spectralTiltSmoothedDb - heavyAnchorDb) / (lightAnchorDb - heavyAnchorDb);
+    const heavyAnchorDb = this.tiltProfile.isLearned ? this.tiltProfile.min : -34;
+    const lightAnchorDb = this.tiltProfile.isLearned ? this.tiltProfile.max : -4;
+    const normalized = (this.spectralTiltSmoothedDb - heavyAnchorDb) / (lightAnchorDb - heavyAnchorDb + 0.0001);
     const tiltConfidenceGate = rms > this.noiseFloor * 1.35 ? 1 : Math.max(0, (rms - this.noiseFloor) / Math.max(1e-6, this.noiseFloor * 0.5));
     this.spectralWeight += (Math.max(0, Math.min(1, normalized)) - this.spectralWeight) * (0.12 + tiltConfidenceGate * 0.2);
     this.spectralTiltConfidence += (tiltConfidenceGate - this.spectralTiltConfidence) * 0.2;
@@ -1237,7 +1270,7 @@ class Particle {
 // ============================================================
 // MAIN GAME
 // ============================================================
-class ProsodyBallGame {
+class VoxBallGame {
   constructor() {
     this.canvas = document.getElementById('gameCanvas');
     this.ctx = this.canvas.getContext('2d');
@@ -1445,9 +1478,8 @@ class ProsodyBallGame {
     }
 
     this.voiceKeyboard = {
-      minMidi: 36, // C2
-      maxMidi: 84, // C6
-      maxMidi: 60, // C4
+      minMidi: 41, // F2
+      maxMidi: 96, // C7
       plasmaTrail: [],
       glowKey: -1,
       glowStrength: 0,
@@ -1656,7 +1688,7 @@ class ProsodyBallGame {
     this.keyboardGameMode = 'mirror'; // 'mirror' | 'target' | 'hero'
     this.pitchGuideLabelMode = 'hz';
     this.pitchGridStrength = 'soft';
-    this.teleprompterMode = 'rainbow';
+    this.teleprompterMode = 'off';
     this.teleprompterCustomText = '';
     this.teleprompterRainbowText = (`When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. ` +
       `The rainbow is a division of white light into many beautiful colors. These take the shape of a long round arch, ` +
@@ -1969,7 +2001,7 @@ class ProsodyBallGame {
             dataUrl: reader.result,
             duration,
             timestamp: ts,
-            name: `prosody-ball-${fileTs}`,
+            name: `vox-ball-${fileTs}`,
             mimeType: 'audio/wav'
           });
           this.updateRecordingsUI();
@@ -2245,6 +2277,7 @@ class ProsodyBallGame {
     const playBtn = document.getElementById('playBtn');
     const helpBtn = document.getElementById('helpBtn');
     const recalibrateBtn = document.getElementById('recalibrateBtn');
+    const homeBtn = document.getElementById('homeBtn');
     const welcomeOverlay = document.getElementById('welcomeOverlay');
     const helpTooltip = document.getElementById('helpTooltip');
     const helpTabs = Array.from(helpTooltip?.querySelectorAll('.help-tab') || []);
@@ -2587,6 +2620,33 @@ class ProsodyBallGame {
       perfBtn.classList.toggle('active', this.perfMonitor.enabled);
     });
 
+    homeBtn?.addEventListener('click', () => {
+      // If a game is running, stop it and go directly to menu
+      if (this.isRunning) {
+        this.isRunning = false;
+        const hud = document.getElementById('creatureStyleHud');
+        if (hud) hud.style.display = 'none';
+        this.analyzer.stop();
+        const prismOvl = document.getElementById('prismOverlay');
+        if (prismOvl) prismOvl.classList.remove('show');
+        startBtn.textContent = '🎙 Start';
+        startBtn.classList.remove('active');
+        const recBtn = document.getElementById('recBtn');
+        if (recBtn) recBtn.classList.remove('visible');
+
+        document.getElementById('sessionTimer').classList.remove('active');
+        for (const rule of this.vibration.rules) { rule.tripped = false; }
+        this.vibration.flashAlpha = 0;
+        if (this._renderVibRules) this._renderVibRules();
+        if (this._gameArea) this._gameArea.classList.remove('vib-shake');
+      }
+
+      // Show the menu directly
+      welcomeOverlay.classList.remove('hidden');
+      document.getElementById('summaryOverlay').classList.remove('show');
+      this.drawIdleScene();
+    });
+
     // Session summary buttons
     document.getElementById('summaryBackBtn')?.addEventListener('click', () => {
       document.getElementById('summaryOverlay').classList.remove('show');
@@ -2679,8 +2739,8 @@ class ProsodyBallGame {
       ascentDetails?.classList.toggle('show', mode === 'ascent');
       prismDetails?.classList.toggle('show', mode === 'prism');
 
-      const titles = { ball: 'PROSODY BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD', ascent: 'SPECTRAL ASCENT', prism: 'PRISM READER' };
-      document.querySelector('.hud-title').textContent = titles[mode] || 'PROSODY BALL';
+      const titles = { ball: 'VOX BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD', ascent: 'SPECTRAL ASCENT', prism: 'PRISM READER' };
+      document.querySelector('.hud-title').textContent = titles[mode] || 'VOX BALL';
       const canvasOnly = document.querySelectorAll('.canvas-only');
       canvasOnly.forEach(el => el.classList.toggle('show', mode === 'canvas' || mode === 'keyboard'));
       if (canvasModeSelect) {
@@ -6294,12 +6354,16 @@ class ProsodyBallGame {
       ctx.fill();
       ctx.stroke();
 
-      if (midi % 12 === 0) {
-        ctx.fillStyle = 'rgba(135,235,255,0.9)';
-        ctx.font = '500 12px "Space Mono", monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText(`C${Math.floor(midi / 12) - 1}`, x + key.w * 0.5, y + key.h - 14);
-      }
+      // Labels for white keys
+      const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      const noteName = names[midi % 12];
+      const octave = Math.floor(midi / 12) - 1;
+      const isC = midi % 12 === 0;
+
+      ctx.fillStyle = isC ? 'rgba(135,235,255,0.95)' : 'rgba(120,210,255,0.7)';
+      ctx.font = isC ? '700 12px "Space Mono", monospace' : '500 11px "Space Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${noteName}${octave}`, x + key.w * 0.5, y + key.h - 14);
     }
 
     for (const key of blackKeys) {
@@ -6314,6 +6378,15 @@ class ProsodyBallGame {
       ctx.roundRect(x - key.w * 0.5, y, key.w, key.h, 7);
       ctx.fill();
       ctx.stroke();
+
+      // Labels for black keys (small labels at the top of the key)
+      const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      const noteName = names[midi % 12];
+      const octave = Math.floor(midi / 12) - 1;
+      ctx.fillStyle = 'rgba(180,120,255,0.85)';
+      ctx.font = '700 9px "Space Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${noteName}${octave}`, x, y + 16);
     }
 
     if (this.keyboardGameMode === 'target') {
