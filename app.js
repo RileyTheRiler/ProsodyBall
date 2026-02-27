@@ -261,19 +261,34 @@ export class VoiceAnalyzer {
     const W = maxPeriod; // integration window
 
     // Step 1 & 2: Difference function d(τ) and CMND d'(τ)
+    // OPTIMIZATION: Use running sum of squares to avoid (a-b)^2 in inner loop
     const cmnd = new Float32Array(maxPeriod + 1);
     cmnd[0] = 1.0;
     let runningSum = 0;
 
+    let sumSq0 = 0;
+    for (let i = 0; i < W; i++) sumSq0 += dsBuf[i] * dsBuf[i];
+
+    let currentSumSqTau = 0;
+    for (let i = 0; i < W; i++) currentSumSqTau += dsBuf[i + 1] * dsBuf[i + 1];
+
     for (let tau = 1; tau <= maxPeriod; tau++) {
-      let diff = 0;
+      let crossCorr = 0;
       for (let i = 0; i < W; i++) {
-        const delta = dsBuf[i] - dsBuf[i + tau];
-        diff += delta * delta;
+        crossCorr += dsBuf[i] * dsBuf[i + tau];
       }
+
+      let diff = sumSq0 + currentSumSqTau - 2 * crossCorr;
+      if (diff < 0) diff = 0; // Floating point noise
+
       runningSum += diff;
-      // Cumulative mean normalized difference
       cmnd[tau] = diff * tau / (runningSum || 1);
+
+      if (tau < maxPeriod) {
+        const removeVal = dsBuf[tau];
+        const addVal = dsBuf[tau + W];
+        currentSumSqTau = currentSumSqTau - removeVal * removeVal + addVal * addVal;
+      }
     }
 
     // Step 3: Absolute threshold — find first dip below threshold
