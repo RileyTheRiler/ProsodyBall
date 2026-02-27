@@ -63,7 +63,8 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 20px;
+      gap: 10px;
+      padding: 10px 14px;
       background: linear-gradient(180deg, rgba(18, 18, 31, 0.95) 0%, rgba(18, 18, 31, 0.7) 100%);
       backdrop-filter: blur(12px);
       z-index: 10;
@@ -95,15 +96,17 @@
 
     .hud-controls {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       align-items: center;
+      min-height: 38px;
     }
 
     .hud-left {
       display: flex;
       align-items: center;
       gap: 10px;
-      min-width: 220px;
+      min-width: 190px;
+      padding-right: 4px;
     }
 
     .hud-primary {
@@ -115,8 +118,19 @@
     .hud-secondary {
       justify-content: flex-end;
       gap: 8px;
-      flex-wrap: wrap;
-      max-width: 60vw;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
+      max-width: min(72vw, 1200px);
+      padding: 4px 6px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+    }
+
+    .hud-secondary::-webkit-scrollbar {
+      display: none;
     }
 
     .canvas-only {
@@ -169,6 +183,7 @@
     }
 
     .theme-select {
+      height: 34px;
       background: #1a1a2e;
       color: var(--text-primary);
       border: 1px solid rgba(255, 255, 255, 0.12);
@@ -184,7 +199,16 @@
       color: #e8e6f0;
     }
 
+
+    button:focus-visible,
+    select:focus-visible,
+    .mode-card:focus-visible {
+      outline: 3px solid rgba(77, 150, 255, 0.9);
+      outline-offset: 2px;
+    }
+
     .btn {
+      min-height: 34px;
       font-family: 'Outfit', sans-serif;
       font-weight: 600;
       font-size: 0.95rem;
@@ -1477,6 +1501,18 @@
       font-size: 0.95rem;
     }
 
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
     .iframe-notice a:hover {
       opacity: 0.9;
     }
@@ -1668,6 +1704,15 @@
         justify-content: flex-start;
         width: 100%;
         order: 3;
+      }
+
+      .hud-secondary {
+        flex-wrap: wrap;
+        overflow: visible;
+        background: none;
+        border: none;
+        box-shadow: none;
+        padding: 0;
       }
 
       .hud-controls .btn {
@@ -2410,6 +2455,16 @@
     .prism-settings-field .info-trigger:focus+.info-popup {
       transform: translateX(-50%) translateY(0);
     }
+  
+    body.low-motion * {
+      animation: none !important;
+      transition: none !important;
+      scroll-behavior: auto !important;
+    }
+
+    body.low-motion .rec-dot {
+      animation: none !important;
+    }
   </style>
 </head>
 
@@ -2455,6 +2510,12 @@
         </select>
         <button class="btn btn-help canvas-only" id="gridContrastBtn"
           title="Increase or reduce pitch grid contrast">Grid: Soft</button>
+        <select id="voiceProfileSelect" class="theme-select" aria-label="Voice profile preset">
+          <option value="auto" selected>Profile: Auto</option>
+          <option value="deeper">Profile: Deeper Voice</option>
+          <option value="lighter">Profile: Lighter Voice</option>
+          <option value="expressive">Profile: Expressive Practice</option>
+        </select>
         <select id="teleprompterModeSelect" class="theme-select" aria-label="Teleprompter mode">
           <option value="off" selected>Teleprompter: Off</option>
           <option value="rainbow">Teleprompter: Rainbow Passage</option>
@@ -2468,6 +2529,7 @@
             <circle cx="12" cy="12" r="3" />
           </svg>
         </button>
+        <button class="btn btn-help" id="motionToggle" aria-label="Toggle low motion mode" title="Low motion mode">Motion: Auto</button>
         <button class="btn btn-vib" id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
@@ -2488,6 +2550,7 @@
           Menu
         </button>
         <button class="btn btn-help" id="recalibrateBtn" title="Run mic calibration again">Recalibrate</button>
+        <button class="btn btn-help" id="recoverMicBtn" title="Recover microphone session" style="display:none;">Recover Mic</button>
       </div>
     </div>
 
@@ -2964,6 +3027,7 @@
               <div class="mic-note">Requires microphone access · All processing is local</div>
             </div>
             <div class="error-banner" id="errorBanner"></div>
+            <div id="statusLiveRegion" class="sr-only" aria-live="polite" aria-atomic="true"></div>
             <div class="iframe-notice" id="iframeNotice"></div>
             <div class="calibration-overlay" id="calibrationOverlay">
               <div class="calibration-card">
