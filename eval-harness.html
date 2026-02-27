@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Evaluation Harness</title>
+    <style>
+        body {
+            font-family: 'Courier New', Courier, monospace;
+            background: #12121f;
+            color: #fff;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #4d96ff;
+        }
+
+        button {
+            padding: 12px 20px;
+            margin: 10px 0;
+            background: #ff6b6b;
+            border: none;
+            color: white;
+            cursor: pointer;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+
+        pre {
+            background: #1a1a2e;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 1.1em;
+            border: 1px solid #333;
+        }
+
+        input[type=file] {
+            padding: 10px;
+            background: #222;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Voice Analyzer - Evaluation Harness</h1>
+    <p>Load an audio file (e.g., standard voice recording) to evaluate the analyzer's output metrics.<br>
+        By comparing the results of the same reference file against future versions, you can detect regressions in the
+        math.</p>
+    <input type="file" id="audioUpload" accept="audio/*">
+    <button id="runHarness" disabled>Run Evaluation</button>
+
+    <h3>Metrics Drift Report</h3>
+    <pre id="output">Waiting for file...</pre>
+
+    <audio id="audioEl" controls style="display:none;"></audio>
+
+    <script type="module">
+        import { VoiceAnalyzer } from './app.js';
+
+        const upload = document.getElementById('audioUpload');
+        const btn = document.getElementById('runHarness');
+        const out = document.getElementById('output');
+        const audioEl = document.getElementById('audioEl');
+
+        upload.onchange = (e) => {
+            if (e.target.files.length > 0) {
+                audioEl.src = URL.createObjectURL(e.target.files[0]);
+                btn.disabled = false;
+                out.textContent = "Ready. Click 'Run Evaluation'.";
+            }
+        };
+
+        btn.onclick = async () => {
+            btn.disabled = true;
+            out.textContent = "Analyzing... please wait.";
+
+            const analyzer = new VoiceAnalyzer();
+
+            // Override start to use the audio element instead of the mic
+            analyzer.start = async function () {
+                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                this.source = this.audioCtx.createMediaElementSource(audioEl);
+
+                this.analyser = this.audioCtx.createAnalyser();
+                this.analyser.fftSize = 4096;
+                this.analyser.smoothingTimeConstant = 0.8;
+                this.source.connect(this.analyser);
+
+                this.analyserFormant = this.audioCtx.createAnalyser();
+                this.analyserFormant.fftSize = 4096;
+                this.analyserFormant.smoothingTimeConstant = 0.5;
+                this.source.connect(this.analyserFormant);
+
+                this.analyserHF = this.audioCtx.createAnalyser();
+                this.analyserHF.fftSize = 1024;
+                this.analyserHF.smoothingTimeConstant = 0.3;
+                const hfFilter = this.audioCtx.createBiquadFilter();
+                hfFilter.type = 'highpass';
+                hfFilter.frequency.value = 2000;
+                this.source.connect(hfFilter);
+                hfFilter.connect(this.analyserHF);
+
+                // Connect to destination to allow playback/timing to run normally in sync
+                this.source.connect(this.audioCtx.destination);
+
+                this.timeDomainData = new Float32Array(this.analyser.fftSize);
+                this.pitchBuf = new Float32Array(this.analyser.fftSize / 2);
+                this.frequencyData = new Float32Array(this.analyser.frequencyBinCount);
+                this.formantFreqData = new Float32Array(this.analyserFormant.frequencyBinCount);
+                this.hfFrequencyData = new Uint8Array(this.analyserHF.frequencyBinCount);
+
+                this.isActive = true;
+                return { ok: true };
+            };
+
+            await analyzer.start();
+            audioEl.play();
+
+            const stats = {
+                pitchSum: 0, pitchCount: 0,
+                energySum: 0,
+                bounceSum: 0,
+                articulationSum: 0,
+                syllablesCount: 0,
+                frames: 0
+            };
+
+            let lastSyllableState = 'silent';
+            let lastTime = performance.now();
+
+            const loop = () => {
+                if (audioEl.ended || audioEl.paused) {
+                    finalize(stats);
+                    return;
+                }
+
+                const now = performance.now();
+                const dt = (now - lastTime) / 1000;
+                lastTime = now;
+
+                analyzer.update(Math.max(0.016, dt));
+
+                stats.frames++;
+                if (analyzer.lastPitch > 0) {
+                    stats.pitchSum += analyzer.lastPitch;
+                    stats.pitchCount++;
+                }
+                stats.energySum += analyzer.metrics.energy;
+                stats.bounceSum += analyzer.metrics.bounce;
+                stats.articulationSum += analyzer.metrics.articulation;
+
+                if (analyzer.syllableState === 'voiced' && lastSyllableState === 'silent') {
+                    stats.syllablesCount++;
+                }
+                lastSyllableState = analyzer.syllableState;
+
+                requestAnimationFrame(loop);
+            };
+
+            requestAnimationFrame(loop);
+
+            function finalize(s) {
+                analyzer.stop();
+                btn.disabled = false;
+
+                const r = {
+                    averagePitchHz: s.pitchCount ? Math.round(s.pitchSum / s.pitchCount) : 0,
+                    averageEnergy: Number((s.energySum / s.frames).toFixed(3)),
+                    averageBounce: Number((s.bounceSum / s.frames).toFixed(3)),
+                    averageArticulation: Number((s.articulationSum / s.frames).toFixed(3)),
+                    syllableCountFound: s.syllablesCount,
+                    totalFramesObserved: s.frames
+                };
+
+                out.textContent = JSON.stringify(r, null, 2);
+                out.textContent += "\n\n(Save these baselines for your reference test clips)";
+            }
+        };
+    </script>
+</body>
+
+</html>

@@ -16,7 +16,7 @@ function escapeHtml(text) {
 // ============================================================
 // VOICE ANALYZER
 // ============================================================
-class VoiceAnalyzer {
+export class VoiceAnalyzer {
   constructor() {
     this.audioCtx = null;
     this.analyser = null;
@@ -74,6 +74,16 @@ class VoiceAnalyzer {
     // Vowel
     this.sustainedDuration = 0;
     this.sustainedThreshold = 0.02;
+
+    // Adaptive Pitch Range
+    this.pitchProfile = {
+      samples: [],
+      min: 80,     // Default fallback
+      max: 380,    // Default fallback
+      isLearned: false,
+      voicedTime: 0,
+      learningDuration: 5.0
+    };
 
     // Noise floor calibration
     this.noiseFloor = 0.015; // default, will be calibrated
@@ -186,6 +196,7 @@ class VoiceAnalyzer {
     this.isCalibrated = false;
     this.noiseFloor = 0.015;
     this.hfNoiseFloor = 0;
+    this.pitchProfile = { samples: [], min: 80, max: 380, isLearned: false, voicedTime: 0, learningDuration: 5.0 };
     for (const k in this.metrics) this.metrics[k] = 0;
   }
 
@@ -391,6 +402,23 @@ class VoiceAnalyzer {
       if (this.pitchConfidence > 0.4) {
         const lerpRate = 0.08 + this.pitchConfidence * 0.12; // faster lerp when more confident
         this.smoothPitchHz += (pitch - this.smoothPitchHz) * lerpRate;
+
+        // --- ADAPTIVE PITCH RANGE LEARNING ---
+        if (!this.pitchProfile.isLearned) {
+          this.pitchProfile.samples.push(pitch);
+          this.pitchProfile.voicedTime += dt;
+          if (this.pitchProfile.voicedTime >= this.pitchProfile.learningDuration || this.pitchProfile.samples.length > 200) {
+            const sorted = [...this.pitchProfile.samples].sort((a, b) => a - b);
+            // Ignore lowest and highest 5% to remove potential octave errors
+            const p05 = sorted[Math.floor(sorted.length * 0.05)];
+            const p95 = sorted[Math.floor(sorted.length * 0.95)];
+
+            this.pitchProfile.min = Math.max(50, p05 * 0.85);
+            this.pitchProfile.max = Math.min(800, p95 * 1.25);
+            this.pitchProfile.isLearned = true;
+            console.log(`[ProsodyBall] Learned User Pitch Range: ${this.pitchProfile.min.toFixed(0)}Hz - ${this.pitchProfile.max.toFixed(0)}Hz`);
+          }
+        }
       }
     }
 
@@ -576,10 +604,13 @@ class VoiceAnalyzer {
       this.metrics.bounce *= 0.95;
     }
 
+    // Pre-calculate robust baseline for dynamic thresholding across metrics
+    const baseEnergyRange = Math.max(0.001, this.energyPercentiles.p90 - this.energyPercentiles.p50);
+
     // 2. TEMPO — energy transition rate (uses gated energy history)
     if (this.energyHistory.length > 5) {
       let transitions = 0;
-      const thresh = Math.max(0.004, this.energyPercentiles.p75 * 0.8);
+      const thresh = this.energyPercentiles.p50 + baseEnergyRange * 0.5;
       for (let i = 1; i < this.energyHistory.length; i++) {
         if ((this.energyHistory[i - 1] > thresh) !== (this.energyHistory[i] > thresh)) transitions++;
       }
@@ -588,7 +619,7 @@ class VoiceAnalyzer {
 
     // 3. VOWEL ELONGATION — sustained voicing WITH vowel-like formants
     //    Uses vowelLikelihood to distinguish real vowels from "sss" or "mmm"
-    const dynamicSustainThreshold = Math.max(this.sustainedThreshold, this.energyPercentiles.p75 * 1.05);
+    const dynamicSustainThreshold = this.energyPercentiles.p50 + baseEnergyRange * 0.4;
     const isVowelSound = gatedRms > dynamicSustainThreshold && pitch > 0 && this.vowelLikelihood > 0.3;
     if (isVowelSound) {
       this.sustainedDuration += dt * (0.5 + this.vowelLikelihood * 0.5); // stronger vowels accumulate faster
@@ -602,8 +633,10 @@ class VoiceAnalyzer {
     this.metrics.articulation += (articTarget - this.metrics.articulation) * 0.3;
 
     // 5. SYLLABLE SEPARATION — energy onset detection (uses gated energy)
-    const syllableOnThreshold = Math.max(this.syllableThreshold * 1.8, this.energyPercentiles.p90 * 1.25);
-    const syllableOffThreshold = Math.max(this.syllableThreshold * 0.3, this.energyPercentiles.p50 * 0.9);
+    const dynamicSyllableOn = this.energyPercentiles.p50 + baseEnergyRange * 0.6;
+    const dynamicSyllableOff = this.energyPercentiles.p50 + baseEnergyRange * 0.15;
+    const syllableOnThreshold = Math.max(0.005, dynamicSyllableOn);
+    const syllableOffThreshold = Math.max(0.002, dynamicSyllableOff);
     if (gatedRms > syllableOnThreshold && this.syllableState === 'silent') {
       if (now - this.lastSyllableTime > 0.08) {
         this.lastSyllableTime = now;
@@ -621,12 +654,22 @@ class VoiceAnalyzer {
     const confidenceGate = Math.max(0.2, Math.min(1, this.pitchConfidence * 0.7 + this.formantConfidence * 0.3));
     const voicedGate = Math.max(0.25, Math.min(1, voicedStrength * 0.75 + this.pitchConfidence * 0.25));
 
-    this.metrics.bounce *= confidenceGate * pitchGate;
-    this.metrics.tempo *= voicedGate;
+    // Stricter confidence gating
+    const isReliableFrame = this.pitchConfidence > 0.3 || this.formantConfidence > 0.35;
+    if (!isReliableFrame && gatedRms < this.energyPercentiles.p75) {
+      // Freeze/slow-decay updates when signal is muddy or user is breathing
+      this.metrics.bounce *= 0.95;
+      this.metrics.tempo *= 0.98;
+    } else {
+      this.metrics.bounce *= confidenceGate * pitchGate;
+      this.metrics.tempo *= voicedGate;
+    }
+
     this.metrics.articulation *= Math.max(0.25, voicedGate * 0.8 + confidenceGate * 0.2);
     this.metrics.syllable *= voicedGate;
 
-    this.metrics.pitch = pitch > 0 ? Math.min(1, (pitch - 80) / 300) : this.metrics.pitch * 0.95;
+    const pitchRange = Math.max(50, this.pitchProfile.max - this.pitchProfile.min);
+    this.metrics.pitch = pitch > 0 ? Math.max(0, Math.min(1, (pitch - this.pitchProfile.min) / pitchRange)) : this.metrics.pitch * 0.95;
     this.metrics.energy = Math.min(1, gatedRms * 12);
     this.metrics.resonance = this.smoothResonance;
   }
@@ -7467,6 +7510,8 @@ class ProsodyBallGame {
       this._stopPrismRecording();
     } else if (pr.isPlayingBack) {
       this._stopPrismPlayback();
+    } else if (pr.audioBlob) {
+      this._startPrismPlayback();
     } else {
       this._startPrismRecording();
     }
@@ -7487,7 +7532,7 @@ class ProsodyBallGame {
       pr.mediaRecorder.onstop = () => {
         pr.audioBlob = new Blob(pr.audioChunks, { type: 'audio/webm' });
         pr.audioPlayer.src = URL.createObjectURL(pr.audioBlob);
-        this._startPrismPlayback();
+        this._updatePrismRecBtnVisibility();
       };
 
       pr.mediaRecorder.start();
@@ -7509,6 +7554,13 @@ class ProsodyBallGame {
   _stopPrismRecording() {
     const pr = this.prismReader;
     if (!pr.isRecording || !pr.mediaRecorder) return;
+
+    // Auto-crystallize the last word if it's still active
+    if (pr.isActive && pr.currentIndex >= 0 && pr.currentIndex < pr.syllables.length) {
+      this._crystallizePrismSyllable(pr.currentIndex);
+      pr.isActive = false;
+    }
+
     pr.mediaRecorder.stop();
     pr.isRecording = false;
 
@@ -7554,6 +7606,8 @@ class ProsodyBallGame {
       const label = recBtn.querySelector('.rec-label');
       if (label) label.textContent = 'Stop';
     }
+
+    this._updatePrismRecBtnVisibility();
   }
 
   _stopPrismPlayback() {
@@ -7567,6 +7621,8 @@ class ProsodyBallGame {
       const label = recBtn.querySelector('.rec-label');
       if (label) label.textContent = 'Replay';
     }
+
+    this._updatePrismRecBtnVisibility();
   }
 
   updatePrismPlayback(dt) {
@@ -8109,5 +8165,5 @@ class ProsodyBallGame {
   }
 }
 
-// Initialize
-const game = new ProsodyBallGame();
+// Initialize if in main UI, export for testing harness
+export const game = document.getElementById('app') ? new ProsodyBallGame() : null;
