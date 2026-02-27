@@ -15,9 +15,18 @@ await new Promise((r) => setTimeout(r, 1500));
 
 let browser;
 try {
+  const commonArgs = ['--no-sandbox', '--disable-setuid-sandbox'];
+
   const launchArgs = browserName === 'firefox'
-    ? { product: 'firefox', headless: true }
-    : { headless: 'new' };
+    ? {
+        product: 'firefox',
+        headless: true,
+        args: commonArgs
+      }
+    : {
+        headless: 'new',
+        args: commonArgs
+      };
 
   browser = await puppeteer.launch(launchArgs);
   const page = await browser.newPage();
