@@ -17,7 +17,10 @@ let browser;
 try {
   const launchArgs = browserName === 'firefox'
     ? { product: 'firefox', headless: true }
-    : { headless: 'new' };
+    : {
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    };
 
   browser = await puppeteer.launch(launchArgs);
   const page = await browser.newPage();
