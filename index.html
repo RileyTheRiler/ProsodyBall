@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Prosody Training — Voice Training Game</title>
+  <title>Vox Arcade — Voice Training Game</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Space+Mono:wght@400;700&display=swap');
 
@@ -2286,6 +2286,130 @@
         max-height: 60%;
       }
     }
+
+    /* Informational Tooltips */
+    .info-wrapper {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+
+    .info-trigger {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.1);
+      color: rgba(255, 255, 255, 0.6);
+      font-family: 'Space Mono', monospace;
+      font-size: 0.65rem;
+      font-weight: 700;
+      cursor: help;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      transition: all 0.2s ease;
+      line-height: 1;
+    }
+
+    .info-trigger:hover,
+    .info-trigger:focus {
+      background: rgba(192, 132, 252, 0.3);
+      color: #fff;
+      border-color: rgba(192, 132, 252, 0.6);
+      outline: none;
+    }
+
+    .info-popup {
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 50%;
+      transform: translateX(-50%) translateY(4px);
+      width: max-content;
+      max-width: 260px;
+      background: rgba(18, 18, 31, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: rgba(255, 255, 255, 0.9);
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 500;
+      line-height: 1.4;
+      text-transform: none;
+      letter-spacing: normal;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.2s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+      z-index: 100;
+      pointer-events: none;
+      text-align: left;
+    }
+
+    /* Little triangle arrow pointing down */
+    .info-popup::after {
+      content: '';
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      border-width: 6px;
+      border-style: solid;
+      border-color: rgba(18, 18, 31, 0.95) transparent transparent transparent;
+    }
+
+    /* Arrow outline */
+    .info-popup::before {
+      content: '';
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      border-width: 7px;
+      border-style: solid;
+      border-color: rgba(255, 255, 255, 0.15) transparent transparent transparent;
+      z-index: -1;
+    }
+
+    .info-wrapper:hover .info-popup,
+    .info-trigger:focus+.info-popup {
+      opacity: 1;
+      visibility: visible;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* Specific positioning overrides to prevent clipping */
+    .meter .info-popup {
+      bottom: calc(100% + 10px);
+    }
+
+    .prism-settings-field .info-popup {
+      bottom: auto;
+      top: calc(100% + 8px);
+      transform: translateX(-50%) translateY(-4px);
+    }
+
+    .prism-settings-field .info-popup::after {
+      top: auto;
+      bottom: 100%;
+      border-color: transparent transparent rgba(18, 18, 31, 0.95) transparent;
+    }
+
+    .prism-settings-field .info-popup::before {
+      top: auto;
+      bottom: 100%;
+      border-color: transparent transparent rgba(255, 255, 255, 0.15) transparent;
+    }
+
+    .prism-settings-field .info-wrapper:hover .info-popup,
+    .prism-settings-field .info-trigger:focus+.info-popup {
+      transform: translateX(-50%) translateY(0);
+    }
   </style>
 </head>
 
@@ -2293,7 +2417,7 @@
   <div id="app">
     <div class="hud">
       <div class="hud-left">
-        <div class="hud-title">PROSODY TRAINING</div>
+        <div class="hud-title">VOX ARCADE</div>
         <span class="session-timer" id="sessionTimer">0:00</span>
       </div>
       <div class="hud-controls hud-primary" aria-label="Primary session controls">
@@ -2332,8 +2456,8 @@
         <button class="btn btn-help canvas-only" id="gridContrastBtn"
           title="Increase or reduce pitch grid contrast">Grid: Soft</button>
         <select id="teleprompterModeSelect" class="theme-select" aria-label="Teleprompter mode">
-          <option value="off">Teleprompter: Off</option>
-          <option value="rainbow" selected>Teleprompter: Rainbow Passage</option>
+          <option value="off" selected>Teleprompter: Off</option>
+          <option value="rainbow">Teleprompter: Rainbow Passage</option>
           <option value="custom">Teleprompter: Custom Text</option>
         </select>
         <button class="btn btn-help" id="teleprompterCustomBtn" title="Edit custom teleprompter text">Edit Text</button>
@@ -2355,6 +2479,14 @@
           </svg>
         </button>
         <button class="btn btn-help" id="helpBtn">How to Play</button>
+        <button class="btn btn-help" id="homeBtn" title="Return to Main Menu">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            <polyline points="9 22 9 12 15 12 15 22" />
+          </svg>
+          Menu
+        </button>
         <button class="btn btn-help" id="recalibrateBtn" title="Run mic calibration again">Recalibrate</button>
       </div>
     </div>
@@ -2382,7 +2514,7 @@
       </div>
 
       <div class="overlay" id="welcomeOverlay">
-        <div class="overlay-title">Prosody Training</div>
+        <div class="overlay-title">Vox Arcade</div>
         <div class="overlay-subtitle">Choose a training mode below, then press Start.</div>
 
         <div class="menu-split">
@@ -2391,7 +2523,7 @@
             <div class="mode-picker" id="modePicker">
               <div class="mode-card" data-mode="ball">
                 <div class="mode-icon">⚽</div>
-                <div class="mode-name">Prosody Ball</div>
+                <div class="mode-name">Vox Ball</div>
               </div>
               <div class="mode-card" data-mode="creature">
                 <div class="mode-icon">🐉</div>
@@ -2435,7 +2567,7 @@
 
               <div class="mode-detail-panel" id="ballDetails">
                 <div class="detail-header">
-                  <div class="detail-title">⚽ Prosody Ball</div>
+                  <div class="detail-title">⚽ Vox Ball</div>
                   <div class="detail-blurb">Control a bouncing ball with your voice. Pitch bounces, tempo changes speed,
                     vowels leave trails.</div>
                 </div>
@@ -2679,6 +2811,11 @@
                 <div
                   style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
                   <label>Target Tone
+                    <div class="info-wrapper">
+                      <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
+                      <div class="info-popup">Pick Bright or Dark posture. The road color palette flips to match your
+                        training goal.</div>
+                    </div>
                     <select id="roadTargetSelect" class="theme-select" aria-label="Resonance Road target tone">
                       <option value="bright">Target BRIGHT</option>
                       <option value="dark">Target DARK</option>
@@ -2775,6 +2912,11 @@
                     <div class="prism-settings-field">
                       <label class="prism-label" for="prismModeSelect">
                         <span class="prism-label-icon">🎙️</span>Mode
+                        <div class="info-wrapper">
+                          <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
+                          <div class="info-popup">'Real-Time' animates as you speak. 'Record & Process' analyzes a whole
+                            clip for higher accuracy playback.</div>
+                        </div>
                       </label>
                       <select id="prismModeSelect" class="theme-select prism-select"
                         aria-label="Prism Reader process mode">
@@ -2785,6 +2927,11 @@
                     <div class="prism-settings-field">
                       <label class="prism-label" for="prismPacingSelect">
                         <span class="prism-label-icon">⏱</span>Pacing Mode
+                        <div class="info-wrapper">
+                          <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
+                          <div class="info-popup">Choose how text advances. 'Auto' detects your speech rhythm. 'Manual'
+                            lets you control the pace with Spacebar or Taps.</div>
+                        </div>
                       </label>
                       <select id="prismPacingSelect" class="theme-select prism-select"
                         aria-label="Prism Reader pacing mode">
@@ -2935,7 +3082,12 @@
 
     <div class="meters-panel">
       <div class="meter meter-pitch">
-        <div class="meter-label">Pitch</div>
+        <div class="meter-label">Pitch
+          <div class="info-wrapper">
+            <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
+            <div class="info-popup">How high or low your voice sounds in Hertz (Hz).</div>
+          </div>
+        </div>
         <div class="meter-bar-bg meter-bar-pitch-bg">
           <div class="meter-bar-fill" id="meterPitch"></div>
         </div>
@@ -2944,6 +3096,11 @@
       <div class="meter meter-resonance">
         <div class="meter-label">
           Resonance
+          <div class="info-wrapper">
+            <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
+            <div class="info-popup">Your vocal tone quality. High resonance sounds 'forward' or 'bright'; low resonance
+              sounds 'deep' or 'hollow'.</div>
+          </div>
           <select id="resMethodSelect" class="res-method-select" aria-label="Resonance method">
             <option value="harmonic">A: Harmonic Env</option>
             <option value="cepstral">B: Cepstral</option>
@@ -2957,14 +3114,25 @@
         <div class="meter-value" id="valResonance">—</div>
       </div>
       <div class="meter meter-bounce">
-        <div class="meter-label">Bounce</div>
+        <div class="meter-label">Bounce
+          <div class="info-wrapper">
+            <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
+            <div class="info-popup">Measures your pitch variance. More 'bounce' means more expressive pitch changes.
+            </div>
+          </div>
+        </div>
         <div class="meter-bar-bg">
           <div class="meter-bar-fill" id="meterBounce"></div>
         </div>
         <div class="meter-value" id="valBounce">0</div>
       </div>
       <div class="meter meter-tempo">
-        <div class="meter-label">Tempo</div>
+        <div class="meter-label">Tempo
+          <div class="info-wrapper">
+            <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
+            <div class="info-popup">The speed of your speech rhythms.</div>
+          </div>
+        </div>
         <div class="meter-bar-bg">
           <div class="meter-bar-fill" id="meterTempo"></div>
         </div>
