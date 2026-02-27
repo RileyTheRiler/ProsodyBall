@@ -8239,4 +8239,4 @@ class VoxBallGame {
 }
 
 // Initialize if in main UI, export for testing harness
-export const game = document.getElementById('app') ? new ProsodyBallGame() : null;
+export const game = document.getElementById('app') ? new VoxBallGame() : null;
