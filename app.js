@@ -3121,20 +3121,34 @@ class VoxBallGame {
     // ---- Settings Panel UI ----
     const settingsBtn = document.getElementById('settingsBtn');
     const settingsPanel = document.getElementById('settingsPanel');
+    const modalBackdrop = document.getElementById('modalBackdrop');
+    const closeSettingsBtn = document.getElementById('closeSettingsBtn');
+
+    const toggleSettings = (show) => {
+      const isVisible = show !== undefined ? show : !settingsPanel.classList.contains('show');
+      settingsPanel.classList.toggle('show', isVisible);
+      modalBackdrop.classList.toggle('show', isVisible);
+
+      if (isVisible) {
+        helpTooltip.classList.remove('show');
+        recordingsDrawer.classList.remove('show');
+        vibPanel.classList.remove('show');
+      }
+    };
 
     settingsBtn?.addEventListener('click', (e) => {
       e.stopPropagation();
-      settingsPanel.classList.toggle('show');
-      helpTooltip.classList.remove('show');
-      recordingsDrawer.classList.remove('show');
-      vibPanel.classList.remove('show');
+      toggleSettings();
     });
+
+    closeSettingsBtn?.addEventListener('click', () => toggleSettings(false));
+    modalBackdrop?.addEventListener('click', () => toggleSettings(false));
 
     // Global click-to-close for all overlays
     document.addEventListener('click', (e) => {
-      // Settings panel
-      if (settingsPanel && !settingsPanel.contains(e.target) && e.target !== settingsBtn) {
-        settingsPanel.classList.remove('show');
+      // Settings panel (if clicking outside and not the gear)
+      if (settingsPanel && !settingsPanel.contains(e.target) && e.target !== settingsBtn && !settingsBtn.contains(e.target)) {
+        if (settingsPanel.classList.contains('show')) toggleSettings(false);
       }
       // Vibration panel
       if (vibPanel && !vibPanel.contains(e.target) && e.target !== vibBtn) {
