@@ -31,7 +31,7 @@ A gamified voice training suite — control a rolling ball with your voice! Prac
 
 ## Usage
 
-Click **Start Speaking** and allow microphone access. Then speak expressively — the ball (Vox Ball) responds to your voice in real time!
+Click **Start Speaking** and allow microphone access. Then speak expressively — the ball (Prosody Ball) responds to your voice in real time!
 
 ## Improvement backlog
 

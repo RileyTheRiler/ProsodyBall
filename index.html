@@ -117,16 +117,17 @@
 
     .hud-secondary {
       justify-content: flex-end;
-      gap: 8px;
+      gap: 6px;
       flex-wrap: nowrap;
       overflow-x: auto;
       scrollbar-width: none;
-      max-width: min(72vw, 1200px);
+      max-width: min(78vw, 1400px);
       padding: 4px 6px;
       border-radius: 10px;
       background: rgba(255, 255, 255, 0.03);
       border: 1px solid rgba(255, 255, 255, 0.06);
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      flex-shrink: 1;
     }
 
     .hud-secondary::-webkit-scrollbar {
@@ -143,10 +144,10 @@
 
     .teleprompter-overlay {
       position: absolute;
-      top: 18px;
+      top: 72px;
       left: 50%;
       width: min(860px, calc(100% - 40px));
-      transform: translate(-50%, -8px);
+      transform: translate(-50%, -4px);
       padding: 12px 16px;
       background: rgba(18, 22, 36, 0.76);
       border: 1px solid rgba(255, 255, 255, 0.14);
@@ -2561,6 +2562,110 @@
       background: rgba(255, 255, 255, 0.12);
       transform: translateY(-1px);
     }
+
+    /* Camera Modal */
+    .camera-modal {
+      position: absolute;
+      top: 80px;
+      right: 20px;
+      width: 320px;
+      height: 240px;
+      background: rgba(18, 18, 31, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 12px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+      z-index: 50;
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+      resize: both;
+      min-width: 200px;
+      min-height: 150px;
+    }
+
+    .camera-modal.show {
+      display: flex;
+    }
+
+    .camera-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      cursor: grab;
+      user-select: none;
+    }
+
+    .camera-header:active {
+      cursor: grabbing;
+    }
+
+    .camera-title {
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      color: rgba(255, 255, 255, 0.7);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .camera-close {
+      background: none;
+      border: none;
+      color: rgba(255, 255, 255, 0.5);
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .camera-close:hover {
+      color: #ff6b6b;
+      background: rgba(255, 107, 107, 0.1);
+    }
+
+    .camera-video-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #cameraVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform-origin: center center;
+    }
+
+    .camera-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      background: rgba(0, 0, 0, 0.5);
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .camera-controls label {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .camera-zoom {
+      flex: 1;
+      accent-color: var(--accent-artic);
+    }
   </style>
 </head>
 
@@ -2648,6 +2753,13 @@
             <path d="M22 10v4" />
           </svg>
         </button>
+        <button class="btn btn-cb" id="cameraBtn" title="Camera Mirror" aria-label="Camera Mirror">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+            <circle cx="12" cy="13" r="4"></circle>
+          </svg>
+        </button>
         <button class="btn btn-help" id="helpBtn">How to Play</button>
         <button class="btn btn-help" id="homeBtn" title="Return to Main Menu">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
@@ -2723,7 +2835,7 @@
             <div class="mode-picker" id="modePicker">
               <div class="mode-card" data-mode="ball">
                 <div class="mode-icon">⚽</div>
-                <div class="mode-name">Vox Arcade</div>
+                <div class="mode-name">Prosody Ball</div>
               </div>
               <div class="mode-card" data-mode="creature">
                 <div class="mode-icon">🐉</div>
@@ -2767,7 +2879,7 @@
 
               <div class="mode-detail-panel" id="ballDetails">
                 <div class="detail-header">
-                  <div class="detail-title">⚽ Vox Arcade</div>
+                  <div class="detail-title">⚽ Prosody Ball</div>
                   <div class="detail-blurb">Control a bouncing ball with your voice. Pitch bounces, tempo changes speed,
                     vowels leave trails.</div>
                 </div>
@@ -3147,6 +3259,7 @@
                         aria-label="Prism Reader passage">
                         <option value="rainbow">Rainbow Passage</option>
                         <option value="custom">Custom Text</option>
+                        <option value="freestyle">Free Speech (Dictation)</option>
                       </select>
                     </div>
                   </div>
@@ -3357,6 +3470,28 @@
         </div>
         <div class="meter-value" id="valSyllable">0</div>
       </div>
+    </div>
+  </div>
+
+  <div class="camera-modal" id="cameraModal">
+    <div class="camera-header" id="cameraHeader">
+      <div class="camera-title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+          <circle cx="12" cy="13" r="4"></circle>
+        </svg>
+        Camera Mirror
+      </div>
+      <button class="camera-close" id="cameraClose" aria-label="Close Camera">✕</button>
+    </div>
+    <div class="camera-video-container">
+      <video id="cameraVideo" autoplay playsinline></video>
+    </div>
+    <div class="camera-controls">
+      <label for="cameraZoom" title="Zoom In/Out">🔍 Zoom</label>
+      <input type="range" id="cameraZoom" class="camera-zoom" min="1" max="3" step="0.1" value="1"
+        aria-label="Camera Zoom">
     </div>
   </div>
 

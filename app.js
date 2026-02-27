@@ -482,7 +482,7 @@ export class VoiceAnalyzer {
             this.pitchProfile.min = Math.max(50, p05 * 0.85);
             this.pitchProfile.max = Math.min(800, p95 * 1.25);
             this.pitchProfile.isLearned = true;
-            console.log(`[VoxBall] Learned User Pitch Range: ${this.pitchProfile.min.toFixed(0)}Hz - ${this.pitchProfile.max.toFixed(0)}Hz`);
+            console.log(`[ProsodyBall] Learned User Pitch Range: ${this.pitchProfile.min.toFixed(0)}Hz - ${this.pitchProfile.max.toFixed(0)}Hz`);
           }
         }
       }
@@ -553,7 +553,7 @@ export class VoiceAnalyzer {
           this.tiltProfile.min = median - spread * 0.55;
           this.tiltProfile.max = median + spread * 0.45;
           this.tiltProfile.isLearned = true;
-          console.log(`[VoxBall] Learned User Tilt Range: ${this.tiltProfile.min.toFixed(1)}dB to ${this.tiltProfile.max.toFixed(1)}dB`);
+          console.log(`[ProsodyBall] Learned User Tilt Range: ${this.tiltProfile.min.toFixed(1)}dB to ${this.tiltProfile.max.toFixed(1)}dB`);
         }
       }
     }
@@ -1328,7 +1328,7 @@ class Particle {
 // ============================================================
 // MAIN GAME
 // ============================================================
-class VoxBallGame {
+class ProsodyBallGame {
   constructor() {
     this.canvas = document.getElementById('gameCanvas');
     this.ctx = this.canvas.getContext('2d');
@@ -1616,33 +1616,6 @@ class VoxBallGame {
       },
     };
 
-    this.resonanceRoad = {
-      targetTone: 'bright',
-      passageMode: 'balcony',
-      customText: '',
-      centerX: 0,
-      laneHalfWidth: 60,
-      roadHalfWidth: 150,
-      speed: 0,
-      trail: [],
-      score: 0,
-      multiplier: 1,
-      driftStrength: 0,
-    };
-
-    this.resonanceRoad = {
-      targetTone: 'bright',
-      passageMode: 'balcony',
-      customText: '',
-      centerX: 0,
-      laneHalfWidth: 60,
-      roadHalfWidth: 150,
-      speed: 0,
-      trail: [],
-      score: 0,
-      multiplier: 1,
-      driftStrength: 0,
-    };
 
     // ====== PRISM READER STATE ======
     this.prismReader = {
@@ -1665,8 +1638,19 @@ class VoxBallGame {
       audioPlayer: new Audio(),
       isRecording: false,
       isPlayingBack: false,
-      playbackIndex: 0
+      playbackIndex: 0,
+      freestyleTranscript: '',
+      speechRecognition: null
     };
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      this.prismReader.speechRecognition = new SpeechRecognition();
+      this.prismReader.speechRecognition.continuous = true;
+      this.prismReader.speechRecognition.interimResults = true;
+      this.prismReader.speechRecognition.onresult = this._onPrismSpeechResult.bind(this);
+      this.prismReader.speechRecognition.onerror = (e) => console.log('Speech recognition error', e);
+    }
 
     // Recording — AnalyserNode polling approach
     this.isRecording = false;
@@ -2364,6 +2348,13 @@ class VoxBallGame {
     const teleprompterModeSelect = document.getElementById('teleprompterModeSelect');
     const voiceProfileSelect = document.getElementById('voiceProfileSelect');
     const motionToggle = document.getElementById('motionToggle');
+    const cameraBtn = document.getElementById('cameraBtn');
+    const cameraModal = document.getElementById('cameraModal');
+    const cameraClose = document.getElementById('cameraClose');
+    const cameraVideo = document.getElementById('cameraVideo');
+    const cameraZoom = document.getElementById('cameraZoom');
+    const cameraHeader = document.getElementById('cameraHeader');
+
     const roadTargetSelect = document.getElementById('roadTargetSelect');
     const roadPassageSelect = document.getElementById('roadPassageSelect');
     const roadCustomText = document.getElementById('roadCustomText');
@@ -2446,6 +2437,92 @@ class VoxBallGame {
     };
 
     recoverMicBtn?.addEventListener('click', recoverMicSession);
+
+    // Camera Mirror Logic
+    let cameraStream = null;
+
+    const stopCamera = () => {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+        cameraStream = null;
+      }
+      if (cameraVideo) {
+        cameraVideo.srcObject = null;
+      }
+      cameraModal?.classList.remove('show');
+      cameraBtn?.classList.remove('active');
+    };
+
+    const toggleCamera = async () => {
+      if (cameraModal?.classList.contains('show')) {
+        stopCamera();
+        return;
+      }
+
+      try {
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+        });
+        if (cameraVideo) {
+          cameraVideo.srcObject = cameraStream;
+        }
+        cameraModal?.classList.add('show');
+        cameraBtn?.classList.add('active');
+      } catch (e) {
+        showError('📷 Camera access denied or not available.');
+        console.error('Camera error:', e);
+      }
+    };
+
+    cameraBtn?.addEventListener('click', toggleCamera);
+    cameraClose?.addEventListener('click', stopCamera);
+
+    // Zoom Logic
+    cameraZoom?.addEventListener('input', (e) => {
+      if (cameraVideo) {
+        cameraVideo.style.transform = `scale(${e.target.value})`;
+      }
+    });
+
+    // Draggable Window Logic
+    let isDraggingCamera = false;
+    let cameraDragStartX = 0;
+    let cameraDragStartY = 0;
+    let cameraModalStartX = 0;
+    let cameraModalStartY = 0;
+
+    cameraHeader?.addEventListener('pointerdown', (e) => {
+      isDraggingCamera = true;
+      cameraDragStartX = e.clientX;
+      cameraDragStartY = e.clientY;
+
+      const rect = cameraModal.getBoundingClientRect();
+      cameraModalStartX = rect.left;
+      cameraModalStartY = rect.top;
+
+      cameraHeader.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+
+    cameraHeader?.addEventListener('pointermove', (e) => {
+      if (!isDraggingCamera || !cameraModal) return;
+
+      const dx = e.clientX - cameraDragStartX;
+      const dy = e.clientY - cameraDragStartY;
+
+      // Keep it within window bounds approximately
+      const newLeft = Math.max(0, Math.min(window.innerWidth - cameraModal.offsetWidth, cameraModalStartX + dx));
+      const newTop = Math.max(0, Math.min(window.innerHeight - 40, cameraModalStartY + dy));
+
+      cameraModal.style.left = `${newLeft}px`;
+      cameraModal.style.top = `${newTop}px`;
+      cameraModal.style.right = 'auto'; // overriding initial right positioning
+    });
+
+    cameraHeader?.addEventListener('pointerup', (e) => {
+      isDraggingCamera = false;
+      cameraHeader.releasePointerCapture(e.pointerId);
+    });
 
     // Audio file upload handling
     const audioUploadInput = document.getElementById('audioUploadInput');
@@ -2654,6 +2731,11 @@ class VoxBallGame {
       }
       if (this.gameMode === 'prism') {
         this._resetPrismReaderState();
+        if (this.prismReader.passageMode === 'freestyle' && this.prismReader.processMode === 'realtime') {
+          if (this.prismReader.speechRecognition) {
+            try { this.prismReader.speechRecognition.start(); } catch (e) { }
+          }
+        }
       }
 
       // Clear vibration alert tripped highlights
@@ -2707,6 +2789,9 @@ class VoxBallGame {
         recBtn.classList.remove('recording');
         recBtn.querySelector('.rec-label').textContent = 'Rec';
         await this.stopRecording();
+      }
+      if (this.prismReader && this.prismReader.speechRecognition) {
+        try { this.prismReader.speechRecognition.stop(); } catch (e) { }
       }
       this.isRunning = false;
       const hud = document.getElementById('creatureStyleHud');
@@ -5973,8 +6058,14 @@ class VoxBallGame {
 
       // Main stroke with visibility outline
       const analysisMode = this.voiceCanvasVisualStyle === 'analysis';
-      const mainAlpha = analysisMode ? Math.min(0.95, alpha + 0.1) : Math.min(0.85, alpha);
-      const baseWidth = analysisMode ? Math.max(2, 1.5 + vc.smoothEnergy * 8) : strokeW;
+      let mainAlpha = analysisMode ? Math.min(0.95, alpha + 0.1) : Math.min(0.85, alpha);
+      let baseWidth = analysisMode ? Math.max(2, 1.5 + vc.smoothEnergy * 8) : strokeW;
+
+      // Boost visibility for keyboard mode so it stands out against the keys
+      if (this.canvasMode === 'keyboard') {
+        mainAlpha = Math.min(1.0, mainAlpha + 0.35);
+        baseWidth = Math.max(3, baseWidth * 1.2);
+      }
 
       // Dark outline for visibility against grid/background
       bCtx.strokeStyle = `rgba(0,0,0,${mainAlpha * 0.75})`;
@@ -6239,6 +6330,11 @@ class VoxBallGame {
     }
 
     // ---- Render offscreen buffer to screen ----
+    if (this.canvasMode === 'keyboard') {
+      this.drawVoiceKeyboardOverlay(prosodyGlow);
+    }
+
+
     if (vc.buffer && vc.bufferH > 0) {
       ctx.save();
       ctx.globalAlpha = paintAlpha;
@@ -6383,7 +6479,7 @@ class VoxBallGame {
       ctx.restore();
     }
 
-    this.drawVoiceKeyboardOverlay(prosodyGlow);
+    // Keyboard overlay was moved to drawing BEFORE the canvas buffer in drawVoiceCanvasScene
 
     // ---- HUD ----
     ctx.font = '600 13px "Space Mono", monospace';
@@ -6841,6 +6937,16 @@ class VoxBallGame {
     pp.crashTimer = 0;
     pp.selectedRangeLabel = 'Auto (Glide Calibration)';
     pp.awaitingRestartChoice = false;
+  }
+
+  _resetResonanceRoadState() {
+    const rr = this.resonanceRoad;
+    rr.centerX = 0;
+    rr.speed = 0;
+    rr.trail = [];
+    rr.score = 0;
+    rr.multiplier = 1;
+    rr.driftStrength = 0;
   }
 
   _pilotNoteForY(y) {
@@ -7724,11 +7830,14 @@ class VoxBallGame {
 
   _resetPrismReaderState() {
     const pr = this.prismReader;
-    const text = pr.passageMode === 'custom' && pr.customText.trim()
-      ? pr.customText
-      : this.teleprompterRainbowText;
+    let text = this.teleprompterRainbowText;
+    if (pr.passageMode === 'custom' && pr.customText.trim()) {
+      text = pr.customText;
+    } else if (pr.passageMode === 'freestyle') {
+      text = pr.freestyleTranscript || '';
+    }
 
-    pr.syllables = this._buildPrismSyllables(text);
+    pr.syllables = text ? this._buildPrismSyllables(text) : [];
     pr.currentIndex = -1;
     pr.isActive = false;
     pr.completed = false;
@@ -7770,6 +7879,18 @@ class VoxBallGame {
 
     const keepReading = document.getElementById('prismKeepReading');
     if (keepReading) keepReading.classList.remove('show');
+
+    const idlePrompt = document.getElementById('prismIdlePrompt');
+    if (idlePrompt) {
+      if (pr.passageMode === 'freestyle') {
+        idlePrompt.textContent = "Speak freely to begin transcribing...";
+        if (pr.processMode === 'realtime') {
+          idlePrompt.classList.add('show');
+        }
+      } else {
+        idlePrompt.textContent = "Click Rec to start reading";
+      }
+    }
   }
 
   // ---- Pitch → Hue (logarithmic for musical perception) ----
@@ -7962,6 +8083,10 @@ class VoxBallGame {
 
       pr.mediaRecorder.start();
       pr.isRecording = true;
+      if (pr.passageMode === 'freestyle' && pr.speechRecognition) {
+        pr.freestyleTranscript = '';
+        try { pr.speechRecognition.start(); } catch (e) { }
+      }
       pr.recordingStream = this.analyzer.stream;
       pr.startTime = performance.now() / 1000;
 
@@ -7988,6 +8113,11 @@ class VoxBallGame {
 
     pr.mediaRecorder.stop();
     pr.isRecording = false;
+    if (pr.passageMode === 'freestyle' && pr.speechRecognition) {
+      try { pr.speechRecognition.stop(); } catch (e) { }
+      pr.customText = pr.freestyleTranscript;
+      this._resetPrismReaderState();
+    }
 
     const recBtn = document.getElementById('recBtn');
     if (recBtn) {
@@ -8048,6 +8178,66 @@ class VoxBallGame {
     }
 
     this._updatePrismRecBtnVisibility();
+  }
+
+  _onPrismSpeechResult(event) {
+    if (!this.isRunning && !this.prismReader.isRecording) return;
+    const pr = this.prismReader;
+    if (pr.passageMode !== 'freestyle') return;
+
+    let finalTranscript = '';
+    for (let i = event.resultIndex; i < event.results.length; ++i) {
+      if (event.results[i].isFinal) {
+        finalTranscript += event.results[i][0].transcript + ' ';
+      }
+    }
+
+    if (finalTranscript.trim()) {
+      pr.freestyleTranscript += finalTranscript;
+
+      const idlePrompt = document.getElementById('prismIdlePrompt');
+      if (idlePrompt) idlePrompt.classList.remove('show');
+
+      if (pr.processMode === 'realtime') {
+        const newSyllables = this._buildPrismSyllables(finalTranscript.trim());
+        const startIndex = pr.syllables.length;
+        pr.syllables = pr.syllables.concat(newSyllables);
+
+        const container = document.getElementById('prismScrollContainer');
+        if (container) {
+          for (let i = 0; i < newSyllables.length; i++) {
+            const globalIndex = startIndex + i;
+            const syl = newSyllables[i];
+            const span = document.createElement('span');
+            span.className = 'prism-syl pre-read';
+            span.dataset.sylIndex = String(globalIndex);
+            span.textContent = syl.text;
+            if (syl.isWordEnd) span.style.marginRight = '0.3em';
+            container.appendChild(span);
+            this._crystallizePrismSyllableImmediate(globalIndex);
+          }
+          container.scrollTop = container.scrollHeight;
+        }
+      }
+    }
+  }
+
+  _crystallizePrismSyllableImmediate(index) {
+    const syl = this.prismReader.syllables[index];
+    if (!syl || syl.state === 'crystallized') return;
+    const a = this.analyzer;
+    syl.avgF0 = a.smoothPitchHz || 0;
+    syl.avgF2_vowelOnly = a.smoothF2 || 0;
+    syl.avgCentroid = a.smoothResonance || 0;
+    syl.avgWeight = a.spectralWeight || 0;
+    syl.vowelType = this._classifyPrismVowel(syl.avgF0, syl.avgF2_vowelOnly);
+    syl.vowelScore = this._scorePrismVowelF2(syl.vowelType, syl.avgF2_vowelOnly);
+    syl.strainFlag = false;
+    syl.confidence = 1;
+
+    this._applyPrismVisuals(index);
+    syl.state = 'crystallized';
+    this._updatePrismSylDOM(index);
   }
 
   updatePrismPlayback(dt) {
@@ -8591,4 +8781,4 @@ class VoxBallGame {
 }
 
 // Initialize if in main UI, export for testing harness
-export const game = document.getElementById('app') ? new VoxBallGame() : null;
+export const game = document.getElementById('app') ? new ProsodyBallGame() : null;
