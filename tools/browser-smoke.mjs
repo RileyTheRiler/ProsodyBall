@@ -16,7 +16,7 @@ await new Promise((r) => setTimeout(r, 1500));
 let browser;
 try {
   const launchArgs = browserName === 'firefox'
-    ? { product: 'firefox', headless: true }
+    ? { product: 'firefox', headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] }
     : {
       headless: 'new',
       args: ['--no-sandbox', '--disable-setuid-sandbox']
