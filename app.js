@@ -2414,16 +2414,27 @@ class ProsodyBallGame {
           directUrl = window.location.href;
         }
       } catch (e) { }
-      iframeNotice.innerHTML =
-        'This app needs microphone access, which may be blocked when embedded.<br>' +
-        '<a href="' + directUrl + '" target="_blank" rel="noopener">Open in new tab for full access ↗</a>';
+      iframeNotice.textContent = 'This app needs microphone access, which may be blocked when embedded.';
+      iframeNotice.appendChild(document.createElement('br'));
+      const link = document.createElement('a');
+      link.href = directUrl;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = 'Open in new tab for full access ↗';
+      iframeNotice.appendChild(link);
       iframeNotice.classList.add('show');
     }
 
     const showError = (msg) => {
-      errorBanner.innerHTML = msg;
+      if (msg instanceof Node) {
+        errorBanner.innerHTML = '';
+        errorBanner.appendChild(msg);
+        if (statusLiveRegion) statusLiveRegion.textContent = msg.textContent.trim();
+      } else {
+        errorBanner.innerHTML = msg;
+        if (statusLiveRegion) statusLiveRegion.textContent = String(msg).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      }
       errorBanner.classList.add('show');
-      if (statusLiveRegion) statusLiveRegion.textContent = String(msg).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     };
     const clearError = () => {
       errorBanner.classList.remove('show');
@@ -2585,13 +2596,18 @@ class ProsodyBallGame {
 
       // Check if we have an audio file OR microphone
       if (!selectedAudioFile && (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)) {
-        showError(
-          '🎙 Microphone API not available and no audio file selected.<br>' +
-          'This requires HTTPS and a modern browser. ' +
-          (isInIframe
-            ? '<a href="' + window.location.href + '" target="_blank">Try opening in a new tab ↗</a>'
-            : 'Please use Chrome, Firefox, Safari, or Edge.')
-        );
+        const errNode = document.createElement('div');
+        errNode.innerHTML = '🎙 Microphone API not available and no audio file selected.<br>This requires HTTPS and a modern browser. ';
+        if (isInIframe) {
+          const link = document.createElement('a');
+          link.href = window.location.href;
+          link.target = '_blank';
+          link.textContent = 'Try opening in a new tab ↗';
+          errNode.appendChild(link);
+        } else {
+          errNode.appendChild(document.createTextNode('Please use Chrome, Firefox, Safari, or Edge.'));
+        }
+        showError(errNode);
         this.drawIdleScene();
         return;
       }
@@ -2607,9 +2623,13 @@ class ProsodyBallGame {
         let msg = '';
         if (result.error === 'NotAllowedError') {
           if (isInIframe) {
-            msg =
-              '🎙 Microphone blocked by browser — this usually happens inside iframes.<br>' +
-              '<a href="' + window.location.href + '" target="_blank">Open in a new tab for full mic access ↗</a>';
+            msg = document.createElement('div');
+            msg.innerHTML = '🎙 Microphone blocked by browser — this usually happens inside iframes.<br>';
+            const link = document.createElement('a');
+            link.href = window.location.href;
+            link.target = '_blank';
+            link.textContent = 'Open in a new tab for full mic access ↗';
+            msg.appendChild(link);
           } else {
             msg =
               '🎙 Microphone permission denied.<br>' +
@@ -2620,7 +2640,8 @@ class ProsodyBallGame {
         } else if (result.error === 'NotReadableError') {
           msg = '🎙 Microphone is in use by another app. Close other apps using the mic and try again.';
         } else {
-          msg = '🎙 Could not access microphone: ' + (result.message || result.error);
+          msg = document.createElement('div');
+          msg.textContent = '🎙 Could not access microphone: ' + (result.message || result.error);
         }
         showError(msg);
         this.drawIdleScene();
@@ -3261,11 +3282,13 @@ class ProsodyBallGame {
 
     // Colorblind mode toggle
     const cbBtn = document.getElementById('cbToggle');
-    cbBtn.addEventListener('click', () => {
-      this.colorblindMode = !this.colorblindMode;
-      document.documentElement.classList.toggle('colorblind', this.colorblindMode);
-      cbBtn.classList.toggle('active', this.colorblindMode);
-    });
+    if (cbBtn) {
+      cbBtn.addEventListener('click', () => {
+        this.colorblindMode = !this.colorblindMode;
+        document.documentElement.classList.toggle('colorblind', this.colorblindMode);
+        cbBtn.classList.toggle('active', this.colorblindMode);
+      });
+    }
 
 
     const syncMotionToggleLabel = () => {
@@ -3325,23 +3348,27 @@ class ProsodyBallGame {
         if (settingsPanel.classList.contains('show')) toggleSettings(false);
       }
       // Vibration panel
-      if (vibPanel && !vibPanel.contains(e.target) && e.target !== vibBtn) {
+      if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || e.target !== vibBtn)) {
         vibPanel.classList.remove('show');
       }
     });
 
-    vibBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      vibPanel.classList.toggle('show');
-      helpTooltip.classList.remove('show');
-      recordingsDrawer.classList.remove('show');
-      settingsPanel.classList.remove('show');
-    });
+    if (vibBtn) {
+      vibBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (vibPanel) vibPanel.classList.toggle('show');
+        if (helpTooltip) helpTooltip.classList.remove('show');
+        if (recordingsDrawer) recordingsDrawer.classList.remove('show');
+        if (settingsPanel) settingsPanel.classList.remove('show');
+      });
+    }
 
-    vibMaster.addEventListener('change', () => {
-      this.vibration.enabled = vibMaster.checked;
-      vibBtn.classList.toggle('active', vibMaster.checked);
-    });
+    if (vibMaster) {
+      vibMaster.addEventListener('change', () => {
+        this.vibration.enabled = vibMaster.checked;
+        if (vibBtn) vibBtn.classList.toggle('active', vibMaster.checked);
+      });
+    }
 
     const vibMetrics = [
       { value: 'pitch', label: 'Pitch (Hz)', unit: 'Hz', min: 50, max: 500, step: 5, defaultBelow: 150, defaultAbove: 250 },
@@ -3555,29 +3582,31 @@ class ProsodyBallGame {
     });
 
     document.addEventListener('click', (e) => {
-      if (!helpTooltip.contains(e.target) && e.target !== helpBtn) {
+      if (helpTooltip && !helpTooltip.contains(e.target) && e.target !== helpBtn) {
         helpTooltip.classList.remove('show');
       }
-      if (!recordingsDrawer.contains(e.target) && !recordingsBtn.contains(e.target)) {
+      if (recordingsDrawer && !recordingsDrawer.contains(e.target) && (!recordingsBtn || !recordingsBtn.contains(e.target))) {
         recordingsDrawer.classList.remove('show');
       }
-      if (!vibPanel.contains(e.target) && !vibBtn.contains(e.target)) {
+      if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || !vibBtn.contains(e.target))) {
         vibPanel.classList.remove('show');
       }
     });
 
     // Recording controls
-    recBtn.addEventListener('click', () => {
-      if (this.isRecording) {
-        this.stopRecording();
-        recBtn.classList.remove('recording');
-        recBtn.querySelector('.rec-label').textContent = 'Rec';
-      } else {
-        this.startRecording();
-        recBtn.classList.add('recording');
-        recBtn.querySelector('.rec-label').textContent = 'Stop';
-      }
-    });
+    if (typeof recBtn !== 'undefined' && recBtn) {
+      recBtn.addEventListener('click', () => {
+        if (this.isRecording) {
+          this.stopRecording();
+          recBtn.classList.remove('recording');
+          recBtn.querySelector('.rec-label').textContent = 'Rec';
+        } else {
+          this.startRecording();
+          recBtn.classList.add('recording');
+          recBtn.querySelector('.rec-label').textContent = 'Stop';
+        }
+      });
+    }
 
 
     document.addEventListener('visibilitychange', async () => {
