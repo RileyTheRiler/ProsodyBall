@@ -2389,16 +2389,27 @@ class ProsodyBallGame {
           directUrl = window.location.href;
         }
       } catch (e) { }
-      iframeNotice.innerHTML =
-        'This app needs microphone access, which may be blocked when embedded.<br>' +
-        '<a href="' + directUrl + '" target="_blank" rel="noopener">Open in new tab for full access ↗</a>';
+      iframeNotice.textContent = 'This app needs microphone access, which may be blocked when embedded.';
+      iframeNotice.appendChild(document.createElement('br'));
+      const link = document.createElement('a');
+      link.href = directUrl;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = 'Open in new tab for full access ↗';
+      iframeNotice.appendChild(link);
       iframeNotice.classList.add('show');
     }
 
     const showError = (msg) => {
-      errorBanner.innerHTML = msg;
+      if (msg instanceof Node) {
+        errorBanner.innerHTML = '';
+        errorBanner.appendChild(msg);
+        if (statusLiveRegion) statusLiveRegion.textContent = msg.textContent.trim();
+      } else {
+        errorBanner.innerHTML = msg;
+        if (statusLiveRegion) statusLiveRegion.textContent = String(msg).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      }
       errorBanner.classList.add('show');
-      if (statusLiveRegion) statusLiveRegion.textContent = String(msg).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     };
     const clearError = () => {
       errorBanner.classList.remove('show');
@@ -2560,13 +2571,18 @@ class ProsodyBallGame {
 
       // Check if we have an audio file OR microphone
       if (!selectedAudioFile && (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)) {
-        showError(
-          '🎙 Microphone API not available and no audio file selected.<br>' +
-          'This requires HTTPS and a modern browser. ' +
-          (isInIframe
-            ? '<a href="' + window.location.href + '" target="_blank">Try opening in a new tab ↗</a>'
-            : 'Please use Chrome, Firefox, Safari, or Edge.')
-        );
+        const errNode = document.createElement('div');
+        errNode.innerHTML = '🎙 Microphone API not available and no audio file selected.<br>This requires HTTPS and a modern browser. ';
+        if (isInIframe) {
+          const link = document.createElement('a');
+          link.href = window.location.href;
+          link.target = '_blank';
+          link.textContent = 'Try opening in a new tab ↗';
+          errNode.appendChild(link);
+        } else {
+          errNode.appendChild(document.createTextNode('Please use Chrome, Firefox, Safari, or Edge.'));
+        }
+        showError(errNode);
         this.drawIdleScene();
         return;
       }
@@ -2582,9 +2598,13 @@ class ProsodyBallGame {
         let msg = '';
         if (result.error === 'NotAllowedError') {
           if (isInIframe) {
-            msg =
-              '🎙 Microphone blocked by browser — this usually happens inside iframes.<br>' +
-              '<a href="' + window.location.href + '" target="_blank">Open in a new tab for full mic access ↗</a>';
+            msg = document.createElement('div');
+            msg.innerHTML = '🎙 Microphone blocked by browser — this usually happens inside iframes.<br>';
+            const link = document.createElement('a');
+            link.href = window.location.href;
+            link.target = '_blank';
+            link.textContent = 'Open in a new tab for full mic access ↗';
+            msg.appendChild(link);
           } else {
             msg =
               '🎙 Microphone permission denied.<br>' +
@@ -2595,7 +2615,8 @@ class ProsodyBallGame {
         } else if (result.error === 'NotReadableError') {
           msg = '🎙 Microphone is in use by another app. Close other apps using the mic and try again.';
         } else {
-          msg = '🎙 Could not access microphone: ' + (result.message || result.error);
+          msg = document.createElement('div');
+          msg.textContent = '🎙 Could not access microphone: ' + (result.message || result.error);
         }
         showError(msg);
         this.drawIdleScene();
