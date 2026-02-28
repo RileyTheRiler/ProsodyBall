@@ -318,8 +318,6 @@ export class VoiceAnalyzer {
     for (let tau = 1; tau <= maxPeriod; tau++) {
       let crossCorr = 0;
       for (let i = 0; i < W; i++) {
-        const delta = dsBuf[i] - dsBuf[i + tau];
-        diff += delta * delta;
         crossCorr += dsBuf[i] * dsBuf[i + tau];
       }
 
