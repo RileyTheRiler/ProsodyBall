@@ -19,6 +19,7 @@ function escapeHtml(text) {
 // ============================================================
 export class VoiceAnalyzer {
   constructor() {
+    this._buffers = {}; // Pre-allocated typed arrays for performance
     this.audioCtx = null;
     this.analyser = null;
     this.analyserFormant = null;
@@ -113,6 +114,14 @@ export class VoiceAnalyzer {
       articulation: 0, syllable: 0,
       pitch: 0, energy: 0, resonance: 0
     };
+  }
+
+  // Helper to reuse typed arrays to prevent garbage collection spikes in hot loops
+  _getBuffer(name, ArrayType, size) {
+    if (!this._buffers[name] || this._buffers[name].length < size) {
+      this._buffers[name] = new ArrayType(size);
+    }
+    return this._buffers[name];
   }
 
   async start(audioFile = null) {
@@ -282,11 +291,9 @@ export class VoiceAnalyzer {
     // Reduces complexity by ~4x (N^2 -> (N/2)^2)
     const dsRate = sampleRate / 2;
     // Use pre-allocated buffer
-    if (!this.pitchBuf || this.pitchBuf.length !== Math.floor(n / 2)) {
-      this.pitchBuf = new Float32Array(Math.floor(n / 2));
-    }
+    this.pitchBuf = this._getBuffer('pitchBuf', Float32Array, Math.floor(n / 2));
     const dsBuf = this.pitchBuf;
-    const dsN = dsBuf.length;
+    const dsN = Math.floor(n / 2); // Logical length, not capacity
 
     // Simple 2x decimation with averaging (low-pass filter)
     for (let i = 0; i < dsN; i++) {
@@ -300,7 +307,7 @@ export class VoiceAnalyzer {
 
     // Step 1 & 2: Difference function d(τ) and CMND d'(τ)
     // OPTIMIZATION: Use running sum of squares to avoid (a-b)^2 in inner loop
-    const cmnd = new Float32Array(maxPeriod + 1);
+    const cmnd = this._getBuffer('cmnd', Float32Array, maxPeriod + 1);
     cmnd[0] = 1.0;
     let runningSum = 0;
 
@@ -784,7 +791,7 @@ export class VoiceAnalyzer {
     if (numHarmonics < 4) return { f1: 0, f2: 0, f3: 0, confidence: 0 };
 
     // Sample FFT at each harmonic with peak-search and parabolic amplitude interpolation
-    const harmonicAmps = new Float32Array(numHarmonics);
+    const harmonicAmps = this._getBuffer('harmonicAmps', Float32Array, numHarmonics);
     for (let h = 0; h < numHarmonics; h++) {
       const hFreq = f0 * (h + 1);
       const bin = hFreq / binHz;
@@ -819,7 +826,7 @@ export class VoiceAnalyzer {
 
     // 5-point Gaussian-weighted smoothing (σ ≈ 1.0 harmonics)
     const gWeights = [0.06, 0.24, 0.40, 0.24, 0.06];
-    const env = new Float32Array(numHarmonics);
+    const env = this._getBuffer('env', Float32Array, numHarmonics);
     for (let i = 0; i < numHarmonics; i++) {
       let sum = 0, wSum = 0;
       for (let k = -2; k <= 2; k++) {
@@ -857,7 +864,7 @@ export class VoiceAnalyzer {
     // Applied BEFORE smoothing so it isn't diluted by the averaging kernel.
     // This counteracts the natural glottal source rolloff that makes F2/F3
     // peaks appear 6-12 dB weaker than F1 in the raw spectrum.
-    const tiltComp = new Float32Array(numBins);
+    const tiltComp = this._getBuffer('tiltComp', Float32Array, numBins);
     for (let i = 0; i < numBins; i++) {
       const freq = i * binHz;
       tiltComp[i] = fmtData[i] + (freq > pitch ? 6 * Math.log2(freq / pitch) : 0);
@@ -866,7 +873,7 @@ export class VoiceAnalyzer {
     // Triangular kernel smoothing on tilt-compensated spectrum
     // Triangular shape: center-weighted, zero at edges — better sidelobe
     // rejection than a box filter, cleaner envelope extraction
-    const smoothed = new Float32Array(numBins);
+    const smoothed = this._getBuffer('smoothed', Float32Array, numBins);
     for (let i = 0; i < numBins; i++) {
       let sum = 0, wSum = 0;
       for (let j = i - halfW; j <= i + halfW; j++) {
@@ -983,7 +990,7 @@ export class VoiceAnalyzer {
 
     // Apply filter + decimate in one pass
     let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
-    const filtered = new Float32Array(dsN);
+    const filtered = this._getBuffer('filtered', Float32Array, dsN);
     let dsIdx = 0, sampleCount = 0;
     for (let i = 0; i < N; i++) {
       const x0 = td[i];
@@ -997,14 +1004,14 @@ export class VoiceAnalyzer {
     }
 
     // Pre-emphasis on filtered/downsampled signal
-    const preEmph = new Float32Array(dsN);
+    const preEmph = this._getBuffer('preEmph', Float32Array, dsN);
     preEmph[0] = filtered[0];
     for (let i = 1; i < dsN; i++) {
       preEmph[i] = filtered[i] - 0.97 * filtered[i - 1];
     }
 
     // Hamming window
-    const windowed = new Float32Array(dsN);
+    const windowed = this._getBuffer('windowed', Float32Array, dsN);
     for (let i = 0; i < dsN; i++) {
       windowed[i] = preEmph[i] * (0.54 - 0.46 * Math.cos(2 * Math.PI * i / (dsN - 1)));
     }
@@ -1013,7 +1020,7 @@ export class VoiceAnalyzer {
     const order = Math.min(20, Math.max(8, Math.round(2 + dsRate / 1000)));
 
     // Autocorrelation
-    const R = new Float64Array(order + 1);
+    const R = this._getBuffer('R', Float64Array, order + 1);
     for (let k = 0; k <= order; k++) {
       let sum = 0;
       for (let i = 0; i < dsN - k; i++) sum += windowed[i] * windowed[i + k];
@@ -1022,8 +1029,8 @@ export class VoiceAnalyzer {
     if (R[0] < 1e-10) return { f1: 0, f2: 0, f3: 0, confidence: 0 };
 
     // Levinson-Durbin
-    const a = new Float64Array(order + 1);
-    const aTemp = new Float64Array(order + 1);
+    const a = this._getBuffer('a', Float64Array, order + 1);
+    const aTemp = this._getBuffer('aTemp', Float64Array, order + 1);
     let E = R[0];
     for (let i = 1; i <= order; i++) {
       let lambda = 0;
