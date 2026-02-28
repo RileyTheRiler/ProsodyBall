@@ -1616,6 +1616,20 @@ class ProsodyBallGame {
       },
     };
 
+    this.vowelValley = {
+      x: 0.5, y: 0.5,
+      smoothX: 0.5, smoothY: 0.5,
+      f1Range: [250, 1000],
+      f2Range: [600, 2600],
+      targets: [
+        { name: 'EE', f1: 300, f2: 2300, color: '#4d96ff', active: false, charge: 0 },
+        { name: 'AH', f1: 850, f2: 1100, color: '#ff6b6b', active: false, charge: 0 },
+        { name: 'OO', f1: 350, f2: 800, color: '#6bcb77', active: false, charge: 0 },
+      ],
+      particles: [],
+      score: 0,
+      gridAlpha: 0.1
+    };
 
     // ====== PRISM READER STATE ======
     this.prismReader = {
@@ -1843,6 +1857,16 @@ class ProsodyBallGame {
           c('vowel', 'Diagnostic Vowel', 'Use a steady "Ah" or "Uh" so changes come from vocal weight, not vowel shape shifts.'),
           c('artic', 'Spectral Gates', 'Fly through high/low/neutral gate patterns to test extremes, stability, and agility.'),
           c('syllable', 'Session Diagnostics', 'Post-flight feedback reports latency, stability drift, and light-heavy dynamic range.'),
+        ],
+      },
+      vowelvalley: {
+        title: 'Voice → Vowel Valley Mapping',
+        items: [
+          c('bounce', 'F2 → Horizontal', 'Left/Right navigation. "EE" moves you right, "OO" moves you left.'),
+          c('tempo', 'F1 → Vertical', 'Up/Down navigation. Jaw height (AH/EE) controls vertical position.'),
+          c('vowel', 'Target Zones', 'Navigate to EE, AH, and OO zones to charge them and score.'),
+          c('artic', 'Vocal Tract Feedback', 'Position reflects your actual vocal tract configuration in real-time.'),
+          c('syllable', 'Flow Scoring', 'Smoothly transitioning between target vowels earns "Flow" bonuses.'),
         ],
       },
       prism: {
@@ -2266,10 +2290,6 @@ class ProsodyBallGame {
         this.deleteRecording(idx);
       }
     };
-  }
-
-  updateRecordingsUI() {
-    // ... existing ... (we don't modify this, just defining the new method under it)
   }
 
   _updatePrismRecBtnVisibility() {
@@ -2737,6 +2757,9 @@ class ProsodyBallGame {
           }
         }
       }
+      if (this.gameMode === 'vowelvalley') {
+        this._resetVowelValleyState();
+      }
 
       // Clear vibration alert tripped highlights
       for (const rule of this.vibration.rules) { rule.tripped = false; }
@@ -2771,7 +2794,7 @@ class ProsodyBallGame {
       helpTooltip.classList.remove('show');
       vibPanel.classList.remove('show');
       recordingsDrawer.classList.remove('show');
-      const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot', road: 'Resonance Road', ascent: 'Spectral Ascent', prism: 'Prism Reader' };
+      const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot', road: 'Resonance Road', ascent: 'Spectral Ascent', prism: 'Prism Reader', vowelvalley: 'Vowel Valley' };
       startBtn.textContent = `⏹ Stop ${modeNames[this.gameMode] || ''}`;
       startBtn.classList.add('active');
       recBtn.classList.add('visible');
@@ -2933,6 +2956,7 @@ class ProsodyBallGame {
     const roadDetails = document.getElementById('roadDetails');
     const ascentDetails = document.getElementById('ascentDetails');
     const prismDetails = document.getElementById('prismDetails');
+    const vowelvalleyDetails = document.getElementById('vowelvalleyDetails');
     const modeCards = modePicker ? modePicker.querySelectorAll('.mode-card') : [];
 
     document.querySelectorAll('.canvas-only').forEach(el => el.classList.toggle('show', this.gameMode === 'canvas' || this.gameMode === 'keyboard'));
@@ -2954,8 +2978,9 @@ class ProsodyBallGame {
       roadDetails?.classList.toggle('show', mode === 'road');
       ascentDetails?.classList.toggle('show', mode === 'ascent');
       prismDetails?.classList.toggle('show', mode === 'prism');
+      vowelvalleyDetails?.classList.toggle('show', mode === 'vowelvalley');
 
-      const titles = { ball: 'VOX ARCADE', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD', ascent: 'SPECTRAL ASCENT', prism: 'PRISM READER' };
+      const titles = { ball: 'VOX ARCADE', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD', ascent: 'SPECTRAL ASCENT', prism: 'PRISM READER', vowelvalley: 'VOWEL VALLEY' };
       document.querySelector('.hud-title').textContent = titles[mode] || 'VOX ARCADE';
       const canvasOnly = document.querySelectorAll('.canvas-only');
       canvasOnly.forEach(el => el.classList.toggle('show', mode === 'canvas' || mode === 'keyboard'));
@@ -2971,6 +2996,7 @@ class ProsodyBallGame {
       if (mode === 'road') this._resetResonanceRoadState();
       if (mode === 'ascent') this._resetSpectralAscentState();
       if (mode === 'prism') this._resetPrismReaderState();
+      if (mode === 'vowelvalley') this._resetVowelValleyState();
       if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
       if (!this.isRunning) this.drawIdleScene();
     };
@@ -3767,6 +3793,9 @@ class ProsodyBallGame {
     } else if (this.gameMode === 'prism') {
       this.updatePrismReader(dt);
       this.drawPrismReaderScene();
+    } else if (this.gameMode === 'vowelvalley') {
+      this.updateVowelValley(dt);
+      this.drawVowelValleyScene(this.prosodyScore);
     } else {
       this.update(dt);
       this.drawSceneInternal(this.prosodyScore);
@@ -7142,14 +7171,13 @@ class ProsodyBallGame {
     pp.awaitingRestartChoice = false;
   }
 
-  _resetResonanceRoadState() {
-    const rr = this.resonanceRoad;
-    rr.centerX = 0;
-    rr.speed = 0;
-    rr.trail = [];
-    rr.score = 0;
-    rr.multiplier = 1;
-    rr.driftStrength = 0;
+  _resetVowelValleyState() {
+    const s = this.vowelValley;
+    s.x = s.smoothX = 0.5;
+    s.y = s.smoothY = 0.5;
+    s.score = 0;
+    s.particles = [];
+    for (const t of s.targets) t.charge = 0;
   }
 
   _pilotNoteForY(y) {
@@ -8845,6 +8873,8 @@ class ProsodyBallGame {
       const styleName = this.creatureStyle.charAt(0).toUpperCase() + this.creatureStyle.slice(1);
       stats.push({ value: `${tLevel}%`, label: 'Peak Transform' });
       stats.push({ value: styleName, label: 'Style' });
+    } else if (this.gameMode === 'vowelvalley') {
+      stats.push({ value: `${this.vowelValley.score}`, label: 'Score' });
     }
 
     // Render stats grid
@@ -8980,6 +9010,175 @@ class ProsodyBallGame {
     if (pct <= 15) return `${pct}% · ${low}`;
     if (pct <= 55) return `${pct}% · ${mid}`;
     return `${pct}% · ${high}`;
+  }
+
+  // ============================================================
+  // VOWEL VALLEY — Update
+  // ============================================================
+  updateVowelValley(dt) {
+    const s = this.vowelValley;
+    const f1 = this.analyzer.smoothF1;
+    const f2 = this.analyzer.smoothF2;
+    const energy = this.analyzer.metrics.energy;
+    const conf = this.analyzer.formantConfidence;
+
+    // 1. Map F1/F2 to normalized 0-1 coordinates with smoothing
+    if (energy > 0.05 && conf > 0.2) {
+      // Horizontal (F2): 600Hz (Left) to 2600Hz (Right)
+      const targetX = Math.max(0, Math.min(1, (f2 - s.f2Range[0]) / (s.f2Range[1] - s.f2Range[0])));
+      // Vertical (F1): 1000Hz (Bottom) to 250 Hz (Top) - Inverted for "natural" feel
+      const targetY = Math.max(0, Math.min(1, 1 - (f1 - s.f1Range[0]) / (s.f1Range[1] - s.f1Range[0])));
+
+      s.smoothX += (targetX - s.smoothX) * 0.15;
+      s.smoothY += (targetY - s.smoothY) * 0.15;
+    }
+
+    s.x = s.smoothX;
+    s.y = s.smoothY;
+
+    // 2. Check collisions with target zones
+    let inAnyZone = false;
+    for (const t of s.targets) {
+      // Map target F1/F2 to normalized space
+      const tx = (t.f2 - s.f2Range[0]) / (s.f2Range[1] - s.f2Range[0]);
+      const ty = 1 - (t.f1 - s.f1Range[0]) / (s.f1Range[1] - s.f1Range[0]);
+
+      const dx = s.x - tx;
+      const dy = s.y - ty;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < 0.15 && energy > 0.1 && conf > 0.3) {
+        t.active = true;
+        t.charge = Math.min(1, t.charge + dt * 1.5);
+        inAnyZone = true;
+
+        if (t.charge >= 1) {
+          s.score += 10;
+          t.charge = 0;
+          // Spawn "score" particles
+          for (let i = 0; i < 8; i++) {
+            const ang = Math.random() * Math.PI * 2;
+            s.particles.push({
+              x: tx * this.width, y: ty * this.height,
+              vx: Math.cos(ang) * 150, vy: Math.sin(ang) * 150,
+              life: 0.6, color: t.color, size: 4
+            });
+          }
+        }
+      } else {
+        t.active = false;
+        t.charge = Math.max(0, t.charge - dt * 0.5);
+      }
+    }
+
+    // 3. Update particles
+    for (let i = s.particles.length - 1; i >= 0; i--) {
+      const p = s.particles[i];
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= dt;
+      if (p.life <= 0) s.particles.splice(i, 1);
+    }
+  }
+
+  // ============================================================
+  // VOWEL VALLEY — Draw
+  // ============================================================
+  drawVowelValleyScene(prosodyGlow) {
+    const ctx = this.ctx;
+    const w = this.width;
+    const h = this.height;
+    const s = this.vowelValley;
+
+    // 1. Background
+    ctx.fillStyle = '#050510';
+    ctx.fillRect(0, 0, w, h);
+
+    // 2. Grid
+    ctx.strokeStyle = `rgba(255,255,255,${s.gridAlpha})`;
+    ctx.lineWidth = 1;
+    for (let i = 1; i < 10; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i * w / 10, 0); ctx.lineTo(i * w / 10, h);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, i * h / 10); ctx.lineTo(w, i * h / 10);
+      ctx.stroke();
+    }
+
+    // 3. Draw Target Zones
+    ctx.font = 'bold 16px "Space Mono", monospace';
+    ctx.textAlign = 'center';
+    for (const t of s.targets) {
+      const tx = (t.f2 - s.f2Range[0]) / (s.f2Range[1] - s.f2Range[0]) * w;
+      const ty = (1 - (t.f1 - s.f1Range[0]) / (s.f1Range[1] - s.f1Range[0])) * h;
+
+      // Outer glow
+      const grad = ctx.createRadialGradient(tx, ty, 20, tx, ty, 60);
+      grad.addColorStop(0, t.color + (t.active ? '66' : '22'));
+      grad.addColorStop(1, 'transparent');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(tx, ty, 60, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Core
+      ctx.fillStyle = t.color;
+      ctx.globalAlpha = 0.3 + t.charge * 0.7;
+      ctx.beginPath();
+      ctx.arc(tx, ty, 15 + t.charge * 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // Label
+      ctx.fillStyle = '#fff';
+      ctx.fillText(t.name, tx, ty - 70);
+
+      // Progress ring
+      if (t.charge > 0) {
+        ctx.strokeStyle = t.color;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(tx, ty, 25, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * t.charge));
+        ctx.stroke();
+      }
+    }
+
+    // 4. Draw Particles
+    for (const p of s.particles) {
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = p.life / 0.6;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // 5. Draw Character (Vocal Spark)
+    const cx = s.x * w;
+    const cy = s.y * h;
+
+    // Character glow
+    const charGlow = ctx.createRadialGradient(cx, cy, 5, cx, cy, 30 + prosodyGlow * 20);
+    charGlow.addColorStop(0, '#fff');
+    charGlow.addColorStop(0.3, this.getBallColor(0.6));
+    charGlow.addColorStop(1, 'transparent');
+    ctx.fillStyle = charGlow;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 30 + prosodyGlow * 20, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Character core
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 6. Score HUD
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.font = '700 24px "Outfit", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`SCORE: ${s.score}`, 20, 40);
   }
 }
 
