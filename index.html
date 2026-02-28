@@ -117,6 +117,11 @@
 
     .hud-secondary {
       justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
+      max-width: min(72vw, 1200px);
       gap: 6px;
       flex-wrap: nowrap;
       overflow-x: auto;
@@ -126,6 +131,7 @@
       border-radius: 10px;
       background: rgba(255, 255, 255, 0.03);
       border: 1px solid rgba(255, 255, 255, 0.06);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
       flex-shrink: 1;
     }
@@ -2469,6 +2475,7 @@
     .prism-settings-field .info-trigger:focus+.info-popup {
       transform: translateX(-50%) translateY(0);
     }
+  
 
 
     body.low-motion * {
@@ -2729,6 +2736,32 @@
       </div>
       <div class="hud-controls hud-secondary" aria-label="Secondary settings">
 
+        <select id="visualStyleSelect" class="theme-select canvas-only" aria-label="Visual style mode">
+          <option value="artistic">🖌️ Artistic</option>
+          <option value="analysis">📈 Analysis</option>
+        </select>
+        <select id="canvasModeSelect" class="theme-select canvas-only" aria-label="Canvas mode">
+          <option value="paint">Canvas Mode: Paint</option>
+          <option value="keyboard">Canvas Mode: Keyboard</option>
+        </select>
+        <select id="keyboardGameSelect" class="theme-select canvas-only" aria-label="Keyboard game mode">
+          <option value="mirror">Keyboard Game: Mirror Mode</option>
+          <option value="target">Keyboard Game: Target Practice</option>
+          <option value="hero">Keyboard Game: Vocal Hero</option>
+        </select>
+        <select id="pitchLabelsSelect" class="theme-select canvas-only" aria-label="Pitch guide labels">
+          <option value="off">Labels: Off</option>
+          <option value="hz" selected>Labels: Hz</option>
+          <option value="notes">Labels: Notes</option>
+        </select>
+        <button class="btn btn-help canvas-only" id="gridContrastBtn"
+          title="Increase or reduce pitch grid contrast">Grid: Soft</button>
+        <select id="voiceProfileSelect" class="theme-select" aria-label="Voice profile preset">
+          <option value="auto" selected>Profile: Auto</option>
+          <option value="deeper">Profile: Deeper Voice</option>
+          <option value="lighter">Profile: Lighter Voice</option>
+          <option value="expressive">Profile: Expressive Practice</option>
+        </select>
         <button class="btn btn-cb" id="settingsBtn" title="Open Settings" aria-label="Open Settings">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
@@ -2793,6 +2826,7 @@
             <circle cx="12" cy="12" r="3" />
           </svg>
         </button>
+        <button class="btn btn-help" id="motionToggle" aria-label="Toggle low motion mode" title="Low motion mode">Motion: Auto</button>
         <button class="btn btn-vib" id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
@@ -2819,6 +2853,8 @@
           </svg>
           Menu
         </button>
+        <button class="btn btn-help" id="recalibrateBtn" title="Run mic calibration again">Recalibrate</button>
+        <button class="btn btn-help" id="recoverMicBtn" title="Recover microphone session" style="display:none;">Recover Mic</button>
         <button class="btn btn-help" id="recoverMicBtn" title="Recover microphone session" style="display:none;">Recover
           Mic</button>
       </div>
@@ -2885,7 +2921,7 @@
             <div class="mode-picker" id="modePicker">
               <div class="mode-card" data-mode="ball">
                 <div class="mode-icon">⚽</div>
-                <div class="mode-name">Prosody Ball</div>
+                <div class="mode-name">Vox Ball</div>
               </div>
               <div class="mode-card" data-mode="creature">
                 <div class="mode-icon">🐉</div>
@@ -2933,7 +2969,7 @@
 
               <div class="mode-detail-panel" id="ballDetails">
                 <div class="detail-header">
-                  <div class="detail-title">⚽ Prosody Ball</div>
+                  <div class="detail-title">⚽ Vox Ball</div>
                   <div class="detail-blurb">Control a bouncing ball with your voice. Pitch bounces, tempo changes speed,
                     vowels leave trails.</div>
                 </div>
@@ -3178,6 +3214,7 @@
                   style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
                   <label>Target Tone
                     <div class="info-wrapper">
+                      <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
                       <button class="info-trigger" aria-label="More Info">?</button>
                       <div class="info-popup">Pick Bright or Dark posture. The road color palette flips to match your
                         training goal.</div>
@@ -3279,6 +3316,7 @@
                       <label class="prism-label" for="prismModeSelect">
                         <span class="prism-label-icon">🎙️</span>Mode
                         <div class="info-wrapper">
+                          <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
                           <button class="info-trigger" aria-label="More Info">?</button>
                           <div class="info-popup">'Real-Time' animates as you speak. 'Record & Process' analyzes a whole
                             clip for higher accuracy playback.</div>
@@ -3294,6 +3332,7 @@
                       <label class="prism-label" for="prismPacingSelect">
                         <span class="prism-label-icon">⏱</span>Pacing Mode
                         <div class="info-wrapper">
+                          <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
                           <button class="info-trigger" aria-label="More Info">?</button>
                           <div class="info-popup">Choose how text advances. 'Auto' detects your speech rhythm. 'Manual'
                             lets you control the pace with Spacebar or Taps.</div>
@@ -3501,6 +3540,7 @@
       <div class="meter meter-pitch">
         <div class="meter-label">Pitch
           <div class="info-wrapper">
+            <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
             <button class="info-trigger" aria-label="More Info">?</button>
             <div class="info-popup">How high or low your voice sounds in Hertz (Hz).</div>
           </div>
@@ -3514,6 +3554,7 @@
         <div class="meter-label">
           Resonance
           <div class="info-wrapper">
+            <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
             <button class="info-trigger" aria-label="More Info">?</button>
             <div class="info-popup">Your vocal tone quality. High resonance sounds 'forward' or 'bright'; low resonance
               sounds 'deep' or 'hollow'.</div>
@@ -3533,6 +3574,7 @@
       <div class="meter meter-bounce">
         <div class="meter-label">Bounce
           <div class="info-wrapper">
+            <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
             <button class="info-trigger" aria-label="More Info">?</button>
             <div class="info-popup">Measures your pitch variance. More 'bounce' means more expressive pitch changes.
             </div>
@@ -3546,6 +3588,7 @@
       <div class="meter meter-tempo">
         <div class="meter-label">Tempo
           <div class="info-wrapper">
+            <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
             <button class="info-trigger" aria-label="More Info">?</button>
             <div class="info-popup">The speed of your speech rhythms.</div>
           </div>

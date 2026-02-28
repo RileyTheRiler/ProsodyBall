@@ -291,6 +291,11 @@ export class VoiceAnalyzer {
     // Reduces complexity by ~4x (N^2 -> (N/2)^2)
     const dsRate = sampleRate / 2;
     // Use pre-allocated buffer
+    if (!this.pitchBuf || this.pitchBuf.length !== Math.floor(n / 2)) {
+      this.pitchBuf = new Float32Array(Math.floor(n / 2));
+    }
+    const dsBuf = this.pitchBuf;
+    const dsN = dsBuf.length;
     this.pitchBuf = this._getBuffer('pitchBuf', Float32Array, Math.floor(n / 2));
     const dsBuf = this.pitchBuf;
     const dsN = Math.floor(n / 2); // Logical length, not capacity
@@ -306,6 +311,7 @@ export class VoiceAnalyzer {
     const W = maxPeriod; // integration window
 
     // Step 1 & 2: Difference function d(τ) and CMND d'(τ)
+    const cmnd = new Float32Array(maxPeriod + 1);
     // OPTIMIZATION: Use running sum of squares to avoid (a-b)^2 in inner loop
     const cmnd = this._getBuffer('cmnd', Float32Array, maxPeriod + 1);
     cmnd[0] = 1.0;
@@ -320,6 +326,8 @@ export class VoiceAnalyzer {
     for (let tau = 1; tau <= maxPeriod; tau++) {
       let crossCorr = 0;
       for (let i = 0; i < W; i++) {
+        const delta = dsBuf[i] - dsBuf[i + tau];
+        diff += delta * delta;
         crossCorr += dsBuf[i] * dsBuf[i + tau];
       }
 
@@ -489,6 +497,7 @@ export class VoiceAnalyzer {
             this.pitchProfile.min = Math.max(50, p05 * 0.85);
             this.pitchProfile.max = Math.min(800, p95 * 1.25);
             this.pitchProfile.isLearned = true;
+            console.log(`[VoxBall] Learned User Pitch Range: ${this.pitchProfile.min.toFixed(0)}Hz - ${this.pitchProfile.max.toFixed(0)}Hz`);
             console.log(`[ProsodyBall] Learned User Pitch Range: ${this.pitchProfile.min.toFixed(0)}Hz - ${this.pitchProfile.max.toFixed(0)}Hz`);
           }
         }
@@ -560,6 +569,7 @@ export class VoiceAnalyzer {
           this.tiltProfile.min = median - spread * 0.55;
           this.tiltProfile.max = median + spread * 0.45;
           this.tiltProfile.isLearned = true;
+          console.log(`[VoxBall] Learned User Tilt Range: ${this.tiltProfile.min.toFixed(1)}dB to ${this.tiltProfile.max.toFixed(1)}dB`);
           console.log(`[ProsodyBall] Learned User Tilt Range: ${this.tiltProfile.min.toFixed(1)}dB to ${this.tiltProfile.max.toFixed(1)}dB`);
         }
       }
@@ -1335,7 +1345,7 @@ class Particle {
 // ============================================================
 // MAIN GAME
 // ============================================================
-class ProsodyBallGame {
+class VoxBallGame {
   constructor() {
     this.canvas = document.getElementById('gameCanvas');
     this.ctx = this.canvas.getContext('2d');
@@ -1664,6 +1674,7 @@ class ProsodyBallGame {
       audioPlayer: new Audio(),
       isRecording: false,
       isPlayingBack: false,
+      playbackIndex: 0
       playbackIndex: 0,
       freestyleTranscript: '',
       speechRecognition: null
@@ -1760,6 +1771,7 @@ class ProsodyBallGame {
     this.canvasModeTransition = 0;
     this.keyboardGameMode = 'mirror'; // 'mirror' | 'target' | 'hero'
     this.pitchGuideLabelMode = 'hz';
+    this.pitchGridStrength = 'soft';
     this.pitchGridStrength = 'strong';
     this.teleprompterMode = 'off';
     this.voiceProfilePreset = 'auto';
@@ -2304,6 +2316,10 @@ class ProsodyBallGame {
     };
   }
 
+  updateRecordingsUI() {
+    // ... existing ... (we don't modify this, just defining the new method under it)
+  }
+
   _updatePrismRecBtnVisibility() {
     const recBtn = document.getElementById('recBtn');
     const clearBtn = document.getElementById('prismClearRecBtn');
@@ -2421,6 +2437,8 @@ class ProsodyBallGame {
           directUrl = window.location.href;
         }
       } catch (e) { }
+      iframeNotice.textContent = '';
+      iframeNotice.appendChild(document.createTextNode('This app needs microphone access, which may be blocked when embedded.'));
       iframeNotice.textContent = 'This app needs microphone access, which may be blocked when embedded.';
       iframeNotice.appendChild(document.createElement('br'));
       const link = document.createElement('a');
@@ -2442,6 +2460,7 @@ class ProsodyBallGame {
         if (statusLiveRegion) statusLiveRegion.textContent = String(msg).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
       }
       errorBanner.classList.add('show');
+      if (statusLiveRegion) statusLiveRegion.textContent = String(msg).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     };
     const clearError = () => {
       errorBanner.classList.remove('show');
@@ -2898,6 +2917,7 @@ class ProsodyBallGame {
         const hud = document.getElementById('creatureStyleHud');
         if (hud) hud.style.display = 'none';
         this.analyzer.stop();
+      setRecoverMicVisible(false);
         setRecoverMicVisible(false);
         const prismOvl = document.getElementById('prismOverlay');
         if (prismOvl) prismOvl.classList.remove('show');
@@ -3013,6 +3033,8 @@ class ProsodyBallGame {
       prismDetails?.classList.toggle('show', mode === 'prism');
       vowelvalleyDetails?.classList.toggle('show', mode === 'vowelvalley');
 
+      const titles = { ball: 'VOX BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD', ascent: 'SPECTRAL ASCENT', prism: 'PRISM READER' };
+      document.querySelector('.hud-title').textContent = titles[mode] || 'VOX BALL';
       const titles = { ball: 'VOX ARCADE', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD', ascent: 'SPECTRAL ASCENT', prism: 'PRISM READER', vowelvalley: 'VOWEL VALLEY' };
       document.querySelector('.hud-title').textContent = titles[mode] || 'VOX ARCADE';
       const canvasOnly = document.querySelectorAll('.canvas-only');
@@ -3296,6 +3318,23 @@ class ProsodyBallGame {
         cbBtn.classList.toggle('active', this.colorblindMode);
       });
     }
+
+
+    const syncMotionToggleLabel = () => {
+      if (!motionToggle) return;
+      const next = this.userMotionPreference === 'auto' ? 'Auto' : this.userMotionPreference === 'low' ? 'Low' : 'Full';
+      motionToggle.textContent = `Motion: ${next}`;
+      motionToggle.classList.toggle('active', this.userMotionPreference === 'low');
+    };
+    syncMotionToggleLabel();
+    motionToggle?.addEventListener('click', () => {
+      const order = ['auto', 'low', 'full'];
+      const idx = order.indexOf(this.userMotionPreference);
+      this.userMotionPreference = order[(idx + 1) % order.length];
+      localStorage.setItem('vox:motionPreference', this.userMotionPreference);
+      this._applyMotionPreferences();
+      syncMotionToggleLabel();
+    });
 
 
     const syncMotionToggleLabel = () => {
@@ -3614,6 +3653,22 @@ class ProsodyBallGame {
         }
       });
     }
+
+
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState !== 'visible' || !this.isRunning) return;
+      try {
+        if (navigator.permissions?.query) {
+          const mic = await navigator.permissions.query({ name: 'microphone' });
+          if (mic.state === 'denied') {
+            showError('🎙 Microphone permission changed to denied. Re-enable browser mic permission, then click Recover Mic.');
+            setRecoverMicVisible(true);
+          }
+        }
+      } catch (e) {
+        // non-blocking permissions probe
+      }
+    });
 
 
     document.addEventListener('visibilitychange', async () => {
@@ -9296,4 +9351,5 @@ class ProsodyBallGame {
 }
 
 // Initialize if in main UI, export for testing harness
+export const game = document.getElementById('app') ? new VoxBallGame() : null;
 export const game = document.getElementById('app') ? new ProsodyBallGame() : null;

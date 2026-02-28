@@ -17,6 +17,11 @@ let browser;
 try {
   const launchArgs = browserName === 'firefox'
     ? { product: 'firefox', headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] }
+    : { headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox'] };
+
+  browser = await puppeteer.launch(launchArgs);
+  const page = await browser.newPage();
+  await page.goto(baseUrl, { waitUntil: 'networkidle0' });
     ? { browser: 'firefox', headless: true, extraPrefsFirefox: { "remote.active-protocols": 3 }, args: ['--no-sandbox', '--disable-setuid-sandbox'] }
     : {
       headless: 'new',
