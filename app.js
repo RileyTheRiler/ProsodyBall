@@ -1841,6 +1841,41 @@ class ProsodyBallGame {
       }
     `;
     document.head.appendChild(mobileStyle);
+
+    // 6. Scroll fade indicators on horizontally-scrollable areas
+    this._initScrollFades();
+  }
+
+  /** Attach scroll-fade edge indicators to horizontal scroll containers */
+  _initScrollFades() {
+    const scrollables = [
+      document.querySelector('.menu-left'),
+      document.querySelector('.context-bar'),
+      document.querySelector('.hud-secondary'),
+    ].filter(Boolean);
+
+    const updateFade = (el) => {
+      const { scrollLeft, scrollWidth, clientWidth } = el;
+      const threshold = 4;
+      const canScrollLeft = scrollLeft > threshold;
+      const canScrollRight = scrollLeft + clientWidth < scrollWidth - threshold;
+      el.classList.toggle('fade-left', canScrollLeft && !canScrollRight);
+      el.classList.toggle('fade-right', canScrollRight && !canScrollLeft);
+      el.classList.toggle('fade-both', canScrollLeft && canScrollRight);
+      if (!canScrollLeft && !canScrollRight) {
+        el.classList.remove('fade-left', 'fade-right', 'fade-both');
+      }
+    };
+
+    scrollables.forEach(el => {
+      el.classList.add('mobile-scroll-fade');
+      // Initial check (deferred to ensure layout is computed)
+      requestAnimationFrame(() => updateFade(el));
+      el.addEventListener('scroll', () => updateFade(el), { passive: true });
+      // Re-check when children change (e.g. mode cards appearing)
+      const resizeObs = new ResizeObserver(() => updateFade(el));
+      resizeObs.observe(el);
+    });
   }
 
 
