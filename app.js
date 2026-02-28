@@ -7865,7 +7865,10 @@ class VoxBallGame {
     if (!onRoad) {
       rr.speed *= 0.72;
       rr.multiplier = 1;
-      this._triggerVibrationFeedback('Resonance Drift');
+      if (this.isRunning && this.vibration.globalCooldown <= 0) {
+        this._triggerVibration('Resonance Drift');
+        this.vibration.globalCooldown = 0.25;
+      }
     } else if (speaking) {
       rr.multiplier = Math.min(6, rr.multiplier + dt * 0.5);
       rr.score += rr.speed * dt * rr.multiplier * 0.08;
