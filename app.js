@@ -3263,11 +3263,13 @@ class ProsodyBallGame {
 
     // Colorblind mode toggle
     const cbBtn = document.getElementById('cbToggle');
-    cbBtn.addEventListener('click', () => {
-      this.colorblindMode = !this.colorblindMode;
-      document.documentElement.classList.toggle('colorblind', this.colorblindMode);
-      cbBtn.classList.toggle('active', this.colorblindMode);
-    });
+    if (cbBtn) {
+      cbBtn.addEventListener('click', () => {
+        this.colorblindMode = !this.colorblindMode;
+        document.documentElement.classList.toggle('colorblind', this.colorblindMode);
+        cbBtn.classList.toggle('active', this.colorblindMode);
+      });
+    }
 
 
     const syncMotionToggleLabel = () => {
@@ -3327,23 +3329,27 @@ class ProsodyBallGame {
         if (settingsPanel.classList.contains('show')) toggleSettings(false);
       }
       // Vibration panel
-      if (vibPanel && !vibPanel.contains(e.target) && e.target !== vibBtn) {
+      if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || e.target !== vibBtn)) {
         vibPanel.classList.remove('show');
       }
     });
 
-    vibBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      vibPanel.classList.toggle('show');
-      helpTooltip.classList.remove('show');
-      recordingsDrawer.classList.remove('show');
-      settingsPanel.classList.remove('show');
-    });
+    if (vibBtn) {
+      vibBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (vibPanel) vibPanel.classList.toggle('show');
+        if (helpTooltip) helpTooltip.classList.remove('show');
+        if (recordingsDrawer) recordingsDrawer.classList.remove('show');
+        if (settingsPanel) settingsPanel.classList.remove('show');
+      });
+    }
 
-    vibMaster.addEventListener('change', () => {
-      this.vibration.enabled = vibMaster.checked;
-      vibBtn.classList.toggle('active', vibMaster.checked);
-    });
+    if (vibMaster) {
+      vibMaster.addEventListener('change', () => {
+        this.vibration.enabled = vibMaster.checked;
+        if (vibBtn) vibBtn.classList.toggle('active', vibMaster.checked);
+      });
+    }
 
     const vibMetrics = [
       { value: 'pitch', label: 'Pitch (Hz)', unit: 'Hz', min: 50, max: 500, step: 5, defaultBelow: 150, defaultAbove: 250 },
@@ -3557,29 +3563,31 @@ class ProsodyBallGame {
     });
 
     document.addEventListener('click', (e) => {
-      if (!helpTooltip.contains(e.target) && e.target !== helpBtn) {
+      if (helpTooltip && !helpTooltip.contains(e.target) && e.target !== helpBtn) {
         helpTooltip.classList.remove('show');
       }
-      if (!recordingsDrawer.contains(e.target) && !recordingsBtn.contains(e.target)) {
+      if (recordingsDrawer && !recordingsDrawer.contains(e.target) && (!recordingsBtn || !recordingsBtn.contains(e.target))) {
         recordingsDrawer.classList.remove('show');
       }
-      if (!vibPanel.contains(e.target) && !vibBtn.contains(e.target)) {
+      if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || !vibBtn.contains(e.target))) {
         vibPanel.classList.remove('show');
       }
     });
 
     // Recording controls
-    recBtn.addEventListener('click', () => {
-      if (this.isRecording) {
-        this.stopRecording();
-        recBtn.classList.remove('recording');
-        recBtn.querySelector('.rec-label').textContent = 'Rec';
-      } else {
-        this.startRecording();
-        recBtn.classList.add('recording');
-        recBtn.querySelector('.rec-label').textContent = 'Stop';
-      }
-    });
+    if (typeof recBtn !== 'undefined' && recBtn) {
+      recBtn.addEventListener('click', () => {
+        if (this.isRecording) {
+          this.stopRecording();
+          recBtn.classList.remove('recording');
+          recBtn.querySelector('.rec-label').textContent = 'Rec';
+        } else {
+          this.startRecording();
+          recBtn.classList.add('recording');
+          recBtn.querySelector('.rec-label').textContent = 'Stop';
+        }
+      });
+    }
 
 
     document.addEventListener('visibilitychange', async () => {
