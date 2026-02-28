@@ -1819,7 +1819,8 @@ class VoxBallGame {
     // ====== EXPANDED METRICS STATE ======
     this.metersExpanded = false;
     this.metricPopupOpen = null; // null or metric key string
-    this._metricHistoryMax = 120; // ~2 seconds at 60fps
+    this._metricHistoryMax = 120; // ~2 seconds at 60fps (default)
+    this._metricHistoryMaxLong = 600; // ~10 seconds at 60fps (pitch, bounce)
     this._metricHistory = {
       pitch: [],       // raw Hz values
       resonance: [],   // 0-1 resonance score
@@ -9814,7 +9815,8 @@ class VoxBallGame {
     h.syllables.push(m.syllable);
 
     for (const k of Object.keys(h)) {
-      if (h[k].length > max) h[k].shift();
+      const limit = (k === 'pitch' || k === 'bounce') ? this._metricHistoryMaxLong : max;
+      if (h[k].length > limit) h[k].shift();
     }
 
     // Vowel scatter plot: collect F1/F2 points during voiced speech
@@ -9933,8 +9935,9 @@ class VoxBallGame {
     ctx.lineJoin = 'round';
     ctx.beginPath();
     const range = maxVal - minVal || 1;
+    const xMax = Math.max(data.length, 2) - 1;
     for (let i = 0; i < data.length; i++) {
-      const x = (i / (this._metricHistoryMax - 1)) * w;
+      const x = (i / xMax) * w;
       const val = Math.max(minVal, Math.min(maxVal, data[i]));
       const y = h - ((val - minVal) / range) * (h - 4) - 2;
       if (i === 0) ctx.moveTo(x, y);
@@ -10108,16 +10111,17 @@ class VoxBallGame {
     }
 
     // Attack/decay filled area
+    const xMax = Math.max(data.length, 2) - 1;
     ctx.fillStyle = 'rgba(77, 150, 255, 0.15)';
     ctx.beginPath();
     ctx.moveTo(0, h);
     for (let i = 0; i < data.length; i++) {
-      const x = (i / (this._metricHistoryMax - 1)) * w;
+      const x = (i / xMax) * w;
       const val = Math.max(0, Math.min(1, data[i]));
       const y = h - val * (h - 4) - 2;
       ctx.lineTo(x, y);
     }
-    ctx.lineTo((data.length - 1) / (this._metricHistoryMax - 1) * w, h);
+    ctx.lineTo(((data.length - 1) / xMax) * w, h);
     ctx.closePath();
     ctx.fill();
 
@@ -10127,7 +10131,7 @@ class VoxBallGame {
     ctx.lineJoin = 'round';
     ctx.beginPath();
     for (let i = 0; i < data.length; i++) {
-      const x = (i / (this._metricHistoryMax - 1)) * w;
+      const x = (i / xMax) * w;
       const val = Math.max(0, Math.min(1, data[i]));
       const y = h - val * (h - 4) - 2;
       if (i === 0) ctx.moveTo(x, y);
