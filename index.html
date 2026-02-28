@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Vox Arcade — Voice Training Game</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Space+Mono:wght@400;700&display=swap');
@@ -777,15 +777,19 @@
       }
 
       .summary-title {
-        font-size: 1.2rem;
+        font-size: 1.3rem;
       }
 
       .summary-stat {
-        padding: 10px;
+        padding: 12px 10px;
       }
 
       .summary-stat-value {
-        font-size: 1.1rem;
+        font-size: 1.15rem;
+      }
+
+      .summary-stat-label {
+        font-size: 0.78rem;
       }
     }
 
@@ -1528,164 +1532,43 @@
       background: linear-gradient(135deg, #56B4E9, #009E73);
     }
 
+    /* ====== MOBILE-ONLY STYLES (phones ≤600px) ====== */
     @media (max-width: 600px) {
 
       body,
       #app {
         overflow: auto;
+        /* Safe area padding for notched phones */
+        padding-left: env(safe-area-inset-left, 0px);
+        padding-right: env(safe-area-inset-right, 0px);
+        /* Eliminate 300ms double-tap-to-zoom delay on all taps */
+        touch-action: manipulation;
       }
 
-      .overlay-title {
-        font-size: 1.6rem;
+      /* Prevent iOS auto-zoom on input focus (triggers below 16px) */
+      select,
+      input[type="text"],
+      input[type="number"],
+      input[type="range"],
+      textarea {
+        font-size: max(16px, 1em);
       }
 
-      .overlay-subtitle {
-        font-size: 0.95rem;
-        margin-bottom: 8px;
-      }
-
-      /* Allow overlay to scroll on small screens */
-      .overlay {
-        padding: 12px 10px 20px;
-        overflow-y: auto;
-        -webkit-overflow-scrolling: touch;
-        justify-content: flex-start;
-      }
-
-      /* Stack the two-column menu vertically on mobile */
-      .menu-split {
-        flex-direction: column;
-        gap: 10px;
-        min-height: 0;
-        flex: none;
-      }
-
-      /* Game card list: becomes a horizontal scrolling row on mobile */
-      .menu-left {
-        width: 100%;
-        flex-direction: row;
-        overflow-x: auto;
-        overflow-y: hidden;
-        flex-shrink: 0;
-        padding-right: 0;
-        padding-bottom: 4px;
-        gap: 6px;
-        scrollbar-width: thin;
-      }
-
-      /* Cards become compact horizontal chips */
-      .mode-card {
-        flex-direction: column;
-        align-items: center;
-        gap: 4px;
-        padding: 8px 10px;
-        flex-shrink: 0;
-        min-width: 68px;
-        transform: none !important;
-      }
-
-      .mode-icon {
-        font-size: 1.4rem;
-      }
-
-      .mode-name {
-        font-size: 0.7rem;
-        white-space: normal;
-        text-align: center;
-        line-height: 1.2;
-      }
-
-      /* Detail panel takes full width */
-      .menu-right {
-        padding: 14px 12px;
-        flex: none;
-      }
-
-      .rules-grid {
-        grid-template-columns: 1fr;
-        gap: 8px;
-        margin-bottom: 12px;
-      }
-
-      .rule-card:last-child {
-        max-width: 100%;
-      }
-
-      .rule-name {
-        font-size: 0.9rem;
-      }
-
-      .rule-desc {
-        font-size: 0.82rem;
-      }
-
-      .btn-big {
-        font-size: 1.1rem;
-        padding: 13px 24px;
-        margin-top: 10px;
-      }
-
-      .meters-panel {
-        padding: 8px 10px 10px;
-        gap: 8px;
-        overflow-x: auto;
-        scrollbar-width: thin;
-      }
-
-      .meter {
-        min-width: 72px;
-      }
-
-      .meter-label {
-        font-size: 0.62rem;
-      }
-
-      .meter-value {
-        font-size: 0.65rem;
-      }
-
-      .theme-select {
-        display: none;
-      }
-
-      /* Keep teleprompter controls visible on mobile */
-      #teleprompterModeSelect.theme-select {
-        display: inline-block;
-        flex: 1;
-        min-width: 140px;
-      }
-
-      #teleprompterCustomBtn.btn-help {
-        display: inline-block;
-      }
-
-      .res-method-select {
-        font-size: 0.52rem;
-        padding: 0 1px;
-      }
-
-      .recordings-drawer {
-        max-width: 100%;
-        right: 0;
-        left: 0;
-        border-radius: 12px 12px 0 0;
-      }
-
-      .vib-panel {
-        right: 4px;
-        left: 4px;
-        max-width: 100%;
-      }
-
-      .vib-rule {
-        grid-template-columns: 1fr auto;
-      }
-
+      /* --- HUD HEADER: compact single-row with overflow actions --- */
       .hud {
-        padding: 8px 10px;
+        padding: 6px 10px;
+        padding-top: max(6px, env(safe-area-inset-top, 0px));
         flex-wrap: wrap;
-        gap: 8px;
-        align-items: flex-start;
+        gap: 6px;
+        align-items: center;
+        position: sticky;
+        top: 0;
+      }
+
+      .hud-left {
+        min-width: 0;
+        gap: 6px;
+        flex: 1;
       }
 
       .hud>.hud-title {
@@ -1694,11 +1577,11 @@
       }
 
       .hud-title {
-        font-size: 1.05rem;
+        font-size: 1rem;
       }
 
       .session-timer {
-        font-size: 0.72rem;
+        font-size: 0.75rem;
         margin-left: 0;
         order: 2;
         flex: 0 0 auto;
@@ -1713,24 +1596,303 @@
         order: 3;
       }
 
-      .hud-secondary {
-        flex-wrap: wrap;
-        overflow: visible;
-        background: none;
-        border: none;
-        box-shadow: none;
-        padding: 0;
+      /* Primary controls: single row with larger touch targets */
+      .hud-primary {
+        justify-content: flex-start;
       }
 
       .hud-controls .btn {
-        font-size: 0.85rem;
-        padding: 6px 10px;
+        font-size: 0.88rem;
+        padding: 10px 14px;
+        min-height: 44px;
+        border-radius: 10px;
       }
 
+      .btn-start {
+        flex: 1 1 auto;
+        justify-content: center;
+        font-size: 0.95rem;
+        padding: 10px 18px;
+      }
+
+      /* Secondary controls: horizontal scroll strip */
+      .hud-secondary {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        box-shadow: none;
+        padding: 4px 6px;
+        border-radius: 10px;
+        gap: 6px;
+        scrollbar-width: none;
+      }
+
+      .hud-secondary::-webkit-scrollbar {
+        display: none;
+      }
+
+      .hud-secondary .btn {
+        flex-shrink: 0;
+        min-height: 40px;
+        min-width: 40px;
+      }
+
+      /* Keep help button visible but compact on mobile */
       .btn-help {
         display: none;
       }
 
+      /* Ensure settings & key action buttons remain visible */
+      .hud-secondary .btn-cb,
+      .hud-secondary .btn-vib {
+        min-height: 40px;
+        min-width: 40px;
+        padding: 8px;
+      }
+
+      .theme-select {
+        display: none;
+      }
+
+      /* Keep teleprompter controls visible on mobile */
+      #teleprompterModeSelect.theme-select {
+        display: inline-block;
+        flex: 1;
+        min-width: 130px;
+        min-height: 40px;
+        font-size: 0.82rem;
+      }
+
+      #teleprompterCustomBtn.btn-help {
+        display: inline-flex;
+        min-height: 40px;
+        align-items: center;
+      }
+
+      /* --- OVERLAY / MENU: improved mobile layout --- */
+      .overlay-title {
+        font-size: 1.5rem;
+        margin-top: 4px;
+      }
+
+      .overlay-subtitle {
+        font-size: 0.92rem;
+        margin-bottom: 10px;
+        line-height: 1.5;
+        padding: 0 4px;
+      }
+
+      .overlay {
+        padding: 10px 8px 24px;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        justify-content: flex-start;
+      }
+
+      /* Stack the two-column menu vertically on mobile */
+      .menu-split {
+        flex-direction: column;
+        gap: 10px;
+        min-height: 0;
+        flex: none;
+      }
+
+      /* Game card list: horizontal scrolling row with larger touch targets */
+      .menu-left {
+        width: 100%;
+        flex-direction: row;
+        overflow-x: auto;
+        overflow-y: hidden;
+        flex-shrink: 0;
+        padding: 2px 0 8px;
+        gap: 8px;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+        scroll-snap-type: x mandatory;
+        /* Scroll fade wrapper */
+        position: relative;
+      }
+
+      .menu-left::-webkit-scrollbar {
+        display: none;
+      }
+
+      /* --- SCROLL FADE INDICATORS: show more content exists --- */
+      .mobile-scroll-fade {
+        position: relative;
+      }
+
+      .mobile-scroll-fade::before,
+      .mobile-scroll-fade::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 28px;
+        pointer-events: none;
+        z-index: 2;
+        opacity: 0;
+        transition: opacity 0.25s ease;
+      }
+
+      .mobile-scroll-fade::before {
+        left: 0;
+        background: linear-gradient(to right, var(--bg-deep, #0a0a12) 0%, transparent 100%);
+      }
+
+      .mobile-scroll-fade::after {
+        right: 0;
+        background: linear-gradient(to left, var(--bg-deep, #0a0a12) 0%, transparent 100%);
+      }
+
+      .mobile-scroll-fade.fade-right::after {
+        opacity: 1;
+      }
+
+      .mobile-scroll-fade.fade-left::before {
+        opacity: 1;
+      }
+
+      .mobile-scroll-fade.fade-both::before,
+      .mobile-scroll-fade.fade-both::after {
+        opacity: 1;
+      }
+
+      /* Cards: larger, easier to tap */
+      .mode-card {
+        flex-direction: column;
+        align-items: center;
+        gap: 5px;
+        padding: 12px 12px 10px;
+        flex-shrink: 0;
+        min-width: 76px;
+        min-height: 72px;
+        transform: none !important;
+        scroll-snap-align: start;
+        border-radius: 12px;
+        border-width: 2px;
+      }
+
+      .mode-card.selected {
+        border-width: 2px;
+      }
+
+      .mode-icon {
+        font-size: 1.5rem;
+      }
+
+      .mode-name {
+        font-size: 0.72rem;
+        white-space: normal;
+        text-align: center;
+        line-height: 1.2;
+        max-width: 72px;
+      }
+
+      /* Detail panel takes full width with better padding */
+      .menu-right {
+        padding: 16px 14px;
+        flex: none;
+        border-radius: 14px;
+      }
+
+      .detail-header {
+        margin-bottom: 12px;
+      }
+
+      .detail-title {
+        font-size: 1.2rem;
+      }
+
+      .detail-blurb {
+        font-size: 0.92rem;
+        line-height: 1.45;
+      }
+
+      .rules-grid {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .rule-card {
+        padding: 10px 12px;
+      }
+
+      .rule-card:last-child {
+        max-width: 100%;
+      }
+
+      .rule-name {
+        font-size: 0.88rem;
+      }
+
+      .rule-desc {
+        font-size: 0.82rem;
+        line-height: 1.4;
+      }
+
+      /* Start button: big, thumb-friendly, full width */
+      .btn-big {
+        font-size: 1.15rem;
+        padding: 16px 24px;
+        margin-top: 12px;
+        border-radius: 14px;
+        min-height: 52px;
+      }
+
+      .mic-note {
+        font-size: 0.78rem;
+        margin-top: 10px;
+      }
+
+      /* --- METERS PANEL: two-row grid for readability --- */
+      .meters-panel {
+        padding: 8px 10px 12px;
+        padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+        gap: 6px;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        grid-template-rows: auto auto;
+      }
+
+      .meter {
+        min-width: 0;
+        gap: 3px;
+      }
+
+      .meter-pitch {
+        grid-column: 1 / 3;
+      }
+
+      .meter-resonance {
+        grid-column: 3 / 5;
+        flex: unset;
+      }
+
+      .meter-label {
+        font-size: 0.65rem;
+      }
+
+      .meter-value {
+        font-size: 0.68rem;
+      }
+
+      .meter-bar-bg {
+        height: 8px;
+        border-radius: 4px;
+      }
+
+      .res-method-select {
+        font-size: 0.55rem;
+        padding: 1px 2px;
+        min-height: 20px;
+      }
+
+      /* --- CONTEXT BAR: horizontal scroll, larger targets --- */
       .context-bar {
         padding: 6px 10px;
         gap: 6px;
@@ -1738,42 +1900,285 @@
         flex-wrap: nowrap;
         scrollbar-width: none;
         justify-content: flex-start;
+        -webkit-overflow-scrolling: touch;
       }
 
       .context-bar::-webkit-scrollbar {
         display: none;
       }
 
+      .context-bar .theme-select {
+        display: inline-block;
+        min-height: 38px;
+        font-size: 0.82rem;
+        flex-shrink: 0;
+      }
+
+      /* --- RECORDINGS DRAWER: slide-up sheet --- */
+      .recordings-drawer {
+        max-width: 100%;
+        right: 0;
+        left: 0;
+        top: auto;
+        bottom: 0;
+        border-radius: 16px 16px 0 0;
+        max-height: 70vh;
+      }
+
+      .recordings-header {
+        padding: 16px 16px 12px;
+      }
+
+      .rec-item {
+        padding: 12px;
+        gap: 10px;
+      }
+
+      .rec-btn {
+        width: 38px;
+        height: 38px;
+        min-width: 38px;
+        border-radius: 8px;
+      }
+
       .btn-recordings span:first-child {
         display: none;
       }
 
-      .meter-resonance {
-        flex: 1.2;
+      /* --- VIBRATION PANEL: full-width sheet --- */
+      .vib-panel {
+        right: 4px;
+        left: 4px;
+        max-width: 100%;
+        max-height: 80vh;
+        border-radius: 14px;
+      }
+
+      .vib-rule {
+        grid-template-columns: 1fr auto;
+        padding: 10px 12px;
+      }
+
+      .vib-rule select,
+      .vib-rule input[type="number"] {
+        min-height: 36px;
+        font-size: 0.82rem;
+        padding: 6px 8px;
+      }
+
+      .vib-add-btn {
+        min-height: 44px;
+        font-size: 0.85rem;
+      }
+
+      .vib-rule-del {
+        min-width: 36px;
+        min-height: 36px;
+        font-size: 1.1rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      /* --- SETTINGS PANEL: larger controls --- */
+      .settings-panel {
+        max-width: 100%;
+        width: 94vw;
+        border-radius: 16px;
+        padding: 20px 18px;
+      }
+
+      .settings-panel .theme-select {
+        display: block;
+        min-height: 44px;
+        font-size: 0.9rem;
+      }
+
+      .btn-close-settings {
+        min-height: 48px;
+        font-size: 1rem;
+      }
+
+      .settings-panel .btn-help {
+        display: block;
+        min-height: 44px;
+        font-size: 0.9rem;
+        text-align: center;
+      }
+
+      /* --- CAMERA MODAL: better mobile sizing --- */
+      .camera-modal {
+        right: 8px;
+        left: 8px;
+        top: auto;
+        bottom: 80px;
+        width: auto;
+        height: 200px;
+        min-width: 0;
+        border-radius: 14px;
+      }
+
+      .camera-close {
+        min-width: 36px;
+        min-height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      /* --- SUMMARY OVERLAY: better mobile spacing --- */
+      .summary-overlay {
+        padding: 20px 16px;
+      }
+
+      .summary-title {
+        font-size: 1.3rem;
+      }
+
+      .summary-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .summary-stat {
+        padding: 10px;
+      }
+
+      .summary-stat-value {
+        font-size: 1.15rem;
       }
 
       .summary-actions {
         width: 100%;
         flex-direction: column;
+        gap: 10px;
       }
 
       .summary-actions .btn {
         width: 100%;
         min-width: 0;
+        min-height: 48px;
+        font-size: 1rem;
       }
 
-      /* Creature style picker wraps tighter on mobile */
+      /* --- CALIBRATION: mobile-friendly --- */
+      .calibration-card {
+        padding: 20px 16px;
+      }
+
+      .cal-btn-primary,
+      .cal-btn-secondary {
+        min-height: 44px;
+        padding: 12px 24px;
+      }
+
+      /* --- CREATURE STYLE PICKER: larger pills --- */
       .creature-style-picker {
-        gap: 4px;
-        margin-bottom: 10px;
+        gap: 6px;
+        margin-bottom: 12px;
       }
 
       .style-pill {
+        font-size: 0.82rem;
+        padding: 8px 14px;
+        min-height: 38px;
+      }
+
+      .creature-style-hud .style-pill {
         font-size: 0.78rem;
-        padding: 5px 10px;
+        padding: 6px 12px;
+        min-height: 34px;
+      }
+
+      /* --- PRISM SETTINGS: mobile layout --- */
+      .prism-settings-row {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+
+      .prism-select {
+        min-height: 42px;
+        font-size: 0.88rem;
+      }
+
+      .prism-textarea {
+        min-height: 80px;
+        font-size: 0.88rem;
+      }
+
+      /* --- INFO TOOLTIPS: full-width on mobile --- */
+      .info-popup {
+        max-width: 200px;
+        font-size: 0.78rem;
+        padding: 8px 12px;
+      }
+
+      .info-trigger {
+        width: 20px;
+        height: 20px;
+        font-size: 0.7rem;
+      }
+
+      /* --- HELP TOOLTIP: full-width bottom sheet --- */
+      .tooltip {
+        right: 4px;
+        left: 4px;
+        max-width: 100%;
+        max-height: 65vh;
+        overflow-y: auto;
+        border-radius: 14px;
+      }
+
+      .help-tab {
+        min-height: 40px;
+        font-size: 0.85rem;
+      }
+
+      /* --- ERROR & NOTICE BANNERS --- */
+      .error-banner,
+      .iframe-notice {
+        width: 95%;
+        font-size: 0.9rem;
+        padding: 12px 14px;
+      }
+
+      /* --- PITCH PILOT RANGE OVERLAY --- */
+      .range-grid {
+        gap: 8px;
+      }
+
+      .range-btn {
+        padding: 16px;
+        font-size: 0.95rem;
+        min-height: 48px;
+      }
+
+      /* --- TOGGLE SWITCHES: slightly larger on mobile --- */
+      .toggle-switch {
+        width: 42px;
+        height: 24px;
+      }
+
+      .toggle-slider::before {
+        height: 18px;
+        width: 18px;
+      }
+
+      .toggle-switch input:checked+.toggle-slider::before {
+        transform: translateX(18px);
+      }
+
+      /* --- PERF PANEL: mobile position --- */
+      .perf-panel {
+        left: 6px;
+        right: 6px;
+        bottom: auto;
+        top: 60px;
+        min-width: 0;
       }
     }
 
+    /* ====== SMALL PHONE STYLES (≤420px) ====== */
     @media (max-width: 420px) {
       .hud-title {
         font-size: 0.88rem;
@@ -1781,8 +2186,8 @@
       }
 
       .hud-controls .btn {
-        padding: 6px 8px;
-        font-size: 0.8rem;
+        padding: 8px 10px;
+        font-size: 0.82rem;
       }
 
       .btn-start {
@@ -1790,16 +2195,242 @@
         justify-content: center;
       }
 
+      .overlay-title {
+        font-size: 1.3rem;
+      }
+
       .overlay-subtitle {
-        margin-bottom: 20px;
+        margin-bottom: 16px;
         line-height: 1.45;
+        font-size: 0.88rem;
       }
 
       .btn-big {
         width: 100%;
         max-width: 320px;
-        padding: 13px 16px;
+        padding: 14px 16px;
         font-size: 1.1rem;
+      }
+
+      /* Mode cards even more compact on tiny screens */
+      .mode-card {
+        min-width: 68px;
+        padding: 10px 8px 8px;
+      }
+
+      .mode-icon {
+        font-size: 1.3rem;
+      }
+
+      .mode-name {
+        font-size: 0.65rem;
+      }
+
+      /* Meters: 3-column on tiny screens for more breathing room */
+      .meters-panel {
+        grid-template-columns: repeat(3, 1fr);
+        padding: 6px 8px 10px;
+      }
+
+      .meter-pitch {
+        grid-column: 1 / 3;
+      }
+
+      .meter-resonance {
+        grid-column: 3 / 4;
+      }
+
+      .detail-title {
+        font-size: 1.05rem;
+      }
+
+      .detail-blurb {
+        font-size: 0.85rem;
+      }
+
+      .summary-stat-value {
+        font-size: 1rem;
+      }
+
+      .summary-stat-label {
+        font-size: 0.72rem;
+      }
+    }
+
+    /* ====== MOBILE LANDSCAPE (phones rotated sideways) ====== */
+    @media (max-width: 900px) and (max-height: 500px) and (orientation: landscape) {
+
+      /* HUD: single compact row */
+      .hud {
+        padding: 4px 12px;
+        gap: 6px;
+        flex-wrap: nowrap;
+        align-items: center;
+      }
+
+      .hud-title {
+        font-size: 0.88rem;
+      }
+
+      .hud-controls {
+        width: auto;
+        flex-wrap: nowrap;
+        gap: 4px;
+      }
+
+      .hud-controls .btn {
+        padding: 6px 10px;
+        font-size: 0.82rem;
+        min-height: 34px;
+      }
+
+      .hud-secondary {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        gap: 4px;
+        padding: 2px 4px;
+        scrollbar-width: none;
+      }
+
+      .hud-secondary::-webkit-scrollbar {
+        display: none;
+      }
+
+      /* Meters: horizontal strip, minimal height */
+      .meters-panel {
+        padding: 4px 12px 6px;
+        gap: 4px;
+        display: flex;
+        flex-direction: row;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+
+      .meters-panel::-webkit-scrollbar {
+        display: none;
+      }
+
+      .meter {
+        min-width: 60px;
+        flex-shrink: 0;
+        gap: 2px;
+      }
+
+      .meter-label {
+        font-size: 0.58rem;
+      }
+
+      .meter-value {
+        font-size: 0.6rem;
+      }
+
+      .meter-bar-bg {
+        height: 5px;
+      }
+
+      /* Overlay: side-by-side layout preserved, scroll vertically */
+      .overlay {
+        padding: 8px 12px;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .overlay-title {
+        font-size: 1.2rem;
+        margin-bottom: 4px;
+      }
+
+      .overlay-subtitle {
+        font-size: 0.85rem;
+        margin-bottom: 6px;
+      }
+
+      /* Menu split: side by side in landscape */
+      .menu-split {
+        flex-direction: row;
+        gap: 10px;
+      }
+
+      .menu-left {
+        flex-direction: column;
+        width: 120px;
+        overflow-y: auto;
+        overflow-x: hidden;
+        max-height: calc(100vh - 120px);
+      }
+
+      .mode-card {
+        flex-direction: row;
+        padding: 8px 10px;
+        min-width: 0;
+        gap: 6px;
+      }
+
+      .mode-icon {
+        font-size: 1.1rem;
+      }
+
+      .mode-name {
+        font-size: 0.7rem;
+        white-space: nowrap;
+      }
+
+      .menu-right {
+        flex: 1;
+        max-height: calc(100vh - 120px);
+        overflow-y: auto;
+        padding: 12px;
+      }
+
+      .rules-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+      }
+
+      .btn-big {
+        padding: 10px 20px;
+        font-size: 1rem;
+        margin-top: 8px;
+      }
+
+      /* Context bar: compact */
+      .context-bar {
+        padding: 4px 10px;
+        gap: 4px;
+      }
+
+      /* Summary: compact landscape layout */
+      .summary-overlay {
+        padding: 12px 16px;
+      }
+
+      .summary-grid {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+      }
+
+      .summary-actions {
+        flex-direction: row;
+        gap: 8px;
+      }
+
+      .summary-actions .btn {
+        min-height: 40px;
+      }
+
+      /* Recordings & panels: constrain height */
+      .recordings-drawer {
+        max-height: 80vh;
+      }
+
+      .vib-panel {
+        max-height: 85vh;
+      }
+
+      /* Camera modal: compact for landscape */
+      .camera-modal {
+        height: 160px;
+        bottom: 60px;
       }
     }
 
@@ -2608,11 +3239,23 @@
 
     @media (max-width: 600px) {
       .prism-scroll-container {
-        margin-top: 40px;
-        padding: 16px 18px;
-        font-size: 1.1rem;
-        line-height: 2.0;
-        max-height: 60%;
+        margin-top: 36px;
+        padding: 16px 14px;
+        font-size: 1.05rem;
+        line-height: 1.9;
+        max-height: 65%;
+        width: min(860px, calc(100% - 16px));
+        border-radius: 14px;
+      }
+
+      .prism-progress {
+        width: min(400px, calc(100% - 32px));
+      }
+
+      .prism-keep-reading,
+      .prism-idle-prompt {
+        font-size: 0.85rem;
+        padding: 8px 16px;
       }
 
       .prism-live-stats {

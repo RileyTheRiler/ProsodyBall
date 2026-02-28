@@ -1829,7 +1829,114 @@ class VoxBallGame {
     window.addEventListener('resize', () => this.resize());
     this.setupUI();
     this._updateHelpContent();
+    this._setupMobile();
     this.drawIdleScene();
+  }
+
+
+  /** Mobile-only UX enhancements (no-op on desktop/tablet) */
+  _setupMobile() {
+    const mobileQuery = window.matchMedia('(max-width: 600px)');
+    if (!mobileQuery.matches) return;
+
+    // 1. Auto-scroll selected mode card into view
+    const menuLeft = document.querySelector('.menu-left');
+    if (menuLeft) {
+      const scrollCardIntoView = (card) => {
+        if (!card || !menuLeft) return;
+        card.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+      };
+      const observer = new MutationObserver(() => {
+        const selected = menuLeft.querySelector('.mode-card.selected');
+        if (selected) scrollCardIntoView(selected);
+      });
+      observer.observe(menuLeft, { subtree: true, attributes: true, attributeFilter: ['class'] });
+    }
+
+    // 2. Close drawers/panels when tapping outside on mobile
+    document.addEventListener('pointerdown', (e) => {
+      if (!mobileQuery.matches) return;
+      const vibPanel = document.getElementById('vibPanel');
+      const vibToggle = document.getElementById('vibToggle');
+      if (vibPanel?.classList.contains('show') && !vibPanel.contains(e.target) && e.target !== vibToggle) {
+        vibPanel.classList.remove('show');
+        vibToggle?.classList.remove('active');
+      }
+      const recDrawer = document.getElementById('recordingsDrawer');
+      const recBtn = document.getElementById('recordingsBtn');
+      if (recDrawer?.classList.contains('show') && !recDrawer.contains(e.target) && e.target !== recBtn && !recBtn?.contains(e.target)) {
+        recDrawer.classList.remove('show');
+      }
+      const helpTooltip = document.getElementById('helpTooltip');
+      const helpBtn = document.getElementById('helpBtn');
+      if (helpTooltip?.classList.contains('show') && !helpTooltip.contains(e.target) && e.target !== helpBtn) {
+        helpTooltip.classList.remove('show');
+      }
+    });
+
+    // 3. Prevent rubber-band bounce on iOS when scrolling at boundaries
+    const appEl = document.getElementById('app');
+    if (appEl) {
+      appEl.style.overscrollBehavior = 'contain';
+    }
+
+    // 4. Add active state feedback for mobile tap (no hover on touch)
+    document.querySelectorAll('.btn, .btn-big, .mode-card, .style-pill, .range-btn, .rec-btn, .help-tab').forEach(el => {
+      el.addEventListener('touchstart', () => el.classList.add('mobile-active'), { passive: true });
+      el.addEventListener('touchend', () => el.classList.remove('mobile-active'), { passive: true });
+      el.addEventListener('touchcancel', () => el.classList.remove('mobile-active'), { passive: true });
+    });
+
+    // 5. Inject mobile active state CSS (visual feedback on tap)
+    const mobileStyle = document.createElement('style');
+    mobileStyle.textContent = `
+      @media (max-width: 600px) {
+        .mobile-active {
+          opacity: 0.85;
+          transform: scale(0.97) !important;
+        }
+        .mode-card.mobile-active {
+          border-color: rgba(192, 132, 252, 0.5);
+          background: rgba(255, 255, 255, 0.08);
+        }
+      }
+    `;
+    document.head.appendChild(mobileStyle);
+
+    // 6. Scroll fade indicators on horizontally-scrollable areas
+    this._initScrollFades();
+  }
+
+  /** Attach scroll-fade edge indicators to horizontal scroll containers */
+  _initScrollFades() {
+    const scrollables = [
+      document.querySelector('.menu-left'),
+      document.querySelector('.context-bar'),
+      document.querySelector('.hud-secondary'),
+    ].filter(Boolean);
+
+    const updateFade = (el) => {
+      const { scrollLeft, scrollWidth, clientWidth } = el;
+      const threshold = 4;
+      const canScrollLeft = scrollLeft > threshold;
+      const canScrollRight = scrollLeft + clientWidth < scrollWidth - threshold;
+      el.classList.toggle('fade-left', canScrollLeft && !canScrollRight);
+      el.classList.toggle('fade-right', canScrollRight && !canScrollLeft);
+      el.classList.toggle('fade-both', canScrollLeft && canScrollRight);
+      if (!canScrollLeft && !canScrollRight) {
+        el.classList.remove('fade-left', 'fade-right', 'fade-both');
+      }
+    };
+
+    scrollables.forEach(el => {
+      el.classList.add('mobile-scroll-fade');
+      // Initial check (deferred to ensure layout is computed)
+      requestAnimationFrame(() => updateFade(el));
+      el.addEventListener('scroll', () => updateFade(el), { passive: true });
+      // Re-check when children change (e.g. mode cards appearing)
+      const resizeObs = new ResizeObserver(() => updateFade(el));
+      resizeObs.observe(el);
+    });
   }
 
 
