@@ -1647,6 +1647,8 @@ class ProsodyBallGame {
       silenceTimer: 0,
       completed: false,
       startTime: 0,
+      firstOnsetTime: 0,
+      wordsCompleted: 0,
       overlayBuilt: false,
       passageMode: 'rainbow',
       customText: '',
@@ -1760,6 +1762,46 @@ class ProsodyBallGame {
     this.teleprompterRainbowText = (`When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. ` +
       `The rainbow is a division of white light into many beautiful colors. These take the shape of a long round arch, ` +
       `with its path high above, and its two ends apparently beyond the horizon. There is, according to legend, a boiling pot of gold at one end.`);
+
+    // Additional Prism Reader passages
+    this.prismPassages = {
+      rainbow: this.teleprompterRainbowText,
+      grandfather: (
+        `You wish to know all about my grandfather. Well, he is nearly ninety-three years old. ` +
+        `He dresses himself in an old black frock coat, usually minus several buttons; yet he still thinks as swiftly as ever. ` +
+        `A long, flowing beard clings to his chin, giving those who observe him a pronounced feeling of the utmost respect. ` +
+        `When he speaks, his voice is just a bit cracked and quivers a trifle. ` +
+        `Twice each day he plays skillfully and with zest upon our small organ. ` +
+        `Except in the winter when the ooze or snow or ice prevents, he slowly takes a short walk in the open air each day. ` +
+        `We have often urged him to walk more and smoke less, but he always answers, "Banana oil!" ` +
+        `Grandfather likes to be modern in his language.`
+      ),
+      caterpillar: (
+        `Do you like amusement parks? Well, I sure do. To amuse myself, I went twice last spring. ` +
+        `My most memorable moment was riding on the Caterpillar, which is a tremendous, undulating roller coaster. ` +
+        `What a series of sensations! What a series of exhilarating and terrifying moments! ` +
+        `As it raced round, I clung to the handrail with a grip of iron. My heart was pounding with delight and fear. ` +
+        `It whipped around curves and seemed to swoop right off the track. ` +
+        `I could barely keep from screaming at every turn, but I managed by simply gritting my teeth. ` +
+        `Every other person on the ride was screaming without restraint. ` +
+        `Some laughed, some cried, and quite a number merely looked petrified.`
+      ),
+      stella: (
+        `Please call Stella. Ask her to bring these things with her from the store: ` +
+        `six spoons of fresh snow peas, five thick slabs of blue cheese, and maybe a snack for her brother Bob. ` +
+        `We also need a small plastic snake and a big toy frog for the kids. ` +
+        `She can scoop these things into three red bags, and we will go meet her Wednesday at the train station.`
+      ),
+      northwind: (
+        `The North Wind and the Sun were disputing which was the stronger, ` +
+        `when a traveler came along wrapped in a warm cloak. ` +
+        `They agreed that the one who first succeeded in making the traveler take his cloak off should be considered stronger than the other. ` +
+        `Then the North Wind blew as hard as he could, but the more he blew, the more closely did the traveler fold his cloak around him; ` +
+        `and at last the North Wind gave up the attempt. ` +
+        `Then the Sun shined out warmly, and immediately the traveler took off his cloak. ` +
+        `And so the North Wind was obliged to confess that the Sun was the stronger of the two.`
+      ),
+    };
     this.teleprompterIndex = 0;
     this.metricHighlightTimers = { bounce: 0, tempo: 0, vowel: 0, articulation: 0, syllable: 0 };
     this.metricExtremeLatch = { bounce: false, tempo: false, vowel: false, articulation: false, syllable: false };
@@ -3201,9 +3243,22 @@ class ProsodyBallGame {
     // Tap-to-advance for prism reader (mobile + desktop click)
     const prismOverlayEl = document.getElementById('prismOverlay');
     if (prismOverlayEl) {
-      prismOverlayEl.addEventListener('click', () => {
+      prismOverlayEl.addEventListener('click', (e) => {
+        // Don't advance if clicking the completion panel or restart button
+        if (e.target.closest('.prism-completion')) return;
         if (this.isRunning && this.gameMode === 'prism') {
           this._advancePrismManual();
+        }
+      });
+    }
+
+    // Restart button for prism reader
+    const prismRestartBtn = document.getElementById('prismRestartBtn');
+    if (prismRestartBtn) {
+      prismRestartBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (this.gameMode === 'prism') {
+          this._resetPrismReaderState();
         }
       });
     }
@@ -7990,7 +8045,11 @@ class ProsodyBallGame {
     if (nuclei.length > 1) {
       const last = nuclei[nuclei.length - 1];
       if (last.end === clean.length && clean.slice(last.start, last.end) === 'e') {
-        nuclei.pop();
+        // Keep the 'e' nucleus for "-le" endings (e.g., "ta-ble", "peo-ple")
+        const beforeE = clean[last.start - 1];
+        if (beforeE !== 'l') {
+          nuclei.pop();
+        }
       }
     }
 
@@ -8007,6 +8066,11 @@ class ProsodyBallGame {
     }
     cleanToOrig[clean.length] = word.length;
 
+    // Common consonant digraphs that shouldn't be split
+    const digraphs = ['th', 'ch', 'sh', 'ph', 'wh', 'ck', 'ng', 'gh'];
+    // Common onset clusters that prefer to stay together
+    const onsetClusters = ['bl', 'br', 'cl', 'cr', 'dr', 'fl', 'fr', 'gl', 'gr', 'pl', 'pr', 'sc', 'sk', 'sl', 'sm', 'sn', 'sp', 'st', 'sw', 'tr', 'tw', 'str', 'spr', 'scr', 'spl'];
+
     const syllables = [];
     let prevEnd = 0;
 
@@ -8014,12 +8078,32 @@ class ProsodyBallGame {
       const gapStart = nuclei[n].end;
       const gapEnd = nuclei[n + 1].start;
       const gapLen = gapEnd - gapStart;
+      const consonants = clean.slice(gapStart, gapEnd);
 
       let splitClean;
-      if (gapLen <= 1) {
+      if (gapLen === 0) {
+        // Adjacent vowel nuclei - split between them
         splitClean = gapStart;
+      } else if (gapLen === 1) {
+        // Single consonant goes with following vowel (open syllable preference)
+        splitClean = gapStart;
+      } else if (gapLen === 2) {
+        // Two consonants: check if they form a valid onset cluster
+        if (onsetClusters.includes(consonants) || digraphs.includes(consonants)) {
+          splitClean = gapStart; // keep together with next syllable
+        } else {
+          splitClean = gapStart + 1; // split between them
+        }
       } else {
-        splitClean = gapEnd - 1;
+        // 3+ consonants: find the longest valid onset cluster at the end
+        let bestOnset = 1; // default: last consonant goes with next syllable
+        for (let len = 2; len <= Math.min(3, gapLen); len++) {
+          const candidate = consonants.slice(gapLen - len);
+          if (onsetClusters.includes(candidate)) {
+            bestOnset = len;
+          }
+        }
+        splitClean = gapEnd - bestOnset;
       }
 
       const splitOrig = cleanToOrig[splitClean] || word.length;
@@ -8071,11 +8155,13 @@ class ProsodyBallGame {
 
   _resetPrismReaderState() {
     const pr = this.prismReader;
-    let text = this.teleprompterRainbowText;
+    let text;
     if (pr.passageMode === 'custom' && pr.customText.trim()) {
       text = pr.customText;
     } else if (pr.passageMode === 'freestyle') {
       text = pr.freestyleTranscript || '';
+    } else {
+      text = (this.prismPassages && this.prismPassages[pr.passageMode]) || this.teleprompterRainbowText;
     }
 
     pr.syllables = text ? this._buildPrismSyllables(text) : [];
@@ -8086,6 +8172,8 @@ class ProsodyBallGame {
     pr.accumulationTimer = 0;
     pr.silenceTimer = 0;
     pr.startTime = performance.now();
+    pr.firstOnsetTime = 0;
+    pr.wordsCompleted = 0;
 
     // Clear any existing recordings if not explicitly retained
     if (pr.isPlayingBack) this._stopPrismPlayback();
@@ -8098,11 +8186,26 @@ class ProsodyBallGame {
     pr.audioChunks = [];
     this._updatePrismRecBtnVisibility();
 
+    // Hide completion summary
+    const comp = document.getElementById('prismCompletion');
+    if (comp) comp.classList.remove('show');
+
     const container = document.getElementById('prismScrollContainer');
     if (container) {
       container.innerHTML = '';
+      // Build DOM with sentence break markers
+      let prevSentenceEnd = false;
       for (let i = 0; i < pr.syllables.length; i++) {
         const syl = pr.syllables[i];
+
+        // Insert sentence break between sentences
+        if (syl.isWordStart && prevSentenceEnd) {
+          const br = document.createElement('span');
+          br.className = 'prism-sentence-break';
+          container.appendChild(br);
+          prevSentenceEnd = false;
+        }
+
         const span = document.createElement('span');
         span.className = 'prism-syl pre-read';
         span.dataset.sylIndex = String(i);
@@ -8111,6 +8214,11 @@ class ProsodyBallGame {
           span.style.marginRight = '0.3em';
         }
         container.appendChild(span);
+
+        // Detect sentence-ending punctuation
+        if (syl.isWordEnd && /[.!?]$/.test(syl.text)) {
+          prevSentenceEnd = true;
+        }
       }
       container.scrollTop = 0;
     }
@@ -8121,6 +8229,16 @@ class ProsodyBallGame {
     const keepReading = document.getElementById('prismKeepReading');
     if (keepReading) keepReading.classList.remove('show');
 
+    // Reset live stats
+    const liveStats = document.getElementById('prismLiveStats');
+    if (liveStats) liveStats.classList.remove('show');
+    const wpmEl = document.getElementById('prismWpm');
+    if (wpmEl) wpmEl.textContent = '0 wpm';
+    const elapsedEl = document.getElementById('prismElapsed');
+    if (elapsedEl) elapsedEl.textContent = '0:00';
+    const sylCountEl = document.getElementById('prismSylCount');
+    if (sylCountEl) sylCountEl.textContent = `0 / ${pr.syllables.length}`;
+
     const idlePrompt = document.getElementById('prismIdlePrompt');
     if (idlePrompt) {
       if (pr.passageMode === 'freestyle') {
@@ -8128,8 +8246,11 @@ class ProsodyBallGame {
         if (pr.processMode === 'realtime') {
           idlePrompt.classList.add('show');
         }
-      } else {
+      } else if (pr.processMode === 'record') {
         idlePrompt.textContent = "Click Rec to start reading";
+      } else {
+        idlePrompt.textContent = "Start speaking to begin...";
+        idlePrompt.classList.add('show');
       }
     }
   }
@@ -8554,6 +8675,9 @@ class ProsodyBallGame {
       keepReading.classList.toggle('show', pr.isActive && !pr.isPlayingBack && pr.silenceTimer > 3.0);
     }
 
+    // Update live stats HUD
+    this._updatePrismLiveStats();
+
     // Manual mode: onset stepping is disabled, spacebar advances instead
     if (pr.manualMode) return;
 
@@ -8565,9 +8689,19 @@ class ProsodyBallGame {
     if (onsetDetected && debounceOk) {
       pr.lastOnsetTime = now;
 
+      // Record the first onset time for WPM calculation
+      if (pr.currentIndex < 0) {
+        pr.firstOnsetTime = performance.now();
+      }
+
       // Crystallize previous syllable
       if (pr.currentIndex >= 0 && pr.currentIndex < pr.syllables.length) {
+        const prevSyl = pr.syllables[pr.currentIndex];
         this._crystallizePrismSyllable(pr.currentIndex);
+        // Track word completions for WPM
+        if (prevSyl.isWordEnd) {
+          pr.wordsCompleted = (pr.wordsCompleted || 0) + 1;
+        }
       }
 
       pr.currentIndex++;
@@ -8576,12 +8710,18 @@ class ProsodyBallGame {
       if (pr.currentIndex >= pr.syllables.length) {
         pr.completed = true;
         pr.isActive = false;
+        this._showPrismCompletionSummary();
         return;
       }
 
       pr.isActive = true;
       pr.syllables[pr.currentIndex].state = 'active';
       pr.syllables[pr.currentIndex].startTime = performance.now();
+
+      // Hide idle prompt once reading begins
+      const idlePrompt = document.getElementById('prismIdlePrompt');
+      if (idlePrompt) idlePrompt.classList.remove('show');
+
       if (pr.processMode !== 'record') {
         this._updatePrismSylDOM(pr.currentIndex);
       }
@@ -8594,12 +8734,53 @@ class ProsodyBallGame {
     }
   }
 
+  _updatePrismLiveStats() {
+    const pr = this.prismReader;
+    const liveStats = document.getElementById('prismLiveStats');
+    if (!liveStats) return;
+
+    const hasSyllables = pr.currentIndex >= 0;
+    liveStats.classList.toggle('show', hasSyllables);
+    if (!hasSyllables) return;
+
+    // Elapsed time since first onset
+    const elapsed = pr.firstOnsetTime > 0 ? (performance.now() - pr.firstOnsetTime) / 1000 : 0;
+    const minutes = Math.floor(elapsed / 60);
+    const seconds = Math.floor(elapsed % 60);
+    const elapsedEl = document.getElementById('prismElapsed');
+    if (elapsedEl) elapsedEl.textContent = `${minutes}:${String(seconds).padStart(2, '0')}`;
+
+    // WPM
+    const wpmEl = document.getElementById('prismWpm');
+    if (wpmEl && elapsed > 2) {
+      const words = pr.wordsCompleted || 0;
+      const wpm = Math.round(words / (elapsed / 60));
+      wpmEl.textContent = `${wpm} wpm`;
+    }
+
+    // Syllable count
+    const sylCountEl = document.getElementById('prismSylCount');
+    if (sylCountEl) {
+      const crystallized = pr.syllables.filter(s => s.state === 'crystallized').length;
+      sylCountEl.textContent = `${crystallized} / ${pr.syllables.length}`;
+    }
+  }
+
   _advancePrismManual() {
     const pr = this.prismReader;
     if (pr.completed) return;
 
+    // Record the first onset time for WPM calculation
+    if (pr.currentIndex < 0) {
+      pr.firstOnsetTime = performance.now();
+    }
+
     if (pr.currentIndex >= 0) {
+      const prevSyl = pr.syllables[pr.currentIndex];
       this._crystallizePrismSyllable(pr.currentIndex);
+      if (prevSyl.isWordEnd) {
+        pr.wordsCompleted = (pr.wordsCompleted || 0) + 1;
+      }
     }
 
     pr.currentIndex++;
@@ -8608,21 +8789,111 @@ class ProsodyBallGame {
     if (pr.currentIndex >= pr.syllables.length) {
       pr.completed = true;
       pr.isActive = false;
+      this._showPrismCompletionSummary();
       return;
     }
 
     pr.isActive = true;
     pr.syllables[pr.currentIndex].state = 'active';
     pr.syllables[pr.currentIndex].startTime = performance.now();
+
+    // Hide idle prompt once reading begins
+    const idlePrompt = document.getElementById('prismIdlePrompt');
+    if (idlePrompt) idlePrompt.classList.remove('show');
+
     if (pr.processMode !== 'record') {
       this._updatePrismSylDOM(pr.currentIndex);
     }
+  }
+
+  _showPrismCompletionSummary() {
+    const pr = this.prismReader;
+    const crystallized = pr.syllables.filter(s => s.state === 'crystallized');
+    if (crystallized.length === 0) return;
+
+    const elapsed = pr.firstOnsetTime > 0 ? (performance.now() - pr.firstOnsetTime) / 1000 : 0;
+    const words = pr.wordsCompleted || 0;
+    const wpm = elapsed > 1 ? Math.round(words / (elapsed / 60)) : 0;
+
+    // Aggregate pitch stats
+    const pitches = crystallized.filter(s => s.avgF0 > 0).map(s => s.avgF0);
+    const avgPitch = pitches.length > 0 ? Math.round(pitches.reduce((a, b) => a + b, 0) / pitches.length) : 0;
+    const minPitch = pitches.length > 0 ? Math.round(Math.min(...pitches)) : 0;
+    const maxPitch = pitches.length > 0 ? Math.round(Math.max(...pitches)) : 0;
+    const pitchRange = maxPitch - minPitch;
+
+    // Vowel score average
+    const vowelScores = crystallized.filter(s => s.vowelScore > 0).map(s => s.vowelScore);
+    const avgVowelScore = vowelScores.length > 0
+      ? Math.round(vowelScores.reduce((a, b) => a + b, 0) / vowelScores.length * 100)
+      : 0;
+
+    // Strain count
+    const strainCount = crystallized.filter(s => s.strainFlag).length;
+
+    // Resonance average
+    const centroids = crystallized.filter(s => s.avgCentroid > 0).map(s => s.avgCentroid);
+    const avgResonance = centroids.length > 0
+      ? Math.round(centroids.reduce((a, b) => a + b, 0) / centroids.length * 100)
+      : 0;
+
+    // Confidence average
+    const avgConfidence = Math.round(
+      crystallized.reduce((a, s) => a + s.confidence, 0) / crystallized.length * 100
+    );
+
+    const minutes = Math.floor(elapsed / 60);
+    const seconds = Math.floor(elapsed % 60);
+
+    const grid = document.getElementById('prismCompletionGrid');
+    if (grid) {
+      grid.innerHTML = `
+        <div class="prism-comp-card">
+          <div class="prism-comp-label">Reading Speed</div>
+          <div class="prism-comp-value">${wpm} wpm</div>
+          <div class="prism-comp-sub">${minutes}:${String(seconds).padStart(2, '0')} total</div>
+        </div>
+        <div class="prism-comp-card">
+          <div class="prism-comp-label">Avg Pitch</div>
+          <div class="prism-comp-value">${avgPitch} Hz</div>
+          <div class="prism-comp-sub">Range: ${pitchRange} Hz (${minPitch}–${maxPitch})</div>
+        </div>
+        <div class="prism-comp-card">
+          <div class="prism-comp-label">Vowel Accuracy</div>
+          <div class="prism-comp-value">${avgVowelScore}%</div>
+          <div class="prism-comp-sub">${vowelScores.length} vowels scored</div>
+        </div>
+        <div class="prism-comp-card">
+          <div class="prism-comp-label">Resonance</div>
+          <div class="prism-comp-value">${avgResonance}%</div>
+          <div class="prism-comp-sub">Forward brightness</div>
+        </div>
+        <div class="prism-comp-card">
+          <div class="prism-comp-label">Syllables</div>
+          <div class="prism-comp-value">${crystallized.length} / ${pr.syllables.length}</div>
+          <div class="prism-comp-sub">Confidence: ${avgConfidence}%</div>
+        </div>
+        <div class="prism-comp-card">
+          <div class="prism-comp-label">Strain Alerts</div>
+          <div class="prism-comp-value" style="color: ${strainCount > 0 ? 'rgba(255,120,100,0.9)' : 'rgba(120,255,160,0.9)'}">${strainCount}</div>
+          <div class="prism-comp-sub">${strainCount === 0 ? 'No strain detected' : 'High energy + low weight'}</div>
+        </div>
+      `;
+    }
+
+    const comp = document.getElementById('prismCompletion');
+    if (comp) comp.classList.add('show');
+
+    // Hide keep-reading prompt
+    const keepReading = document.getElementById('prismKeepReading');
+    if (keepReading) keepReading.classList.remove('show');
   }
 
   drawPrismReaderScene() {
     const ctx = this.ctx;
     const w = this.width;
     const h = this.height;
+    const now = performance.now() / 1000;
 
     const bg = ctx.createLinearGradient(0, 0, 0, h);
     bg.addColorStop(0, '#080816');
@@ -8632,15 +8903,113 @@ class ProsodyBallGame {
     ctx.fillRect(0, 0, w, h);
 
     const pr = this.prismReader;
+
+    // Draw subtle star field
+    ctx.save();
+    for (const star of this.stars) {
+      const flicker = 0.4 + 0.6 * Math.sin(now * 0.8 + star.twinkle);
+      ctx.globalAlpha = flicker * 0.25;
+      ctx.fillStyle = '#c8d0ff';
+      ctx.beginPath();
+      ctx.arc(star.x % w, star.y, star.size * 0.7, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // Prism light refraction effect at center
     if (pr.syllables.length > 0) {
       const crystallized = pr.syllables.filter(s => s.state === 'crystallized');
+      const progress = crystallized.length / Math.max(1, pr.syllables.length);
+
       if (crystallized.length > 0) {
         const avgHue = crystallized.reduce((s, c) => s + c.hue, 0) / crystallized.length;
+        const recentHue = crystallized.length > 0 ? crystallized[crystallized.length - 1].hue : avgHue;
+
+        // Central ambient glow that shifts with reading progress
         const grad = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w * 0.6);
-        grad.addColorStop(0, `hsla(${avgHue}, 40%, 15%, 0.15)`);
+        grad.addColorStop(0, `hsla(${avgHue}, 40%, 15%, ${0.08 + progress * 0.12})`);
+        grad.addColorStop(0.5, `hsla(${recentHue}, 30%, 10%, ${0.04 + progress * 0.06})`);
         grad.addColorStop(1, 'transparent');
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, w, h);
+
+        // Floating prism particles
+        if (!this._prismParticles) this._prismParticles = [];
+
+        // Spawn particles on new crystallizations
+        const prevCrystCount = this._prevPrismCrystCount || 0;
+        if (crystallized.length > prevCrystCount) {
+          const newSyl = crystallized[crystallized.length - 1];
+          for (let p = 0; p < 3; p++) {
+            this._prismParticles.push({
+              x: w * (0.3 + Math.random() * 0.4),
+              y: h * (0.2 + Math.random() * 0.6),
+              vx: (Math.random() - 0.5) * 20,
+              vy: -10 - Math.random() * 25,
+              hue: newSyl.hue + (Math.random() - 0.5) * 30,
+              size: 1.5 + Math.random() * 2.5,
+              life: 1,
+              decay: 0.3 + Math.random() * 0.4,
+              glow: newSyl.glowRadius > 2,
+            });
+          }
+        }
+        this._prevPrismCrystCount = crystallized.length;
+
+        // Update and draw particles
+        ctx.save();
+        for (let i = this._prismParticles.length - 1; i >= 0; i--) {
+          const p = this._prismParticles[i];
+          p.x += p.vx * 0.016;
+          p.y += p.vy * 0.016;
+          p.vy += 5 * 0.016; // gentle gravity
+          p.life -= p.decay * 0.016;
+          if (p.life <= 0) {
+            this._prismParticles.splice(i, 1);
+            continue;
+          }
+
+          ctx.globalAlpha = p.life * 0.6;
+          ctx.fillStyle = `hsl(${Math.round(p.hue)}, 60%, 65%)`;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+          ctx.fill();
+
+          if (p.glow) {
+            ctx.globalAlpha = p.life * 0.15;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size * p.life * 3, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        ctx.restore();
+
+        // Limit particle count
+        if (this._prismParticles.length > 60) {
+          this._prismParticles.splice(0, this._prismParticles.length - 60);
+        }
+      }
+
+      // Refraction rainbow bands along left/right edges during active reading
+      if (pr.isActive && !this.reducedMotion) {
+        const a = this.analyzer;
+        const energy = a ? a.smoothEnergy || 0 : 0;
+        const bandAlpha = Math.min(0.12, energy * 0.8);
+        if (bandAlpha > 0.005) {
+          const colors = [
+            `hsla(240, 70%, 55%, ${bandAlpha})`,
+            `hsla(260, 60%, 55%, ${bandAlpha})`,
+            `hsla(280, 55%, 55%, ${bandAlpha})`,
+            `hsla(300, 50%, 55%, ${bandAlpha})`,
+            `hsla(320, 60%, 55%, ${bandAlpha})`,
+          ];
+          const bandW = 3;
+          for (let b = 0; b < colors.length; b++) {
+            ctx.fillStyle = colors[b];
+            ctx.fillRect(b * bandW, 0, bandW, h);
+            ctx.fillRect(w - (b + 1) * bandW, 0, bandW, h);
+          }
+        }
       }
     }
   }
@@ -8664,16 +9033,29 @@ class ProsodyBallGame {
       }
     }
 
-    // Scroll to keep active syllable visible
+    // Smooth adaptive scroll to keep active syllable visible
     const activeIndex = pr.isPlayingBack ? pr.playbackIndex : pr.currentIndex;
     if (activeIndex >= 0) {
       const container = document.getElementById('prismScrollContainer');
       const activeSpan = container?.querySelector(`.prism-syl[data-syl-index="${activeIndex}"]`);
       if (activeSpan && container) {
         const spanTop = activeSpan.offsetTop;
+        const spanH = activeSpan.offsetHeight;
         const containerH = container.clientHeight;
-        const targetScroll = spanTop - containerH * 0.4;
-        container.scrollTop += (targetScroll - container.scrollTop) * 0.1;
+        const currentScroll = container.scrollTop;
+
+        // Target: center the active syllable vertically (aim for 35% from top)
+        const targetScroll = spanTop + spanH / 2 - containerH * 0.35;
+
+        // Adaptive easing: faster when far away, slower when close
+        const distance = Math.abs(targetScroll - currentScroll);
+        const easeFactor = distance > containerH * 0.5
+          ? 0.18  // fast catch-up when far
+          : distance > 50
+            ? 0.1  // medium ease
+            : 0.06; // gentle when close
+
+        container.scrollTop += (targetScroll - currentScroll) * easeFactor;
       }
     }
   }
@@ -8871,7 +9253,10 @@ class ProsodyBallGame {
       const avgScore = scored.length > 0
         ? scored.reduce((sum, s) => sum + s.vowelScore, 0) / scored.length : 0;
       const strainCount = crystallized.filter(s => s.strainFlag).length;
+      const elapsed = pr.firstOnsetTime > 0 ? (performance.now() - pr.firstOnsetTime) / 1000 : 0;
+      const wpm = elapsed > 1 ? Math.round((pr.wordsCompleted || 0) / (elapsed / 60)) : 0;
       stats.push({ value: `${crystallized.length}/${total}`, label: 'Syllables Read' });
+      stats.push({ value: `${wpm} wpm`, label: 'Reading Speed' });
       stats.push({ value: `${Math.round(avgScore * 100)}%`, label: 'Avg Vowel Score' });
       if (strainCount > 0) {
         stats.push({ value: `${strainCount}`, label: 'Strain Flags' });

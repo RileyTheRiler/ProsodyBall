@@ -2336,6 +2336,129 @@
       opacity: 1;
     }
 
+    /* ====== PRISM LIVE STATS HUD ====== */
+    .prism-live-stats {
+      position: absolute;
+      top: 12px;
+      right: 16px;
+      z-index: 25;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 14px;
+      background: rgba(10, 10, 20, 0.75);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      opacity: 0;
+      transition: opacity 0.4s ease;
+      pointer-events: none;
+    }
+
+    .prism-live-stats.show {
+      opacity: 1;
+    }
+
+    .prism-stat {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: rgba(200, 210, 255, 0.85);
+      letter-spacing: 0.04em;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .prism-stat-sep {
+      width: 1px;
+      height: 12px;
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    /* ====== PRISM COMPLETION SUMMARY ====== */
+    .prism-completion {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) scale(0.92);
+      z-index: 30;
+      width: min(480px, calc(100% - 40px));
+      padding: 28px 24px 22px;
+      background: rgba(12, 10, 28, 0.92);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(180, 140, 255, 0.18);
+      border-radius: 18px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 40px rgba(140, 100, 255, 0.08);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .prism-completion.show {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translate(-50%, -50%) scale(1);
+    }
+
+    .prism-completion-title {
+      text-align: center;
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: rgba(220, 200, 255, 0.95);
+      margin-bottom: 18px;
+      text-transform: uppercase;
+    }
+
+    .prism-completion-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .prism-comp-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 10px;
+      padding: 10px 12px;
+      text-align: center;
+    }
+
+    .prism-comp-label {
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(255, 255, 255, 0.4);
+      margin-bottom: 4px;
+    }
+
+    .prism-comp-value {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: rgba(200, 180, 255, 0.95);
+    }
+
+    .prism-comp-sub {
+      font-size: 0.68rem;
+      color: rgba(255, 255, 255, 0.35);
+      margin-top: 2px;
+    }
+
+    .prism-restart-btn {
+      display: block;
+      margin: 0 auto;
+      padding: 8px 28px;
+      font-size: 0.85rem;
+    }
+
+    /* ====== PRISM SENTENCE MARKERS ====== */
+    .prism-sentence-break {
+      display: block;
+      height: 8px;
+    }
+
     @media (max-width: 600px) {
       .prism-scroll-container {
         margin-top: 40px;
@@ -2343,6 +2466,22 @@
         font-size: 1.1rem;
         line-height: 2.0;
         max-height: 60%;
+      }
+
+      .prism-live-stats {
+        top: 8px;
+        right: 8px;
+        padding: 4px 10px;
+        gap: 6px;
+      }
+
+      .prism-stat {
+        font-size: 0.7rem;
+      }
+
+      .prism-completion-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
       }
     }
 
@@ -2802,11 +2941,23 @@
       <canvas id="gameCanvas"></canvas>
       <div class="teleprompter-overlay" id="teleprompterOverlay"></div>
       <div class="prism-overlay" id="prismOverlay">
+        <div class="prism-live-stats" id="prismLiveStats">
+          <span class="prism-stat" id="prismWpm">0 wpm</span>
+          <span class="prism-stat-sep"></span>
+          <span class="prism-stat" id="prismElapsed">0:00</span>
+          <span class="prism-stat-sep"></span>
+          <span class="prism-stat" id="prismSylCount">0 / 0</span>
+        </div>
         <div class="prism-scroll-container" id="prismScrollContainer"></div>
         <div class="prism-idle-prompt" id="prismIdlePrompt">Click Rec to start reading</div>
         <div class="prism-keep-reading" id="prismKeepReading">Keep reading...</div>
         <div class="prism-progress" id="prismProgress">
           <div class="prism-progress-fill" id="prismProgressFill"></div>
+        </div>
+        <div class="prism-completion" id="prismCompletion">
+          <div class="prism-completion-title">Reading Complete</div>
+          <div class="prism-completion-grid" id="prismCompletionGrid"></div>
+          <button class="btn btn-start prism-restart-btn" id="prismRestartBtn">Read Again</button>
         </div>
       </div>
 
@@ -3257,6 +3408,10 @@
                       <select id="prismPassageSelect" class="theme-select prism-select"
                         aria-label="Prism Reader passage">
                         <option value="rainbow">Rainbow Passage</option>
+                        <option value="grandfather">Grandfather Passage</option>
+                        <option value="caterpillar">Caterpillar Passage</option>
+                        <option value="stella">Stella Passage</option>
+                        <option value="northwind">The North Wind & the Sun</option>
                         <option value="custom">Custom Text</option>
                         <option value="freestyle">Free Speech (Dictation)</option>
                       </select>
@@ -3267,6 +3422,9 @@
                       <span class="prism-label-icon">✏️</span>Custom Text
                       <span class="prism-label-hint">Used only when Passage = Custom</span>
                     </label>
+                    <textarea id="prismCustomText" class="theme-input prism-textarea"
+                      placeholder="Type or paste your custom reading passage here..."
+                      aria-label="Custom passage text"></textarea>
                   </div>
                 </div>
               </div>
