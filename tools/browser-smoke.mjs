@@ -17,6 +17,7 @@ let browser;
 try {
   const launchArgs = browserName === 'firefox'
     ? { product: 'firefox', headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] }
+    ? { browser: 'firefox', headless: true, extraPrefsFirefox: { "remote.active-protocols": 3 }, args: ['--no-sandbox', '--disable-setuid-sandbox'] }
     : {
       headless: 'new',
       args: ['--no-sandbox', '--disable-setuid-sandbox']
@@ -24,7 +25,11 @@ try {
 
   browser = await puppeteer.launch(launchArgs);
   const page = await browser.newPage();
-  await page.goto(baseUrl, { waitUntil: 'networkidle0' });
+
+  page.on('console', msg => console.log('PAGE LOG:', msg.text()));
+  page.on('pageerror', error => console.error('PAGE ERROR:', error.message));
+
+  await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#startBtn');
 
   await page.click('.mode-card[data-mode="creature"]');
