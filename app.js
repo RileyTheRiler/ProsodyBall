@@ -6317,9 +6317,12 @@ class ProsodyBallGame {
       const cpY = vc.lastCtrlY + (targetY - vc.lastCtrlY) * 0.5;
 
       // --- NEW SPECTROGRAM BACKGROUND ---
-      if (this.analyzer.analyser && this.analyzer.dataArray) {
-        this.analyzer.analyser.getByteFrequencyData(this.analyzer.dataArray);
-        const fbLength = this.analyzer.dataArray.length;
+      if (this.analyzer.analyser) {
+        if (!this.analyzer.byteFreqData) {
+          this.analyzer.byteFreqData = new Uint8Array(this.analyzer.analyser.frequencyBinCount);
+        }
+        this.analyzer.analyser.getByteFrequencyData(this.analyzer.byteFreqData);
+        const fbLength = this.analyzer.byteFreqData.length;
         bCtx.save();
         bCtx.globalCompositeOperation = 'screen';
 
@@ -6335,7 +6338,7 @@ class ProsodyBallGame {
 
         for (let i = 0; i < chunks; i++) {
           let sum = 0;
-          for (let j = 0; j < chunkSize; j++) sum += this.analyzer.dataArray[i * chunkSize + j] || 0;
+          for (let j = 0; j < chunkSize; j++) sum += this.analyzer.byteFreqData[i * chunkSize + j] || 0;
           const avg = sum / chunkSize;
           if (avg > 12) {
             const norm = avg / 255;
@@ -6671,9 +6674,9 @@ class ProsodyBallGame {
 
       // Live "listening" pulse at the bottom when not actively charting pitch
       // This provides feedback that the mic is active during silence.
-      if (this.isRunning && !vc.isSpeaking && this.analyzer.analyser) {
-        this.analyzer.analyser.getFloatTimeDomainData(this.analyzer.dataArray);
-        const data = this.analyzer.dataArray;
+      if (this.isRunning && !vc.isSpeaking && this.analyzer.analyser && this.analyzer.timeDomainData) {
+        this.analyzer.analyser.getFloatTimeDomainData(this.analyzer.timeDomainData);
+        const data = this.analyzer.timeDomainData;
         ctx.strokeStyle = 'rgba(77, 150, 255, 0.4)';
         ctx.lineWidth = 1;
         ctx.beginPath();
