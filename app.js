@@ -3966,10 +3966,10 @@ class ProsodyBallGame {
     const ps = this.prosodyScore;
 
     // ==========================================================
-    // SCROLL SPEED — prosody drives movement, not volume
-    // Monotone: sluggish crawl (20 px/s). Full prosody: 280 px/s.
+    // SCROLL SPEED — prosody + tempo drives movement
+    // Monotone: sluggish crawl (20 px/s). High tempo: >300 px/s.
     // ==========================================================
-    this.targetScrollSpeed = 20 + ps * 260;
+    this.targetScrollSpeed = 20 + ps * 100 + m.tempo * 300;
     this.scrollSpeed += (this.targetScrollSpeed - this.scrollSpeed) * 0.06;
     this.scrollX += this.scrollSpeed * dt;
 
