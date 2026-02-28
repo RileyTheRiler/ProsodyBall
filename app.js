@@ -1762,7 +1762,6 @@ class VoxBallGame {
     this.canvasModeTransition = 0;
     this.keyboardGameMode = 'mirror'; // 'mirror' | 'target' | 'hero'
     this.pitchGuideLabelMode = 'hz';
-    this.pitchGridStrength = 'soft';
     this.pitchGridStrength = 'strong';
     this.teleprompterMode = 'off';
     this.voiceProfilePreset = 'auto';
@@ -2473,10 +2472,6 @@ class VoxBallGame {
     };
   }
 
-  updateRecordingsUI() {
-    // ... existing ... (we don't modify this, just defining the new method under it)
-  }
-
   _updatePrismRecBtnVisibility() {
     const recBtn = document.getElementById('recBtn');
     const clearBtn = document.getElementById('prismClearRecBtn');
@@ -2596,7 +2591,6 @@ class VoxBallGame {
       } catch (e) { }
       iframeNotice.textContent = '';
       iframeNotice.appendChild(document.createTextNode('This app needs microphone access, which may be blocked when embedded.'));
-      iframeNotice.textContent = 'This app needs microphone access, which may be blocked when embedded.';
       iframeNotice.appendChild(document.createElement('br'));
       const link = document.createElement('a');
       link.href = directUrl;
@@ -2617,7 +2611,6 @@ class VoxBallGame {
         if (statusLiveRegion) statusLiveRegion.textContent = String(msg).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
       }
       errorBanner.classList.add('show');
-      if (statusLiveRegion) statusLiveRegion.textContent = String(msg).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     };
     const clearError = () => {
       errorBanner.classList.remove('show');
@@ -3303,7 +3296,6 @@ class VoxBallGame {
     canvasModeSelect?.addEventListener('change', (e) => {
       this.canvasMode = e.target.value;
       if (canvasModeSelect) canvasModeSelect.style.display = this.gameMode === 'canvas' ? '' : 'none';
-      if (keyboardGameSelect) keyboardGameSelect.style.display = this.gameMode === 'keyboard' ? '' : 'none';
       if (keyboardGameSelect) keyboardGameSelect.style.display = this.canvasMode === 'keyboard' ? '' : 'none';
       if (!this.isRunning) this.drawIdleScene();
     });
@@ -3314,7 +3306,6 @@ class VoxBallGame {
       if (!this.isRunning) this.drawIdleScene();
     });
     if (canvasModeSelect) canvasModeSelect.style.display = this.gameMode === 'canvas' ? '' : 'none';
-    if (keyboardGameSelect) keyboardGameSelect.style.display = this.gameMode === 'keyboard' ? '' : 'none';
     if (keyboardGameSelect) keyboardGameSelect.style.display = this.canvasMode === 'keyboard' ? '' : 'none';
 
     pitchLabelsSelect?.addEventListener('change', (e) => {
@@ -3840,22 +3831,6 @@ class VoxBallGame {
         }
       });
     }
-
-
-    document.addEventListener('visibilitychange', async () => {
-      if (document.visibilityState !== 'visible' || !this.isRunning) return;
-      try {
-        if (navigator.permissions?.query) {
-          const mic = await navigator.permissions.query({ name: 'microphone' });
-          if (mic.state === 'denied') {
-            showError('🎙 Microphone permission changed to denied. Re-enable browser mic permission, then click Recover Mic.');
-            setRecoverMicVisible(true);
-          }
-        }
-      } catch (e) {
-        // non-blocking permissions probe
-      }
-    });
 
 
     document.addEventListener('visibilitychange', async () => {
