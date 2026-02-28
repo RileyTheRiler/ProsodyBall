@@ -2544,6 +2544,8 @@ class VoxBallGame {
     const canvasModeSelect = document.getElementById('canvasModeSelect');
     const keyboardGameSelect = document.getElementById('keyboardGameSelect');
     const pitchLabelsSelect = document.getElementById('pitchLabelsSelect');
+    const canvasContextBar = document.getElementById('canvasContextBar');
+    const contextToggleBtn = document.getElementById('contextToggleBtn');
 
     const teleprompterModeSelect = document.getElementById('teleprompterModeSelect');
     const voiceProfileSelect = document.getElementById('voiceProfileSelect');
@@ -3167,6 +3169,11 @@ class VoxBallGame {
     const modeCards = modePicker ? modePicker.querySelectorAll('.mode-card') : [];
 
     document.querySelectorAll('.canvas-only').forEach(el => el.classList.toggle('show', this.gameMode === 'canvas' || this.gameMode === 'keyboard'));
+    if (canvasContextBar) canvasContextBar.classList.remove('expanded');
+    if (contextToggleBtn) {
+      contextToggleBtn.setAttribute('aria-expanded', 'false');
+      contextToggleBtn.textContent = 'Canvas Controls';
+    }
     if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
 
     const selectMode = (mode, card) => {
@@ -3191,6 +3198,14 @@ class VoxBallGame {
       document.querySelector('.hud-title').textContent = titles[mode] || 'VOX ARCADE';
       const canvasOnly = document.querySelectorAll('.canvas-only');
       canvasOnly.forEach(el => el.classList.toggle('show', mode === 'canvas' || mode === 'keyboard'));
+      if (canvasContextBar && mode !== 'canvas' && mode !== 'keyboard') {
+        canvasContextBar.classList.remove('expanded');
+      }
+      if (contextToggleBtn) {
+        const expanded = canvasContextBar?.classList.contains('expanded');
+        contextToggleBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        contextToggleBtn.textContent = expanded ? 'Hide Canvas Controls' : 'Canvas Controls';
+      }
       if (canvasModeSelect) {
         canvasModeSelect.style.display = mode === 'canvas' ? '' : 'none';
         canvasModeSelect.value = this.canvasMode;
@@ -3226,6 +3241,14 @@ class VoxBallGame {
 
     modePicker?.addEventListener('click', (event) => activateFromEvent(event, false));
     modePicker?.addEventListener('touchend', (event) => activateFromEvent(event, true), { passive: false });
+
+    contextToggleBtn?.addEventListener('click', () => {
+      if (!canvasContextBar) return;
+      const nextExpanded = !canvasContextBar.classList.contains('expanded');
+      canvasContextBar.classList.toggle('expanded', nextExpanded);
+      contextToggleBtn.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
+      contextToggleBtn.textContent = nextExpanded ? 'Hide Canvas Controls' : 'Canvas Controls';
+    });
 
     // Also bind directly on each card so mode selection still works even if delegated
     // events are disrupted by embedding layers / browser quirks.
