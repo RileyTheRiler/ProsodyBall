@@ -971,6 +971,218 @@
       color: var(--text-primary);
     }
 
+    /* ===== EXPANDABLE METRICS PANEL ===== */
+    .meters-panel {
+      position: relative;
+    }
+
+    .meters-expand-toggle {
+      position: absolute;
+      top: -18px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 36px;
+      height: 18px;
+      background: rgba(18, 18, 31, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-bottom: none;
+      border-radius: 8px 8px 0 0;
+      color: rgba(255, 255, 255, 0.5);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.65rem;
+      z-index: 11;
+      transition: color 0.2s, background 0.2s;
+      padding: 0;
+    }
+
+    .meters-expand-toggle:hover {
+      color: rgba(255, 255, 255, 0.9);
+      background: rgba(30, 30, 50, 0.95);
+    }
+
+    .meters-expand-toggle svg {
+      width: 14px;
+      height: 14px;
+      transition: transform 0.3s ease;
+    }
+
+    .meters-panel.expanded .meters-expand-toggle svg {
+      transform: rotate(180deg);
+    }
+
+    .meters-expanded {
+      display: none;
+      padding: 0 16px 8px;
+      gap: 8px;
+    }
+
+    .meters-panel.expanded .meters-expanded {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      animation: metersSlideUp 0.3s ease-out;
+    }
+
+    @keyframes metersSlideUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .metric-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 10px;
+      padding: 10px;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .metric-card:hover {
+      border-color: rgba(255, 255, 255, 0.18);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .metric-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .metric-card-title {
+      font-family: 'Space Mono', monospace;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      opacity: 0.8;
+    }
+
+    .metric-card-value {
+      font-family: 'Space Mono', monospace;
+      font-size: 0.68rem;
+      opacity: 0.5;
+    }
+
+    .metric-card-canvas {
+      width: 100%;
+      height: 60px;
+      border-radius: 6px;
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    .metric-card-desc {
+      font-size: 0.65rem;
+      opacity: 0.4;
+      line-height: 1.3;
+    }
+
+    /* Color accents for each metric card */
+    .metric-card[data-metric="pitch"] .metric-card-title { color: #c084fc; }
+    .metric-card[data-metric="resonance"] .metric-card-title { color: #ffaa44; }
+    .metric-card[data-metric="bounce"] .metric-card-title { color: var(--accent-bounce); }
+    .metric-card[data-metric="tempo"] .metric-card-title { color: var(--accent-tempo); }
+    .metric-card[data-metric="vowels"] .metric-card-title { color: var(--accent-vowel); }
+    .metric-card[data-metric="artic"] .metric-card-title { color: var(--accent-artic); }
+    .metric-card[data-metric="syllables"] .metric-card-title { color: var(--accent-syllable); }
+
+    /* ===== METRIC FOCUS POPUP ===== */
+    .metric-popup-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      z-index: 100;
+      display: none;
+      opacity: 0;
+      transition: opacity 0.25s ease;
+    }
+
+    .metric-popup-backdrop.show {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 1;
+    }
+
+    .metric-popup {
+      background: rgba(18, 18, 31, 0.98);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 16px;
+      width: min(560px, 92vw);
+      max-height: 80vh;
+      padding: 24px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      transform: scale(0.95);
+      transition: transform 0.25s cubic-bezier(0.18, 0.89, 0.32, 1.2);
+    }
+
+    .metric-popup-backdrop.show .metric-popup {
+      transform: scale(1);
+    }
+
+    .metric-popup-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .metric-popup-title {
+      font-family: 'Space Mono', monospace;
+      font-size: 1.1rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .metric-popup-close {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.05);
+      color: rgba(255, 255, 255, 0.6);
+      cursor: pointer;
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .metric-popup-close:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+    }
+
+    .metric-popup-value {
+      font-family: 'Space Mono', monospace;
+      font-size: 1.8rem;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .metric-popup-canvas {
+      width: 100%;
+      height: 200px;
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.25);
+    }
+
+    .metric-popup-desc {
+      font-size: 0.82rem;
+      opacity: 0.55;
+      line-height: 1.5;
+      text-align: center;
+    }
+
     /* Overlay */
     .overlay {
       position: absolute;
@@ -1892,6 +2104,31 @@
         min-height: 20px;
       }
 
+      /* --- EXPANDED METRICS: 2-col on mobile --- */
+      .meters-panel.expanded .meters-expanded {
+        grid-template-columns: repeat(2, 1fr);
+        padding: 0 10px 8px;
+        gap: 6px;
+      }
+
+      .metric-card-canvas {
+        height: 50px;
+      }
+
+      .metric-popup {
+        width: 96vw;
+        padding: 16px;
+        max-height: 85vh;
+      }
+
+      .metric-popup-canvas {
+        height: 160px;
+      }
+
+      .metric-popup-value {
+        font-size: 1.4rem;
+      }
+
       /* --- CONTEXT BAR: horizontal scroll, larger targets --- */
       .context-bar {
         padding: 6px 10px;
@@ -2326,6 +2563,25 @@
 
       .meter-bar-bg {
         height: 5px;
+      }
+
+      /* Expanded metrics: single row scroll in landscape */
+      .meters-panel.expanded .meters-expanded {
+        display: flex;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        scrollbar-width: none;
+        padding: 0 8px 4px;
+        gap: 6px;
+      }
+
+      .meters-panel.expanded .meters-expanded .metric-card {
+        min-width: 160px;
+        flex-shrink: 0;
+      }
+
+      .metric-card-canvas {
+        height: 45px;
       }
 
       /* Overlay: side-by-side layout preserved, scroll vertically */
@@ -4524,7 +4780,12 @@
         <option value="notes">Labels: Notes</option>
       </select>
     </div>
-    <div class="meters-panel">
+    <div class="meters-panel" id="metersPanel">
+      <button class="meters-expand-toggle" id="metersExpandToggle" aria-label="Expand metrics">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="18 15 12 9 6 15"></polyline>
+        </svg>
+      </button>
       <div class="meter meter-pitch">
         <div class="meter-label">Pitch
           <div class="info-wrapper">
@@ -4607,6 +4868,78 @@
         </div>
         <div class="meter-value" id="valSyllable">0</div>
       </div>
+      <!-- Expanded metric cards -->
+      <div class="meters-expanded" id="metersExpanded">
+        <div class="metric-card" data-metric="pitch">
+          <div class="metric-card-header">
+            <span class="metric-card-title">Pitch</span>
+            <span class="metric-card-value" id="expValPitch">— Hz</span>
+          </div>
+          <canvas class="metric-card-canvas" id="expCanvasPitch"></canvas>
+          <div class="metric-card-desc">Frequency history over time</div>
+        </div>
+        <div class="metric-card" data-metric="resonance">
+          <div class="metric-card-header">
+            <span class="metric-card-title">Resonance</span>
+            <span class="metric-card-value" id="expValResonance">—</span>
+          </div>
+          <canvas class="metric-card-canvas" id="expCanvasResonance"></canvas>
+          <div class="metric-card-desc">Harmonic envelope spectrogram</div>
+        </div>
+        <div class="metric-card" data-metric="bounce">
+          <div class="metric-card-header">
+            <span class="metric-card-title">Bounce</span>
+            <span class="metric-card-value" id="expValBounce">0%</span>
+          </div>
+          <canvas class="metric-card-canvas" id="expCanvasBounce"></canvas>
+          <div class="metric-card-desc">Prosodic inflection wave</div>
+        </div>
+        <div class="metric-card" data-metric="tempo">
+          <div class="metric-card-header">
+            <span class="metric-card-title">Tempo</span>
+            <span class="metric-card-value" id="expValTempo">0%</span>
+          </div>
+          <canvas class="metric-card-canvas" id="expCanvasTempo"></canvas>
+          <div class="metric-card-desc">Speech pace gauge</div>
+        </div>
+        <div class="metric-card" data-metric="vowels">
+          <div class="metric-card-header">
+            <span class="metric-card-title">Vowels</span>
+            <span class="metric-card-value" id="expValVowels">0%</span>
+          </div>
+          <canvas class="metric-card-canvas" id="expCanvasVowels"></canvas>
+          <div class="metric-card-desc">F1 vs F2 vowel space</div>
+        </div>
+        <div class="metric-card" data-metric="artic">
+          <div class="metric-card-header">
+            <span class="metric-card-title">Artic</span>
+            <span class="metric-card-value" id="expValArtic">0%</span>
+          </div>
+          <canvas class="metric-card-canvas" id="expCanvasArtic"></canvas>
+          <div class="metric-card-desc">Attack and decay precision</div>
+        </div>
+        <div class="metric-card" data-metric="syllables">
+          <div class="metric-card-header">
+            <span class="metric-card-title">Syllables</span>
+            <span class="metric-card-value" id="expValSyllables">0</span>
+          </div>
+          <canvas class="metric-card-canvas" id="expCanvasSyllables"></canvas>
+          <div class="metric-card-desc">Syllables per minute histogram</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Metric Focus Popup -->
+  <div class="metric-popup-backdrop" id="metricPopupBackdrop">
+    <div class="metric-popup" id="metricPopup">
+      <div class="metric-popup-header">
+        <span class="metric-popup-title" id="metricPopupTitle">PITCH</span>
+        <button class="metric-popup-close" id="metricPopupClose" aria-label="Close">&#x2715;</button>
+      </div>
+      <div class="metric-popup-value" id="metricPopupValue">— Hz</div>
+      <canvas class="metric-popup-canvas" id="metricPopupCanvas"></canvas>
+      <div class="metric-popup-desc" id="metricPopupDesc"></div>
     </div>
   </div>
 
