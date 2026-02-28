@@ -2277,9 +2277,9 @@ class ProsodyBallGame {
           <div class="rec-progress"><div class="rec-progress-fill" id="rec-progress-${i}"></div></div>
         </div>
         <div class="rec-item-actions">
-          <button class="rec-btn" id="rec-play-${i}" title="Play" data-action="play" data-index="${i}">▶</button>
-          <button class="rec-btn" title="Download" data-action="download" data-index="${i}">⬇</button>
-          <button class="rec-btn delete" title="Delete" data-action="delete" data-index="${i}">✕</button>
+          <button class="rec-btn" id="rec-play-${i}" title="Play" aria-label="Play Recording" data-action="play" data-index="${i}">▶</button>
+          <button class="rec-btn" title="Download" aria-label="Download Recording" data-action="download" data-index="${i}">⬇</button>
+          <button class="rec-btn delete" title="Delete" aria-label="Delete Recording" data-action="delete" data-index="${i}">✕</button>
         </div>
       `;
       list.appendChild(item);
