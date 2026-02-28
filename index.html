@@ -122,11 +122,18 @@
       overflow-x: auto;
       scrollbar-width: none;
       max-width: min(72vw, 1200px);
+      gap: 6px;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
+      max-width: min(78vw, 1400px);
       padding: 4px 6px;
       border-radius: 10px;
       background: rgba(255, 255, 255, 0.03);
       border: 1px solid rgba(255, 255, 255, 0.06);
       box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      flex-shrink: 1;
     }
 
     .hud-secondary::-webkit-scrollbar {
@@ -143,10 +150,10 @@
 
     .teleprompter-overlay {
       position: absolute;
-      top: 18px;
+      top: 72px;
       left: 50%;
       width: min(860px, calc(100% - 40px));
-      transform: translate(-50%, -8px);
+      transform: translate(-50%, -4px);
       padding: 12px 16px;
       background: rgba(18, 22, 36, 0.76);
       border: 1px solid rgba(255, 255, 255, 0.14);
@@ -1724,6 +1731,19 @@
         display: none;
       }
 
+      .context-bar {
+        padding: 6px 10px;
+        gap: 6px;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        scrollbar-width: none;
+        justify-content: flex-start;
+      }
+
+      .context-bar::-webkit-scrollbar {
+        display: none;
+      }
+
       .btn-recordings span:first-child {
         display: none;
       }
@@ -2456,6 +2476,8 @@
       transform: translateX(-50%) translateY(0);
     }
   
+
+
     body.low-motion * {
       animation: none !important;
       transition: none !important;
@@ -2464,6 +2486,205 @@
 
     body.low-motion .rec-dot {
       animation: none !important;
+    }
+
+    /* Modal Backdrop */
+    .modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.4);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      z-index: 35;
+      display: none;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .modal-backdrop.show {
+      display: block;
+      opacity: 1;
+    }
+
+    /* Settings modal */
+    .settings-panel {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -45%) scale(0.95);
+      background: rgba(18, 18, 31, 0.98);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 20px;
+      padding: 24px;
+      max-width: 360px;
+      width: 92vw;
+      z-index: 40;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+      display: none;
+      flex-direction: column;
+      gap: 18px;
+      opacity: 0;
+      transition: all 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+      pointer-events: none;
+    }
+
+    .settings-panel.show {
+      display: flex;
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+      pointer-events: auto;
+    }
+
+    .settings-panel h3 {
+      font-size: 1.25rem;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      text-align: center;
+    }
+
+    .settings-group {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .settings-group:last-child {
+      border-bottom: none;
+    }
+
+    .settings-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    .btn-close-settings {
+      margin-top: 8px;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-primary);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      font-weight: 600;
+      padding: 10px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-close-settings:hover {
+      background: rgba(255, 255, 255, 0.12);
+      transform: translateY(-1px);
+    }
+
+    /* Camera Modal */
+    .camera-modal {
+      position: absolute;
+      top: 80px;
+      right: 20px;
+      width: 320px;
+      height: 240px;
+      background: rgba(18, 18, 31, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 12px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+      z-index: 50;
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+      resize: both;
+      min-width: 200px;
+      min-height: 150px;
+    }
+
+    .camera-modal.show {
+      display: flex;
+    }
+
+    .camera-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      cursor: grab;
+      user-select: none;
+    }
+
+    .camera-header:active {
+      cursor: grabbing;
+    }
+
+    .camera-title {
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      color: rgba(255, 255, 255, 0.7);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .camera-close {
+      background: none;
+      border: none;
+      color: rgba(255, 255, 255, 0.5);
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .camera-close:hover {
+      color: #ff6b6b;
+      background: rgba(255, 107, 107, 0.1);
+    }
+
+    .camera-video-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #cameraVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform-origin: center center;
+    }
+
+    .camera-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      background: rgba(0, 0, 0, 0.5);
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .camera-controls label {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .camera-zoom {
+      flex: 1;
+      accent-color: var(--accent-artic);
     }
   </style>
 </head>
@@ -2477,6 +2698,29 @@
       </div>
       <div class="hud-controls hud-primary" aria-label="Primary session controls">
         <button class="btn btn-start" id="startBtn">🎙 Start</button>
+        <label class="btn btn-help" for="audioUploadInput"
+          style="cursor: pointer; display: inline-flex; align-items: center; justify-content: center;"
+          title="Upload Audio File">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round" stroke-linejoin="round" style="pointer-events: none;">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="17 8 12 3 7 8"></polyline>
+            <line x1="12" y1="3" x2="12" y2="15"></line>
+          </svg>
+          <input type="file" id="audioUploadInput" accept="audio/*" style="display: none;">
+        </label>
+        <button class="btn btn-cb" id="prismSaveRecBtn" title="Save Clip" aria-label="Save Clip"
+          style="padding: 6px 10px; border-radius: 6px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+            <polyline points="7 3 7 8 15 8"></polyline>
+          </svg>
+        </button>
+
+        <button class="btn btn-recordings" id="recordingsBtn" style="display:none;"><span>Clips</span><span
+            class="badge" id="recBadge">0</span></button>
         <button class="btn btn-rec" id="recBtn"><span class="rec-dot"></span><span class="rec-label">Rec</span></button>
         <button class="btn btn-help" id="prismClearRecBtn"
           style="display: none; opacity: 0; transform: scale(0.95); transition: all 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);">Clear</button>
@@ -2485,8 +2729,10 @@
           Clip</button>
         <button class="btn btn-recordings" id="recordingsBtn"><span>Clips</span><span class="badge"
             id="recBadge">0</span></button>
-        <button class="btn btn-help canvas-only" id="pauseCanvasBtn" title="Pause paint updates">Pause</button>
-        <button class="btn btn-help canvas-only" id="clearCanvasBtn" title="Clear current canvas drawing">Clear</button>
+        <button class="btn btn-cb canvas-only" id="pauseCanvasBtn" title="Pause paint updates"
+          style="padding: 6px 14px; font-weight: 600; border-radius: 8px;">Pause</button>
+        <button class="btn btn-cb canvas-only" id="clearCanvasBtn" title="Clear current canvas drawing"
+          style="padding: 6px 14px; font-weight: 600; border-radius: 8px;">Clear</button>
       </div>
       <div class="hud-controls hud-secondary" aria-label="Secondary settings">
 
@@ -2516,6 +2762,57 @@
           <option value="lighter">Profile: Lighter Voice</option>
           <option value="expressive">Profile: Expressive Practice</option>
         </select>
+        <button class="btn btn-cb" id="settingsBtn" title="Open Settings" aria-label="Open Settings">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round">
+            <circle cx="12" cy="12" r="3" />
+            <path
+              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        </button>
+
+        <div
+          style="display: flex; align-items: center; gap: 6px; border-left: 1px solid rgba(255,255,255,0.1); padding-left: 8px;">
+          <span style="font-size: 0.8rem; color: var(--text-muted);">Teleprompter: Off</span>
+          <div class="toggle-switch" style="transform: scale(0.85);">
+            <input type="checkbox" id="teleprompterToggleSwitch">
+            <span class="toggle-slider"></span>
+          </div>
+          <select id="teleprompterModeSelect" class="theme-select" style="display:none;">
+            <option value="off">Off</option>
+            <option value="rainbow">Rainbow</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+
+        <button class="btn btn-cb" id="teleprompterCustomBtn" title="Edit Text" aria-label="Edit Text"
+          style="padding: 6px; border-radius: 6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 20h9"></path>
+            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+          </svg>
+        </button>
+
+        <button class="btn btn-cb" id="cameraBtn" title="Camera" aria-label="Camera" style="padding: 6px; border-radius: 6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+            <circle cx="12" cy="13" r="4"></circle>
+          </svg>
+        </button>
+
+        <button class="btn btn-cb" id="helpBtn" title="Help" aria-label="Help" style="padding: 6px; border-radius: 6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
+        </button>
+
+        <button class="btn btn-cb" id="homeBtn" title="Menu" aria-label="Menu" style="padding: 6px; border-radius: 6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
         <select id="teleprompterModeSelect" class="theme-select" aria-label="Teleprompter mode">
           <option value="off" selected>Teleprompter: Off</option>
           <option value="rainbow">Teleprompter: Rainbow Passage</option>
@@ -2540,6 +2837,13 @@
             <path d="M22 10v4" />
           </svg>
         </button>
+        <button class="btn btn-cb" id="cameraBtn" title="Camera Mirror" aria-label="Camera Mirror">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+            <circle cx="12" cy="13" r="4"></circle>
+          </svg>
+        </button>
         <button class="btn btn-help" id="helpBtn">How to Play</button>
         <button class="btn btn-help" id="homeBtn" title="Return to Main Menu">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
@@ -2551,7 +2855,38 @@
         </button>
         <button class="btn btn-help" id="recalibrateBtn" title="Run mic calibration again">Recalibrate</button>
         <button class="btn btn-help" id="recoverMicBtn" title="Recover microphone session" style="display:none;">Recover Mic</button>
+        <button class="btn btn-help" id="recoverMicBtn" title="Recover microphone session" style="display:none;">Recover
+          Mic</button>
       </div>
+    </div>
+
+    <div id="modalBackdrop" class="modal-backdrop"></div>
+    <div id="settingsPanel" class="settings-panel">
+      <h3>Session Settings</h3>
+
+      <div class="settings-group">
+        <span class="settings-label">Voice Tracking</span>
+        <select id="voiceProfileSelect" class="theme-select" style="width:100%" aria-label="Voice profile preset">
+          <option value="auto" selected>Profile: Auto</option>
+          <option value="deeper">Profile: Deep / Chest-Focus</option>
+          <option value="lighter">Profile: High-Range / Bright</option>
+          <option value="expressive">Profile: Expressive Practice</option>
+        </select>
+      </div>
+
+      <div class="settings-group">
+        <span class="settings-label">Performance</span>
+        <button class="btn btn-help" style="width:100%" id="motionToggle" aria-label="Toggle low motion mode"
+          title="Low motion mode">Motion: Auto</button>
+      </div>
+
+      <div class="settings-group">
+        <span class="settings-label">Calibration</span>
+        <button class="btn btn-help" style="width:100%" id="recalibrateBtn"
+          title="Run mic calibration again">Recalibrate</button>
+      </div>
+
+      <button class="btn btn-close-settings" id="closeSettingsBtn">Close</button>
     </div>
 
     <div class="game-area">
@@ -2619,6 +2954,10 @@
               <div class="mode-card" data-mode="prism">
                 <div class="mode-icon">🔮</div>
                 <div class="mode-name">Prism Reader</div>
+              </div>
+              <div class="mode-card" data-mode="vowelvalley">
+                <div class="mode-icon">⛰️</div>
+                <div class="mode-name">Vowel Valley</div>
               </div>
             </div>
           </div>
@@ -2876,6 +3215,7 @@
                   <label>Target Tone
                     <div class="info-wrapper">
                       <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
+                      <button class="info-trigger" aria-label="More Info">?</button>
                       <div class="info-popup">Pick Bright or Dark posture. The road color palette flips to match your
                         training goal.</div>
                     </div>
@@ -2977,6 +3317,7 @@
                         <span class="prism-label-icon">🎙️</span>Mode
                         <div class="info-wrapper">
                           <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
+                          <button class="info-trigger" aria-label="More Info">?</button>
                           <div class="info-popup">'Real-Time' animates as you speak. 'Record & Process' analyzes a whole
                             clip for higher accuracy playback.</div>
                         </div>
@@ -2992,6 +3333,7 @@
                         <span class="prism-label-icon">⏱</span>Pacing Mode
                         <div class="info-wrapper">
                           <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
+                          <button class="info-trigger" aria-label="More Info">?</button>
                           <div class="info-popup">Choose how text advances. 'Auto' detects your speech rhythm. 'Manual'
                             lets you control the pace with Spacebar or Taps.</div>
                         </div>
@@ -3010,6 +3352,7 @@
                         aria-label="Prism Reader passage">
                         <option value="rainbow">Rainbow Passage</option>
                         <option value="custom">Custom Text</option>
+                        <option value="freestyle">Free Speech (Dictation)</option>
                       </select>
                     </div>
                   </div>
@@ -3018,8 +3361,39 @@
                       <span class="prism-label-icon">✏️</span>Custom Text
                       <span class="prism-label-hint">Used only when Passage = Custom</span>
                     </label>
-                    <textarea id="prismCustomText" class="theme-select prism-textarea" rows="3"
-                      placeholder="Paste your own text here…"></textarea>
+                  </div>
+                </div>
+              </div>
+              <div class="mode-detail-panel" id="vowelvalleyDetails">
+                <div class="detail-header">
+                  <div class="detail-title">⛰️ Vowel Valley</div>
+                  <div class="detail-blurb">Navigate a 2D space using your vocal formants. Train precise vowel shaping
+                    by visiting target zones.</div>
+                </div>
+                <div class="rules-grid">
+                  <div class="rule-card rule-bounce">
+                    <div class="rule-name">F2 → Horizontal (Left/Right)</div>
+                    <div class="rule-desc">Front vs Back vowels. Making an "EE" sound moves you right, while "OO" moves
+                      you left.</div>
+                  </div>
+                  <div class="rule-card rule-tempo">
+                    <div class="rule-name">F1 → Vertical (Up/Down)</div>
+                    <div class="rule-desc">High vs Low vowels. Lowering your jaw ("AH") moves you down; raising it
+                      ("EE"/"OO") moves you up.</div>
+                  </div>
+                  <div class="rule-card rule-vowel">
+                    <div class="rule-name">Target Zones</div>
+                    <div class="rule-desc">Navigate to the "EE", "AH", and "OO" zones to score. Maintain the vowel to
+                      charge the zone.</div>
+                  </div>
+                  <div class="rule-card rule-artic">
+                    <div class="rule-name">Vocal Tract Feedback</div>
+                    <div class="rule-desc">The visual position reflects your actual vocal tract configuration in
+                      real-time.</div>
+                  </div>
+                  <div class="rule-card rule-syllable">
+                    <div class="rule-name">Flow Scoring</div>
+                    <div class="rule-desc">Smoothly transitioning between target vowels earns "Flow" bonuses.</div>
                   </div>
                 </div>
               </div>
@@ -3078,77 +3452,96 @@
             </div>
           </div>
 
-          <div class="tooltip" id="helpTooltip">
-            <div class="help-tabs">
-              <button class="help-tab active" data-tab="howto">How To Play</button>
-              <button class="help-tab" data-tab="rainbow">Rainbow Passage</button>
-            </div>
+        </div>
+      </div>
 
-            <div class="help-panel active" data-panel="howto" id="helpHowTo">
-              <!-- Populated dynamically per mode -->
-            </div>
+      <div class="tooltip" id="helpTooltip">
+        <div class="help-tabs">
+          <button class="help-tab active" data-tab="howto">How To Play</button>
+          <button class="help-tab" data-tab="rainbow">Rainbow Passage</button>
+        </div>
 
-            <div class="help-panel" data-panel="rainbow">
-              <h3>Rainbow Passage</h3>
-              <p>When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is
-                a
-                division of white light into many beautiful colors. These take the shape of a long round arch, with its
-                path
-                high above, and its two ends apparently beyond the horizon. There is, according to legend, a boiling pot
-                of
-                gold at one end. People look, but no one ever finds it.</p>
-            </div>
+        <div class="help-panel active" data-panel="howto" id="helpHowTo">
+          <!-- Populated dynamically per mode -->
+        </div>
+
+        <div class="help-panel" data-panel="rainbow">
+          <h3>Rainbow Passage</h3>
+          <p>When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is a
+            division of white light into many beautiful colors. These take the shape of a long round arch, with its path
+            high above, and its two ends apparently beyond the horizon. There is, according to legend, a boiling pot of
+            gold at one end. People look, but no one ever finds it.</p>
+        </div>
+      </div>
+
+      <div class="vib-panel" id="vibPanel">
+        <h3>📳 Vibration Alerts</h3>
+        <div class="vib-panel-sub">
+          Get haptic or visual feedback when your voice goes outside target ranges.
+          Add rules below — each triggers a brief vibration when the condition is met.
+        </div>
+
+        <div class="vib-master">
+          <label>Vibration alerts</label>
+          <div class="toggle-switch">
+            <input type="checkbox" id="vibMasterToggle">
+            <span class="toggle-slider"></span>
           </div>
+        </div>
 
-          <div class="vib-panel" id="vibPanel">
-            <h3>📳 Vibration Alerts</h3>
-            <div class="vib-panel-sub">
-              Get haptic or visual feedback when your voice goes outside target ranges.
-              Add rules below — each triggers a brief vibration when the condition is met.
-            </div>
+        <div id="vibEmptyHint"
+          style="text-align:center;padding:12px 0 6px;font-size:0.72rem;color:rgba(255,255,255,0.25);line-height:1.5">
+          No alert rules yet.<br>Add a rule or use a preset below.
+        </div>
 
-            <div class="vib-master">
-              <label>Vibration alerts</label>
-              <div class="toggle-switch">
-                <input type="checkbox" id="vibMasterToggle">
-                <span class="toggle-slider"></span>
-              </div>
-            </div>
+        <div class="vib-rules-list" id="vibRulesList"></div>
+        <button class="vib-add-btn" id="vibAddRule">+ Add Alert Rule</button>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button class="vib-add-btn" id="vibPresetFem" style="flex:1;font-size:0.66rem">♀ Feminine preset</button>
+          <button class="vib-add-btn" id="vibPresetMasc" style="flex:1;font-size:0.66rem">♂ Masculine preset</button>
+        </div>
+        <button class="vib-add-btn" id="vibTestBtn" style="margin-top:8px;border-style:solid;opacity:0.7">📳 Test
+          Vibration</button>
+      </div>
 
-            <div id="vibEmptyHint"
-              style="text-align:center;padding:12px 0 6px;font-size:0.72rem;color:rgba(255,255,255,0.25);line-height:1.5">
-              No alert rules yet.<br>Add a rule or use a preset below.
-            </div>
-
-            <div class="vib-rules-list" id="vibRulesList"></div>
-            <button class="vib-add-btn" id="vibAddRule">+ Add Alert Rule</button>
-            <div style="display:flex;gap:6px;margin-top:8px">
-              <button class="vib-add-btn" id="vibPresetFem" style="flex:1;font-size:0.66rem">♀ Feminine preset</button>
-              <button class="vib-add-btn" id="vibPresetMasc" style="flex:1;font-size:0.66rem">♂ Masculine
-                preset</button>
-            </div>
-            <button class="vib-add-btn" id="vibTestBtn" style="margin-top:8px;border-style:solid;opacity:0.7">📳 Test
-              Vibration</button>
-          </div>
-
-          <div class="recordings-drawer" id="recordingsDrawer">
-            <div class="recordings-header">
-              <h3>Recordings</h3>
-              <button class="btn-clear-all" id="clearAllRecs">Clear all</button>
-            </div>
-            <div class="recordings-list" id="recordingsList">
-              <div class="recordings-empty" id="recsEmpty">No recordings yet. Hit <b>Rec</b> while playing!</div>
-            </div>
-          </div>
+      <div class="recordings-drawer" id="recordingsDrawer">
+        <div class="recordings-header">
+          <h3>Recordings</h3>
+          <button class="btn-clear-all" id="clearAllRecs">Clear all</button>
+        </div>
+        <div class="recordings-list" id="recordingsList">
+          <div class="recordings-empty" id="recsEmpty">No recordings yet. Hit <b>Rec</b> while playing!</div>
         </div>
       </div>
     </div>
 
+    <div class="context-bar">
+      <select id="visualStyleSelect" class="theme-select canvas-only" aria-label="Visual style mode">
+        <option value="artistic">🖌️ Artistic</option>
+        <option value="analysis">📈 Analysis</option>
+      </select>
+      <select id="canvasModeSelect" class="theme-select canvas-only" aria-label="Canvas mode">
+        <option value="paint">Canvas Mode: Paint</option>
+        <option value="freepaint">Canvas Mode: 2D Free Paint</option>
+        <option value="keyboard">Canvas Mode: Keyboard</option>
+      </select>
+      <select id="keyboardGameSelect" class="theme-select canvas-only" aria-label="Keyboard game mode">
+        <option value="mirror">Keyboard Game: Mirror Mode</option>
+        <option value="target">Keyboard Game: Target Practice</option>
+        <option value="hero">Keyboard Game: Vocal Hero</option>
+      </select>
+      <select id="pitchLabelsSelect" class="theme-select canvas-only" aria-label="Pitch guide labels">
+        <option value="off">Labels: Off</option>
+        <option value="hz" selected>Labels: Hz</option>
+        <option value="notes">Labels: Notes</option>
+      </select>
+    </div>
     <div class="meters-panel">
       <div class="meter meter-pitch">
         <div class="meter-label">Pitch
           <div class="info-wrapper">
             <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
+            <button class="info-trigger" aria-label="More Info">?</button>
             <div class="info-popup">How high or low your voice sounds in Hertz (Hz).</div>
           </div>
         </div>
@@ -3162,6 +3555,7 @@
           Resonance
           <div class="info-wrapper">
             <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
+            <button class="info-trigger" aria-label="More Info">?</button>
             <div class="info-popup">Your vocal tone quality. High resonance sounds 'forward' or 'bright'; low resonance
               sounds 'deep' or 'hollow'.</div>
           </div>
@@ -3181,6 +3575,7 @@
         <div class="meter-label">Bounce
           <div class="info-wrapper">
             <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
+            <button class="info-trigger" aria-label="More Info">?</button>
             <div class="info-popup">Measures your pitch variance. More 'bounce' means more expressive pitch changes.
             </div>
           </div>
@@ -3194,6 +3589,7 @@
         <div class="meter-label">Tempo
           <div class="info-wrapper">
             <button class="info-trigger" tabindex="-1" aria-label="More Info">?</button>
+            <button class="info-trigger" aria-label="More Info">?</button>
             <div class="info-popup">The speed of your speech rhythms.</div>
           </div>
         </div>
@@ -3223,6 +3619,28 @@
         </div>
         <div class="meter-value" id="valSyllable">0</div>
       </div>
+    </div>
+  </div>
+
+  <div class="camera-modal" id="cameraModal">
+    <div class="camera-header" id="cameraHeader">
+      <div class="camera-title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+          <circle cx="12" cy="13" r="4"></circle>
+        </svg>
+        Camera Mirror
+      </div>
+      <button class="camera-close" id="cameraClose" aria-label="Close Camera">✕</button>
+    </div>
+    <div class="camera-video-container">
+      <video id="cameraVideo" autoplay playsinline></video>
+    </div>
+    <div class="camera-controls">
+      <label for="cameraZoom" title="Zoom In/Out">🔍 Zoom</label>
+      <input type="range" id="cameraZoom" class="camera-zoom" min="1" max="3" step="0.1" value="1"
+        aria-label="Camera Zoom">
     </div>
   </div>
 

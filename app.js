@@ -19,6 +19,7 @@ function escapeHtml(text) {
 // ============================================================
 export class VoiceAnalyzer {
   constructor() {
+    this._buffers = {}; // Pre-allocated typed arrays for performance
     this.audioCtx = null;
     this.analyser = null;
     this.analyserFormant = null;
@@ -27,6 +28,7 @@ export class VoiceAnalyzer {
     this.recTimeDomainData = null;
     this.source = null;
     this.stream = null;
+    this.audioElement = null; // store audio element for cleanup
     this.isActive = false;
 
     this.timeDomainData = null;
@@ -114,14 +116,39 @@ export class VoiceAnalyzer {
     };
   }
 
-  async start() {
-    try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-      });
+  // Helper to reuse typed arrays to prevent garbage collection spikes in hot loops
+  _getBuffer(name, ArrayType, size) {
+    if (!this._buffers[name] || this._buffers[name].length < size) {
+      this._buffers[name] = new ArrayType(size);
+    }
+    return this._buffers[name];
+  }
 
+  async start(audioFile = null) {
+    try {
       this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      this.source = this.audioCtx.createMediaStreamSource(this.stream);
+
+      if (audioFile) {
+        // Handle audio file input
+        this.audioElement = new Audio();
+        this.audioElement.src = URL.createObjectURL(audioFile);
+        this.audioElement.loop = false;
+
+        // ensure AudioContext is running before playing
+        if (this.audioCtx.state === 'suspended') {
+          await this.audioCtx.resume();
+        }
+
+        this.source = this.audioCtx.createMediaElementSource(this.audioElement);
+        // Connect to destination so user can hear it
+        this.source.connect(this.audioCtx.destination);
+      } else {
+        // Handle microphone input
+        this.stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
+        this.source = this.audioCtx.createMediaStreamSource(this.stream);
+      }
 
       this.analyser = this.audioCtx.createAnalyser();
       this.analyser.fftSize = 4096; // Larger window → better low-freq pitch resolution
@@ -157,15 +184,35 @@ export class VoiceAnalyzer {
       this.recTimeDomainData = new Float32Array(512);
 
       this.isActive = true;
-      return { ok: true };
+
+      // We must play it to get logic processing
+      if (this.audioElement) {
+        try {
+          await this.audioElement.play();
+        } catch (playErr) {
+          console.error("Autoplay prevented:", playErr);
+          // Provide error response if play fails
+          return { ok: false, error: "AutoPlayError", message: playErr.message };
+        }
+      }
+
+      return { ok: true, audioElement: this.audioElement };
     } catch (e) {
-      console.error('Mic access denied:', e);
+      console.error('Mic/Audio access denied:', e);
       return { ok: false, error: e.name, message: e.message };
     }
   }
 
   stop() {
     this.isActive = false;
+
+    if (this.audioElement) {
+      this.audioElement.pause();
+      URL.revokeObjectURL(this.audioElement.src);
+      this.audioElement.src = "";
+      this.audioElement = null;
+    }
+
     if (this.source) { try { this.source.disconnect(); } catch (e) { } }
     // FIX: stop stream tracks so mic LED turns off
     if (this.stream) {
@@ -249,6 +296,9 @@ export class VoiceAnalyzer {
     }
     const dsBuf = this.pitchBuf;
     const dsN = dsBuf.length;
+    this.pitchBuf = this._getBuffer('pitchBuf', Float32Array, Math.floor(n / 2));
+    const dsBuf = this.pitchBuf;
+    const dsN = Math.floor(n / 2); // Logical length, not capacity
 
     // Simple 2x decimation with averaging (low-pass filter)
     for (let i = 0; i < dsN; i++) {
@@ -262,18 +312,36 @@ export class VoiceAnalyzer {
 
     // Step 1 & 2: Difference function d(τ) and CMND d'(τ)
     const cmnd = new Float32Array(maxPeriod + 1);
+    // OPTIMIZATION: Use running sum of squares to avoid (a-b)^2 in inner loop
+    const cmnd = this._getBuffer('cmnd', Float32Array, maxPeriod + 1);
     cmnd[0] = 1.0;
     let runningSum = 0;
 
+    let sumSq0 = 0;
+    for (let i = 0; i < W; i++) sumSq0 += dsBuf[i] * dsBuf[i];
+
+    let currentSumSqTau = 0;
+    for (let i = 0; i < W; i++) currentSumSqTau += dsBuf[i + 1] * dsBuf[i + 1];
+
     for (let tau = 1; tau <= maxPeriod; tau++) {
-      let diff = 0;
+      let crossCorr = 0;
       for (let i = 0; i < W; i++) {
         const delta = dsBuf[i] - dsBuf[i + tau];
         diff += delta * delta;
+        crossCorr += dsBuf[i] * dsBuf[i + tau];
       }
+
+      let diff = sumSq0 + currentSumSqTau - 2 * crossCorr;
+      if (diff < 0) diff = 0; // Floating point noise
+
       runningSum += diff;
-      // Cumulative mean normalized difference
       cmnd[tau] = diff * tau / (runningSum || 1);
+
+      if (tau < maxPeriod) {
+        const removeVal = dsBuf[tau];
+        const addVal = dsBuf[tau + W];
+        currentSumSqTau = currentSumSqTau - removeVal * removeVal + addVal * addVal;
+      }
     }
 
     // Step 3: Absolute threshold — find first dip below threshold
@@ -430,6 +498,7 @@ export class VoiceAnalyzer {
             this.pitchProfile.max = Math.min(800, p95 * 1.25);
             this.pitchProfile.isLearned = true;
             console.log(`[VoxBall] Learned User Pitch Range: ${this.pitchProfile.min.toFixed(0)}Hz - ${this.pitchProfile.max.toFixed(0)}Hz`);
+            console.log(`[ProsodyBall] Learned User Pitch Range: ${this.pitchProfile.min.toFixed(0)}Hz - ${this.pitchProfile.max.toFixed(0)}Hz`);
           }
         }
       }
@@ -501,6 +570,7 @@ export class VoiceAnalyzer {
           this.tiltProfile.max = median + spread * 0.45;
           this.tiltProfile.isLearned = true;
           console.log(`[VoxBall] Learned User Tilt Range: ${this.tiltProfile.min.toFixed(1)}dB to ${this.tiltProfile.max.toFixed(1)}dB`);
+          console.log(`[ProsodyBall] Learned User Tilt Range: ${this.tiltProfile.min.toFixed(1)}dB to ${this.tiltProfile.max.toFixed(1)}dB`);
         }
       }
     }
@@ -731,7 +801,7 @@ export class VoiceAnalyzer {
     if (numHarmonics < 4) return { f1: 0, f2: 0, f3: 0, confidence: 0 };
 
     // Sample FFT at each harmonic with peak-search and parabolic amplitude interpolation
-    const harmonicAmps = new Float32Array(numHarmonics);
+    const harmonicAmps = this._getBuffer('harmonicAmps', Float32Array, numHarmonics);
     for (let h = 0; h < numHarmonics; h++) {
       const hFreq = f0 * (h + 1);
       const bin = hFreq / binHz;
@@ -766,7 +836,7 @@ export class VoiceAnalyzer {
 
     // 5-point Gaussian-weighted smoothing (σ ≈ 1.0 harmonics)
     const gWeights = [0.06, 0.24, 0.40, 0.24, 0.06];
-    const env = new Float32Array(numHarmonics);
+    const env = this._getBuffer('env', Float32Array, numHarmonics);
     for (let i = 0; i < numHarmonics; i++) {
       let sum = 0, wSum = 0;
       for (let k = -2; k <= 2; k++) {
@@ -804,7 +874,7 @@ export class VoiceAnalyzer {
     // Applied BEFORE smoothing so it isn't diluted by the averaging kernel.
     // This counteracts the natural glottal source rolloff that makes F2/F3
     // peaks appear 6-12 dB weaker than F1 in the raw spectrum.
-    const tiltComp = new Float32Array(numBins);
+    const tiltComp = this._getBuffer('tiltComp', Float32Array, numBins);
     for (let i = 0; i < numBins; i++) {
       const freq = i * binHz;
       tiltComp[i] = fmtData[i] + (freq > pitch ? 6 * Math.log2(freq / pitch) : 0);
@@ -813,7 +883,7 @@ export class VoiceAnalyzer {
     // Triangular kernel smoothing on tilt-compensated spectrum
     // Triangular shape: center-weighted, zero at edges — better sidelobe
     // rejection than a box filter, cleaner envelope extraction
-    const smoothed = new Float32Array(numBins);
+    const smoothed = this._getBuffer('smoothed', Float32Array, numBins);
     for (let i = 0; i < numBins; i++) {
       let sum = 0, wSum = 0;
       for (let j = i - halfW; j <= i + halfW; j++) {
@@ -930,7 +1000,7 @@ export class VoiceAnalyzer {
 
     // Apply filter + decimate in one pass
     let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
-    const filtered = new Float32Array(dsN);
+    const filtered = this._getBuffer('filtered', Float32Array, dsN);
     let dsIdx = 0, sampleCount = 0;
     for (let i = 0; i < N; i++) {
       const x0 = td[i];
@@ -944,14 +1014,14 @@ export class VoiceAnalyzer {
     }
 
     // Pre-emphasis on filtered/downsampled signal
-    const preEmph = new Float32Array(dsN);
+    const preEmph = this._getBuffer('preEmph', Float32Array, dsN);
     preEmph[0] = filtered[0];
     for (let i = 1; i < dsN; i++) {
       preEmph[i] = filtered[i] - 0.97 * filtered[i - 1];
     }
 
     // Hamming window
-    const windowed = new Float32Array(dsN);
+    const windowed = this._getBuffer('windowed', Float32Array, dsN);
     for (let i = 0; i < dsN; i++) {
       windowed[i] = preEmph[i] * (0.54 - 0.46 * Math.cos(2 * Math.PI * i / (dsN - 1)));
     }
@@ -960,7 +1030,7 @@ export class VoiceAnalyzer {
     const order = Math.min(20, Math.max(8, Math.round(2 + dsRate / 1000)));
 
     // Autocorrelation
-    const R = new Float64Array(order + 1);
+    const R = this._getBuffer('R', Float64Array, order + 1);
     for (let k = 0; k <= order; k++) {
       let sum = 0;
       for (let i = 0; i < dsN - k; i++) sum += windowed[i] * windowed[i + k];
@@ -969,8 +1039,8 @@ export class VoiceAnalyzer {
     if (R[0] < 1e-10) return { f1: 0, f2: 0, f3: 0, confidence: 0 };
 
     // Levinson-Durbin
-    const a = new Float64Array(order + 1);
-    const aTemp = new Float64Array(order + 1);
+    const a = this._getBuffer('a', Float64Array, order + 1);
+    const aTemp = this._getBuffer('aTemp', Float64Array, order + 1);
     let E = R[0];
     for (let i = 1; i <= order; i++) {
       let lambda = 0;
@@ -1497,6 +1567,7 @@ class VoxBallGame {
       successPulse: 0,
       missPulse: 0,
     };
+    this.activePointerNotes = new Map(); // pointerId -> { oscillator, gain }
 
     this.pitchPilot = {
       sparkX: 0,
@@ -1562,32 +1633,24 @@ class VoxBallGame {
       },
     };
 
-    this.resonanceRoad = {
-      targetTone: 'bright',
-      passageMode: 'balcony',
-      customText: '',
-      centerX: 0,
-      laneHalfWidth: 60,
-      roadHalfWidth: 150,
-      speed: 0,
+    this.vowelValley = {
+      x: 0.5, y: 0.5,
+      smoothX: 0.5, smoothY: 0.5,
+      f1Range: [250, 1000],
+      f2Range: [600, 2600],
+      targets: [
+        { name: 'EE', f1: 300, f2: 2300, color: '#4d96ff', active: false, charge: 0 },
+        { name: 'AH', f1: 850, f2: 1100, color: '#ff6b6b', active: false, charge: 0 },
+        { name: 'OO', f1: 350, f2: 800, color: '#6bcb77', active: false, charge: 0 },
+      ],
+      particles: [],
       trail: [],
+      popups: [],
       score: 0,
-      multiplier: 1,
-      driftStrength: 0,
-    };
-
-    this.resonanceRoad = {
-      targetTone: 'bright',
-      passageMode: 'balcony',
-      customText: '',
-      centerX: 0,
-      laneHalfWidth: 60,
-      roadHalfWidth: 150,
-      speed: 0,
-      trail: [],
-      score: 0,
-      multiplier: 1,
-      driftStrength: 0,
+      flowMultiplier: 1,
+      flowTimer: 0,
+      lastTargetHit: null,
+      gridAlpha: 0.1
     };
 
     // ====== PRISM READER STATE ======
@@ -1612,7 +1675,19 @@ class VoxBallGame {
       isRecording: false,
       isPlayingBack: false,
       playbackIndex: 0
+      playbackIndex: 0,
+      freestyleTranscript: '',
+      speechRecognition: null
     };
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      this.prismReader.speechRecognition = new SpeechRecognition();
+      this.prismReader.speechRecognition.continuous = true;
+      this.prismReader.speechRecognition.interimResults = true;
+      this.prismReader.speechRecognition.onresult = this._onPrismSpeechResult.bind(this);
+      this.prismReader.speechRecognition.onerror = (e) => console.log('Speech recognition error', e);
+    }
 
     // Recording — AnalyserNode polling approach
     this.isRecording = false;
@@ -1697,6 +1772,7 @@ class VoxBallGame {
     this.keyboardGameMode = 'mirror'; // 'mirror' | 'target' | 'hero'
     this.pitchGuideLabelMode = 'hz';
     this.pitchGridStrength = 'soft';
+    this.pitchGridStrength = 'strong';
     this.teleprompterMode = 'off';
     this.voiceProfilePreset = 'auto';
     this.teleprompterCustomText = '';
@@ -1805,6 +1881,16 @@ class VoxBallGame {
           c('vowel', 'Diagnostic Vowel', 'Use a steady "Ah" or "Uh" so changes come from vocal weight, not vowel shape shifts.'),
           c('artic', 'Spectral Gates', 'Fly through high/low/neutral gate patterns to test extremes, stability, and agility.'),
           c('syllable', 'Session Diagnostics', 'Post-flight feedback reports latency, stability drift, and light-heavy dynamic range.'),
+        ],
+      },
+      vowelvalley: {
+        title: 'Voice → Vowel Valley Mapping',
+        items: [
+          c('bounce', 'F2 → Horizontal', 'Left/Right navigation. "EE" moves you right, "OO" moves you left.'),
+          c('tempo', 'F1 → Vertical', 'Up/Down navigation. Jaw height (AH/EE) controls vertical position.'),
+          c('vowel', 'Target Zones', 'Navigate to EE, AH, and OO zones to charge them and score.'),
+          c('artic', 'Vocal Tract Feedback', 'Position reflects your actual vocal tract configuration in real-time.'),
+          c('syllable', 'Flow Scoring', 'Smoothly transitioning between target vowels earns "Flow" bonuses.'),
         ],
       },
       prism: {
@@ -2203,9 +2289,9 @@ class VoxBallGame {
           <div class="rec-progress"><div class="rec-progress-fill" id="rec-progress-${i}"></div></div>
         </div>
         <div class="rec-item-actions">
-          <button class="rec-btn" id="rec-play-${i}" title="Play" data-action="play" data-index="${i}">▶</button>
-          <button class="rec-btn" title="Download" data-action="download" data-index="${i}">⬇</button>
-          <button class="rec-btn delete" title="Delete" data-action="delete" data-index="${i}">✕</button>
+          <button class="rec-btn" id="rec-play-${i}" title="Play" aria-label="Play Recording" data-action="play" data-index="${i}">▶</button>
+          <button class="rec-btn" title="Download" aria-label="Download Recording" data-action="download" data-index="${i}">⬇</button>
+          <button class="rec-btn delete" title="Delete" aria-label="Delete Recording" data-action="delete" data-index="${i}">✕</button>
         </div>
       `;
       list.appendChild(item);
@@ -2306,10 +2392,17 @@ class VoxBallGame {
     const canvasModeSelect = document.getElementById('canvasModeSelect');
     const keyboardGameSelect = document.getElementById('keyboardGameSelect');
     const pitchLabelsSelect = document.getElementById('pitchLabelsSelect');
-    const gridContrastBtn = document.getElementById('gridContrastBtn');
+
     const teleprompterModeSelect = document.getElementById('teleprompterModeSelect');
     const voiceProfileSelect = document.getElementById('voiceProfileSelect');
     const motionToggle = document.getElementById('motionToggle');
+    const cameraBtn = document.getElementById('cameraBtn');
+    const cameraModal = document.getElementById('cameraModal');
+    const cameraClose = document.getElementById('cameraClose');
+    const cameraVideo = document.getElementById('cameraVideo');
+    const cameraZoom = document.getElementById('cameraZoom');
+    const cameraHeader = document.getElementById('cameraHeader');
+
     const roadTargetSelect = document.getElementById('roadTargetSelect');
     const roadPassageSelect = document.getElementById('roadPassageSelect');
     const roadCustomText = document.getElementById('roadCustomText');
@@ -2346,6 +2439,7 @@ class VoxBallGame {
       } catch (e) { }
       iframeNotice.textContent = '';
       iframeNotice.appendChild(document.createTextNode('This app needs microphone access, which may be blocked when embedded.'));
+      iframeNotice.textContent = 'This app needs microphone access, which may be blocked when embedded.';
       iframeNotice.appendChild(document.createElement('br'));
       const link = document.createElement('a');
       link.href = directUrl;
@@ -2357,7 +2451,14 @@ class VoxBallGame {
     }
 
     const showError = (msg) => {
-      errorBanner.innerHTML = msg;
+      if (msg instanceof Node) {
+        errorBanner.innerHTML = '';
+        errorBanner.appendChild(msg);
+        if (statusLiveRegion) statusLiveRegion.textContent = msg.textContent.trim();
+      } else {
+        errorBanner.innerHTML = msg;
+        if (statusLiveRegion) statusLiveRegion.textContent = String(msg).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      }
       errorBanner.classList.add('show');
       if (statusLiveRegion) statusLiveRegion.textContent = String(msg).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     };
@@ -2399,6 +2500,109 @@ class VoxBallGame {
 
     recoverMicBtn?.addEventListener('click', recoverMicSession);
 
+    // Camera Mirror Logic
+    let cameraStream = null;
+
+    const stopCamera = () => {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+        cameraStream = null;
+      }
+      if (cameraVideo) {
+        cameraVideo.srcObject = null;
+      }
+      cameraModal?.classList.remove('show');
+      cameraBtn?.classList.remove('active');
+    };
+
+    const toggleCamera = async () => {
+      if (cameraModal?.classList.contains('show')) {
+        stopCamera();
+        return;
+      }
+
+      try {
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+        });
+        if (cameraVideo) {
+          cameraVideo.srcObject = cameraStream;
+        }
+        cameraModal?.classList.add('show');
+        cameraBtn?.classList.add('active');
+      } catch (e) {
+        showError('📷 Camera access denied or not available.');
+        console.error('Camera error:', e);
+      }
+    };
+
+    cameraBtn?.addEventListener('click', toggleCamera);
+    cameraClose?.addEventListener('click', stopCamera);
+
+    // Zoom Logic
+    cameraZoom?.addEventListener('input', (e) => {
+      if (cameraVideo) {
+        cameraVideo.style.transform = `scale(${e.target.value})`;
+      }
+    });
+
+    // Draggable Window Logic
+    let isDraggingCamera = false;
+    let cameraDragStartX = 0;
+    let cameraDragStartY = 0;
+    let cameraModalStartX = 0;
+    let cameraModalStartY = 0;
+
+    cameraHeader?.addEventListener('pointerdown', (e) => {
+      isDraggingCamera = true;
+      cameraDragStartX = e.clientX;
+      cameraDragStartY = e.clientY;
+
+      const rect = cameraModal.getBoundingClientRect();
+      cameraModalStartX = rect.left;
+      cameraModalStartY = rect.top;
+
+      cameraHeader.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+
+    cameraHeader?.addEventListener('pointermove', (e) => {
+      if (!isDraggingCamera || !cameraModal) return;
+
+      const dx = e.clientX - cameraDragStartX;
+      const dy = e.clientY - cameraDragStartY;
+
+      // Keep it within window bounds approximately
+      const newLeft = Math.max(0, Math.min(window.innerWidth - cameraModal.offsetWidth, cameraModalStartX + dx));
+      const newTop = Math.max(0, Math.min(window.innerHeight - 40, cameraModalStartY + dy));
+
+      cameraModal.style.left = `${newLeft}px`;
+      cameraModal.style.top = `${newTop}px`;
+      cameraModal.style.right = 'auto'; // overriding initial right positioning
+    });
+
+    cameraHeader?.addEventListener('pointerup', (e) => {
+      isDraggingCamera = false;
+      cameraHeader.releasePointerCapture(e.pointerId);
+    });
+
+    // Audio file upload handling
+    const audioUploadInput = document.getElementById('audioUploadInput');
+    let selectedAudioFile = null;
+
+    audioUploadInput?.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files.length > 0) {
+        selectedAudioFile = e.target.files[0];
+
+        // if a game is running, stop it and start again with file
+        if (this.isRunning) {
+          stopGame().then(() => startGame());
+        } else {
+          startGame();
+        }
+      }
+    });
+
     const startGame = async () => {
       this._resetKeyboardModeState();
       if (this.gameMode === 'keyboard') {
@@ -2416,27 +2620,42 @@ class VoxBallGame {
         this.idleAnimId = null;
       }
 
-      // Check if getUserMedia is available at all
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        showError(
-          '🎙 Microphone API not available.<br>' +
-          'This requires HTTPS and a modern browser. ' +
-          (isInIframe
-            ? '<a href="' + window.location.href + '" target="_blank">Try opening in a new tab ↗</a>'
-            : 'Please use Chrome, Firefox, Safari, or Edge.')
-        );
+      // Check if we have an audio file OR microphone
+      if (!selectedAudioFile && (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)) {
+        const errNode = document.createElement('div');
+        errNode.innerHTML = '🎙 Microphone API not available and no audio file selected.<br>This requires HTTPS and a modern browser. ';
+        if (isInIframe) {
+          const link = document.createElement('a');
+          link.href = window.location.href;
+          link.target = '_blank';
+          link.textContent = 'Try opening in a new tab ↗';
+          errNode.appendChild(link);
+        } else {
+          errNode.appendChild(document.createTextNode('Please use Chrome, Firefox, Safari, or Edge.'));
+        }
+        showError(errNode);
         this.drawIdleScene();
         return;
       }
 
-      const result = await this.analyzer.start();
+      const result = await this.analyzer.start(selectedAudioFile);
+
+      // Clear the selected file after starting so it doesn't persistently start with the file
+      // if the user later clicks the normal Start button.
+      selectedAudioFile = null;
+      if (audioUploadInput) audioUploadInput.value = "";
+
       if (!result.ok) {
         let msg = '';
         if (result.error === 'NotAllowedError') {
           if (isInIframe) {
-            msg =
-              '🎙 Microphone blocked by browser — this usually happens inside iframes.<br>' +
-              '<a href="' + window.location.href + '" target="_blank">Open in a new tab for full mic access ↗</a>';
+            msg = document.createElement('div');
+            msg.innerHTML = '🎙 Microphone blocked by browser — this usually happens inside iframes.<br>';
+            const link = document.createElement('a');
+            link.href = window.location.href;
+            link.target = '_blank';
+            link.textContent = 'Open in a new tab for full mic access ↗';
+            msg.appendChild(link);
           } else {
             msg =
               '🎙 Microphone permission denied.<br>' +
@@ -2447,7 +2666,8 @@ class VoxBallGame {
         } else if (result.error === 'NotReadableError') {
           msg = '🎙 Microphone is in use by another app. Close other apps using the mic and try again.';
         } else {
-          msg = '🎙 Could not access microphone: ' + (result.message || result.error);
+          msg = document.createElement('div');
+          msg.textContent = '🎙 Could not access microphone: ' + (result.message || result.error);
         }
         showError(msg);
         this.drawIdleScene();
@@ -2583,6 +2803,14 @@ class VoxBallGame {
       }
       if (this.gameMode === 'prism') {
         this._resetPrismReaderState();
+        if (this.prismReader.passageMode === 'freestyle' && this.prismReader.processMode === 'realtime') {
+          if (this.prismReader.speechRecognition) {
+            try { this.prismReader.speechRecognition.start(); } catch (e) { }
+          }
+        }
+      }
+      if (this.gameMode === 'vowelvalley') {
+        this._resetVowelValleyState();
       }
 
       // Clear vibration alert tripped highlights
@@ -2618,7 +2846,7 @@ class VoxBallGame {
       helpTooltip.classList.remove('show');
       vibPanel.classList.remove('show');
       recordingsDrawer.classList.remove('show');
-      const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot', road: 'Resonance Road', ascent: 'Spectral Ascent', prism: 'Prism Reader' };
+      const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot', road: 'Resonance Road', ascent: 'Spectral Ascent', prism: 'Prism Reader', vowelvalley: 'Vowel Valley' };
       startBtn.textContent = `⏹ Stop ${modeNames[this.gameMode] || ''}`;
       startBtn.classList.add('active');
       recBtn.classList.add('visible');
@@ -2636,6 +2864,9 @@ class VoxBallGame {
         recBtn.classList.remove('recording');
         recBtn.querySelector('.rec-label').textContent = 'Rec';
         await this.stopRecording();
+      }
+      if (this.prismReader && this.prismReader.speechRecognition) {
+        try { this.prismReader.speechRecognition.stop(); } catch (e) { }
       }
       this.isRunning = false;
       const hud = document.getElementById('creatureStyleHud');
@@ -2687,6 +2918,7 @@ class VoxBallGame {
         if (hud) hud.style.display = 'none';
         this.analyzer.stop();
       setRecoverMicVisible(false);
+        setRecoverMicVisible(false);
         const prismOvl = document.getElementById('prismOverlay');
         if (prismOvl) prismOvl.classList.remove('show');
         startBtn.textContent = '🎙 Start';
@@ -2777,6 +3009,7 @@ class VoxBallGame {
     const roadDetails = document.getElementById('roadDetails');
     const ascentDetails = document.getElementById('ascentDetails');
     const prismDetails = document.getElementById('prismDetails');
+    const vowelvalleyDetails = document.getElementById('vowelvalleyDetails');
     const modeCards = modePicker ? modePicker.querySelectorAll('.mode-card') : [];
 
     document.querySelectorAll('.canvas-only').forEach(el => el.classList.toggle('show', this.gameMode === 'canvas' || this.gameMode === 'keyboard'));
@@ -2798,9 +3031,12 @@ class VoxBallGame {
       roadDetails?.classList.toggle('show', mode === 'road');
       ascentDetails?.classList.toggle('show', mode === 'ascent');
       prismDetails?.classList.toggle('show', mode === 'prism');
+      vowelvalleyDetails?.classList.toggle('show', mode === 'vowelvalley');
 
       const titles = { ball: 'VOX BALL', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD', ascent: 'SPECTRAL ASCENT', prism: 'PRISM READER' };
       document.querySelector('.hud-title').textContent = titles[mode] || 'VOX BALL';
+      const titles = { ball: 'VOX ARCADE', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD', ascent: 'SPECTRAL ASCENT', prism: 'PRISM READER', vowelvalley: 'VOWEL VALLEY' };
+      document.querySelector('.hud-title').textContent = titles[mode] || 'VOX ARCADE';
       const canvasOnly = document.querySelectorAll('.canvas-only');
       canvasOnly.forEach(el => el.classList.toggle('show', mode === 'canvas' || mode === 'keyboard'));
       if (canvasModeSelect) {
@@ -2815,6 +3051,7 @@ class VoxBallGame {
       if (mode === 'road') this._resetResonanceRoadState();
       if (mode === 'ascent') this._resetSpectralAscentState();
       if (mode === 'prism') this._resetPrismReaderState();
+      if (mode === 'vowelvalley') this._resetVowelValleyState();
       if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
       if (!this.isRunning) this.drawIdleScene();
     };
@@ -2925,10 +3162,7 @@ class VoxBallGame {
       this.pitchGuideLabelMode = e.target.value;
     });
 
-    gridContrastBtn?.addEventListener('click', () => {
-      this.pitchGridStrength = this.pitchGridStrength === 'soft' ? 'strong' : 'soft';
-      gridContrastBtn.textContent = this.pitchGridStrength === 'soft' ? 'Grid: Soft' : 'Grid: Strong';
-    });
+
 
     roadTargetSelect?.addEventListener('change', (e) => {
       this.resonanceRoad.targetTone = e.target.value;
@@ -3077,10 +3311,29 @@ class VoxBallGame {
 
     // Colorblind mode toggle
     const cbBtn = document.getElementById('cbToggle');
-    cbBtn.addEventListener('click', () => {
-      this.colorblindMode = !this.colorblindMode;
-      document.documentElement.classList.toggle('colorblind', this.colorblindMode);
-      cbBtn.classList.toggle('active', this.colorblindMode);
+    if (cbBtn) {
+      cbBtn.addEventListener('click', () => {
+        this.colorblindMode = !this.colorblindMode;
+        document.documentElement.classList.toggle('colorblind', this.colorblindMode);
+        cbBtn.classList.toggle('active', this.colorblindMode);
+      });
+    }
+
+
+    const syncMotionToggleLabel = () => {
+      if (!motionToggle) return;
+      const next = this.userMotionPreference === 'auto' ? 'Auto' : this.userMotionPreference === 'low' ? 'Low' : 'Full';
+      motionToggle.textContent = `Motion: ${next}`;
+      motionToggle.classList.toggle('active', this.userMotionPreference === 'low');
+    };
+    syncMotionToggleLabel();
+    motionToggle?.addEventListener('click', () => {
+      const order = ['auto', 'low', 'full'];
+      const idx = order.indexOf(this.userMotionPreference);
+      this.userMotionPreference = order[(idx + 1) % order.length];
+      localStorage.setItem('vox:motionPreference', this.userMotionPreference);
+      this._applyMotionPreferences();
+      syncMotionToggleLabel();
     });
 
 
@@ -3108,17 +3361,60 @@ class VoxBallGame {
     const vibAddBtn = document.getElementById('vibAddRule');
     const gameArea = document.querySelector('.game-area');
 
-    vibBtn.addEventListener('click', (e) => {
+    // ---- Settings Panel UI ----
+    const settingsBtn = document.getElementById('settingsBtn');
+    const settingsPanel = document.getElementById('settingsPanel');
+    const modalBackdrop = document.getElementById('modalBackdrop');
+    const closeSettingsBtn = document.getElementById('closeSettingsBtn');
+
+    const toggleSettings = (show) => {
+      const isVisible = show !== undefined ? show : !settingsPanel.classList.contains('show');
+      settingsPanel.classList.toggle('show', isVisible);
+      modalBackdrop.classList.toggle('show', isVisible);
+
+      if (isVisible) {
+        helpTooltip.classList.remove('show');
+        recordingsDrawer.classList.remove('show');
+        vibPanel.classList.remove('show');
+      }
+    };
+
+    settingsBtn?.addEventListener('click', (e) => {
       e.stopPropagation();
-      vibPanel.classList.toggle('show');
-      helpTooltip.classList.remove('show');
-      recordingsDrawer.classList.remove('show');
+      toggleSettings();
     });
 
-    vibMaster.addEventListener('change', () => {
-      this.vibration.enabled = vibMaster.checked;
-      vibBtn.classList.toggle('active', vibMaster.checked);
+    closeSettingsBtn?.addEventListener('click', () => toggleSettings(false));
+    modalBackdrop?.addEventListener('click', () => toggleSettings(false));
+
+    // Global click-to-close for all overlays
+    document.addEventListener('click', (e) => {
+      // Settings panel (if clicking outside and not the gear)
+      if (settingsPanel && !settingsPanel.contains(e.target) && e.target !== settingsBtn && !settingsBtn.contains(e.target)) {
+        if (settingsPanel.classList.contains('show')) toggleSettings(false);
+      }
+      // Vibration panel
+      if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || e.target !== vibBtn)) {
+        vibPanel.classList.remove('show');
+      }
     });
+
+    if (vibBtn) {
+      vibBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (vibPanel) vibPanel.classList.toggle('show');
+        if (helpTooltip) helpTooltip.classList.remove('show');
+        if (recordingsDrawer) recordingsDrawer.classList.remove('show');
+        if (settingsPanel) settingsPanel.classList.remove('show');
+      });
+    }
+
+    if (vibMaster) {
+      vibMaster.addEventListener('change', () => {
+        this.vibration.enabled = vibMaster.checked;
+        if (vibBtn) vibBtn.classList.toggle('active', vibMaster.checked);
+      });
+    }
 
     const vibMetrics = [
       { value: 'pitch', label: 'Pitch (Hz)', unit: 'Hz', min: 50, max: 500, step: 5, defaultBelow: 150, defaultAbove: 250 },
@@ -3332,27 +3628,45 @@ class VoxBallGame {
     });
 
     document.addEventListener('click', (e) => {
-      if (!helpTooltip.contains(e.target) && e.target !== helpBtn) {
+      if (helpTooltip && !helpTooltip.contains(e.target) && e.target !== helpBtn) {
         helpTooltip.classList.remove('show');
       }
-      if (!recordingsDrawer.contains(e.target) && !recordingsBtn.contains(e.target)) {
+      if (recordingsDrawer && !recordingsDrawer.contains(e.target) && (!recordingsBtn || !recordingsBtn.contains(e.target))) {
         recordingsDrawer.classList.remove('show');
       }
-      if (!vibPanel.contains(e.target) && !vibBtn.contains(e.target)) {
+      if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || !vibBtn.contains(e.target))) {
         vibPanel.classList.remove('show');
       }
     });
 
     // Recording controls
-    recBtn.addEventListener('click', () => {
-      if (this.isRecording) {
-        this.stopRecording();
-        recBtn.classList.remove('recording');
-        recBtn.querySelector('.rec-label').textContent = 'Rec';
-      } else {
-        this.startRecording();
-        recBtn.classList.add('recording');
-        recBtn.querySelector('.rec-label').textContent = 'Stop';
+    if (typeof recBtn !== 'undefined' && recBtn) {
+      recBtn.addEventListener('click', () => {
+        if (this.isRecording) {
+          this.stopRecording();
+          recBtn.classList.remove('recording');
+          recBtn.querySelector('.rec-label').textContent = 'Rec';
+        } else {
+          this.startRecording();
+          recBtn.classList.add('recording');
+          recBtn.querySelector('.rec-label').textContent = 'Stop';
+        }
+      });
+    }
+
+
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState !== 'visible' || !this.isRunning) return;
+      try {
+        if (navigator.permissions?.query) {
+          const mic = await navigator.permissions.query({ name: 'microphone' });
+          if (mic.state === 'denied') {
+            showError('🎙 Microphone permission changed to denied. Re-enable browser mic permission, then click Recover Mic.');
+            setRecoverMicVisible(true);
+          }
+        }
+      } catch (e) {
+        // non-blocking permissions probe
       }
     });
 
@@ -3383,6 +3697,17 @@ class VoxBallGame {
       if (this.recordings.length === 0) return;
       this.clearAllRecordings();
     });
+
+    this.canvas.addEventListener('pointerdown', (e) => this._handleKeyboardPointer(e));
+    this.canvas.addEventListener('pointermove', (e) => this._handleKeyboardPointer(e));
+    this.canvas.addEventListener('pointerup', (e) => this._stopPointerNote(e.pointerId));
+    this.canvas.addEventListener('pointercancel', (e) => this._stopPointerNote(e.pointerId));
+    this.canvas.addEventListener('contextmenu', (e) => {
+      if (this.gameMode === 'keyboard' || (this.gameMode === 'canvas' && this.canvasMode === 'keyboard')) {
+        e.preventDefault();
+      }
+    });
+
   }
 
   // FIX: Idle scene animation behind the overlay
@@ -3564,6 +3889,9 @@ class VoxBallGame {
     } else if (this.gameMode === 'prism') {
       this.updatePrismReader(dt);
       this.drawPrismReaderScene();
+    } else if (this.gameMode === 'vowelvalley') {
+      this.updateVowelValley(dt);
+      this.drawVowelValleyScene(this.prosodyScore);
     } else {
       this.update(dt);
       this.drawSceneInternal(this.prosodyScore);
@@ -3763,10 +4091,10 @@ class VoxBallGame {
     const ps = this.prosodyScore;
 
     // ==========================================================
-    // SCROLL SPEED — prosody drives movement, not volume
-    // Monotone: sluggish crawl (20 px/s). Full prosody: 280 px/s.
+    // SCROLL SPEED — prosody + tempo drives movement
+    // Monotone: sluggish crawl (20 px/s). High tempo: >300 px/s.
     // ==========================================================
-    this.targetScrollSpeed = 20 + ps * 260;
+    this.targetScrollSpeed = 20 + ps * 100 + m.tempo * 300;
     this.scrollSpeed += (this.targetScrollSpeed - this.scrollSpeed) * 0.06;
     this.scrollX += this.scrollSpeed * dt;
 
@@ -3779,7 +4107,7 @@ class VoxBallGame {
     // At ps=0.4 → ~120px height. At ps=0.8 → ~400px height.
     // ==========================================================
     if (m.syllable > 0.5) {
-      const bouncePower = 80 + ps * 1200;
+      const bouncePower = 120 + ps * 1800;
       if (this.ball.vy > -bouncePower * 0.5) {
         this.ball.vy = -bouncePower * m.syllable;
         this.ball.onGround = false;
@@ -3810,7 +4138,7 @@ class VoxBallGame {
     // Stronger force so expressive speech sustains altitude
     // ==========================================================
     if (m.bounce > 0.2) {
-      this.ball.vy -= m.bounce * ps * 800 * dt;
+      this.ball.vy -= m.bounce * ps * 1200 * dt;
     }
 
     if (!this.ball.onGround) {
@@ -4323,16 +4651,16 @@ class VoxBallGame {
       p.targetR = shapedR * breathScale + wobble + dance;
       p.r += (p.targetR - p.r) * (4 + ps * 4) * dt;
     }
-    const targetFloat = -pitchNorm * 80 * (0.3 + (S.pitchConf || 0) * 0.7);
+    const targetFloat = -pitchNorm * 140 * (0.3 + (S.pitchConf || 0) * 0.7);
     c.floatY += (targetFloat - c.floatY) * 2.5 * dt;
     c.glow += ((0.15 + ps * 0.7 + m.energy * 0.3) - c.glow) * 3 * dt;
     if (ps > 0.45) { c.transformLevel += (ps - 0.45) * 0.8 * dt; }
     else { c.transformLevel -= 0.15 * dt; }
     c.transformLevel = Math.max(0, Math.min(1, c.transformLevel));
-    c.wingSpread += (c.transformLevel * 0.9 - c.wingSpread) * 2 * dt;
-    c.tendrilGrow += ((m.vowel * 0.8 + m.energy * 0.2) - c.tendrilGrow) * 3 * dt;
+    c.wingSpread += (c.transformLevel * 1.5 - c.wingSpread) * 2 * dt;
+    c.tendrilGrow += ((m.vowel * 1.2 + m.energy * 0.4) - c.tendrilGrow) * 3 * dt;
     for (const t of c.tendrils) {
-      t.targetLength = c.tendrilGrow * (60 + ps * 80);
+      t.targetLength = c.tendrilGrow * (100 + ps * 120);
       t.length += (t.targetLength - t.length) * 3 * dt;
       t.phase += dt * (1.5 + ps);
     }
@@ -4371,11 +4699,11 @@ class VoxBallGame {
     j.breath += dt * (1.2 + ps * 0.6);
     j.pulsePhase += dt * (0.8 + ps * 0.4);
     // Float with pitch
-    const targetFloat = -pitchNorm * 100 * (0.3 + (pitchConf || 0) * 0.7);
+    const targetFloat = -pitchNorm * 160 * (0.3 + (pitchConf || 0) * 0.7);
     j.floatY += (targetFloat - j.floatY) * 2.0 * dt;
     // Bell size — resonance shapes aspect, energy grows it
-    j.bellW += ((55 + m.energy * 30 + ps * 15) * (1.3 - (res || 0.5) * 0.6) - j.bellW) * 3 * dt;
-    j.bellH += ((45 + m.energy * 25 + ps * 10) * (0.7 + (res || 0.5) * 0.6) - j.bellH) * 3 * dt;
+    j.bellW += ((65 + m.energy * 45 + ps * 25) * (1.3 - (res || 0.5) * 0.6) - j.bellW) * 3 * dt;
+    j.bellH += ((55 + m.energy * 35 + ps * 20) * (0.7 + (res || 0.5) * 0.6) - j.bellH) * 3 * dt;
     // Glow & transform
     j.glow += ((0.15 + ps * 0.6 + m.energy * 0.3) - j.glow) * 3 * dt;
     j.biolumFlash = m.articulation > 0.4 ? Math.min(1, j.biolumFlash + dt * 8) : j.biolumFlash * (1 - dt * 4);
@@ -4384,7 +4712,7 @@ class VoxBallGame {
     j.transformLevel = Math.max(0, Math.min(1, j.transformLevel));
     // Tentacles — vowels extend them
     for (const t of j.tentacles) {
-      t.targetLen = 30 + m.vowel * 80 + ps * 40 + j.transformLevel * 30;
+      t.targetLen = 45 + m.vowel * 120 + ps * 60 + j.transformLevel * 45;
       t.length += (t.targetLen - t.length) * 3 * dt;
       t.phase += dt * (1.0 + ps * 0.5);
     }
@@ -4409,12 +4737,12 @@ class VoxBallGame {
     const { ps, m, dt, pitchNorm, res, pitchConf } = S;
     const p = this._phoenix;
     p.breath += dt * (1.5 + ps);
-    const targetFloat = -pitchNorm * 90 * (0.3 + (pitchConf || 0) * 0.7);
+    const targetFloat = -pitchNorm * 150 * (0.3 + (pitchConf || 0) * 0.7);
     p.floatY += (targetFloat - p.floatY) * 2.5 * dt;
     // Wings lift with pitch
-    p.wingAngle += ((0.15 + pitchNorm * 0.7 + ps * 0.3) * Math.PI * 0.5 - p.wingAngle) * 3 * dt;
+    p.wingAngle += ((0.15 + pitchNorm * 0.9 + ps * 0.4) * Math.PI * 0.5 - p.wingAngle) * 3 * dt;
     // Tail grows with vowels
-    p.tailLen += ((20 + m.vowel * 100 + ps * 50) - p.tailLen) * 3 * dt;
+    p.tailLen += ((30 + m.vowel * 150 + ps * 75) - p.tailLen) * 3 * dt;
     // Flame intensity
     p.flameIntensity += ((0.1 + ps * 0.7 + m.energy * 0.3) - p.flameIntensity) * 3 * dt;
     // Transform
@@ -4476,9 +4804,9 @@ class VoxBallGame {
     // Compression — pitch compresses the cloud
     n.compression += ((1.0 - pitchNorm * 0.5 + ps * 0.2) - n.compression) * 2 * dt;
     // Radius with energy
-    n.radius += ((70 + m.energy * 40 + ps * 20) * n.compression - n.radius) * 2 * dt;
+    n.radius += ((100 + m.energy * 60 + ps * 30) * n.compression - n.radius) * 2 * dt;
     // Spiral arms from vowels
-    n.spiralLen += ((m.vowel * 120 + ps * 60) - n.spiralLen) * 2 * dt;
+    n.spiralLen += ((m.vowel * 180 + ps * 90) - n.spiralLen) * 2 * dt;
     n.spiralAngle += dt * (0.2 + ps * 0.3);
     // Core glow
     n.coreGlow += ((0.1 + ps * 0.6 + m.energy * 0.3) - n.coreGlow) * 3 * dt;
@@ -4508,10 +4836,10 @@ class VoxBallGame {
     const { ps, m, dt, pitchNorm, res, pitchConf } = S;
     const sp = this._spirit;
     sp.breath += dt * (1.0 + ps * 0.5);
-    const targetFloat = -pitchNorm * 80 * (0.3 + (pitchConf || 0) * 0.7);
+    const targetFloat = -pitchNorm * 140 * (0.3 + (pitchConf || 0) * 0.7);
     sp.floatY += (targetFloat - sp.floatY) * 2.5 * dt;
     // Orb size
-    sp.orbR += ((18 + m.energy * 12 + ps * 8) - sp.orbR) * 3 * dt;
+    sp.orbR += ((25 + m.energy * 20 + ps * 12) - sp.orbR) * 3 * dt;
     // Glow
     sp.glow += ((0.15 + ps * 0.6 + m.energy * 0.3) - sp.glow) * 3 * dt;
     // Color temp — res warm/cool
@@ -4522,7 +4850,7 @@ class VoxBallGame {
     sp.transformLevel = Math.max(0, Math.min(1, sp.transformLevel));
     // Ribbons — vowels extend
     for (const r of sp.ribbons) {
-      r.targetLen = 30 + m.vowel * 90 + ps * 40 + sp.transformLevel * 40;
+      r.targetLen = 45 + m.vowel * 135 + ps * 60 + sp.transformLevel * 60;
       r.length += (r.targetLen - r.length) * 3 * dt;
       r.phase += dt * (r.freq + ps * 0.5);
     }
@@ -4557,10 +4885,10 @@ class VoxBallGame {
     k.breath += dt * (1.0 + ps * 0.5);
     k.swimPhase += dt * (2.0 + ps * 1.5);
     // Depth from pitch
-    const targetFloat = -pitchNorm * 80 * (0.3 + (pitchConf || 0) * 0.7);
+    const targetFloat = -pitchNorm * 140 * (0.3 + (pitchConf || 0) * 0.7);
     k.floatY += (targetFloat - k.floatY) * 2.0 * dt;
     // Fin extension from vowels
-    k.finExt += ((m.vowel * 0.8 + ps * 0.3) - k.finExt) * 3 * dt;
+    k.finExt += ((m.vowel * 1.2 + ps * 0.5) - k.finExt) * 3 * dt;
     // Tail amplitude from energy
     k.tailAmp += ((0.3 + m.energy * 0.5 + ps * 0.3) - k.tailAmp) * 3 * dt;
     // Iridescence from resonance
@@ -4569,8 +4897,8 @@ class VoxBallGame {
     if (ps > 0.45) k.transformLevel += (ps - 0.45) * 0.6 * dt;
     else k.transformLevel -= 0.1 * dt;
     k.transformLevel = Math.max(0, Math.min(1, k.transformLevel));
-    k.whiskerLen += (k.transformLevel * 50 - k.whiskerLen) * 2 * dt;
-    k.bodyLen += ((1 + k.transformLevel * 0.5) - k.bodyLen) * 1.5 * dt;
+    k.whiskerLen += (k.transformLevel * 80 - k.whiskerLen) * 2 * dt;
+    k.bodyLen += ((1 + k.transformLevel * 0.8) - k.bodyLen) * 1.5 * dt;
     // Ripples on articulation
     if (m.articulation > 0.3 && ps > 0.05) {
       k.ripples.push({ r: 10, maxR: 60 + Math.random() * 40, life: 1, x: (Math.random() - 0.5) * 40, y: (Math.random() - 0.5) * 20 });
@@ -4607,8 +4935,18 @@ class VoxBallGame {
       }
       ctx.globalAlpha = 1;
     }
+    // 1. Confusion Jitter setup (applied before dispatch)
+    let cxJitter = 0, cyJitter = 0;
+    const m = this.analyzer.metrics;
+    if (ps < 0.15 && m.energy > 0.1) {
+      cxJitter = (Math.random() - 0.5) * 15 * m.energy;
+      cyJitter = (Math.random() - 0.5) * 15 * m.energy;
+      ctx.save();
+      ctx.translate(cxJitter, cyJitter);
+    }
+
     // --- Dispatch ---
-    const S = { ctx, w, h, ps, hue, sat, lit, time };
+    const S = { ctx, w, h, ps, hue, sat, lit, time, res: this.analyzer.smoothResonance, m };
     switch (this.creatureStyle) {
       case 'jellyfish': this._drawJellyfish(S); break;
       case 'phoenix': this._drawPhoenix(S); break;
@@ -4617,6 +4955,83 @@ class VoxBallGame {
       case 'koi': this._drawKoi(S); break;
       default: this._drawBlob(S); break;
     }
+
+    // --- Global Exaggerations (Applied to all styles) ---
+
+    // 1. Confusion Jitter (low prosody, high energy)
+    let jitterX = 0; let jitterY = 0;
+    if (ps < 0.15 && m.energy > 0.1) {
+      jitterX = (Math.random() - 0.5) * 10 * m.energy;
+      jitterY = (Math.random() - 0.5) * 10 * m.energy;
+      ctx.translate(jitterX, jitterY); // Apply jitter to subsequent shared effects if desired, but mostly it would need to be applied *before* the creature is drawn.
+      // Actually, to apply jitter to the creature itself, we need to pass it into S or apply it to the context before dispatching. Let's do a screen shake effect instead.
+    }
+
+    // 2. Super Voice Overdrive Aura
+    if (ps > 0.7 && m.energy > 0.6) {
+      const cx = w / 2, cy = h * 0.5;
+      const auraPulse = 0.5 + 0.5 * Math.sin(time * 15);
+      const intensity = (ps - 0.7) * (m.energy - 0.5) * 10;
+
+      const aG = ctx.createRadialGradient(cx, cy, 50, cx, cy, 300 + auraPulse * 50);
+      aG.addColorStop(0, `hsla(${hue + 40}, 90%, 70%, ${0.3 * intensity})`);
+      aG.addColorStop(0.5, `hsla(${hue}, 100%, 60%, ${0.1 * intensity})`);
+      aG.addColorStop(1, 'rgba(0,0,0,0)');
+
+      ctx.globalCompositeOperation = 'screen';
+      ctx.fillStyle = aG;
+      ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // 3. Tempo Dashes (Speed Lines)
+    if (m.tempo > 0.6 && ps > 0.2) {
+      const lineCount = Math.floor(m.tempo * 15);
+      ctx.strokeStyle = `hsla(${hue}, 80%, 80%, ${m.tempo * 0.3})`;
+      ctx.lineWidth = 1 + m.tempo * 2;
+      for (let i = 0; i < lineCount; i++) {
+        const y = h * 0.2 + Math.random() * h * 0.6;
+        const len = 50 + Math.random() * 200 * m.tempo;
+        const x = w / 2 - 100 - Math.random() * 300; // Left side rushing in
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x - len, y);
+        ctx.stroke();
+
+        const x2 = w / 2 + 100 + Math.random() * 300; // Right side rushing out
+        ctx.beginPath();
+        ctx.moveTo(x2, y);
+        ctx.lineTo(x2 + len, y);
+        ctx.stroke();
+      }
+    }
+
+    // 4. Syllable Shockwaves
+    if (!this._shockwaves) this._shockwaves = [];
+    if (m.syllable > 0.6 && ps > 0.2) {
+      this._shockwaves.push({ r: 50, life: 1.0, maxLife: 1.0, cx: w / 2, cy: h * 0.5, hue: hue });
+    }
+
+    // Draw and update shockwaves
+    for (let i = this._shockwaves.length - 1; i >= 0; i--) {
+      const sw = this._shockwaves[i];
+      sw.r += 800 * (1 / 60); // fast expansion
+      sw.life -= (1 / 60) * 2; // half second life
+
+      if (sw.life > 0) {
+        ctx.strokeStyle = `hsla(${sw.hue}, 100%, 80%, ${sw.life * 0.5})`;
+        ctx.lineWidth = 2 + sw.life * 5;
+        ctx.beginPath();
+        ctx.arc(sw.cx, sw.cy, sw.r, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        this._shockwaves.splice(i, 1);
+      }
+    }
+    if (ps < 0.15 && m.energy > 0.1) {
+      ctx.restore(); // remove jitter transform
+    }
+
     // --- Shared HUD ---
     ctx.font = '600 14px "Space Mono", monospace';
     ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.textAlign = 'right';
@@ -5161,10 +5576,10 @@ class VoxBallGame {
       growth: initGrowth || 0,
       bloom: 0,
       age: 0,       // time since spawned
-      maxH: (type === 'tree' ? 80 + srand(1) * 60
-        : type === 'flower' ? 40 + srand(1) * 30
-          : type === 'fern' ? 30 + srand(1) * 20
-            : 18 + srand(1) * 14) * (0.6 + depth * 0.4),
+      maxH: (type === 'tree' ? 120 + srand(1) * 90
+        : type === 'flower' ? 60 + srand(1) * 45
+          : type === 'fern' ? 45 + srand(1) * 30
+            : 27 + srand(1) * 21) * (0.6 + depth * 0.4),
       swayPhase: srand(2) * Math.PI * 2,
       variant: srand(3),
       seed,
@@ -5172,6 +5587,9 @@ class VoxBallGame {
       fruitAngles: Array.from({ length: 6 }, (_, i) => srand(10 + i) * Math.PI * 2),
       fruitDists: Array.from({ length: 6 }, (_, i) => 0.3 + srand(20 + i) * 0.5),
       spotAngles: Array.from({ length: 4 }, (_, i) => -Math.PI + srand(30 + i) * Math.PI),
+      // Effects states
+      bouncePhase: 0,
+      isBoomTree: false
     };
   }
 
@@ -5189,8 +5607,8 @@ class VoxBallGame {
       m.articulation * 0.15 + m.syllable * 0.15;
     this.prosodyScore += (rawPS - this.prosodyScore) * 2.0 * dt;
 
-    // Vowel → global growth multiplier (sunlight)
-    g.globalGrowth += ((m.vowel * 0.7 + m.energy * 0.3) - g.globalGrowth) * 3 * dt;
+    // Vowel → global growth multiplier (sunlight) - exaggerated 1.5x
+    g.globalGrowth += ((m.vowel * 1.05 + m.energy * 0.45) - g.globalGrowth) * 3 * dt;
 
     // Syllable → spawn new plants
     g.spawnCooldown -= dt;
@@ -5212,19 +5630,53 @@ class VoxBallGame {
       const sat = 40 + res * 50;
 
       g.cursor += 20 + Math.random() * 40;
-      g.plants.push(this._makeGardenPlant(g.cursor, type, hue, sat, 0.005));
+      const newPlant = this._makeGardenPlant(g.cursor, type, hue, sat, 0.005);
+
+      // Booming Tree effect
+      if (type === 'tree' && m.energy > 0.7) {
+        newPlant.isBoomTree = true;
+        newPlant.growth = 0.5 + Math.random() * 0.3; // instant partial growth
+        // Spawn dust cloud
+        for (let d = 0; d < 15; d++) {
+          g.pollen.push({
+            x: g.cursor + (Math.random() - 0.5) * 40, y: h * 0.76 - 5,
+            vx: (Math.random() - 0.5) * 80, vy: -20 - Math.random() * 40,
+            size: 3 + Math.random() * 5, life: 1, maxLife: 1.5 + Math.random(),
+            hue: 30, sat: 20, lit: 20, bright: false // dirt colors
+          });
+        }
+      }
+      // Bounce Mushroom setup
+      if (type === 'mushroom') {
+        newPlant.bounceAmp = 1.0 + m.syllable * 2.0;
+      }
+
+      g.plants.push(newPlant);
       g.spawnCooldown = 0.25 + Math.random() * 0.25;
       // Maintain depth sort (back-to-front) for draw order
       g.plants.sort((a, b) => a.depth - b.depth);
     }
 
     // Grow all plants + age tracking
-    const growSpeed = 0.12 + g.globalGrowth * 0.7 + ps * 0.3;
+    const growSpeed = 0.18 + g.globalGrowth * 1.05 + ps * 0.45; // 1.5x speed
     for (const p of g.plants) {
       p.age += dt;
       p.growth = Math.min(1, p.growth + growSpeed * dt * (0.4 + p.depth * 0.2));
       if (ps > 0.25 && p.growth > 0.3) {
-        p.bloom = Math.min(1, p.bloom + (ps - 0.2) * 0.4 * dt);
+        p.bloom = Math.min(1, p.bloom + (ps - 0.2) * 0.6 * dt); // bloom faster
+      }
+
+      // Super Bloom Force
+      if (ps > 0.8 && m.energy > 0.8) {
+        p.bloom = 1.0;
+        p.growth = Math.min(1.0, p.growth + 2.0 * dt);
+      }
+
+      // Mushroom Bounce animation
+      if (p.type === 'mushroom' && p.bounceAmp > 0) {
+        p.bouncePhase += dt * 15;
+        p.bounceAmp *= (1 - dt * 3);
+        if (p.bounceAmp < 0.01) p.bounceAmp = 0;
       }
     }
 
@@ -5235,23 +5687,44 @@ class VoxBallGame {
     const targetCamX = Math.max(0, rightEdge - this.width * 0.65);
     g.smoothCamX += (targetCamX - g.smoothCamX) * 2.5 * dt;
 
-    // Articulation → pollen bursts
-    if (m.articulation > 0.3 && ps > 0.1 && g.pollen.length < 60) {
-      const cnt = Math.floor(m.articulation * 3 * this.particleScale);
+    // Articulation → pollen bursts (Hyper-Vibe when tempo & ps are high)
+    const pollenMult = (m.tempo > 0.7 && ps > 0.5) ? 5 : 1;
+    if (m.articulation > 0.3 && ps > 0.1 && g.pollen.length < 60 * pollenMult) {
+      const cnt = Math.floor(m.articulation * 3 * this.particleScale * pollenMult);
       for (let i = 0; i < cnt; i++) {
         const rp = g.plants.length > 0
           ? g.plants[Math.max(0, g.plants.length - 1 - Math.floor(Math.random() * Math.min(10, g.plants.length)))]
           : null;
-        const px = rp ? rp.x + (Math.random() - 0.5) * 40 : g.cursor;
+        const px = rp ? rp.x + (Math.random() - 0.5) * 40 : g.cursor + (Math.random() - 0.5) * 100;
         g.pollen.push({
           x: px, y: g.groundY - 20 - Math.random() * 80,
-          vx: (Math.random() - 0.5) * 20,
-          vy: -10 - Math.random() * 25,
+          vx: (Math.random() - 0.5) * (20 * pollenMult),
+          vy: -10 - Math.random() * (25 * pollenMult),
           size: 1.5 + Math.random() * 2.5,
           life: 1, maxLife: 2.5 + Math.random() * 2,
           hue: rp ? rp.hue + Math.random() * 40 : 60,
+          sat: 65, lit: 78,
           bright: true,
         });
+      }
+    }
+
+    // Shooting Stars (High Pitch + Vowels)
+    if (this.analyzer.smoothPitchHz > 300 && m.vowel > 0.7 && Math.random() < 2 * dt) {
+      if (!g.stars) g.stars = [];
+      g.stars.push({
+        x: g.smoothCamX - 100, y: Math.random() * h * 0.4,
+        vx: 800 + Math.random() * 400, vy: (Math.random() - 0.5) * 200,
+        life: 1.0, size: 2 + Math.random() * 3
+      });
+    }
+    if (g.stars) {
+      for (let i = g.stars.length - 1; i >= 0; i--) {
+        const s = g.stars[i];
+        s.x += s.vx * dt;
+        s.y += s.vy * dt;
+        s.life -= dt * 0.5;
+        if (s.life <= 0 || s.x > g.smoothCamX + w + 100) g.stars.splice(i, 1);
       }
     }
 
@@ -5310,6 +5783,16 @@ class VoxBallGame {
     const camX = g.smoothCamX;
     const time = g.time;
 
+    // 1. Withering Glitch Jitter (low prosody, high energy)
+    let jitterX = 0, jitterY = 0;
+    const isGlitching = ps < 0.15 && this.analyzer.metrics.energy > 0.1;
+    if (isGlitching) {
+      jitterX = (Math.random() - 0.5) * 8 * this.analyzer.metrics.energy;
+      jitterY = (Math.random() - 0.5) * 8 * this.analyzer.metrics.energy;
+      ctx.save();
+      ctx.translate(jitterX, jitterY);
+    }
+
     // ---- Sky gradient — theme-aware with garden earth tones ----
     const gardenSkies = {
       highcontrast: ['#020206', '#04060a', '#080c10', '#101818', '#122020', '#08120a'],
@@ -5333,6 +5816,27 @@ class VoxBallGame {
         ctx.fillStyle = '#d8d0b8';
         ctx.beginPath();
         ctx.arc(star.x, star.y, star.size * 0.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // ---- Shooting Stars ----
+    if (g.stars) {
+      for (const s of g.stars) {
+        ctx.globalAlpha = s.life;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        // A streaking star
+        ctx.moveTo(s.x, s.y);
+        ctx.lineTo(s.x - 30 * s.life, s.y - 10 * s.life);
+        ctx.lineTo(s.x, s.y + s.size);
+        ctx.lineTo(s.x + 40 * s.life, s.y + 15 * s.life);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.size * 1.5, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.globalAlpha = 1;
@@ -5439,11 +5943,22 @@ class VoxBallGame {
 
       const depthScale = 0.5 + plant.depth * 0.5; // far=0.5x, near=1x
       const depthDim = 0.4 + plant.depth * 0.6;   // far=dimmer
+
+      // Withering Glitch effect on sway
+      const glitchSway = isGlitching ? (Math.random() - 0.5) * 10 : 0;
+
       const terrainAtPlant = getTerrainY(plant.x);
-      const sway = Math.sin(time * 1.2 + plant.swayPhase) * (2 + ps * 4) * gr * depthScale;
-      const pH = plant.maxH * gr * depthScale;
-      const hue = plant.hue;
-      const sat = plant.sat;
+      const sway = Math.sin(time * 1.2 + plant.swayPhase) * (2 + ps * 4) * gr * depthScale + glitchSway;
+      let pH = plant.maxH * gr * depthScale;
+      // Mushroom Bounce Y stretch
+      let bounceScaleY = 1.0;
+      if (plant.type === 'mushroom' && plant.bounceAmp > 0) {
+        bounceScaleY = 1.0 + Math.sin(plant.bouncePhase) * plant.bounceAmp;
+        pH *= bounceScaleY;
+      }
+
+      const hue = isGlitching ? plant.hue : plant.hue; // could grayscale, but jitter is enough
+      const sat = isGlitching ? plant.sat * 0.5 : plant.sat;
       const bloom = plant.bloom;
 
       ctx.save();
@@ -5626,10 +6141,11 @@ class VoxBallGame {
             ctx.restore();
           }
 
-          // Center pistil
-          ctx.fillStyle = `hsla(${hue + 40}, ${sat}%, 70%, ${bloom * 0.8 * depthDim})`;
+          // Center pistil (Hyper-vibe glow)
+          const isHyper = ps > 0.8 && this.analyzer.metrics.tempo > 0.7;
+          ctx.fillStyle = `hsla(${hue + 40}, ${isHyper ? 100 : sat}%, ${isHyper ? 90 : 70}%, ${bloom * 0.8 * depthDim})`;
           ctx.beginPath();
-          ctx.arc(flX, flY, (2 + bloom * 2) * depthScale, 0, Math.PI * 2);
+          ctx.arc(flX, flY, (2 + bloom * 2 + (isHyper ? 1.5 : 0)) * depthScale, 0, Math.PI * 2);
           ctx.fill();
         }
 
@@ -5733,6 +6249,21 @@ class VoxBallGame {
     }
     ctx.globalAlpha = 1;
 
+    // Super Bloom overlay
+    if (ps > 0.8 && this.analyzer.metrics.energy > 0.8) {
+      ctx.globalCompositeOperation = 'screen';
+      const sbGrad = ctx.createLinearGradient(0, h, 0, 0);
+      sbGrad.addColorStop(0, `hsla(120, 80%, 70%, ${(ps - 0.8) * 0.5})`);
+      sbGrad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = sbGrad;
+      ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    if (isGlitching) {
+      ctx.restore(); // remove jitter
+    }
+
     // HUD
     ctx.font = '600 14px "Space Mono", monospace';
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
@@ -5792,15 +6323,22 @@ class VoxBallGame {
     // Advance cursor — ONLY while speaking (slow drift in silence)
     const tempoMod = 0.6 + m.tempo * 0.8; // tempo modulates speed
     if (!this.voiceCanvasPaused) {
-      if (vc.isSpeaking && !this.voiceCanvasPaused) {
-        vc.cursorX += (35 + ps * 25) * tempoMod * dt;
+      if (this.canvasMode === 'freepaint') {
+        const resNorm = this.analyzer.smoothResonance;
+        const targetX = 30 + resNorm * (this.width - 60);
+        const lerpSpeed = vc.isSpeaking ? 5 * dt : 2 * dt;
+        vc.cursorX += (targetX - vc.cursorX) * lerpSpeed;
       } else {
-        vc.cursorX += 4 * dt; // tiny drift so it's not totally frozen
+        if (vc.isSpeaking) {
+          vc.cursorX += (35 + ps * 25) * tempoMod * dt;
+        } else {
+          vc.cursorX += 4 * dt; // tiny drift so it's not totally frozen
+        }
       }
     }
 
     // Wrap buffer
-    if (vc.cursorX >= vc.bufferW - 50) {
+    if (this.canvasMode !== 'freepaint' && vc.cursorX >= vc.bufferW - 50) {
       vc.cursorX = 30;
       if (vc.bufferCtx) vc.bufferCtx.clearRect(0, 0, vc.bufferW, vc.bufferH);
     }
@@ -5846,13 +6384,30 @@ class VoxBallGame {
       const cpX = (vc.lastPaintX + x) / 2;
       const cpY = vc.lastCtrlY + (targetY - vc.lastCtrlY) * 0.5;
 
-      // Main stroke
+      // Main stroke with visibility outline
       const analysisMode = this.voiceCanvasVisualStyle === 'analysis';
-      const mainAlpha = analysisMode ? Math.min(0.95, alpha + 0.1) : Math.min(0.85, alpha);
-      bCtx.strokeStyle = `hsla(${vc.strokeHue}, ${vc.strokeSat}%, ${vc.strokeLit}%, ${mainAlpha})`;
-      bCtx.lineWidth = analysisMode ? Math.max(2, 1.5 + vc.smoothEnergy * 8) : strokeW;
+      let mainAlpha = analysisMode ? Math.min(0.95, alpha + 0.1) : Math.min(0.85, alpha);
+      let baseWidth = analysisMode ? Math.max(2, 1.5 + vc.smoothEnergy * 8) : strokeW;
+
+      // Boost visibility for keyboard mode so it stands out against the keys
+      if (this.canvasMode === 'keyboard') {
+        mainAlpha = Math.min(1.0, mainAlpha + 0.35);
+        baseWidth = Math.max(3, baseWidth * 1.2);
+      }
+
+      // Dark outline for visibility against grid/background
+      bCtx.strokeStyle = `rgba(0,0,0,${mainAlpha * 0.75})`;
+      bCtx.lineWidth = baseWidth + 2.5;
       bCtx.lineCap = 'round';
       bCtx.lineJoin = 'round';
+      bCtx.beginPath();
+      bCtx.moveTo(vc.lastPaintX, vc.lastScreenY);
+      bCtx.quadraticCurveTo(cpX, cpY, x, targetY);
+      bCtx.stroke();
+
+      // Main color stroke
+      bCtx.strokeStyle = `hsla(${vc.strokeHue}, ${vc.strokeSat}%, ${vc.strokeLit}%, ${mainAlpha})`;
+      bCtx.lineWidth = baseWidth;
       bCtx.beginPath();
       bCtx.moveTo(vc.lastPaintX, vc.lastScreenY);
       bCtx.quadraticCurveTo(cpX, cpY, x, targetY);
@@ -6093,11 +6648,21 @@ class VoxBallGame {
     ctx.setLineDash([]);
 
     // ---- Smooth viewport camera ----
-    const targetViewX = Math.max(0, vc.cursorX - w * 0.7 + margin);
-    vc.smoothViewX += (targetViewX - vc.smoothViewX) * (this.isRunning ? 4 : 1) * (1 / 60);
-    const viewX = Math.max(0, vc.smoothViewX);
+    let viewX = 0;
+    if (this.canvasMode === 'freepaint') {
+      vc.smoothViewX = 0;
+    } else {
+      const targetViewX = Math.max(0, vc.cursorX - w * 0.7 + margin);
+      vc.smoothViewX += (targetViewX - vc.smoothViewX) * (this.isRunning ? 4 : 1) * (1 / 60);
+      viewX = Math.max(0, vc.smoothViewX);
+    }
 
     // ---- Render offscreen buffer to screen ----
+    if (this.canvasMode === 'keyboard') {
+      this.drawVoiceKeyboardOverlay(prosodyGlow);
+    }
+
+
     if (vc.buffer && vc.bufferH > 0) {
       ctx.save();
       ctx.globalAlpha = paintAlpha;
@@ -6242,7 +6807,7 @@ class VoxBallGame {
       ctx.restore();
     }
 
-    this.drawVoiceKeyboardOverlay(prosodyGlow);
+    // Keyboard overlay was moved to drawing BEFORE the canvas buffer in drawVoiceCanvasScene
 
     // ---- HUD ----
     ctx.font = '600 13px "Space Mono", monospace';
@@ -6587,6 +7152,95 @@ class VoxBallGame {
     ctx.restore();
   }
 
+  _handleKeyboardPointer(e) {
+    if (this.gameMode !== 'keyboard' && !(this.gameMode === 'canvas' && this.canvasMode === 'keyboard')) return;
+    if (e.type === 'pointermove' && !this.activePointerNotes.has(e.pointerId)) return;
+
+    const rect = this.canvas.getBoundingClientRect();
+    const rx = (e.clientX - rect.left) * (this.width / rect.width);
+    const ry = (e.clientY - rect.top) * (this.height / rect.height);
+
+    const t = this.canvasModeTransition;
+    const keyboardTop = this.height * 0.52 + (1 - t) * (this.height * 0.2);
+    const keyboardH = this.height * 0.38;
+    const keyboardW = this.width * 0.92;
+    const left = (this.width - keyboardW) * 0.5;
+
+    const layout = this._getKeyboardLayout(left, keyboardTop, keyboardW, keyboardH);
+
+    let hitKey = null;
+    // Check black keys first (they are on top)
+    for (const k of layout.blackKeys) {
+      if (rx >= k.x - k.w * 0.5 && rx <= k.x + k.w * 0.5 && ry >= k.y && ry <= k.y + k.h) {
+        hitKey = k;
+        break;
+      }
+    }
+    if (!hitKey) {
+      for (const k of layout.whiteKeys) {
+        if (rx >= k.x && rx <= k.x + k.w && ry >= k.y && ry <= k.y + k.h) {
+          hitKey = k;
+          break;
+        }
+      }
+    }
+
+    const current = this.activePointerNotes.get(e.pointerId);
+    if (hitKey) {
+      if (current && current.midi === hitKey.midi) {
+        return;
+      }
+      if (current) this._stopPointerNote(e.pointerId);
+
+      const midi = hitKey.midi;
+      const hz = 440 * Math.pow(2, (midi - 69) / 12);
+
+      try {
+        const audioCtx = this.analyzer.audioCtx;
+        if (!audioCtx) return;
+
+        const now = audioCtx.currentTime;
+        const gain = audioCtx.createGain();
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.linearRampToValueAtTime(0.12, now + 0.02);
+        gain.connect(audioCtx.destination);
+
+        const osc = audioCtx.createOscillator();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(hz, now);
+        osc.connect(gain);
+        osc.start(now);
+
+        this.activePointerNotes.set(e.pointerId, { midi, osc, gain });
+
+        this.voiceKeyboard.glowKey = midi;
+        this.voiceKeyboard.glowStrength = 1.0;
+
+      } catch (err) { console.error("Synthesis failed", err); }
+    } else {
+      if (current) this._stopPointerNote(e.pointerId);
+    }
+  }
+
+  _stopPointerNote(pointerId) {
+    const note = this.activePointerNotes.get(pointerId);
+    if (!note) return;
+
+    try {
+      const audioCtx = this.analyzer.audioCtx;
+      const now = audioCtx?.currentTime || 0;
+      note.gain.gain.cancelScheduledValues(now);
+      note.gain.gain.setValueAtTime(note.gain.gain.value, now);
+      note.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.1);
+      note.osc.stop(now + 0.15);
+    } catch (e) { }
+
+    this.activePointerNotes.delete(pointerId);
+    if (this.activePointerNotes.size === 0) {
+      this.voiceKeyboard.glowKey = -1;
+    }
+  }
+
 
   _resetPitchPilotState() {
     const pp = this.pitchPilot;
@@ -6611,6 +7265,20 @@ class VoxBallGame {
     pp.crashTimer = 0;
     pp.selectedRangeLabel = 'Auto (Glide Calibration)';
     pp.awaitingRestartChoice = false;
+  }
+
+  _resetVowelValleyState() {
+    const s = this.vowelValley;
+    s.x = s.smoothX = 0.5;
+    s.y = s.smoothY = 0.5;
+    s.score = 0;
+    s.flowMultiplier = 1;
+    s.flowTimer = 0;
+    s.lastTargetHit = null;
+    s.particles = [];
+    s.trail = [];
+    s.popups = [];
+    for (const t of s.targets) t.charge = 0;
   }
 
   _pilotNoteForY(y) {
@@ -7494,11 +8162,14 @@ class VoxBallGame {
 
   _resetPrismReaderState() {
     const pr = this.prismReader;
-    const text = pr.passageMode === 'custom' && pr.customText.trim()
-      ? pr.customText
-      : this.teleprompterRainbowText;
+    let text = this.teleprompterRainbowText;
+    if (pr.passageMode === 'custom' && pr.customText.trim()) {
+      text = pr.customText;
+    } else if (pr.passageMode === 'freestyle') {
+      text = pr.freestyleTranscript || '';
+    }
 
-    pr.syllables = this._buildPrismSyllables(text);
+    pr.syllables = text ? this._buildPrismSyllables(text) : [];
     pr.currentIndex = -1;
     pr.isActive = false;
     pr.completed = false;
@@ -7540,6 +8211,18 @@ class VoxBallGame {
 
     const keepReading = document.getElementById('prismKeepReading');
     if (keepReading) keepReading.classList.remove('show');
+
+    const idlePrompt = document.getElementById('prismIdlePrompt');
+    if (idlePrompt) {
+      if (pr.passageMode === 'freestyle') {
+        idlePrompt.textContent = "Speak freely to begin transcribing...";
+        if (pr.processMode === 'realtime') {
+          idlePrompt.classList.add('show');
+        }
+      } else {
+        idlePrompt.textContent = "Click Rec to start reading";
+      }
+    }
   }
 
   // ---- Pitch → Hue (logarithmic for musical perception) ----
@@ -7732,6 +8415,10 @@ class VoxBallGame {
 
       pr.mediaRecorder.start();
       pr.isRecording = true;
+      if (pr.passageMode === 'freestyle' && pr.speechRecognition) {
+        pr.freestyleTranscript = '';
+        try { pr.speechRecognition.start(); } catch (e) { }
+      }
       pr.recordingStream = this.analyzer.stream;
       pr.startTime = performance.now() / 1000;
 
@@ -7758,6 +8445,11 @@ class VoxBallGame {
 
     pr.mediaRecorder.stop();
     pr.isRecording = false;
+    if (pr.passageMode === 'freestyle' && pr.speechRecognition) {
+      try { pr.speechRecognition.stop(); } catch (e) { }
+      pr.customText = pr.freestyleTranscript;
+      this._resetPrismReaderState();
+    }
 
     const recBtn = document.getElementById('recBtn');
     if (recBtn) {
@@ -7818,6 +8510,66 @@ class VoxBallGame {
     }
 
     this._updatePrismRecBtnVisibility();
+  }
+
+  _onPrismSpeechResult(event) {
+    if (!this.isRunning && !this.prismReader.isRecording) return;
+    const pr = this.prismReader;
+    if (pr.passageMode !== 'freestyle') return;
+
+    let finalTranscript = '';
+    for (let i = event.resultIndex; i < event.results.length; ++i) {
+      if (event.results[i].isFinal) {
+        finalTranscript += event.results[i][0].transcript + ' ';
+      }
+    }
+
+    if (finalTranscript.trim()) {
+      pr.freestyleTranscript += finalTranscript;
+
+      const idlePrompt = document.getElementById('prismIdlePrompt');
+      if (idlePrompt) idlePrompt.classList.remove('show');
+
+      if (pr.processMode === 'realtime') {
+        const newSyllables = this._buildPrismSyllables(finalTranscript.trim());
+        const startIndex = pr.syllables.length;
+        pr.syllables = pr.syllables.concat(newSyllables);
+
+        const container = document.getElementById('prismScrollContainer');
+        if (container) {
+          for (let i = 0; i < newSyllables.length; i++) {
+            const globalIndex = startIndex + i;
+            const syl = newSyllables[i];
+            const span = document.createElement('span');
+            span.className = 'prism-syl pre-read';
+            span.dataset.sylIndex = String(globalIndex);
+            span.textContent = syl.text;
+            if (syl.isWordEnd) span.style.marginRight = '0.3em';
+            container.appendChild(span);
+            this._crystallizePrismSyllableImmediate(globalIndex);
+          }
+          container.scrollTop = container.scrollHeight;
+        }
+      }
+    }
+  }
+
+  _crystallizePrismSyllableImmediate(index) {
+    const syl = this.prismReader.syllables[index];
+    if (!syl || syl.state === 'crystallized') return;
+    const a = this.analyzer;
+    syl.avgF0 = a.smoothPitchHz || 0;
+    syl.avgF2_vowelOnly = a.smoothF2 || 0;
+    syl.avgCentroid = a.smoothResonance || 0;
+    syl.avgWeight = a.spectralWeight || 0;
+    syl.vowelType = this._classifyPrismVowel(syl.avgF0, syl.avgF2_vowelOnly);
+    syl.vowelScore = this._scorePrismVowelF2(syl.vowelType, syl.avgF2_vowelOnly);
+    syl.strainFlag = false;
+    syl.confidence = 1;
+
+    this._applyPrismVisuals(index);
+    syl.state = 'crystallized';
+    this._updatePrismSylDOM(index);
   }
 
   updatePrismPlayback(dt) {
@@ -8222,6 +8974,8 @@ class VoxBallGame {
       const styleName = this.creatureStyle.charAt(0).toUpperCase() + this.creatureStyle.slice(1);
       stats.push({ value: `${tLevel}%`, label: 'Peak Transform' });
       stats.push({ value: styleName, label: 'Style' });
+    } else if (this.gameMode === 'vowelvalley') {
+      stats.push({ value: `${this.vowelValley.score}`, label: 'Score' });
     }
 
     // Render stats grid
@@ -8358,7 +9112,244 @@ class VoxBallGame {
     if (pct <= 55) return `${pct}% · ${mid}`;
     return `${pct}% · ${high}`;
   }
+
+  // ============================================================
+  // VOWEL VALLEY — Update
+  // ============================================================
+  updateVowelValley(dt) {
+    const s = this.vowelValley;
+    const f1 = this.analyzer.smoothF1;
+    const f2 = this.analyzer.smoothF2;
+    const energy = this.analyzer.metrics.energy;
+    const conf = this.analyzer.formantConfidence;
+
+    // 1. Map F1/F2 to normalized 0-1 coordinates with smoothing
+    if (energy > 0.05 && conf > 0.2) {
+      // Horizontal (F2): 600Hz (Left) to 2600Hz (Right)
+      const targetX = Math.max(0, Math.min(1, (f2 - s.f2Range[0]) / (s.f2Range[1] - s.f2Range[0])));
+      // Vertical (F1): 1000Hz (Bottom) to 250 Hz (Top) - Inverted for "natural" feel
+      const targetY = Math.max(0, Math.min(1, 1 - (f1 - s.f1Range[0]) / (s.f1Range[1] - s.f1Range[0])));
+
+      s.smoothX += (targetX - s.smoothX) * 0.15;
+      s.smoothY += (targetY - s.smoothY) * 0.15;
+    }
+
+    s.x = s.smoothX;
+    s.y = s.smoothY;
+
+    // 2. Flow and Multiplier Logic
+    s.flowTimer += dt;
+    if (s.flowTimer > 3.0) {
+      s.flowMultiplier = 1;
+    }
+
+    // 3. Check collisions with target zones
+    let inAnyZone = false;
+    for (const t of s.targets) {
+      // Map target F1/F2 to normalized space
+      const tx = (t.f2 - s.f2Range[0]) / (s.f2Range[1] - s.f2Range[0]);
+      const ty = 1 - (t.f1 - s.f1Range[0]) / (s.f1Range[1] - s.f1Range[0]);
+
+      const dx = s.x - tx;
+      const dy = s.y - ty;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < 0.15 && energy > 0.1 && conf > 0.3) {
+        t.active = true;
+        t.charge = Math.min(1, t.charge + dt * 1.5);
+        inAnyZone = true;
+
+        if (t.charge >= 1) {
+          // Flow logic: Different target hit quickly
+          if (s.lastTargetHit && s.lastTargetHit !== t.name && s.flowTimer < 2.0) {
+            s.flowMultiplier = Math.min(4, s.flowMultiplier + 1);
+            s.popups.push({
+              x: tx * this.width, y: ty * this.height - 40,
+              text: `FLOW x${s.flowMultiplier}`, life: 1.0, color: '#fff'
+            });
+          }
+
+          s.score += 10 * s.flowMultiplier;
+          t.charge = 0;
+          s.lastTargetHit = t.name;
+          s.flowTimer = 0;
+
+          // Spawn "score" particles
+          for (let i = 0; i < 8; i++) {
+            const ang = Math.random() * Math.PI * 2;
+            s.particles.push({
+              x: tx * this.width, y: ty * this.height,
+              vx: Math.cos(ang) * 150, vy: Math.sin(ang) * 150,
+              life: 0.6, color: t.color, size: 4
+            });
+          }
+        }
+      } else {
+        t.active = false;
+        t.charge = Math.max(0, t.charge - dt * 0.5);
+      }
+    }
+
+    // 4. Update Trail
+    if (energy > 0.05) {
+      s.trail.push({
+        x: s.x * this.width, y: s.y * this.height,
+        life: 1.0,
+        flow: s.flowMultiplier
+      });
+    }
+    for (let i = s.trail.length - 1; i >= 0; i--) {
+      s.trail[i].life -= dt * 1.2;
+      if (s.trail[i].life <= 0) s.trail.splice(i, 1);
+    }
+
+    // 5. Update Popups
+    for (let i = s.popups.length - 1; i >= 0; i--) {
+      const p = s.popups[i];
+      p.y -= dt * 40;
+      p.life -= dt;
+      if (p.life <= 0) s.popups.splice(i, 1);
+    }
+
+    // 6. Update particles
+    for (let i = s.particles.length - 1; i >= 0; i--) {
+      const p = s.particles[i];
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= dt;
+      if (p.life <= 0) s.particles.splice(i, 1);
+    }
+  }
+
+  // ============================================================
+  // VOWEL VALLEY — Draw
+  // ============================================================
+  drawVowelValleyScene(prosodyGlow) {
+    const ctx = this.ctx;
+    const w = this.width;
+    const h = this.height;
+    const s = this.vowelValley;
+
+    // 1. Background
+    ctx.fillStyle = '#050510';
+    ctx.fillRect(0, 0, w, h);
+
+    // 2. Grid
+    ctx.strokeStyle = `rgba(255,255,255,${s.gridAlpha})`;
+    ctx.lineWidth = 1;
+    for (let i = 1; i < 10; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i * w / 10, 0); ctx.lineTo(i * w / 10, h);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, i * h / 10); ctx.lineTo(w, i * h / 10);
+      ctx.stroke();
+    }
+
+    // 3. Draw Target Zones
+    ctx.font = 'bold 16px "Space Mono", monospace';
+    ctx.textAlign = 'center';
+    for (const t of s.targets) {
+      const tx = (t.f2 - s.f2Range[0]) / (s.f2Range[1] - s.f2Range[0]) * w;
+      const ty = (1 - (t.f1 - s.f1Range[0]) / (s.f1Range[1] - s.f1Range[0])) * h;
+
+      // Outer glow
+      const grad = ctx.createRadialGradient(tx, ty, 20, tx, ty, 60);
+      grad.addColorStop(0, t.color + (t.active ? '66' : '22'));
+      grad.addColorStop(1, 'transparent');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(tx, ty, 60, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Core
+      ctx.fillStyle = t.color;
+      ctx.globalAlpha = 0.3 + t.charge * 0.7;
+      ctx.beginPath();
+      ctx.arc(tx, ty, 15 + t.charge * 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // Label
+      ctx.fillStyle = '#fff';
+      ctx.fillText(t.name, tx, ty - 70);
+
+      // Progress ring
+      if (t.charge > 0) {
+        ctx.strokeStyle = t.color;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(tx, ty, 25, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * t.charge));
+        ctx.stroke();
+      }
+    }
+
+    // 4. Draw Trail
+    ctx.lineWidth = 2;
+    for (let i = 1; i < s.trail.length; i++) {
+      const p1 = s.trail[i - 1];
+      const p2 = s.trail[i];
+      const alpha = p2.life * 0.5;
+      ctx.strokeStyle = `hsla(${200 + p2.flow * 40}, 80%, 70%, ${alpha})`;
+      ctx.lineWidth = 2 + p2.flow * 1.5;
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
+    }
+
+    // 5. Draw Particles
+    for (const p of s.particles) {
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = p.life / 0.6;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // 6. Draw Popups
+    ctx.font = 'bold 20px "Outfit", sans-serif';
+    for (const p of s.popups) {
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = p.life;
+      ctx.fillText(p.text, p.x, p.y);
+    }
+    ctx.globalAlpha = 1;
+
+    // 7. Draw Character (Vocal Spark)
+    const cx = s.x * w;
+    const cy = s.y * h;
+
+    // Character glow
+    const charGlow = ctx.createRadialGradient(cx, cy, 5, cx, cy, 30 + prosodyGlow * 20 + s.flowMultiplier * 10);
+    charGlow.addColorStop(0, '#fff');
+    charGlow.addColorStop(0.3, this.getBallColor(0.6));
+    charGlow.addColorStop(1, 'transparent');
+    ctx.fillStyle = charGlow;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 30 + prosodyGlow * 20 + s.flowMultiplier * 10, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Character core
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 8. Score HUD
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.font = '700 24px "Outfit", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`SCORE: ${s.score}`, 20, 40);
+
+    if (s.flowMultiplier > 1) {
+      ctx.fillStyle = '#6bcb77';
+      ctx.fillText(`FLOW x${s.flowMultiplier}`, 20, 75);
+    }
+  }
 }
 
 // Initialize if in main UI, export for testing harness
 export const game = document.getElementById('app') ? new VoxBallGame() : null;
+export const game = document.getElementById('app') ? new ProsodyBallGame() : null;
