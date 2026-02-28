@@ -1816,6 +1816,25 @@ class VoxBallGame {
     this.metricHighlightTimers = { bounce: 0, tempo: 0, vowel: 0, articulation: 0, syllable: 0 };
     this.metricExtremeLatch = { bounce: false, tempo: false, vowel: false, articulation: false, syllable: false };
 
+    // ====== EXPANDED METRICS STATE ======
+    this.metersExpanded = false;
+    this.metricPopupOpen = null; // null or metric key string
+    this._metricHistoryMax = 120; // ~2 seconds at 60fps
+    this._metricHistory = {
+      pitch: [],       // raw Hz values
+      resonance: [],   // 0-1 resonance score
+      bounce: [],      // 0-1
+      tempo: [],       // 0-1
+      vowels: [],      // 0-1
+      artic: [],       // 0-1
+      syllables: [],   // 0-1 impulse
+    };
+    this._syllableCountHistory = []; // per-second syllable counts for histogram
+    this._syllableCountTimer = 0;
+    this._syllableCountInWindow = 0;
+    this._vowelPlotPoints = []; // {x, y} for F1/F2 scatter
+    this._vowelPlotMax = 80;
+
     this.resize();
     window.addEventListener('resize', () => this.resize());
     this.setupUI();
@@ -3124,6 +3143,11 @@ class VoxBallGame {
         recBtn.click();
       }
       if (e.code === 'Escape') {
+        // Close metric popup first if open
+        if (this.metricPopupOpen) {
+          this._closeMetricPopup();
+          return;
+        }
         helpTooltip.classList.remove('show');
         vibPanel.classList.remove('show');
         recordingsDrawer.classList.remove('show');
@@ -3473,6 +3497,33 @@ class VoxBallGame {
       });
     }
 
+
+    // ====== EXPANDABLE METRICS PANEL ======
+    const metersPanel = document.getElementById('metersPanel');
+    const metersExpandToggle = document.getElementById('metersExpandToggle');
+    const metersExpanded = document.getElementById('metersExpanded');
+    metersExpandToggle?.addEventListener('click', () => {
+      this.metersExpanded = !this.metersExpanded;
+      metersPanel.classList.toggle('expanded', this.metersExpanded);
+      // Size canvases on first expand
+      if (this.metersExpanded) this._sizeExpandedCanvases();
+    });
+
+    // Metric card click → open popup
+    metersExpanded?.querySelectorAll('.metric-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const metric = card.dataset.metric;
+        this._openMetricPopup(metric);
+      });
+    });
+
+    // Popup close
+    const popupBackdrop = document.getElementById('metricPopupBackdrop');
+    const popupClose = document.getElementById('metricPopupClose');
+    popupClose?.addEventListener('click', () => this._closeMetricPopup());
+    popupBackdrop?.addEventListener('click', (e) => {
+      if (e.target === popupBackdrop) this._closeMetricPopup();
+    });
 
     const syncMotionToggleLabel = () => {
       if (!motionToggle) return;
@@ -4035,6 +4086,7 @@ class VoxBallGame {
       this.drawSceneInternal(this.prosodyScore);
     }
     this.updateMeters();
+    this._updateExpandedMetrics();
     this.renderTeleprompter(dt);
     this.checkVibrationAlerts(dt);
     this.perfMonitor.render(`Particles: ${this.particles.length} · Trail: ${this.trailPoints.length}`);
@@ -9742,6 +9794,481 @@ class VoxBallGame {
     if (pct <= 15) return `${pct}% · ${low}`;
     if (pct <= 55) return `${pct}% · ${mid}`;
     return `${pct}% · ${high}`;
+  }
+
+  // ============================================================
+  // EXPANDED METRICS — History tracking & rendering
+  // ============================================================
+
+  _pushMetricHistory() {
+    const m = this.analyzer.metrics;
+    const h = this._metricHistory;
+    const max = this._metricHistoryMax;
+
+    h.pitch.push(this.analyzer.smoothPitchHz);
+    h.resonance.push(this.analyzer.smoothResonance);
+    h.bounce.push(m.bounce);
+    h.tempo.push(m.tempo);
+    h.vowels.push(m.vowel);
+    h.artic.push(m.articulation);
+    h.syllables.push(m.syllable);
+
+    for (const k of Object.keys(h)) {
+      if (h[k].length > max) h[k].shift();
+    }
+
+    // Vowel scatter plot: collect F1/F2 points during voiced speech
+    if (m.energy > 0.05 && this.analyzer.formantConfidence > 0.25 && this.analyzer.lastPitch > 0) {
+      const f1 = this.analyzer.smoothF1;
+      const f2 = this.analyzer.smoothF2;
+      this._vowelPlotPoints.push({ x: f2, y: f1 });
+      if (this._vowelPlotPoints.length > this._vowelPlotMax) this._vowelPlotPoints.shift();
+    }
+
+    // Syllable count histogram: count syllable impulses per second
+    this._syllableCountTimer += 1 / 60;
+    if (m.syllable > 0.5) this._syllableCountInWindow++;
+    if (this._syllableCountTimer >= 1.0) {
+      this._syllableCountHistory.push(this._syllableCountInWindow);
+      if (this._syllableCountHistory.length > 30) this._syllableCountHistory.shift();
+      this._syllableCountInWindow = 0;
+      this._syllableCountTimer = 0;
+    }
+  }
+
+  _sizeExpandedCanvases() {
+    const ids = ['expCanvasPitch', 'expCanvasResonance', 'expCanvasBounce', 'expCanvasTempo',
+                 'expCanvasVowels', 'expCanvasArtic', 'expCanvasSyllables'];
+    for (const id of ids) {
+      const c = document.getElementById(id);
+      if (c) {
+        const r = c.getBoundingClientRect();
+        c.width = Math.round(r.width * devicePixelRatio);
+        c.height = Math.round(r.height * devicePixelRatio);
+      }
+    }
+  }
+
+  _sizePopupCanvas() {
+    const c = document.getElementById('metricPopupCanvas');
+    if (c) {
+      const r = c.getBoundingClientRect();
+      c.width = Math.round(r.width * devicePixelRatio);
+      c.height = Math.round(r.height * devicePixelRatio);
+    }
+  }
+
+  _updateExpandedMetrics() {
+    if (!this.metersExpanded && !this.metricPopupOpen) return;
+    this._pushMetricHistory();
+
+    const m = this.analyzer.metrics;
+    const hz = this.analyzer.smoothPitchHz;
+    const resConf = this.analyzer.formantConfidence;
+
+    if (this.metersExpanded) {
+      // Update expanded card values
+      const pEl = document.getElementById('expValPitch');
+      if (pEl) pEl.textContent = this.analyzer.lastPitch > 0 ? Math.round(hz) + ' Hz' : '— Hz';
+      const rEl = document.getElementById('expValResonance');
+      if (rEl) {
+        if (resConf > 0.2 && m.energy > 0.05) {
+          rEl.textContent = `Q ${Math.round(resConf * 100)}%`;
+        } else {
+          rEl.textContent = '—';
+        }
+      }
+      const bEl = document.getElementById('expValBounce');
+      if (bEl) bEl.textContent = Math.round(m.bounce * 100) + '%';
+      const tEl = document.getElementById('expValTempo');
+      if (tEl) tEl.textContent = Math.round(m.tempo * 100) + '%';
+      const vEl = document.getElementById('expValVowels');
+      if (vEl) vEl.textContent = Math.round(m.vowel * 100) + '%';
+      const aEl = document.getElementById('expValArtic');
+      if (aEl) aEl.textContent = Math.round(m.articulation * 100) + '%';
+      const sEl = document.getElementById('expValSyllables');
+      if (sEl) {
+        const recent = this._syllableCountHistory;
+        const spm = recent.length > 0 ? Math.round(recent[recent.length - 1] * 60) : 0;
+        sEl.textContent = spm + '/min';
+      }
+
+      // Render each card canvas
+      this._drawLineGraph('expCanvasPitch', this._metricHistory.pitch, '#c084fc', 60, 400, true);
+      this._drawSpectrogram('expCanvasResonance');
+      this._drawLineGraph('expCanvasBounce', this._metricHistory.bounce, '#ff6b6b', 0, 1, false);
+      this._drawTempoGauge('expCanvasTempo', m.tempo);
+      this._drawVowelPlot('expCanvasVowels');
+      this._drawAttackDecay('expCanvasArtic', this._metricHistory.artic);
+      this._drawSyllableHistogram('expCanvasSyllables');
+    }
+
+    // Render popup if open
+    if (this.metricPopupOpen) {
+      this._renderPopupCanvas(this.metricPopupOpen);
+      this._updatePopupValue(this.metricPopupOpen);
+    }
+  }
+
+  // ---- Drawing helpers for expanded cards ----
+
+  _drawLineGraph(canvasId, data, color, minVal, maxVal, isHz) {
+    const c = document.getElementById(canvasId);
+    if (!c || !data.length) return;
+    const ctx = c.getContext('2d');
+    const w = c.width, h = c.height;
+    ctx.clearRect(0, 0, w, h);
+
+    // Grid lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 1;
+    for (let i = 1; i < 4; i++) {
+      const y = (h / 4) * i;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    }
+
+    // Data line
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2 * devicePixelRatio;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    const range = maxVal - minVal || 1;
+    for (let i = 0; i < data.length; i++) {
+      const x = (i / (this._metricHistoryMax - 1)) * w;
+      const val = Math.max(minVal, Math.min(maxVal, data[i]));
+      const y = h - ((val - minVal) / range) * (h - 4) - 2;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // Glow effect
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = 0.15;
+    ctx.lineWidth = 6 * devicePixelRatio;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // Current value label
+    if (data.length > 0) {
+      const last = data[data.length - 1];
+      const lastY = h - ((Math.max(minVal, Math.min(maxVal, last)) - minVal) / range) * (h - 4) - 2;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(w - 2, lastY, 3 * devicePixelRatio, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  _drawSpectrogram(canvasId) {
+    const c = document.getElementById(canvasId);
+    if (!c) return;
+    const ctx = c.getContext('2d');
+    const w = c.width, h = c.height;
+
+    // Shift existing content left by 1 column
+    const imgData = ctx.getImageData(1, 0, w - 1, h);
+    ctx.putImageData(imgData, 0, 0);
+
+    // Draw new column on the right using frequency data
+    const fData = this.analyzer.frequencyData;
+    if (!fData || fData.length === 0) {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(w - 1, 0, 1, h);
+      return;
+    }
+
+    // Map frequency bins to vertical pixels (low freq at bottom)
+    const binsToShow = Math.min(fData.length, 256); // focus on lower frequencies
+    for (let y = 0; y < h; y++) {
+      const binIdx = Math.floor(((h - y) / h) * binsToShow);
+      const dbVal = fData[binIdx] || -100;
+      // Map dB (-100 to 0) to intensity
+      const intensity = Math.max(0, Math.min(1, (dbVal + 100) / 80));
+      // Warm color map: black → blue → orange → gold
+      const r = Math.round(intensity * intensity * 255);
+      const g = Math.round(Math.pow(intensity, 3) * 200);
+      const b = Math.round(intensity * 180);
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(w - 1, y, 1, 1);
+    }
+  }
+
+  _drawTempoGauge(canvasId, tempoVal) {
+    const c = document.getElementById(canvasId);
+    if (!c) return;
+    const ctx = c.getContext('2d');
+    const w = c.width, h = c.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const cx = w / 2, cy = h * 0.85;
+    const radius = Math.min(w * 0.4, h * 0.7);
+    const startAngle = Math.PI * 0.8;
+    const endAngle = Math.PI * 0.2;
+    const totalArc = Math.PI * 1.4;
+
+    // Background arc
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 6 * devicePixelRatio;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, startAngle, Math.PI * 2 + endAngle);
+    ctx.stroke();
+
+    // Value arc with gradient
+    const angle = startAngle + totalArc * tempoVal;
+    const grad = ctx.createLinearGradient(cx - radius, cy, cx + radius, cy);
+    grad.addColorStop(0, '#4d96ff');
+    grad.addColorStop(0.5, '#ffd93d');
+    grad.addColorStop(1, '#ff6b6b');
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 6 * devicePixelRatio;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, startAngle, angle);
+    ctx.stroke();
+
+    // Needle
+    const needleAngle = startAngle + totalArc * tempoVal;
+    const nx = cx + Math.cos(needleAngle) * (radius - 8 * devicePixelRatio);
+    const ny = cy + Math.sin(needleAngle) * (radius - 8 * devicePixelRatio);
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(nx, ny, 4 * devicePixelRatio, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Labels
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.font = `${9 * devicePixelRatio}px "Space Mono", monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText('SLOW', cx - radius * 0.6, cy + 12 * devicePixelRatio);
+    ctx.fillText('FAST', cx + radius * 0.6, cy + 12 * devicePixelRatio);
+  }
+
+  _drawVowelPlot(canvasId) {
+    const c = document.getElementById(canvasId);
+    if (!c) return;
+    const ctx = c.getContext('2d');
+    const w = c.width, h = c.height;
+    ctx.clearRect(0, 0, w, h);
+
+    // Axes
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(w / 2, 0); ctx.lineTo(w / 2, h); ctx.stroke();
+
+    // Reference vowel positions (approximate F2, F1 in Hz)
+    const vowels = [
+      { label: 'EE', f2: 2300, f1: 300 },
+      { label: 'AH', f2: 1100, f1: 800 },
+      { label: 'OO', f2: 800, f1: 350 },
+      { label: 'EH', f2: 1800, f1: 550 },
+      { label: 'AW', f2: 900, f1: 600 },
+    ];
+
+    // F2 range: 600-2600, F1 range: 200-1000
+    const mapF2 = f2 => ((f2 - 600) / 2000) * w;
+    const mapF1 = f1 => ((f1 - 200) / 800) * h;
+
+    // Reference labels
+    ctx.font = `${8 * devicePixelRatio}px "Space Mono", monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    for (const v of vowels) {
+      const vx = mapF2(v.f2);
+      const vy = mapF1(v.f1);
+      ctx.fillText(v.label, vx, vy);
+    }
+
+    // Scatter points
+    const pts = this._vowelPlotPoints;
+    for (let i = 0; i < pts.length; i++) {
+      const alpha = 0.2 + (i / pts.length) * 0.6;
+      const size = 2 + (i / pts.length) * 2;
+      ctx.fillStyle = `rgba(107, 203, 119, ${alpha})`;
+      ctx.beginPath();
+      ctx.arc(mapF2(pts[i].x), mapF1(pts[i].y), size * devicePixelRatio, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  _drawAttackDecay(canvasId, data) {
+    const c = document.getElementById(canvasId);
+    if (!c || !data.length) return;
+    const ctx = c.getContext('2d');
+    const w = c.width, h = c.height;
+    ctx.clearRect(0, 0, w, h);
+
+    // Background grid
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 1;
+    for (let i = 1; i < 4; i++) {
+      const y = (h / 4) * i;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    }
+
+    // Attack/decay filled area
+    ctx.fillStyle = 'rgba(77, 150, 255, 0.15)';
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    for (let i = 0; i < data.length; i++) {
+      const x = (i / (this._metricHistoryMax - 1)) * w;
+      const val = Math.max(0, Math.min(1, data[i]));
+      const y = h - val * (h - 4) - 2;
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo((data.length - 1) / (this._metricHistoryMax - 1) * w, h);
+    ctx.closePath();
+    ctx.fill();
+
+    // Line on top
+    ctx.strokeStyle = '#4d96ff';
+    ctx.lineWidth = 2 * devicePixelRatio;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let i = 0; i < data.length; i++) {
+      const x = (i / (this._metricHistoryMax - 1)) * w;
+      const val = Math.max(0, Math.min(1, data[i]));
+      const y = h - val * (h - 4) - 2;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  _drawSyllableHistogram(canvasId) {
+    const c = document.getElementById(canvasId);
+    if (!c) return;
+    const ctx = c.getContext('2d');
+    const w = c.width, h = c.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const data = this._syllableCountHistory;
+    if (!data.length) return;
+
+    const maxCount = Math.max(1, ...data);
+    const barW = Math.max(4, (w / 30) - 2);
+    const gap = 2;
+
+    for (let i = 0; i < data.length; i++) {
+      const barH = (data[i] / maxCount) * (h - 8);
+      const x = i * (barW + gap);
+      const y = h - barH - 2;
+      const alpha = 0.4 + (i / data.length) * 0.6;
+      ctx.fillStyle = `rgba(192, 132, 252, ${alpha})`;
+      ctx.beginPath();
+      // Rounded top
+      const radius = Math.min(2, barW / 2);
+      ctx.moveTo(x, y + radius);
+      ctx.arcTo(x, y, x + barW, y, radius);
+      ctx.arcTo(x + barW, y, x + barW, y + barH, radius);
+      ctx.lineTo(x + barW, h - 2);
+      ctx.lineTo(x, h - 2);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  // ---- Metric Popup ----
+
+  _openMetricPopup(metric) {
+    this.metricPopupOpen = metric;
+    const backdrop = document.getElementById('metricPopupBackdrop');
+    const title = document.getElementById('metricPopupTitle');
+    const desc = document.getElementById('metricPopupDesc');
+
+    const descriptions = {
+      pitch: 'Displays the current fundamental frequency (F0). The color-coded slider shows your position in the pitch range. The line graph shows pitch stability and range over time.',
+      resonance: 'Shows a real-time spectrogram tracking formant frequencies (F1, F2). The "Q" value indicates the sharpness of the resonance filter (Harmonic Envelope).',
+      bounce: 'A stylized wave graph measuring prosodic inflection or "melody" in speech. Higher values suggest more dynamic pitch variation rather than monotonic delivery.',
+      tempo: 'Features a speed gauge measuring the pace of speech. Faster speech shows higher readings on the gauge.',
+      vowels: 'A vowel space plot (F1 vs F2) showing the brightness or darkness of vowel sounds like "EE" and "AH." Tracks resonance shifts during articulation.',
+      artic: 'Articulation module uses an Attack and Decay graph to measure the precision of consonant onsets and vowel offsets.',
+      syllables: 'A bar histogram tracking the number of syllables spoken per minute, providing a granular look at speech density and pauses.',
+    };
+
+    const colors = {
+      pitch: '#c084fc', resonance: '#ffaa44', bounce: '#ff6b6b',
+      tempo: '#ffd93d', vowels: '#6bcb77', artic: '#4d96ff', syllables: '#c084fc',
+    };
+
+    title.textContent = metric.toUpperCase();
+    title.style.color = colors[metric] || '#fff';
+    desc.textContent = descriptions[metric] || '';
+
+    backdrop.classList.add('show');
+    // Allow layout, then size canvas
+    requestAnimationFrame(() => this._sizePopupCanvas());
+  }
+
+  _closeMetricPopup() {
+    this.metricPopupOpen = null;
+    const backdrop = document.getElementById('metricPopupBackdrop');
+    backdrop.classList.remove('show');
+  }
+
+  _updatePopupValue(metric) {
+    const el = document.getElementById('metricPopupValue');
+    if (!el) return;
+    const m = this.analyzer.metrics;
+
+    const colors = {
+      pitch: '#c084fc', resonance: '#ffaa44', bounce: '#ff6b6b',
+      tempo: '#ffd93d', vowels: '#6bcb77', artic: '#4d96ff', syllables: '#c084fc',
+    };
+    el.style.color = colors[metric] || '#fff';
+
+    switch (metric) {
+      case 'pitch':
+        el.textContent = this.analyzer.lastPitch > 0 ? Math.round(this.analyzer.smoothPitchHz) + ' Hz' : '— Hz';
+        break;
+      case 'resonance':
+        if (this.analyzer.formantConfidence > 0.2 && m.energy > 0.05) {
+          const f1 = Math.round(this.analyzer.smoothF1);
+          const f2 = Math.round(this.analyzer.smoothF2);
+          el.textContent = `F1: ${f1} Hz  F2: ${f2} Hz`;
+        } else {
+          el.textContent = '—';
+        }
+        break;
+      case 'bounce': el.textContent = Math.round(m.bounce * 100) + '%'; break;
+      case 'tempo': el.textContent = Math.round(m.tempo * 100) + '%'; break;
+      case 'vowels': el.textContent = Math.round(m.vowel * 100) + '%'; break;
+      case 'artic': el.textContent = Math.round(m.articulation * 100) + '%'; break;
+      case 'syllables': {
+        const recent = this._syllableCountHistory;
+        const spm = recent.length > 0 ? Math.round(recent[recent.length - 1] * 60) : 0;
+        el.textContent = spm + ' syl/min';
+        break;
+      }
+    }
+  }
+
+  _renderPopupCanvas(metric) {
+    const canvasId = 'metricPopupCanvas';
+    switch (metric) {
+      case 'pitch':
+        this._drawLineGraph(canvasId, this._metricHistory.pitch, '#c084fc', 60, 400, true);
+        break;
+      case 'resonance':
+        this._drawSpectrogram(canvasId);
+        break;
+      case 'bounce':
+        this._drawLineGraph(canvasId, this._metricHistory.bounce, '#ff6b6b', 0, 1, false);
+        break;
+      case 'tempo':
+        this._drawTempoGauge(canvasId, this.analyzer.metrics.tempo);
+        break;
+      case 'vowels':
+        this._drawVowelPlot(canvasId);
+        break;
+      case 'artic':
+        this._drawAttackDecay(canvasId, this._metricHistory.artic);
+        break;
+      case 'syllables':
+        this._drawSyllableHistogram(canvasId);
+        break;
+    }
   }
 
   // ============================================================
