@@ -2777,6 +2777,8 @@ class ProsodyBallGame {
       recBtn.classList.add('visible');
       const hud = document.getElementById('creatureStyleHud');
       if (hud) hud.style.display = this.gameMode === 'creature' ? '' : 'none';
+      const metricsCards = document.getElementById('metricsCardsPanel');
+      if (metricsCards) metricsCards.style.display = 'flex';
       this.isRunning = true;
       this.lastTime = performance.now();
       this.loop();
@@ -2804,6 +2806,8 @@ class ProsodyBallGame {
       startBtn.textContent = '🎙 Start';
       startBtn.classList.remove('active');
       recBtn.classList.remove('visible');
+      const metricsCards = document.getElementById('metricsCardsPanel');
+      if (metricsCards) metricsCards.style.display = 'none';
 
       // Hide session timer
       document.getElementById('sessionTimer').classList.remove('active');
@@ -2955,14 +2959,17 @@ class ProsodyBallGame {
       ascentDetails?.classList.toggle('show', mode === 'ascent');
       prismDetails?.classList.toggle('show', mode === 'prism');
 
-      const titles = { ball: 'VOX ARCADE', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD', ascent: 'SPECTRAL ASCENT', prism: 'PRISM READER' };
-      document.querySelector('.hud-title').textContent = titles[mode] || 'VOX ARCADE';
+      const titles = { ball: 'ARCADE', creature: 'CREATURE', garden: 'GARDEN', canvas: 'CANVAS', keyboard: 'KEYBOARD', pilot: 'PILOT', road: 'ROAD', ascent: 'ASCENT', prism: 'PRISM' };
+      const subtitleEl = document.getElementById('hudSubtitle');
+      if (subtitleEl) subtitleEl.textContent = titles[mode] || 'ARCADE';
+
       const canvasOnly = document.querySelectorAll('.canvas-only');
       canvasOnly.forEach(el => el.classList.toggle('show', mode === 'canvas' || mode === 'keyboard'));
-      if (canvasModeSelect) {
-        canvasModeSelect.style.display = mode === 'canvas' ? '' : 'none';
-        canvasModeSelect.value = this.canvasMode;
-      }
+
+      // Update active state of new inline canvas mode buttons
+      document.querySelectorAll('.canvas-mode-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.canvasMode === this.canvasMode);
+      });
       if (keyboardGameSelect) keyboardGameSelect.style.display = mode === 'keyboard' ? '' : 'none';
       if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', mode !== 'prism' && this.teleprompterMode !== 'off');
       this._updateHelpContent();
@@ -3060,12 +3067,17 @@ class ProsodyBallGame {
       applyVoiceProfilePreset(e.target.value);
     });
 
-    canvasModeSelect?.addEventListener('change', (e) => {
-      this.canvasMode = e.target.value;
-      if (canvasModeSelect) canvasModeSelect.style.display = this.gameMode === 'canvas' ? '' : 'none';
-      if (keyboardGameSelect) keyboardGameSelect.style.display = this.gameMode === 'keyboard' ? '' : 'none';
-      if (keyboardGameSelect) keyboardGameSelect.style.display = this.canvasMode === 'keyboard' ? '' : 'none';
-      if (!this.isRunning) this.drawIdleScene();
+    document.querySelectorAll('.canvas-mode-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const selectedMode = e.currentTarget.dataset.canvasMode;
+        if (!selectedMode) return;
+        this.canvasMode = selectedMode;
+        document.querySelectorAll('.canvas-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.canvasMode === selectedMode));
+
+        if (keyboardGameSelect) keyboardGameSelect.style.display = this.gameMode === 'keyboard' ? '' : 'none';
+        if (keyboardGameSelect) keyboardGameSelect.style.display = this.canvasMode === 'keyboard' ? '' : 'none';
+        if (!this.isRunning) this.drawIdleScene();
+      });
     });
 
     keyboardGameSelect?.addEventListener('change', (e) => {
@@ -3878,20 +3890,65 @@ class ProsodyBallGame {
       ctx.textAlign = 'left';
       ctx.fillStyle = '#e8e6f0';
       ctx.font = '600 14px "Outfit", sans-serif';
-      ctx.fillText(`Quick setup guide · ${secsLeft}s`, left + 12, y + 22);
+      ctx.fillText(`Quick setup guide - ${secsLeft}s`, left + 12, y + 22);
       ctx.font = '500 12px "Outfit", sans-serif';
+
       const rows = [
-        ['Room calibrated', this.guidedChecklist.roomReady],
-        ['Voice detected', this.guidedChecklist.voiceDetected],
-        ['Pitch lock stable', this.guidedChecklist.pitchLocked],
+        { text: 'Room Calibrated', okay: this.guidedChecklist.roomReady, iconPath: 'M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z M19 10v2a7 7 0 0 1-14 0v-2 M12 19v4 M8 23h8' },
+        { text: 'Voice Detected', okay: this.guidedChecklist.voiceDetected, iconPath: 'M4 12V8 M8 16V6 M12 20V4 M16 16V6 M20 12V8' },
+        { text: 'Pitch Lock Stable', okay: this.guidedChecklist.pitchLocked, iconPath: 'M21 2l-2 2 M20.5 4.5l-2-2 M15 5c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zM4 14l6-6 4 4-6 6-4-4z' }
       ];
+
       rows.forEach((row, i) => {
-        ctx.fillStyle = row[1] ? '#6bcb77' : 'rgba(255,255,255,0.55)';
-        ctx.fillText(`${row[1] ? '✅' : '⬜'} ${row[0]}`, left + 14, y + 48 + i * 22);
+        const rowY = y + 48 + i * 22;
+
+        // Draw Checkmark or un-filled circle
+        ctx.save();
+        ctx.translate(left + 14, rowY - 10);
+        if (row.okay) {
+          ctx.beginPath();
+          ctx.arc(6, 6, 7, 0, Math.PI * 2);
+          ctx.fillStyle = '#10b981'; // Green
+          ctx.fill();
+          ctx.beginPath();
+          ctx.moveTo(3, 6);
+          ctx.lineTo(5.5, 8.5);
+          ctx.lineTo(9.5, 3.5);
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        } else {
+          ctx.beginPath();
+          ctx.arc(6, 6, 7, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255,255,255,0.1)';
+          ctx.fill();
+        }
+        ctx.restore();
+
+        // Draw Text
+        ctx.fillStyle = row.okay ? '#e8e6f0' : 'rgba(255,255,255,0.55)';
+        ctx.fillText(row.text, left + 34, rowY);
+
+        // Draw Right-aligned Icon
+        ctx.save();
+        ctx.translate(left + w - 30, rowY - 11);
+        ctx.scale(0.65, 0.65);
+        ctx.strokeStyle = row.okay ? '#10b981' : '#6b7280';
+        if (row.text === 'Voice Detected' && row.okay) ctx.strokeStyle = '#34d399'; // Brighter cyan/green
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        const p = new Path2D(row.iconPath);
+        if (row.text === 'Pitch Lock Stable') { ctx.fillStyle = ctx.strokeStyle; ctx.fill(p); }
+        ctx.stroke(p);
+        ctx.restore();
       });
+
+      // Bottom Status Text
       if (this.guidedChecklist.roomReady && this.guidedChecklist.voiceDetected && this.guidedChecklist.pitchLocked) {
-        ctx.fillStyle = this.colorblindMode ? '#56B4E9' : '#4d96ff';
-        ctx.fillText('Great! You are fully tracked.', left + 14, y + 112);
+        ctx.fillStyle = '#e5e7eb';
+        ctx.font = '400 11px "Outfit", sans-serif';
+        ctx.fillText('Setup complete. Optimization running.', left + 14, y + 112);
       }
       ctx.restore();
     } else {
@@ -3982,7 +4039,7 @@ class ProsodyBallGame {
     // At ps=0.4 → ~120px height. At ps=0.8 → ~400px height.
     // ==========================================================
     if (m.syllable > 0.5) {
-      const bouncePower = 80 + ps * 1200;
+      const bouncePower = 120 + ps * 1800;
       if (this.ball.vy > -bouncePower * 0.5) {
         this.ball.vy = -bouncePower * m.syllable;
         this.ball.onGround = false;
@@ -4013,7 +4070,7 @@ class ProsodyBallGame {
     // Stronger force so expressive speech sustains altitude
     // ==========================================================
     if (m.bounce > 0.2) {
-      this.ball.vy -= m.bounce * ps * 800 * dt;
+      this.ball.vy -= m.bounce * ps * 1200 * dt;
     }
 
     if (!this.ball.onGround) {
@@ -4526,16 +4583,16 @@ class ProsodyBallGame {
       p.targetR = shapedR * breathScale + wobble + dance;
       p.r += (p.targetR - p.r) * (4 + ps * 4) * dt;
     }
-    const targetFloat = -pitchNorm * 80 * (0.3 + (S.pitchConf || 0) * 0.7);
+    const targetFloat = -pitchNorm * 140 * (0.3 + (S.pitchConf || 0) * 0.7);
     c.floatY += (targetFloat - c.floatY) * 2.5 * dt;
     c.glow += ((0.15 + ps * 0.7 + m.energy * 0.3) - c.glow) * 3 * dt;
     if (ps > 0.45) { c.transformLevel += (ps - 0.45) * 0.8 * dt; }
     else { c.transformLevel -= 0.15 * dt; }
     c.transformLevel = Math.max(0, Math.min(1, c.transformLevel));
-    c.wingSpread += (c.transformLevel * 0.9 - c.wingSpread) * 2 * dt;
-    c.tendrilGrow += ((m.vowel * 0.8 + m.energy * 0.2) - c.tendrilGrow) * 3 * dt;
+    c.wingSpread += (c.transformLevel * 1.5 - c.wingSpread) * 2 * dt;
+    c.tendrilGrow += ((m.vowel * 1.2 + m.energy * 0.4) - c.tendrilGrow) * 3 * dt;
     for (const t of c.tendrils) {
-      t.targetLength = c.tendrilGrow * (60 + ps * 80);
+      t.targetLength = c.tendrilGrow * (100 + ps * 120);
       t.length += (t.targetLength - t.length) * 3 * dt;
       t.phase += dt * (1.5 + ps);
     }
@@ -4574,11 +4631,11 @@ class ProsodyBallGame {
     j.breath += dt * (1.2 + ps * 0.6);
     j.pulsePhase += dt * (0.8 + ps * 0.4);
     // Float with pitch
-    const targetFloat = -pitchNorm * 100 * (0.3 + (pitchConf || 0) * 0.7);
+    const targetFloat = -pitchNorm * 160 * (0.3 + (pitchConf || 0) * 0.7);
     j.floatY += (targetFloat - j.floatY) * 2.0 * dt;
     // Bell size — resonance shapes aspect, energy grows it
-    j.bellW += ((55 + m.energy * 30 + ps * 15) * (1.3 - (res || 0.5) * 0.6) - j.bellW) * 3 * dt;
-    j.bellH += ((45 + m.energy * 25 + ps * 10) * (0.7 + (res || 0.5) * 0.6) - j.bellH) * 3 * dt;
+    j.bellW += ((65 + m.energy * 45 + ps * 25) * (1.3 - (res || 0.5) * 0.6) - j.bellW) * 3 * dt;
+    j.bellH += ((55 + m.energy * 35 + ps * 20) * (0.7 + (res || 0.5) * 0.6) - j.bellH) * 3 * dt;
     // Glow & transform
     j.glow += ((0.15 + ps * 0.6 + m.energy * 0.3) - j.glow) * 3 * dt;
     j.biolumFlash = m.articulation > 0.4 ? Math.min(1, j.biolumFlash + dt * 8) : j.biolumFlash * (1 - dt * 4);
@@ -4587,7 +4644,7 @@ class ProsodyBallGame {
     j.transformLevel = Math.max(0, Math.min(1, j.transformLevel));
     // Tentacles — vowels extend them
     for (const t of j.tentacles) {
-      t.targetLen = 30 + m.vowel * 80 + ps * 40 + j.transformLevel * 30;
+      t.targetLen = 45 + m.vowel * 120 + ps * 60 + j.transformLevel * 45;
       t.length += (t.targetLen - t.length) * 3 * dt;
       t.phase += dt * (1.0 + ps * 0.5);
     }
@@ -4612,12 +4669,12 @@ class ProsodyBallGame {
     const { ps, m, dt, pitchNorm, res, pitchConf } = S;
     const p = this._phoenix;
     p.breath += dt * (1.5 + ps);
-    const targetFloat = -pitchNorm * 90 * (0.3 + (pitchConf || 0) * 0.7);
+    const targetFloat = -pitchNorm * 150 * (0.3 + (pitchConf || 0) * 0.7);
     p.floatY += (targetFloat - p.floatY) * 2.5 * dt;
     // Wings lift with pitch
-    p.wingAngle += ((0.15 + pitchNorm * 0.7 + ps * 0.3) * Math.PI * 0.5 - p.wingAngle) * 3 * dt;
+    p.wingAngle += ((0.15 + pitchNorm * 0.9 + ps * 0.4) * Math.PI * 0.5 - p.wingAngle) * 3 * dt;
     // Tail grows with vowels
-    p.tailLen += ((20 + m.vowel * 100 + ps * 50) - p.tailLen) * 3 * dt;
+    p.tailLen += ((30 + m.vowel * 150 + ps * 75) - p.tailLen) * 3 * dt;
     // Flame intensity
     p.flameIntensity += ((0.1 + ps * 0.7 + m.energy * 0.3) - p.flameIntensity) * 3 * dt;
     // Transform
@@ -4679,9 +4736,9 @@ class ProsodyBallGame {
     // Compression — pitch compresses the cloud
     n.compression += ((1.0 - pitchNorm * 0.5 + ps * 0.2) - n.compression) * 2 * dt;
     // Radius with energy
-    n.radius += ((70 + m.energy * 40 + ps * 20) * n.compression - n.radius) * 2 * dt;
+    n.radius += ((100 + m.energy * 60 + ps * 30) * n.compression - n.radius) * 2 * dt;
     // Spiral arms from vowels
-    n.spiralLen += ((m.vowel * 120 + ps * 60) - n.spiralLen) * 2 * dt;
+    n.spiralLen += ((m.vowel * 180 + ps * 90) - n.spiralLen) * 2 * dt;
     n.spiralAngle += dt * (0.2 + ps * 0.3);
     // Core glow
     n.coreGlow += ((0.1 + ps * 0.6 + m.energy * 0.3) - n.coreGlow) * 3 * dt;
@@ -4711,10 +4768,10 @@ class ProsodyBallGame {
     const { ps, m, dt, pitchNorm, res, pitchConf } = S;
     const sp = this._spirit;
     sp.breath += dt * (1.0 + ps * 0.5);
-    const targetFloat = -pitchNorm * 80 * (0.3 + (pitchConf || 0) * 0.7);
+    const targetFloat = -pitchNorm * 140 * (0.3 + (pitchConf || 0) * 0.7);
     sp.floatY += (targetFloat - sp.floatY) * 2.5 * dt;
     // Orb size
-    sp.orbR += ((18 + m.energy * 12 + ps * 8) - sp.orbR) * 3 * dt;
+    sp.orbR += ((25 + m.energy * 20 + ps * 12) - sp.orbR) * 3 * dt;
     // Glow
     sp.glow += ((0.15 + ps * 0.6 + m.energy * 0.3) - sp.glow) * 3 * dt;
     // Color temp — res warm/cool
@@ -4725,7 +4782,7 @@ class ProsodyBallGame {
     sp.transformLevel = Math.max(0, Math.min(1, sp.transformLevel));
     // Ribbons — vowels extend
     for (const r of sp.ribbons) {
-      r.targetLen = 30 + m.vowel * 90 + ps * 40 + sp.transformLevel * 40;
+      r.targetLen = 45 + m.vowel * 135 + ps * 60 + sp.transformLevel * 60;
       r.length += (r.targetLen - r.length) * 3 * dt;
       r.phase += dt * (r.freq + ps * 0.5);
     }
@@ -4760,10 +4817,10 @@ class ProsodyBallGame {
     k.breath += dt * (1.0 + ps * 0.5);
     k.swimPhase += dt * (2.0 + ps * 1.5);
     // Depth from pitch
-    const targetFloat = -pitchNorm * 80 * (0.3 + (pitchConf || 0) * 0.7);
+    const targetFloat = -pitchNorm * 140 * (0.3 + (pitchConf || 0) * 0.7);
     k.floatY += (targetFloat - k.floatY) * 2.0 * dt;
     // Fin extension from vowels
-    k.finExt += ((m.vowel * 0.8 + ps * 0.3) - k.finExt) * 3 * dt;
+    k.finExt += ((m.vowel * 1.2 + ps * 0.5) - k.finExt) * 3 * dt;
     // Tail amplitude from energy
     k.tailAmp += ((0.3 + m.energy * 0.5 + ps * 0.3) - k.tailAmp) * 3 * dt;
     // Iridescence from resonance
@@ -4772,8 +4829,8 @@ class ProsodyBallGame {
     if (ps > 0.45) k.transformLevel += (ps - 0.45) * 0.6 * dt;
     else k.transformLevel -= 0.1 * dt;
     k.transformLevel = Math.max(0, Math.min(1, k.transformLevel));
-    k.whiskerLen += (k.transformLevel * 50 - k.whiskerLen) * 2 * dt;
-    k.bodyLen += ((1 + k.transformLevel * 0.5) - k.bodyLen) * 1.5 * dt;
+    k.whiskerLen += (k.transformLevel * 80 - k.whiskerLen) * 2 * dt;
+    k.bodyLen += ((1 + k.transformLevel * 0.8) - k.bodyLen) * 1.5 * dt;
     // Ripples on articulation
     if (m.articulation > 0.3 && ps > 0.05) {
       k.ripples.push({ r: 10, maxR: 60 + Math.random() * 40, life: 1, x: (Math.random() - 0.5) * 40, y: (Math.random() - 0.5) * 20 });
@@ -4810,8 +4867,18 @@ class ProsodyBallGame {
       }
       ctx.globalAlpha = 1;
     }
+    // 1. Confusion Jitter setup (applied before dispatch)
+    let cxJitter = 0, cyJitter = 0;
+    const m = this.analyzer.metrics;
+    if (ps < 0.15 && m.energy > 0.1) {
+      cxJitter = (Math.random() - 0.5) * 15 * m.energy;
+      cyJitter = (Math.random() - 0.5) * 15 * m.energy;
+      ctx.save();
+      ctx.translate(cxJitter, cyJitter);
+    }
+
     // --- Dispatch ---
-    const S = { ctx, w, h, ps, hue, sat, lit, time };
+    const S = { ctx, w, h, ps, hue, sat, lit, time, res: this.analyzer.smoothResonance, m };
     switch (this.creatureStyle) {
       case 'jellyfish': this._drawJellyfish(S); break;
       case 'phoenix': this._drawPhoenix(S); break;
@@ -4820,6 +4887,83 @@ class ProsodyBallGame {
       case 'koi': this._drawKoi(S); break;
       default: this._drawBlob(S); break;
     }
+
+    // --- Global Exaggerations (Applied to all styles) ---
+
+    // 1. Confusion Jitter (low prosody, high energy)
+    let jitterX = 0; let jitterY = 0;
+    if (ps < 0.15 && m.energy > 0.1) {
+      jitterX = (Math.random() - 0.5) * 10 * m.energy;
+      jitterY = (Math.random() - 0.5) * 10 * m.energy;
+      ctx.translate(jitterX, jitterY); // Apply jitter to subsequent shared effects if desired, but mostly it would need to be applied *before* the creature is drawn.
+      // Actually, to apply jitter to the creature itself, we need to pass it into S or apply it to the context before dispatching. Let's do a screen shake effect instead.
+    }
+
+    // 2. Super Voice Overdrive Aura
+    if (ps > 0.7 && m.energy > 0.6) {
+      const cx = w / 2, cy = h * 0.5;
+      const auraPulse = 0.5 + 0.5 * Math.sin(time * 15);
+      const intensity = (ps - 0.7) * (m.energy - 0.5) * 10;
+
+      const aG = ctx.createRadialGradient(cx, cy, 50, cx, cy, 300 + auraPulse * 50);
+      aG.addColorStop(0, `hsla(${hue + 40}, 90%, 70%, ${0.3 * intensity})`);
+      aG.addColorStop(0.5, `hsla(${hue}, 100%, 60%, ${0.1 * intensity})`);
+      aG.addColorStop(1, 'rgba(0,0,0,0)');
+
+      ctx.globalCompositeOperation = 'screen';
+      ctx.fillStyle = aG;
+      ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // 3. Tempo Dashes (Speed Lines)
+    if (m.tempo > 0.6 && ps > 0.2) {
+      const lineCount = Math.floor(m.tempo * 15);
+      ctx.strokeStyle = `hsla(${hue}, 80%, 80%, ${m.tempo * 0.3})`;
+      ctx.lineWidth = 1 + m.tempo * 2;
+      for (let i = 0; i < lineCount; i++) {
+        const y = h * 0.2 + Math.random() * h * 0.6;
+        const len = 50 + Math.random() * 200 * m.tempo;
+        const x = w / 2 - 100 - Math.random() * 300; // Left side rushing in
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x - len, y);
+        ctx.stroke();
+
+        const x2 = w / 2 + 100 + Math.random() * 300; // Right side rushing out
+        ctx.beginPath();
+        ctx.moveTo(x2, y);
+        ctx.lineTo(x2 + len, y);
+        ctx.stroke();
+      }
+    }
+
+    // 4. Syllable Shockwaves
+    if (!this._shockwaves) this._shockwaves = [];
+    if (m.syllable > 0.6 && ps > 0.2) {
+      this._shockwaves.push({ r: 50, life: 1.0, maxLife: 1.0, cx: w / 2, cy: h * 0.5, hue: hue });
+    }
+
+    // Draw and update shockwaves
+    for (let i = this._shockwaves.length - 1; i >= 0; i--) {
+      const sw = this._shockwaves[i];
+      sw.r += 800 * (1 / 60); // fast expansion
+      sw.life -= (1 / 60) * 2; // half second life
+
+      if (sw.life > 0) {
+        ctx.strokeStyle = `hsla(${sw.hue}, 100%, 80%, ${sw.life * 0.5})`;
+        ctx.lineWidth = 2 + sw.life * 5;
+        ctx.beginPath();
+        ctx.arc(sw.cx, sw.cy, sw.r, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        this._shockwaves.splice(i, 1);
+      }
+    }
+    if (ps < 0.15 && m.energy > 0.1) {
+      ctx.restore(); // remove jitter transform
+    }
+
     // --- Shared HUD ---
     ctx.font = '600 14px "Space Mono", monospace';
     ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.textAlign = 'right';
@@ -5364,10 +5508,10 @@ class ProsodyBallGame {
       growth: initGrowth || 0,
       bloom: 0,
       age: 0,       // time since spawned
-      maxH: (type === 'tree' ? 80 + srand(1) * 60
-        : type === 'flower' ? 40 + srand(1) * 30
-          : type === 'fern' ? 30 + srand(1) * 20
-            : 18 + srand(1) * 14) * (0.6 + depth * 0.4),
+      maxH: (type === 'tree' ? 120 + srand(1) * 90
+        : type === 'flower' ? 60 + srand(1) * 45
+          : type === 'fern' ? 45 + srand(1) * 30
+            : 27 + srand(1) * 21) * (0.6 + depth * 0.4),
       swayPhase: srand(2) * Math.PI * 2,
       variant: srand(3),
       seed,
@@ -5375,6 +5519,9 @@ class ProsodyBallGame {
       fruitAngles: Array.from({ length: 6 }, (_, i) => srand(10 + i) * Math.PI * 2),
       fruitDists: Array.from({ length: 6 }, (_, i) => 0.3 + srand(20 + i) * 0.5),
       spotAngles: Array.from({ length: 4 }, (_, i) => -Math.PI + srand(30 + i) * Math.PI),
+      // Effects states
+      bouncePhase: 0,
+      isBoomTree: false
     };
   }
 
@@ -5392,8 +5539,8 @@ class ProsodyBallGame {
       m.articulation * 0.15 + m.syllable * 0.15;
     this.prosodyScore += (rawPS - this.prosodyScore) * 2.0 * dt;
 
-    // Vowel → global growth multiplier (sunlight)
-    g.globalGrowth += ((m.vowel * 0.7 + m.energy * 0.3) - g.globalGrowth) * 3 * dt;
+    // Vowel → global growth multiplier (sunlight) - exaggerated 1.5x
+    g.globalGrowth += ((m.vowel * 1.05 + m.energy * 0.45) - g.globalGrowth) * 3 * dt;
 
     // Syllable → spawn new plants
     g.spawnCooldown -= dt;
@@ -5415,19 +5562,53 @@ class ProsodyBallGame {
       const sat = 40 + res * 50;
 
       g.cursor += 20 + Math.random() * 40;
-      g.plants.push(this._makeGardenPlant(g.cursor, type, hue, sat, 0.005));
+      const newPlant = this._makeGardenPlant(g.cursor, type, hue, sat, 0.005);
+
+      // Booming Tree effect
+      if (type === 'tree' && m.energy > 0.7) {
+        newPlant.isBoomTree = true;
+        newPlant.growth = 0.5 + Math.random() * 0.3; // instant partial growth
+        // Spawn dust cloud
+        for (let d = 0; d < 15; d++) {
+          g.pollen.push({
+            x: g.cursor + (Math.random() - 0.5) * 40, y: h * 0.76 - 5,
+            vx: (Math.random() - 0.5) * 80, vy: -20 - Math.random() * 40,
+            size: 3 + Math.random() * 5, life: 1, maxLife: 1.5 + Math.random(),
+            hue: 30, sat: 20, lit: 20, bright: false // dirt colors
+          });
+        }
+      }
+      // Bounce Mushroom setup
+      if (type === 'mushroom') {
+        newPlant.bounceAmp = 1.0 + m.syllable * 2.0;
+      }
+
+      g.plants.push(newPlant);
       g.spawnCooldown = 0.25 + Math.random() * 0.25;
       // Maintain depth sort (back-to-front) for draw order
       g.plants.sort((a, b) => a.depth - b.depth);
     }
 
     // Grow all plants + age tracking
-    const growSpeed = 0.12 + g.globalGrowth * 0.7 + ps * 0.3;
+    const growSpeed = 0.18 + g.globalGrowth * 1.05 + ps * 0.45; // 1.5x speed
     for (const p of g.plants) {
       p.age += dt;
       p.growth = Math.min(1, p.growth + growSpeed * dt * (0.4 + p.depth * 0.2));
       if (ps > 0.25 && p.growth > 0.3) {
-        p.bloom = Math.min(1, p.bloom + (ps - 0.2) * 0.4 * dt);
+        p.bloom = Math.min(1, p.bloom + (ps - 0.2) * 0.6 * dt); // bloom faster
+      }
+
+      // Super Bloom Force
+      if (ps > 0.8 && m.energy > 0.8) {
+        p.bloom = 1.0;
+        p.growth = Math.min(1.0, p.growth + 2.0 * dt);
+      }
+
+      // Mushroom Bounce animation
+      if (p.type === 'mushroom' && p.bounceAmp > 0) {
+        p.bouncePhase += dt * 15;
+        p.bounceAmp *= (1 - dt * 3);
+        if (p.bounceAmp < 0.01) p.bounceAmp = 0;
       }
     }
 
@@ -5438,23 +5619,44 @@ class ProsodyBallGame {
     const targetCamX = Math.max(0, rightEdge - this.width * 0.65);
     g.smoothCamX += (targetCamX - g.smoothCamX) * 2.5 * dt;
 
-    // Articulation → pollen bursts
-    if (m.articulation > 0.3 && ps > 0.1 && g.pollen.length < 60) {
-      const cnt = Math.floor(m.articulation * 3 * this.particleScale);
+    // Articulation → pollen bursts (Hyper-Vibe when tempo & ps are high)
+    const pollenMult = (m.tempo > 0.7 && ps > 0.5) ? 5 : 1;
+    if (m.articulation > 0.3 && ps > 0.1 && g.pollen.length < 60 * pollenMult) {
+      const cnt = Math.floor(m.articulation * 3 * this.particleScale * pollenMult);
       for (let i = 0; i < cnt; i++) {
         const rp = g.plants.length > 0
           ? g.plants[Math.max(0, g.plants.length - 1 - Math.floor(Math.random() * Math.min(10, g.plants.length)))]
           : null;
-        const px = rp ? rp.x + (Math.random() - 0.5) * 40 : g.cursor;
+        const px = rp ? rp.x + (Math.random() - 0.5) * 40 : g.cursor + (Math.random() - 0.5) * 100;
         g.pollen.push({
           x: px, y: g.groundY - 20 - Math.random() * 80,
-          vx: (Math.random() - 0.5) * 20,
-          vy: -10 - Math.random() * 25,
+          vx: (Math.random() - 0.5) * (20 * pollenMult),
+          vy: -10 - Math.random() * (25 * pollenMult),
           size: 1.5 + Math.random() * 2.5,
           life: 1, maxLife: 2.5 + Math.random() * 2,
           hue: rp ? rp.hue + Math.random() * 40 : 60,
+          sat: 65, lit: 78,
           bright: true,
         });
+      }
+    }
+
+    // Shooting Stars (High Pitch + Vowels)
+    if (this.analyzer.smoothPitchHz > 300 && m.vowel > 0.7 && Math.random() < 2 * dt) {
+      if (!g.stars) g.stars = [];
+      g.stars.push({
+        x: g.smoothCamX - 100, y: Math.random() * h * 0.4,
+        vx: 800 + Math.random() * 400, vy: (Math.random() - 0.5) * 200,
+        life: 1.0, size: 2 + Math.random() * 3
+      });
+    }
+    if (g.stars) {
+      for (let i = g.stars.length - 1; i >= 0; i--) {
+        const s = g.stars[i];
+        s.x += s.vx * dt;
+        s.y += s.vy * dt;
+        s.life -= dt * 0.5;
+        if (s.life <= 0 || s.x > g.smoothCamX + w + 100) g.stars.splice(i, 1);
       }
     }
 
@@ -5513,6 +5715,16 @@ class ProsodyBallGame {
     const camX = g.smoothCamX;
     const time = g.time;
 
+    // 1. Withering Glitch Jitter (low prosody, high energy)
+    let jitterX = 0, jitterY = 0;
+    const isGlitching = ps < 0.15 && this.analyzer.metrics.energy > 0.1;
+    if (isGlitching) {
+      jitterX = (Math.random() - 0.5) * 8 * this.analyzer.metrics.energy;
+      jitterY = (Math.random() - 0.5) * 8 * this.analyzer.metrics.energy;
+      ctx.save();
+      ctx.translate(jitterX, jitterY);
+    }
+
     // ---- Sky gradient — theme-aware with garden earth tones ----
     const gardenSkies = {
       highcontrast: ['#020206', '#04060a', '#080c10', '#101818', '#122020', '#08120a'],
@@ -5536,6 +5748,27 @@ class ProsodyBallGame {
         ctx.fillStyle = '#d8d0b8';
         ctx.beginPath();
         ctx.arc(star.x, star.y, star.size * 0.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // ---- Shooting Stars ----
+    if (g.stars) {
+      for (const s of g.stars) {
+        ctx.globalAlpha = s.life;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        // A streaking star
+        ctx.moveTo(s.x, s.y);
+        ctx.lineTo(s.x - 30 * s.life, s.y - 10 * s.life);
+        ctx.lineTo(s.x, s.y + s.size);
+        ctx.lineTo(s.x + 40 * s.life, s.y + 15 * s.life);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.size * 1.5, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.globalAlpha = 1;
@@ -5642,11 +5875,22 @@ class ProsodyBallGame {
 
       const depthScale = 0.5 + plant.depth * 0.5; // far=0.5x, near=1x
       const depthDim = 0.4 + plant.depth * 0.6;   // far=dimmer
+
+      // Withering Glitch effect on sway
+      const glitchSway = isGlitching ? (Math.random() - 0.5) * 10 : 0;
+
       const terrainAtPlant = getTerrainY(plant.x);
-      const sway = Math.sin(time * 1.2 + plant.swayPhase) * (2 + ps * 4) * gr * depthScale;
-      const pH = plant.maxH * gr * depthScale;
-      const hue = plant.hue;
-      const sat = plant.sat;
+      const sway = Math.sin(time * 1.2 + plant.swayPhase) * (2 + ps * 4) * gr * depthScale + glitchSway;
+      let pH = plant.maxH * gr * depthScale;
+      // Mushroom Bounce Y stretch
+      let bounceScaleY = 1.0;
+      if (plant.type === 'mushroom' && plant.bounceAmp > 0) {
+        bounceScaleY = 1.0 + Math.sin(plant.bouncePhase) * plant.bounceAmp;
+        pH *= bounceScaleY;
+      }
+
+      const hue = isGlitching ? plant.hue : plant.hue; // could grayscale, but jitter is enough
+      const sat = isGlitching ? plant.sat * 0.5 : plant.sat;
       const bloom = plant.bloom;
 
       ctx.save();
@@ -5829,10 +6073,11 @@ class ProsodyBallGame {
             ctx.restore();
           }
 
-          // Center pistil
-          ctx.fillStyle = `hsla(${hue + 40}, ${sat}%, 70%, ${bloom * 0.8 * depthDim})`;
+          // Center pistil (Hyper-vibe glow)
+          const isHyper = ps > 0.8 && this.analyzer.metrics.tempo > 0.7;
+          ctx.fillStyle = `hsla(${hue + 40}, ${isHyper ? 100 : sat}%, ${isHyper ? 90 : 70}%, ${bloom * 0.8 * depthDim})`;
           ctx.beginPath();
-          ctx.arc(flX, flY, (2 + bloom * 2) * depthScale, 0, Math.PI * 2);
+          ctx.arc(flX, flY, (2 + bloom * 2 + (isHyper ? 1.5 : 0)) * depthScale, 0, Math.PI * 2);
           ctx.fill();
         }
 
@@ -5935,6 +6180,21 @@ class ProsodyBallGame {
       ctx.fill();
     }
     ctx.globalAlpha = 1;
+
+    // Super Bloom overlay
+    if (ps > 0.8 && this.analyzer.metrics.energy > 0.8) {
+      ctx.globalCompositeOperation = 'screen';
+      const sbGrad = ctx.createLinearGradient(0, h, 0, 0);
+      sbGrad.addColorStop(0, `hsla(120, 80%, 70%, ${(ps - 0.8) * 0.5})`);
+      sbGrad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = sbGrad;
+      ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    if (isGlitching) {
+      ctx.restore(); // remove jitter
+    }
 
     // HUD
     ctx.font = '600 14px "Space Mono", monospace';
@@ -6055,6 +6315,60 @@ class ProsodyBallGame {
       // Smooth bezier curve segment
       const cpX = (vc.lastPaintX + x) / 2;
       const cpY = vc.lastCtrlY + (targetY - vc.lastCtrlY) * 0.5;
+
+      // --- NEW SPECTROGRAM BACKGROUND ---
+      if (this.analyzer.analyser && this.analyzer.dataArray) {
+        this.analyzer.analyser.getByteFrequencyData(this.analyzer.dataArray);
+        const fbLength = this.analyzer.dataArray.length;
+        bCtx.save();
+        bCtx.globalCompositeOperation = 'screen';
+
+        // Map frequency bins to screen height (log scale approximation)
+        // We only care about lower ~350 bins out of 1024 or 2048 to see vocal range
+        const activeBins = Math.min(fbLength, 350);
+        const chunks = 80;
+        const chunkSize = Math.max(1, Math.floor(activeBins / chunks));
+
+        const hStep = Math.max(1, bH / chunks);
+        const sliceWidth = Math.max(1.5, x - vc.lastPaintX);
+        const startX = vc.lastPaintX;
+
+        for (let i = 0; i < chunks; i++) {
+          let sum = 0;
+          for (let j = 0; j < chunkSize; j++) sum += this.analyzer.dataArray[i * chunkSize + j] || 0;
+          const avg = sum / chunkSize;
+          if (avg > 12) {
+            const norm = avg / 255;
+            // Draw from bottom up, gently compressing low frequencies
+            const logPos = Math.pow(i / chunks, 0.85);
+            const yPos = bH - (logPos * bH) - 40;
+
+            // Vibrant colors matching mockup: deep blue via magenta to cyan/green
+            const hue = 220 - (i / chunks) * 100; // 220 (blue) to 120 (green)
+            bCtx.fillStyle = `hsla(${hue}, 85%, ${50 + norm * 20}%, ${Math.min(0.7, norm * 0.9)})`;
+            bCtx.fillRect(startX, yPos, sliceWidth, hStep + 1.5);
+          }
+        }
+        bCtx.restore();
+      }
+
+      // --- RANDOM AESTHETIC ANNOTATIONS ---
+      if (Math.random() < 0.003 && vc.cursorX > 150 && vc.cursorX < bCtx.canvas.width - 250) {
+        const annotations = ["Syllable: 'OOO'", "Pitch Glide", "Vibrato detail", "Syllable: 'AH'", "Resonance Peak"];
+        const text = annotations[Math.floor(Math.random() * annotations.length)];
+        bCtx.save();
+        bCtx.fillStyle = '#e8e6f0';
+        bCtx.font = '500 11px "Outfit", sans-serif';
+        const txtMargin = x > targetY ? 24 : -35;
+        bCtx.fillText(text, x + 18, targetY + txtMargin);
+        bCtx.strokeStyle = 'rgba(255,255,255,0.45)';
+        bCtx.beginPath();
+        bCtx.arc(x, targetY, 2, 0, Math.PI * 2);
+        bCtx.moveTo(x + 2, targetY);
+        bCtx.lineTo(x + 15, targetY + txtMargin - 4);
+        bCtx.stroke();
+        bCtx.restore();
+      }
 
       // Main stroke with visibility outline
       const analysisMode = this.voiceCanvasVisualStyle === 'analysis';
@@ -6282,23 +6596,22 @@ class ProsodyBallGame {
     ctx.roundRect(margin, margin, w - margin * 2, h - margin * 2, frameR);
     ctx.fill();
 
-    // Horizontal grid lines with configurable contrast
-    const gridAlpha = this.pitchGridStrength === 'strong' ? 0.08 : 0.03;
-    ctx.strokeStyle = `rgba(255,255,255,${gridAlpha})`;
-    ctx.lineWidth = this.pitchGridStrength === 'strong' ? 0.8 : 0.5;
+    // Horizontal grid lines - much crisper for technical feel
+    ctx.strokeStyle = `rgba(255,255,255,0.08)`;
+    ctx.lineWidth = 0.5;
     for (let y = margin + 30; y < h - margin - 10; y += 35) {
       ctx.beginPath();
-      ctx.moveTo(margin + 5, y);
-      ctx.lineTo(w - margin - 5, y);
+      ctx.moveTo(margin, y);
+      ctx.lineTo(w - margin, y);
       ctx.stroke();
     }
 
     // Pitch range guides + optional labels
-    ctx.setLineDash([3, 7]);
-    ctx.strokeStyle = this.pitchGridStrength === 'strong' ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.06)';
-    ctx.lineWidth = 0.9;
-    ctx.font = '500 10px "Space Mono", monospace';
-    ctx.fillStyle = this.pitchGridStrength === 'strong' ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.48)';
+    ctx.setLineDash([2, 5]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = 1.0;
+    ctx.font = '600 11px "Space Mono", monospace';
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
     ctx.textAlign = 'left';
     const guides = [100, 150, 200, 250, 300].map((hz) => ({
       hz,
@@ -6310,11 +6623,19 @@ class ProsodyBallGame {
       ctx.moveTo(margin + 5, gy);
       ctx.lineTo(w - margin - 5, gy);
       ctx.stroke();
+
+      // Draw a subtle band/highlight for target range if around 200Hz
+      if (guide.hz === 200) {
+        ctx.fillStyle = 'rgba(255,255,255,0.02)';
+        ctx.fillRect(margin, gy - 20, w - margin * 2, 40);
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      }
+
       if (this.pitchGuideLabelMode !== 'off') {
         const label = this.pitchGuideLabelMode === 'notes'
           ? `${this._pitchHzToNoteLabel(guide.hz)} (${guide.hz}Hz)`
           : `${guide.hz}Hz`;
-        ctx.fillText(label, margin + 10, gy - 4);
+        ctx.fillText(label, margin + 12, gy - 6);
       }
     }
     ctx.setLineDash([]);
@@ -6347,6 +6668,36 @@ class ProsodyBallGame {
         viewX, 0, w - margin * 2, vc.bufferH,
         margin, 0, w - margin * 2, h
       );
+
+      // Live "listening" pulse at the bottom when not actively charting pitch
+      // This provides feedback that the mic is active during silence.
+      if (this.isRunning && !vc.isSpeaking && this.analyzer.analyser) {
+        this.analyzer.analyser.getFloatTimeDomainData(this.analyzer.dataArray);
+        const data = this.analyzer.dataArray;
+        ctx.strokeStyle = 'rgba(77, 150, 255, 0.4)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        const yBase = h - margin - 20;
+        const step = Math.ceil(data.length / (w - margin * 2));
+        for (let i = 0; i < data.length; i += step) {
+          const x = margin + (i / data.length) * (w - margin * 2);
+          // Amplify raw mic waveform slightly for visibility
+          const y = yBase + data[i] * 60;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(255,255,255,0.4)';
+        ctx.font = '500 10px "Outfit", sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText('LISTENING', w - margin - 10, yBase + 12);
+
+        ctx.beginPath();
+        ctx.arc(w - margin - 75, yBase + 8, 3, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(77, 150, 255, ${0.3 + Math.sin(vc.time * 4) * 0.3})`;
+        ctx.fill();
+      }
 
       // Idle demo strokes
       if (!this.isRunning) {
@@ -8710,72 +9061,228 @@ class ProsodyBallGame {
     overlay.innerHTML = view.join(' ');
   }
 
-  updateMeters() {
+  _initCardCanvas(id) {
+    const el = document.getElementById(id);
+    if (!el) return null;
+    if (el.width !== el.clientWidth) {
+      // CSS controls size, internal coordinates match pixel size for crispness
+      el.width = el.clientWidth * window.devicePixelRatio;
+      el.height = el.clientHeight * window.devicePixelRatio;
+    }
+    return { ctx: el.getContext('2d'), w: el.width, h: el.height };
+  }
+
+  updateMeters(dt) {
+    if (!this.isRunning) return;
     const m = this.analyzer.metrics;
-    this._triggerMetricHighlight('articulation', 0.72);
-    this._triggerMetricHighlight('vowel', 0.7);
-    this._triggerMetricHighlight('bounce', 0.75);
+    if (this._lastMeterUpdate && performance.now() - this._lastMeterUpdate < 30) return;
+    this._lastMeterUpdate = performance.now();
 
-    const set = (id, val) => {
-      document.getElementById(id).style.width = (val * 100) + '%';
-    };
-    set('meterBounce', m.bounce);
-    set('meterTempo', m.tempo);
-    set('meterVowel', m.vowel);
-    set('meterArtic', m.articulation);
-    set('meterSyllable', m.syllable);
+    // Init history buffers for cards
+    if (!this.cardHistory) {
+      this.cardHistory = {
+        pitch: [], res: [], bounce: [], vowelX: [], vowelY: [], artic: [], syll: []
+      };
+      this.cardTime = 0;
+    }
+    this.cardTime += 1;
 
-    // Pitch meter — position-based indicator (not fill width)
-    // Map 80-300 Hz to 0-100% position on the gradient bar
-    const hz = this.analyzer.smoothPitchHz;
-    const pitchPos = pitchHzToPosition(hz, 80, 300);
-    const pitchEl = document.getElementById('meterPitch');
-    pitchEl.style.left = (pitchPos * 100) + '%';
-    pitchEl.style.width = '3px';
-    document.getElementById('valPitch').textContent =
-      this.analyzer.lastPitch > 0 ? Math.round(hz) + ' Hz' : '— Hz';
+    const ch = this.cardHistory;
+    const MAX_HIST = 50;
 
-    // Resonance meter — position-based indicator like pitch
-    const res = this.analyzer.smoothResonance;
-    const resEl = document.getElementById('meterResonance');
-    resEl.style.left = (res * 100) + '%';
-    resEl.style.width = '3px';
-    // Show F1/F2/F3 Hz during voiced speech for method comparison
-    const resConf = this.analyzer.formantConfidence;
-    if (resConf > 0.2 && this.analyzer.metrics.energy > 0.05) {
-      const f1 = Math.round(this.analyzer.smoothF1);
-      const f2 = Math.round(this.analyzer.smoothF2);
-      const f3 = Math.round(this.analyzer.smoothF3);
-      document.getElementById('valResonance').textContent = `${f1}/${f2}/${f3}`;
-    } else {
-      document.getElementById('valResonance').textContent = '—';
+    // Only record actual voiced pitch, otherwise hold last or drop
+    const hz = this.analyzer.smoothPitchHz || 0;
+    ch.pitch.push(this.analyzer.metrics.energy > 0.05 ? hz : (ch.pitch[ch.pitch.length - 1] || 0) * 0.95);
+    ch.res.push(this.analyzer.smoothResonance || 0);
+    ch.bounce.push(m.bounce);
+    ch.vowelX.push(this.analyzer.smoothF1 || 500);
+    ch.vowelY.push(this.analyzer.smoothF2 || 1500);
+    ch.artic.push(m.articulation);
+    ch.syll.push(m.syllable);
+
+    for (const key in ch) {
+      if (ch[key].length > MAX_HIST) ch[key].shift();
     }
 
-    document.getElementById('valBounce').textContent = this._meterLabel(m.bounce, 'Flat', 'Varied', 'Wild');
-    document.getElementById('valTempo').textContent = this._meterLabel(m.tempo, 'Steady', 'Varied', 'Dynamic');
-    document.getElementById('valVowel').textContent = this._meterLabel(m.vowel, 'Short', 'Held', 'Sustained');
-    document.getElementById('valArtic').textContent = this._meterLabel(m.articulation, 'Soft', 'Clear', 'Crisp');
-    document.getElementById('valSyllable').textContent = this._meterLabel(m.syllable, 'Quiet', 'Active', 'Rapid');
+    const setHtml = (id, html) => { const e = document.getElementById(id); if (e) e.innerHTML = html; };
 
-    const highlightMap = {
-      bounce: document.querySelector('.meter-bounce .meter-label'),
-      tempo: document.querySelector('.meter-tempo .meter-label'),
-      vowel: document.querySelector('.meter-vowel .meter-label'),
-      articulation: document.querySelector('.meter-artic .meter-label'),
-      syllable: document.querySelector('.meter-syllable .meter-label'),
-    };
-    for (const [k, el] of Object.entries(highlightMap)) {
-      this.metricHighlightTimers[k] = Math.max(0, this.metricHighlightTimers[k] - 1 / 60);
-      if (el) el.classList.toggle('active-ping', this.metricHighlightTimers[k] > 0);
+    // --- PITCH CARD ---
+    setHtml('valPitch', this.analyzer.lastPitch > 0 ? `${Math.round(hz)} Hz` : '— Hz');
+    const pCanvas = this._initCardCanvas('pitchCardCanvas');
+    if (pCanvas) {
+      const { ctx, w, h } = pCanvas;
+      ctx.clearRect(0, 0, w, h);
+      ctx.beginPath();
+      for (let i = 0; i < ch.pitch.length; i++) {
+        const x = (i / MAX_HIST) * w;
+        // Map 80-300Hz typical vocal range
+        let yNorm = (ch.pitch[i] - 80) / 220;
+        yNorm = Math.max(0, Math.min(1, yNorm));
+        const y = h - (yNorm * h);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = '#ff8e53';
+      ctx.lineWidth = 2 * window.devicePixelRatio;
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+
+      // Filled gradient under line
+      ctx.lineTo(w, h);
+      ctx.lineTo(0, h);
+      const grad = ctx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, 'rgba(255, 142, 83, 0.4)');
+      grad.addColorStop(1, 'rgba(255, 142, 83, 0.0)');
+      ctx.fillStyle = grad;
+      ctx.fill();
     }
-    const mapSplatter = document.getElementById('mapSplatter');
-    if (mapSplatter) mapSplatter.classList.toggle('active-ping', this.metricHighlightTimers.articulation > 0);
+
+    // --- RESONANCE CARD ---
+    setHtml('valResonance', (this.analyzer.smoothResonance * 2).toFixed(1) + ' Q');
+    const rCanvas = this._initCardCanvas('resCardCanvas');
+    if (rCanvas) {
+      const { ctx, w, h } = rCanvas;
+      ctx.clearRect(0, 0, w, h);
+      // Simulated mini spectrograph
+      const steps = 30;
+      const barW = w / steps;
+      for (let i = 0; i < steps; i++) {
+        // Sample history from end to start
+        const histIdx = ch.res.length - 1 - (steps - 1 - i);
+        if (histIdx < 0 || histIdx >= ch.res.length) continue;
+        const resVal = ch.res[histIdx];
+
+        const opacity = Math.max(0.1, resVal);
+        ctx.fillStyle = `hsla(${280 - resVal * 120}, 80%, 60%, ${opacity})`;
+
+        // Draw 3 formant bands
+        ctx.fillRect(i * barW, h * 0.2 - resVal * h * 0.1, barW - 1, h * 0.2);
+        ctx.fillRect(i * barW, h * 0.5 - resVal * h * 0.15, barW - 1, h * 0.15);
+        ctx.fillRect(i * barW, h * 0.8 - resVal * h * 0.1, barW - 1, h * 0.1);
+      }
+    }
+
+    // --- BOUNCE CARD ---
+    setHtml('valBounce', this._meterLabel(m.bounce, 'Flat', 'Lively', 'Wild'));
+    const bCanvas = this._initCardCanvas('bounceCardCanvas');
+    if (bCanvas) {
+      const { ctx, w, h } = bCanvas;
+      ctx.clearRect(0, 0, w, h);
+      ctx.beginPath();
+      // Smooth sine wave whose amplitude and frequency depend on bounce
+      for (let x = 0; x <= w; x += 5) {
+        const t = this.cardTime * 0.15 + (x / w) * Math.PI * 4;
+        const yOff = Math.sin(t) * (m.bounce * h * 0.4);
+        const y = h / 2 + yOff;
+        if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = '#ff6b6b';
+      ctx.lineWidth = 2.5 * window.devicePixelRatio;
+      ctx.stroke();
+    }
+
+    // --- TEMPO CARD ---
+    setHtml('valTempo', this._meterLabel(m.tempo, 'Steady', 'Rhythmic', 'Dynamic'));
+    const tempoBar = document.getElementById('meterTempoBar');
+    const tempoThumb = document.getElementById('tempoThumb');
+    if (tempoBar && tempoThumb) {
+      const pct = Math.max(0, Math.min(100, m.tempo * 100));
+      tempoBar.style.width = pct + '%';
+      tempoThumb.style.left = pct + '%';
+    }
+
+    // --- VOWELS CARD ---
+    setHtml('valVowel', this._meterLabel(m.vowel, 'Short', 'Varied', 'Sustained'));
+    const vCanvas = this._initCardCanvas('vowelCardCanvas');
+    if (vCanvas) {
+      const { ctx, w, h } = vCanvas;
+      ctx.clearRect(0, 0, w, h);
+
+      // Axes
+      ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+      ctx.lineWidth = 1 * window.devicePixelRatio;
+      ctx.beginPath(); ctx.moveTo(10, 10); ctx.lineTo(10, h - 10); ctx.lineTo(w - 10, h - 10); ctx.stroke();
+
+      // Scatter plot of recent history
+      for (let i = 0; i < ch.vowelX.length; i++) {
+        // F1 map 200..1000 to y (inverted)
+        // F2 map 800..2500 to x
+        const f1 = ch.vowelX[i];
+        const f2 = ch.vowelY[i];
+        const xNorm = Math.max(0, Math.min(1, (f2 - 800) / 1700));
+        const yNorm = Math.max(0, Math.min(1, (f1 - 200) / 800));
+
+        const x = 10 + xNorm * (w - 20);
+        const y = h - 10 - yNorm * (h - 20);
+
+        if (i === ch.vowelX.length - 1) {
+          // Current dot
+          ctx.beginPath(); ctx.arc(x, y, 4 * window.devicePixelRatio, 0, Math.PI * 2);
+          ctx.fillStyle = '#4d96ff'; ctx.fill();
+        } else {
+          // Trail
+          const age = i / ch.vowelX.length;
+          ctx.fillStyle = `rgba(100, 150, 255, ${0.1 + age * 0.3})`;
+          ctx.fillRect(x, y, 2.5 * window.devicePixelRatio, 2.5 * window.devicePixelRatio);
+        }
+      }
+    }
+
+    // --- ARTIC. CARD ---
+    setHtml('valArtic', this._meterLabel(m.articulation, 'Soft', 'Clear', 'Crisp'));
+    const aCanvas = this._initCardCanvas('articCardCanvas');
+    if (aCanvas) {
+      const { ctx, w, h } = aCanvas;
+      ctx.clearRect(0, 0, w, h);
+
+      // Attack Envelope (left side)
+      ctx.beginPath();
+      ctx.moveTo(0, h);
+      ctx.quadraticCurveTo(w * 0.1, h - m.articulation * h * 0.9, w * 0.3, h - m.articulation * h * 0.9);
+      ctx.lineTo(w * 0.3, h);
+      ctx.fillStyle = 'rgba(255, 107, 107, 0.2)'; ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(0, h);
+      ctx.quadraticCurveTo(w * 0.1, h - m.articulation * h * 0.9, w * 0.3, h - m.articulation * h * 0.9);
+      ctx.strokeStyle = '#ff6b6b'; ctx.lineWidth = 1.5; ctx.stroke();
+
+      // Decay Envelope (right side)
+      const smEnergy = this.analyzer.metrics.energy * 2.0;
+      ctx.beginPath();
+      ctx.moveTo(w * 0.3, h);
+      ctx.lineTo(w * 0.3, h - smEnergy * h * 0.8);
+      ctx.quadraticCurveTo(w * 0.7, h - smEnergy * h * 0.2, w, h);
+      ctx.fillStyle = 'rgba(107, 203, 119, 0.2)'; ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(w * 0.3, h - smEnergy * h * 0.8);
+      ctx.quadraticCurveTo(w * 0.7, h - smEnergy * h * 0.2, w, h);
+      ctx.strokeStyle = '#6bcb77'; ctx.lineWidth = 1.5; ctx.stroke();
+    }
+
+    // --- SYLLABLES CARD ---
+    const syllCount = Math.round(m.syllable * 120); // rough conversion to per/min
+    setHtml('valSyllable', `${syllCount} / min`);
+    const sCanvas = this._initCardCanvas('syllCardCanvas');
+    if (sCanvas) {
+      const { ctx, w, h } = sCanvas;
+      ctx.clearRect(0, 0, w, h);
+      const bars = 25;
+      const barW = (w / bars) - 2;
+      for (let i = 0; i < bars; i++) {
+        const histIdx = ch.syll.length - 1 - (bars - 1 - i);
+        if (histIdx < 0 || histIdx >= ch.syll.length) continue;
+        const val = ch.syll[histIdx];
+        const barH = val * h * 0.8 + 2;
+        ctx.fillStyle = `hsl(${260 + val * 60}, 70%, 65%)`;
+        ctx.fillRect(i * (barW + 2), h - barH, barW, barH);
+      }
+    }
+
   }
 
   _meterLabel(val, low, mid, high) {
     const pct = Math.round(val * 100);
-    if (pct <= 15) return `${pct}% · ${low}`;
-    if (pct <= 55) return `${pct}% · ${mid}`;
+    if (pct <= 25) return `${pct}% · ${low}`;
+    if (pct <= 65) return `${pct}% · ${mid}`;
     return `${pct}% · ${high}`;
   }
 }
