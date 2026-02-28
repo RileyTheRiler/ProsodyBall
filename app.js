@@ -1627,7 +1627,12 @@ class ProsodyBallGame {
         { name: 'OO', f1: 350, f2: 800, color: '#6bcb77', active: false, charge: 0 },
       ],
       particles: [],
+      trail: [],
+      popups: [],
       score: 0,
+      flowMultiplier: 1,
+      flowTimer: 0,
+      lastTargetHit: null,
       gridAlpha: 0.1
     };
 
@@ -2389,8 +2394,6 @@ class ProsodyBallGame {
     const perfBtn = document.getElementById('perfBtn');
     const pauseCanvasBtn = document.getElementById('pauseCanvasBtn');
     const clearCanvasBtn = document.getElementById('clearCanvasBtn');
-    const moreControlsBtn = document.getElementById('moreControlsBtn');
-    const hudSecondaryInner = document.getElementById('hudSecondaryInner');
     const teleprompterOverlay = document.getElementById('teleprompterOverlay');
     const diagPanel = document.getElementById('diagPanel');
 
@@ -2498,20 +2501,6 @@ class ProsodyBallGame {
 
     cameraBtn?.addEventListener('click', toggleCamera);
     cameraClose?.addEventListener('click', stopCamera);
-
-    // Mobile More Controls Toggle
-    moreControlsBtn?.addEventListener('click', (e) => {
-      hudSecondaryInner?.classList.toggle('show');
-      e.stopPropagation();
-    });
-
-    document.addEventListener('click', (e) => {
-      if (hudSecondaryInner?.classList.contains('show')) {
-        if (!hudSecondaryInner.contains(e.target) && e.target !== moreControlsBtn) {
-          hudSecondaryInner.classList.remove('show');
-        }
-      }
-    });
 
     // Zoom Logic
     cameraZoom?.addEventListener('input', (e) => {
@@ -7192,7 +7181,12 @@ class ProsodyBallGame {
     s.x = s.smoothX = 0.5;
     s.y = s.smoothY = 0.5;
     s.score = 0;
+    s.flowMultiplier = 1;
+    s.flowTimer = 0;
+    s.lastTargetHit = null;
     s.particles = [];
+    s.trail = [];
+    s.popups = [];
     for (const t of s.targets) t.charge = 0;
   }
 
@@ -9052,7 +9046,13 @@ class ProsodyBallGame {
     s.x = s.smoothX;
     s.y = s.smoothY;
 
-    // 2. Check collisions with target zones
+    // 2. Flow and Multiplier Logic
+    s.flowTimer += dt;
+    if (s.flowTimer > 3.0) {
+      s.flowMultiplier = 1;
+    }
+
+    // 3. Check collisions with target zones
     let inAnyZone = false;
     for (const t of s.targets) {
       // Map target F1/F2 to normalized space
@@ -9069,8 +9069,20 @@ class ProsodyBallGame {
         inAnyZone = true;
 
         if (t.charge >= 1) {
-          s.score += 10;
+          // Flow logic: Different target hit quickly
+          if (s.lastTargetHit && s.lastTargetHit !== t.name && s.flowTimer < 2.0) {
+            s.flowMultiplier = Math.min(4, s.flowMultiplier + 1);
+            s.popups.push({
+              x: tx * this.width, y: ty * this.height - 40,
+              text: `FLOW x${s.flowMultiplier}`, life: 1.0, color: '#fff'
+            });
+          }
+
+          s.score += 10 * s.flowMultiplier;
           t.charge = 0;
+          s.lastTargetHit = t.name;
+          s.flowTimer = 0;
+
           // Spawn "score" particles
           for (let i = 0; i < 8; i++) {
             const ang = Math.random() * Math.PI * 2;
@@ -9087,7 +9099,28 @@ class ProsodyBallGame {
       }
     }
 
-    // 3. Update particles
+    // 4. Update Trail
+    if (energy > 0.05) {
+      s.trail.push({
+        x: s.x * this.width, y: s.y * this.height,
+        life: 1.0,
+        flow: s.flowMultiplier
+      });
+    }
+    for (let i = s.trail.length - 1; i >= 0; i--) {
+      s.trail[i].life -= dt * 1.2;
+      if (s.trail[i].life <= 0) s.trail.splice(i, 1);
+    }
+
+    // 5. Update Popups
+    for (let i = s.popups.length - 1; i >= 0; i--) {
+      const p = s.popups[i];
+      p.y -= dt * 40;
+      p.life -= dt;
+      if (p.life <= 0) s.popups.splice(i, 1);
+    }
+
+    // 6. Update particles
     for (let i = s.particles.length - 1; i >= 0; i--) {
       const p = s.particles[i];
       p.x += p.vx * dt;
@@ -9160,7 +9193,21 @@ class ProsodyBallGame {
       }
     }
 
-    // 4. Draw Particles
+    // 4. Draw Trail
+    ctx.lineWidth = 2;
+    for (let i = 1; i < s.trail.length; i++) {
+      const p1 = s.trail[i - 1];
+      const p2 = s.trail[i];
+      const alpha = p2.life * 0.5;
+      ctx.strokeStyle = `hsla(${200 + p2.flow * 40}, 80%, 70%, ${alpha})`;
+      ctx.lineWidth = 2 + p2.flow * 1.5;
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
+    }
+
+    // 5. Draw Particles
     for (const p of s.particles) {
       ctx.fillStyle = p.color;
       ctx.globalAlpha = p.life / 0.6;
@@ -9170,18 +9217,27 @@ class ProsodyBallGame {
     }
     ctx.globalAlpha = 1;
 
-    // 5. Draw Character (Vocal Spark)
+    // 6. Draw Popups
+    ctx.font = 'bold 20px "Outfit", sans-serif';
+    for (const p of s.popups) {
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = p.life;
+      ctx.fillText(p.text, p.x, p.y);
+    }
+    ctx.globalAlpha = 1;
+
+    // 7. Draw Character (Vocal Spark)
     const cx = s.x * w;
     const cy = s.y * h;
 
     // Character glow
-    const charGlow = ctx.createRadialGradient(cx, cy, 5, cx, cy, 30 + prosodyGlow * 20);
+    const charGlow = ctx.createRadialGradient(cx, cy, 5, cx, cy, 30 + prosodyGlow * 20 + s.flowMultiplier * 10);
     charGlow.addColorStop(0, '#fff');
     charGlow.addColorStop(0.3, this.getBallColor(0.6));
     charGlow.addColorStop(1, 'transparent');
     ctx.fillStyle = charGlow;
     ctx.beginPath();
-    ctx.arc(cx, cy, 30 + prosodyGlow * 20, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 30 + prosodyGlow * 20 + s.flowMultiplier * 10, 0, Math.PI * 2);
     ctx.fill();
 
     // Character core
@@ -9190,11 +9246,16 @@ class ProsodyBallGame {
     ctx.arc(cx, cy, 8, 0, Math.PI * 2);
     ctx.fill();
 
-    // 6. Score HUD
+    // 8. Score HUD
     ctx.fillStyle = 'rgba(255,255,255,0.8)';
     ctx.font = '700 24px "Outfit", sans-serif';
     ctx.textAlign = 'left';
     ctx.fillText(`SCORE: ${s.score}`, 20, 40);
+
+    if (s.flowMultiplier > 1) {
+      ctx.fillStyle = '#6bcb77';
+      ctx.fillText(`FLOW x${s.flowMultiplier}`, 20, 75);
+    }
   }
 }
 
