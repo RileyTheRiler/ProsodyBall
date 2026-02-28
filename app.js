@@ -1623,6 +1623,25 @@ class ProsodyBallGame {
       },
     };
 
+    this.vowelValley = {
+      x: 0.5, y: 0.5,
+      smoothX: 0.5, smoothY: 0.5,
+      f1Range: [250, 1000],
+      f2Range: [600, 2600],
+      targets: [
+        { name: 'EE', f1: 300, f2: 2300, color: '#4d96ff', active: false, charge: 0 },
+        { name: 'AH', f1: 850, f2: 1100, color: '#ff6b6b', active: false, charge: 0 },
+        { name: 'OO', f1: 350, f2: 800, color: '#6bcb77', active: false, charge: 0 },
+      ],
+      particles: [],
+      trail: [],
+      popups: [],
+      score: 0,
+      flowMultiplier: 1,
+      flowTimer: 0,
+      lastTargetHit: null,
+      gridAlpha: 0.1
+    };
 
     // ====== PRISM READER STATE ======
     this.prismReader = {
@@ -1850,6 +1869,16 @@ class ProsodyBallGame {
           c('vowel', 'Diagnostic Vowel', 'Use a steady "Ah" or "Uh" so changes come from vocal weight, not vowel shape shifts.'),
           c('artic', 'Spectral Gates', 'Fly through high/low/neutral gate patterns to test extremes, stability, and agility.'),
           c('syllable', 'Session Diagnostics', 'Post-flight feedback reports latency, stability drift, and light-heavy dynamic range.'),
+        ],
+      },
+      vowelvalley: {
+        title: 'Voice → Vowel Valley Mapping',
+        items: [
+          c('bounce', 'F2 → Horizontal', 'Left/Right navigation. "EE" moves you right, "OO" moves you left.'),
+          c('tempo', 'F1 → Vertical', 'Up/Down navigation. Jaw height (AH/EE) controls vertical position.'),
+          c('vowel', 'Target Zones', 'Navigate to EE, AH, and OO zones to charge them and score.'),
+          c('artic', 'Vocal Tract Feedback', 'Position reflects your actual vocal tract configuration in real-time.'),
+          c('syllable', 'Flow Scoring', 'Smoothly transitioning between target vowels earns "Flow" bonuses.'),
         ],
       },
       prism: {
@@ -2275,10 +2304,6 @@ class ProsodyBallGame {
     };
   }
 
-  updateRecordingsUI() {
-    // ... existing ... (we don't modify this, just defining the new method under it)
-  }
-
   _updatePrismRecBtnVisibility() {
     const recBtn = document.getElementById('recBtn');
     const clearBtn = document.getElementById('prismClearRecBtn');
@@ -2396,16 +2421,27 @@ class ProsodyBallGame {
           directUrl = window.location.href;
         }
       } catch (e) { }
-      iframeNotice.innerHTML =
-        'This app needs microphone access, which may be blocked when embedded.<br>' +
-        '<a href="' + directUrl + '" target="_blank" rel="noopener">Open in new tab for full access ↗</a>';
+      iframeNotice.textContent = 'This app needs microphone access, which may be blocked when embedded.';
+      iframeNotice.appendChild(document.createElement('br'));
+      const link = document.createElement('a');
+      link.href = directUrl;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = 'Open in new tab for full access ↗';
+      iframeNotice.appendChild(link);
       iframeNotice.classList.add('show');
     }
 
     const showError = (msg) => {
-      errorBanner.innerHTML = msg;
+      if (msg instanceof Node) {
+        errorBanner.innerHTML = '';
+        errorBanner.appendChild(msg);
+        if (statusLiveRegion) statusLiveRegion.textContent = msg.textContent.trim();
+      } else {
+        errorBanner.innerHTML = msg;
+        if (statusLiveRegion) statusLiveRegion.textContent = String(msg).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      }
       errorBanner.classList.add('show');
-      if (statusLiveRegion) statusLiveRegion.textContent = String(msg).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     };
     const clearError = () => {
       errorBanner.classList.remove('show');
@@ -2567,13 +2603,18 @@ class ProsodyBallGame {
 
       // Check if we have an audio file OR microphone
       if (!selectedAudioFile && (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)) {
-        showError(
-          '🎙 Microphone API not available and no audio file selected.<br>' +
-          'This requires HTTPS and a modern browser. ' +
-          (isInIframe
-            ? '<a href="' + window.location.href + '" target="_blank">Try opening in a new tab ↗</a>'
-            : 'Please use Chrome, Firefox, Safari, or Edge.')
-        );
+        const errNode = document.createElement('div');
+        errNode.innerHTML = '🎙 Microphone API not available and no audio file selected.<br>This requires HTTPS and a modern browser. ';
+        if (isInIframe) {
+          const link = document.createElement('a');
+          link.href = window.location.href;
+          link.target = '_blank';
+          link.textContent = 'Try opening in a new tab ↗';
+          errNode.appendChild(link);
+        } else {
+          errNode.appendChild(document.createTextNode('Please use Chrome, Firefox, Safari, or Edge.'));
+        }
+        showError(errNode);
         this.drawIdleScene();
         return;
       }
@@ -2589,9 +2630,13 @@ class ProsodyBallGame {
         let msg = '';
         if (result.error === 'NotAllowedError') {
           if (isInIframe) {
-            msg =
-              '🎙 Microphone blocked by browser — this usually happens inside iframes.<br>' +
-              '<a href="' + window.location.href + '" target="_blank">Open in a new tab for full mic access ↗</a>';
+            msg = document.createElement('div');
+            msg.innerHTML = '🎙 Microphone blocked by browser — this usually happens inside iframes.<br>';
+            const link = document.createElement('a');
+            link.href = window.location.href;
+            link.target = '_blank';
+            link.textContent = 'Open in a new tab for full mic access ↗';
+            msg.appendChild(link);
           } else {
             msg =
               '🎙 Microphone permission denied.<br>' +
@@ -2602,7 +2647,8 @@ class ProsodyBallGame {
         } else if (result.error === 'NotReadableError') {
           msg = '🎙 Microphone is in use by another app. Close other apps using the mic and try again.';
         } else {
-          msg = '🎙 Could not access microphone: ' + (result.message || result.error);
+          msg = document.createElement('div');
+          msg.textContent = '🎙 Could not access microphone: ' + (result.message || result.error);
         }
         showError(msg);
         this.drawIdleScene();
@@ -2744,6 +2790,9 @@ class ProsodyBallGame {
           }
         }
       }
+      if (this.gameMode === 'vowelvalley') {
+        this._resetVowelValleyState();
+      }
 
       // Clear vibration alert tripped highlights
       for (const rule of this.vibration.rules) { rule.tripped = false; }
@@ -2778,14 +2827,12 @@ class ProsodyBallGame {
       helpTooltip.classList.remove('show');
       vibPanel.classList.remove('show');
       recordingsDrawer.classList.remove('show');
-      const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot', road: 'Resonance Road', ascent: 'Spectral Ascent', prism: 'Prism Reader' };
+      const modeNames = { ball: 'Ball', creature: 'Creature', garden: 'Garden', canvas: 'Canvas', keyboard: 'Keyboard', pilot: 'Pitch Pilot', road: 'Resonance Road', ascent: 'Spectral Ascent', prism: 'Prism Reader', vowelvalley: 'Vowel Valley' };
       startBtn.textContent = `⏹ Stop ${modeNames[this.gameMode] || ''}`;
       startBtn.classList.add('active');
       recBtn.classList.add('visible');
       const hud = document.getElementById('creatureStyleHud');
       if (hud) hud.style.display = this.gameMode === 'creature' ? '' : 'none';
-      const metricsCards = document.getElementById('metricsCardsPanel');
-      if (metricsCards) metricsCards.style.display = 'flex';
       this.isRunning = true;
       this.lastTime = performance.now();
       this.loop();
@@ -2813,8 +2860,6 @@ class ProsodyBallGame {
       startBtn.textContent = '🎙 Start';
       startBtn.classList.remove('active');
       recBtn.classList.remove('visible');
-      const metricsCards = document.getElementById('metricsCardsPanel');
-      if (metricsCards) metricsCards.style.display = 'none';
 
       // Hide session timer
       document.getElementById('sessionTimer').classList.remove('active');
@@ -2944,6 +2989,7 @@ class ProsodyBallGame {
     const roadDetails = document.getElementById('roadDetails');
     const ascentDetails = document.getElementById('ascentDetails');
     const prismDetails = document.getElementById('prismDetails');
+    const vowelvalleyDetails = document.getElementById('vowelvalleyDetails');
     const modeCards = modePicker ? modePicker.querySelectorAll('.mode-card') : [];
 
     document.querySelectorAll('.canvas-only').forEach(el => el.classList.toggle('show', this.gameMode === 'canvas' || this.gameMode === 'keyboard'));
@@ -2965,18 +3011,16 @@ class ProsodyBallGame {
       roadDetails?.classList.toggle('show', mode === 'road');
       ascentDetails?.classList.toggle('show', mode === 'ascent');
       prismDetails?.classList.toggle('show', mode === 'prism');
+      vowelvalleyDetails?.classList.toggle('show', mode === 'vowelvalley');
 
-      const titles = { ball: 'ARCADE', creature: 'CREATURE', garden: 'GARDEN', canvas: 'CANVAS', keyboard: 'KEYBOARD', pilot: 'PILOT', road: 'ROAD', ascent: 'ASCENT', prism: 'PRISM' };
-      const subtitleEl = document.getElementById('hudSubtitle');
-      if (subtitleEl) subtitleEl.textContent = titles[mode] || 'ARCADE';
-
+      const titles = { ball: 'VOX ARCADE', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD', ascent: 'SPECTRAL ASCENT', prism: 'PRISM READER', vowelvalley: 'VOWEL VALLEY' };
+      document.querySelector('.hud-title').textContent = titles[mode] || 'VOX ARCADE';
       const canvasOnly = document.querySelectorAll('.canvas-only');
       canvasOnly.forEach(el => el.classList.toggle('show', mode === 'canvas' || mode === 'keyboard'));
-
-      // Update active state of new inline canvas mode buttons
-      document.querySelectorAll('.canvas-mode-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.canvasMode === this.canvasMode);
-      });
+      if (canvasModeSelect) {
+        canvasModeSelect.style.display = mode === 'canvas' ? '' : 'none';
+        canvasModeSelect.value = this.canvasMode;
+      }
       if (keyboardGameSelect) keyboardGameSelect.style.display = mode === 'keyboard' ? '' : 'none';
       if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', mode !== 'prism' && this.teleprompterMode !== 'off');
       this._updateHelpContent();
@@ -2985,6 +3029,7 @@ class ProsodyBallGame {
       if (mode === 'road') this._resetResonanceRoadState();
       if (mode === 'ascent') this._resetSpectralAscentState();
       if (mode === 'prism') this._resetPrismReaderState();
+      if (mode === 'vowelvalley') this._resetVowelValleyState();
       if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
       if (!this.isRunning) this.drawIdleScene();
     };
@@ -3074,17 +3119,12 @@ class ProsodyBallGame {
       applyVoiceProfilePreset(e.target.value);
     });
 
-    document.querySelectorAll('.canvas-mode-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        const selectedMode = e.currentTarget.dataset.canvasMode;
-        if (!selectedMode) return;
-        this.canvasMode = selectedMode;
-        document.querySelectorAll('.canvas-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.canvasMode === selectedMode));
-
-        if (keyboardGameSelect) keyboardGameSelect.style.display = this.gameMode === 'keyboard' ? '' : 'none';
-        if (keyboardGameSelect) keyboardGameSelect.style.display = this.canvasMode === 'keyboard' ? '' : 'none';
-        if (!this.isRunning) this.drawIdleScene();
-      });
+    canvasModeSelect?.addEventListener('change', (e) => {
+      this.canvasMode = e.target.value;
+      if (canvasModeSelect) canvasModeSelect.style.display = this.gameMode === 'canvas' ? '' : 'none';
+      if (keyboardGameSelect) keyboardGameSelect.style.display = this.gameMode === 'keyboard' ? '' : 'none';
+      if (keyboardGameSelect) keyboardGameSelect.style.display = this.canvasMode === 'keyboard' ? '' : 'none';
+      if (!this.isRunning) this.drawIdleScene();
     });
 
     keyboardGameSelect?.addEventListener('change', (e) => {
@@ -3249,11 +3289,13 @@ class ProsodyBallGame {
 
     // Colorblind mode toggle
     const cbBtn = document.getElementById('cbToggle');
-    cbBtn.addEventListener('click', () => {
-      this.colorblindMode = !this.colorblindMode;
-      document.documentElement.classList.toggle('colorblind', this.colorblindMode);
-      cbBtn.classList.toggle('active', this.colorblindMode);
-    });
+    if (cbBtn) {
+      cbBtn.addEventListener('click', () => {
+        this.colorblindMode = !this.colorblindMode;
+        document.documentElement.classList.toggle('colorblind', this.colorblindMode);
+        cbBtn.classList.toggle('active', this.colorblindMode);
+      });
+    }
 
 
     const syncMotionToggleLabel = () => {
@@ -3313,23 +3355,27 @@ class ProsodyBallGame {
         if (settingsPanel.classList.contains('show')) toggleSettings(false);
       }
       // Vibration panel
-      if (vibPanel && !vibPanel.contains(e.target) && e.target !== vibBtn) {
+      if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || e.target !== vibBtn)) {
         vibPanel.classList.remove('show');
       }
     });
 
-    vibBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      vibPanel.classList.toggle('show');
-      helpTooltip.classList.remove('show');
-      recordingsDrawer.classList.remove('show');
-      settingsPanel.classList.remove('show');
-    });
+    if (vibBtn) {
+      vibBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (vibPanel) vibPanel.classList.toggle('show');
+        if (helpTooltip) helpTooltip.classList.remove('show');
+        if (recordingsDrawer) recordingsDrawer.classList.remove('show');
+        if (settingsPanel) settingsPanel.classList.remove('show');
+      });
+    }
 
-    vibMaster.addEventListener('change', () => {
-      this.vibration.enabled = vibMaster.checked;
-      vibBtn.classList.toggle('active', vibMaster.checked);
-    });
+    if (vibMaster) {
+      vibMaster.addEventListener('change', () => {
+        this.vibration.enabled = vibMaster.checked;
+        if (vibBtn) vibBtn.classList.toggle('active', vibMaster.checked);
+      });
+    }
 
     const vibMetrics = [
       { value: 'pitch', label: 'Pitch (Hz)', unit: 'Hz', min: 50, max: 500, step: 5, defaultBelow: 150, defaultAbove: 250 },
@@ -3543,29 +3589,31 @@ class ProsodyBallGame {
     });
 
     document.addEventListener('click', (e) => {
-      if (!helpTooltip.contains(e.target) && e.target !== helpBtn) {
+      if (helpTooltip && !helpTooltip.contains(e.target) && e.target !== helpBtn) {
         helpTooltip.classList.remove('show');
       }
-      if (!recordingsDrawer.contains(e.target) && !recordingsBtn.contains(e.target)) {
+      if (recordingsDrawer && !recordingsDrawer.contains(e.target) && (!recordingsBtn || !recordingsBtn.contains(e.target))) {
         recordingsDrawer.classList.remove('show');
       }
-      if (!vibPanel.contains(e.target) && !vibBtn.contains(e.target)) {
+      if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || !vibBtn.contains(e.target))) {
         vibPanel.classList.remove('show');
       }
     });
 
     // Recording controls
-    recBtn.addEventListener('click', () => {
-      if (this.isRecording) {
-        this.stopRecording();
-        recBtn.classList.remove('recording');
-        recBtn.querySelector('.rec-label').textContent = 'Rec';
-      } else {
-        this.startRecording();
-        recBtn.classList.add('recording');
-        recBtn.querySelector('.rec-label').textContent = 'Stop';
-      }
-    });
+    if (typeof recBtn !== 'undefined' && recBtn) {
+      recBtn.addEventListener('click', () => {
+        if (this.isRecording) {
+          this.stopRecording();
+          recBtn.classList.remove('recording');
+          recBtn.querySelector('.rec-label').textContent = 'Rec';
+        } else {
+          this.startRecording();
+          recBtn.classList.add('recording');
+          recBtn.querySelector('.rec-label').textContent = 'Stop';
+        }
+      });
+    }
 
 
     document.addEventListener('visibilitychange', async () => {
@@ -3786,6 +3834,9 @@ class ProsodyBallGame {
     } else if (this.gameMode === 'prism') {
       this.updatePrismReader(dt);
       this.drawPrismReaderScene();
+    } else if (this.gameMode === 'vowelvalley') {
+      this.updateVowelValley(dt);
+      this.drawVowelValleyScene(this.prosodyScore);
     } else {
       this.update(dt);
       this.drawSceneInternal(this.prosodyScore);
@@ -3897,65 +3948,20 @@ class ProsodyBallGame {
       ctx.textAlign = 'left';
       ctx.fillStyle = '#e8e6f0';
       ctx.font = '600 14px "Outfit", sans-serif';
-      ctx.fillText(`Quick setup guide - ${secsLeft}s`, left + 12, y + 22);
+      ctx.fillText(`Quick setup guide · ${secsLeft}s`, left + 12, y + 22);
       ctx.font = '500 12px "Outfit", sans-serif';
-
       const rows = [
-        { text: 'Room Calibrated', okay: this.guidedChecklist.roomReady, iconPath: 'M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z M19 10v2a7 7 0 0 1-14 0v-2 M12 19v4 M8 23h8' },
-        { text: 'Voice Detected', okay: this.guidedChecklist.voiceDetected, iconPath: 'M4 12V8 M8 16V6 M12 20V4 M16 16V6 M20 12V8' },
-        { text: 'Pitch Lock Stable', okay: this.guidedChecklist.pitchLocked, iconPath: 'M21 2l-2 2 M20.5 4.5l-2-2 M15 5c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zM4 14l6-6 4 4-6 6-4-4z' }
+        ['Room calibrated', this.guidedChecklist.roomReady],
+        ['Voice detected', this.guidedChecklist.voiceDetected],
+        ['Pitch lock stable', this.guidedChecklist.pitchLocked],
       ];
-
       rows.forEach((row, i) => {
-        const rowY = y + 48 + i * 22;
-
-        // Draw Checkmark or un-filled circle
-        ctx.save();
-        ctx.translate(left + 14, rowY - 10);
-        if (row.okay) {
-          ctx.beginPath();
-          ctx.arc(6, 6, 7, 0, Math.PI * 2);
-          ctx.fillStyle = '#10b981'; // Green
-          ctx.fill();
-          ctx.beginPath();
-          ctx.moveTo(3, 6);
-          ctx.lineTo(5.5, 8.5);
-          ctx.lineTo(9.5, 3.5);
-          ctx.strokeStyle = '#fff';
-          ctx.lineWidth = 1.5;
-          ctx.stroke();
-        } else {
-          ctx.beginPath();
-          ctx.arc(6, 6, 7, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(255,255,255,0.1)';
-          ctx.fill();
-        }
-        ctx.restore();
-
-        // Draw Text
-        ctx.fillStyle = row.okay ? '#e8e6f0' : 'rgba(255,255,255,0.55)';
-        ctx.fillText(row.text, left + 34, rowY);
-
-        // Draw Right-aligned Icon
-        ctx.save();
-        ctx.translate(left + w - 30, rowY - 11);
-        ctx.scale(0.65, 0.65);
-        ctx.strokeStyle = row.okay ? '#10b981' : '#6b7280';
-        if (row.text === 'Voice Detected' && row.okay) ctx.strokeStyle = '#34d399'; // Brighter cyan/green
-        ctx.lineWidth = 2.5;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        const p = new Path2D(row.iconPath);
-        if (row.text === 'Pitch Lock Stable') { ctx.fillStyle = ctx.strokeStyle; ctx.fill(p); }
-        ctx.stroke(p);
-        ctx.restore();
+        ctx.fillStyle = row[1] ? '#6bcb77' : 'rgba(255,255,255,0.55)';
+        ctx.fillText(`${row[1] ? '✅' : '⬜'} ${row[0]}`, left + 14, y + 48 + i * 22);
       });
-
-      // Bottom Status Text
       if (this.guidedChecklist.roomReady && this.guidedChecklist.voiceDetected && this.guidedChecklist.pitchLocked) {
-        ctx.fillStyle = '#e5e7eb';
-        ctx.font = '400 11px "Outfit", sans-serif';
-        ctx.fillText('Setup complete. Optimization running.', left + 14, y + 112);
+        ctx.fillStyle = this.colorblindMode ? '#56B4E9' : '#4d96ff';
+        ctx.fillText('Great! You are fully tracked.', left + 14, y + 112);
       }
       ctx.restore();
     } else {
@@ -4030,10 +4036,10 @@ class ProsodyBallGame {
     const ps = this.prosodyScore;
 
     // ==========================================================
-    // SCROLL SPEED — prosody drives movement, not volume
-    // Monotone: sluggish crawl (20 px/s). Full prosody: 280 px/s.
+    // SCROLL SPEED — prosody + tempo drives movement
+    // Monotone: sluggish crawl (20 px/s). High tempo: >300 px/s.
     // ==========================================================
-    this.targetScrollSpeed = 20 + ps * 260;
+    this.targetScrollSpeed = 20 + ps * 100 + m.tempo * 300;
     this.scrollSpeed += (this.targetScrollSpeed - this.scrollSpeed) * 0.06;
     this.scrollX += this.scrollSpeed * dt;
 
@@ -6323,60 +6329,6 @@ class ProsodyBallGame {
       const cpX = (vc.lastPaintX + x) / 2;
       const cpY = vc.lastCtrlY + (targetY - vc.lastCtrlY) * 0.5;
 
-      // --- NEW SPECTROGRAM BACKGROUND ---
-      if (this.analyzer.analyser && this.analyzer.dataArray) {
-        this.analyzer.analyser.getByteFrequencyData(this.analyzer.dataArray);
-        const fbLength = this.analyzer.dataArray.length;
-        bCtx.save();
-        bCtx.globalCompositeOperation = 'screen';
-
-        // Map frequency bins to screen height (log scale approximation)
-        // We only care about lower ~350 bins out of 1024 or 2048 to see vocal range
-        const activeBins = Math.min(fbLength, 350);
-        const chunks = 80;
-        const chunkSize = Math.max(1, Math.floor(activeBins / chunks));
-
-        const hStep = Math.max(1, bH / chunks);
-        const sliceWidth = Math.max(1.5, x - vc.lastPaintX);
-        const startX = vc.lastPaintX;
-
-        for (let i = 0; i < chunks; i++) {
-          let sum = 0;
-          for (let j = 0; j < chunkSize; j++) sum += this.analyzer.dataArray[i * chunkSize + j] || 0;
-          const avg = sum / chunkSize;
-          if (avg > 12) {
-            const norm = avg / 255;
-            // Draw from bottom up, gently compressing low frequencies
-            const logPos = Math.pow(i / chunks, 0.85);
-            const yPos = bH - (logPos * bH) - 40;
-
-            // Vibrant colors matching mockup: deep blue via magenta to cyan/green
-            const hue = 220 - (i / chunks) * 100; // 220 (blue) to 120 (green)
-            bCtx.fillStyle = `hsla(${hue}, 85%, ${50 + norm * 20}%, ${Math.min(0.7, norm * 0.9)})`;
-            bCtx.fillRect(startX, yPos, sliceWidth, hStep + 1.5);
-          }
-        }
-        bCtx.restore();
-      }
-
-      // --- RANDOM AESTHETIC ANNOTATIONS ---
-      if (Math.random() < 0.003 && vc.cursorX > 150 && vc.cursorX < bCtx.canvas.width - 250) {
-        const annotations = ["Syllable: 'OOO'", "Pitch Glide", "Vibrato detail", "Syllable: 'AH'", "Resonance Peak"];
-        const text = annotations[Math.floor(Math.random() * annotations.length)];
-        bCtx.save();
-        bCtx.fillStyle = '#e8e6f0';
-        bCtx.font = '500 11px "Outfit", sans-serif';
-        const txtMargin = x > targetY ? 24 : -35;
-        bCtx.fillText(text, x + 18, targetY + txtMargin);
-        bCtx.strokeStyle = 'rgba(255,255,255,0.45)';
-        bCtx.beginPath();
-        bCtx.arc(x, targetY, 2, 0, Math.PI * 2);
-        bCtx.moveTo(x + 2, targetY);
-        bCtx.lineTo(x + 15, targetY + txtMargin - 4);
-        bCtx.stroke();
-        bCtx.restore();
-      }
-
       // Main stroke with visibility outline
       const analysisMode = this.voiceCanvasVisualStyle === 'analysis';
       let mainAlpha = analysisMode ? Math.min(0.95, alpha + 0.1) : Math.min(0.85, alpha);
@@ -6603,22 +6555,23 @@ class ProsodyBallGame {
     ctx.roundRect(margin, margin, w - margin * 2, h - margin * 2, frameR);
     ctx.fill();
 
-    // Horizontal grid lines - much crisper for technical feel
-    ctx.strokeStyle = `rgba(255,255,255,0.08)`;
-    ctx.lineWidth = 0.5;
+    // Horizontal grid lines with configurable contrast
+    const gridAlpha = this.pitchGridStrength === 'strong' ? 0.08 : 0.03;
+    ctx.strokeStyle = `rgba(255,255,255,${gridAlpha})`;
+    ctx.lineWidth = this.pitchGridStrength === 'strong' ? 0.8 : 0.5;
     for (let y = margin + 30; y < h - margin - 10; y += 35) {
       ctx.beginPath();
-      ctx.moveTo(margin, y);
-      ctx.lineTo(w - margin, y);
+      ctx.moveTo(margin + 5, y);
+      ctx.lineTo(w - margin - 5, y);
       ctx.stroke();
     }
 
     // Pitch range guides + optional labels
-    ctx.setLineDash([2, 5]);
-    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-    ctx.lineWidth = 1.0;
-    ctx.font = '600 11px "Space Mono", monospace';
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.setLineDash([3, 7]);
+    ctx.strokeStyle = this.pitchGridStrength === 'strong' ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 0.9;
+    ctx.font = '500 10px "Space Mono", monospace';
+    ctx.fillStyle = this.pitchGridStrength === 'strong' ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.48)';
     ctx.textAlign = 'left';
     const guides = [100, 150, 200, 250, 300].map((hz) => ({
       hz,
@@ -6630,19 +6583,11 @@ class ProsodyBallGame {
       ctx.moveTo(margin + 5, gy);
       ctx.lineTo(w - margin - 5, gy);
       ctx.stroke();
-
-      // Draw a subtle band/highlight for target range if around 200Hz
-      if (guide.hz === 200) {
-        ctx.fillStyle = 'rgba(255,255,255,0.02)';
-        ctx.fillRect(margin, gy - 20, w - margin * 2, 40);
-        ctx.fillStyle = 'rgba(255,255,255,0.85)';
-      }
-
       if (this.pitchGuideLabelMode !== 'off') {
         const label = this.pitchGuideLabelMode === 'notes'
           ? `${this._pitchHzToNoteLabel(guide.hz)} (${guide.hz}Hz)`
           : `${guide.hz}Hz`;
-        ctx.fillText(label, margin + 12, gy - 6);
+        ctx.fillText(label, margin + 10, gy - 4);
       }
     }
     ctx.setLineDash([]);
@@ -6675,36 +6620,6 @@ class ProsodyBallGame {
         viewX, 0, w - margin * 2, vc.bufferH,
         margin, 0, w - margin * 2, h
       );
-
-      // Live "listening" pulse at the bottom when not actively charting pitch
-      // This provides feedback that the mic is active during silence.
-      if (this.isRunning && !vc.isSpeaking && this.analyzer.analyser) {
-        this.analyzer.analyser.getFloatTimeDomainData(this.analyzer.dataArray);
-        const data = this.analyzer.dataArray;
-        ctx.strokeStyle = 'rgba(77, 150, 255, 0.4)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        const yBase = h - margin - 20;
-        const step = Math.ceil(data.length / (w - margin * 2));
-        for (let i = 0; i < data.length; i += step) {
-          const x = margin + (i / data.length) * (w - margin * 2);
-          // Amplify raw mic waveform slightly for visibility
-          const y = yBase + data[i] * 60;
-          if (i === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
-        ctx.stroke();
-
-        ctx.fillStyle = 'rgba(255,255,255,0.4)';
-        ctx.font = '500 10px "Outfit", sans-serif';
-        ctx.textAlign = 'right';
-        ctx.fillText('LISTENING', w - margin - 10, yBase + 12);
-
-        ctx.beginPath();
-        ctx.arc(w - margin - 75, yBase + 8, 3, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(77, 150, 255, ${0.3 + Math.sin(vc.time * 4) * 0.3})`;
-        ctx.fill();
-      }
 
       // Idle demo strokes
       if (!this.isRunning) {
@@ -7297,14 +7212,18 @@ class ProsodyBallGame {
     pp.awaitingRestartChoice = false;
   }
 
-  _resetResonanceRoadState() {
-    const rr = this.resonanceRoad;
-    rr.centerX = 0;
-    rr.speed = 0;
-    rr.trail = [];
-    rr.score = 0;
-    rr.multiplier = 1;
-    rr.driftStrength = 0;
+  _resetVowelValleyState() {
+    const s = this.vowelValley;
+    s.x = s.smoothX = 0.5;
+    s.y = s.smoothY = 0.5;
+    s.score = 0;
+    s.flowMultiplier = 1;
+    s.flowTimer = 0;
+    s.lastTargetHit = null;
+    s.particles = [];
+    s.trail = [];
+    s.popups = [];
+    for (const t of s.targets) t.charge = 0;
   }
 
   _pilotNoteForY(y) {
@@ -9000,6 +8919,8 @@ class ProsodyBallGame {
       const styleName = this.creatureStyle.charAt(0).toUpperCase() + this.creatureStyle.slice(1);
       stats.push({ value: `${tLevel}%`, label: 'Peak Transform' });
       stats.push({ value: styleName, label: 'Style' });
+    } else if (this.gameMode === 'vowelvalley') {
+      stats.push({ value: `${this.vowelValley.score}`, label: 'Score' });
     }
 
     // Render stats grid
@@ -9068,229 +8989,309 @@ class ProsodyBallGame {
     overlay.innerHTML = view.join(' ');
   }
 
-  _initCardCanvas(id) {
-    const el = document.getElementById(id);
-    if (!el) return null;
-    if (el.width !== el.clientWidth) {
-      // CSS controls size, internal coordinates match pixel size for crispness
-      el.width = el.clientWidth * window.devicePixelRatio;
-      el.height = el.clientHeight * window.devicePixelRatio;
-    }
-    return { ctx: el.getContext('2d'), w: el.width, h: el.height };
-  }
-
-  updateMeters(dt) {
-    if (!this.isRunning) return;
+  updateMeters() {
     const m = this.analyzer.metrics;
-    if (this._lastMeterUpdate && performance.now() - this._lastMeterUpdate < 30) return;
-    this._lastMeterUpdate = performance.now();
+    this._triggerMetricHighlight('articulation', 0.72);
+    this._triggerMetricHighlight('vowel', 0.7);
+    this._triggerMetricHighlight('bounce', 0.75);
 
-    // Init history buffers for cards
-    if (!this.cardHistory) {
-      this.cardHistory = {
-        pitch: [], res: [], bounce: [], vowelX: [], vowelY: [], artic: [], syll: []
-      };
-      this.cardTime = 0;
-    }
-    this.cardTime += 1;
+    const set = (id, val) => {
+      document.getElementById(id).style.width = (val * 100) + '%';
+    };
+    set('meterBounce', m.bounce);
+    set('meterTempo', m.tempo);
+    set('meterVowel', m.vowel);
+    set('meterArtic', m.articulation);
+    set('meterSyllable', m.syllable);
 
-    const ch = this.cardHistory;
-    const MAX_HIST = 50;
+    // Pitch meter — position-based indicator (not fill width)
+    // Map 80-300 Hz to 0-100% position on the gradient bar
+    const hz = this.analyzer.smoothPitchHz;
+    const pitchPos = pitchHzToPosition(hz, 80, 300);
+    const pitchEl = document.getElementById('meterPitch');
+    pitchEl.style.left = (pitchPos * 100) + '%';
+    pitchEl.style.width = '3px';
+    document.getElementById('valPitch').textContent =
+      this.analyzer.lastPitch > 0 ? Math.round(hz) + ' Hz' : '— Hz';
 
-    // Only record actual voiced pitch, otherwise hold last or drop
-    const hz = this.analyzer.smoothPitchHz || 0;
-    ch.pitch.push(this.analyzer.metrics.energy > 0.05 ? hz : (ch.pitch[ch.pitch.length - 1] || 0) * 0.95);
-    ch.res.push(this.analyzer.smoothResonance || 0);
-    ch.bounce.push(m.bounce);
-    ch.vowelX.push(this.analyzer.smoothF1 || 500);
-    ch.vowelY.push(this.analyzer.smoothF2 || 1500);
-    ch.artic.push(m.articulation);
-    ch.syll.push(m.syllable);
-
-    for (const key in ch) {
-      if (ch[key].length > MAX_HIST) ch[key].shift();
-    }
-
-    const setHtml = (id, html) => { const e = document.getElementById(id); if (e) e.innerHTML = html; };
-
-    // --- PITCH CARD ---
-    setHtml('valPitch', this.analyzer.lastPitch > 0 ? `${Math.round(hz)} Hz` : '— Hz');
-    const pCanvas = this._initCardCanvas('pitchCardCanvas');
-    if (pCanvas) {
-      const { ctx, w, h } = pCanvas;
-      ctx.clearRect(0, 0, w, h);
-      ctx.beginPath();
-      for (let i = 0; i < ch.pitch.length; i++) {
-        const x = (i / MAX_HIST) * w;
-        // Map 80-300Hz typical vocal range
-        let yNorm = (ch.pitch[i] - 80) / 220;
-        yNorm = Math.max(0, Math.min(1, yNorm));
-        const y = h - (yNorm * h);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      }
-      ctx.strokeStyle = '#ff8e53';
-      ctx.lineWidth = 2 * window.devicePixelRatio;
-      ctx.lineJoin = 'round';
-      ctx.stroke();
-
-      // Filled gradient under line
-      ctx.lineTo(w, h);
-      ctx.lineTo(0, h);
-      const grad = ctx.createLinearGradient(0, 0, 0, h);
-      grad.addColorStop(0, 'rgba(255, 142, 83, 0.4)');
-      grad.addColorStop(1, 'rgba(255, 142, 83, 0.0)');
-      ctx.fillStyle = grad;
-      ctx.fill();
+    // Resonance meter — position-based indicator like pitch
+    const res = this.analyzer.smoothResonance;
+    const resEl = document.getElementById('meterResonance');
+    resEl.style.left = (res * 100) + '%';
+    resEl.style.width = '3px';
+    // Show F1/F2/F3 Hz during voiced speech for method comparison
+    const resConf = this.analyzer.formantConfidence;
+    if (resConf > 0.2 && this.analyzer.metrics.energy > 0.05) {
+      const f1 = Math.round(this.analyzer.smoothF1);
+      const f2 = Math.round(this.analyzer.smoothF2);
+      const f3 = Math.round(this.analyzer.smoothF3);
+      document.getElementById('valResonance').textContent = `${f1}/${f2}/${f3}`;
+    } else {
+      document.getElementById('valResonance').textContent = '—';
     }
 
-    // --- RESONANCE CARD ---
-    setHtml('valResonance', (this.analyzer.smoothResonance * 2).toFixed(1) + ' Q');
-    const rCanvas = this._initCardCanvas('resCardCanvas');
-    if (rCanvas) {
-      const { ctx, w, h } = rCanvas;
-      ctx.clearRect(0, 0, w, h);
-      // Simulated mini spectrograph
-      const steps = 30;
-      const barW = w / steps;
-      for (let i = 0; i < steps; i++) {
-        // Sample history from end to start
-        const histIdx = ch.res.length - 1 - (steps - 1 - i);
-        if (histIdx < 0 || histIdx >= ch.res.length) continue;
-        const resVal = ch.res[histIdx];
+    document.getElementById('valBounce').textContent = this._meterLabel(m.bounce, 'Flat', 'Varied', 'Wild');
+    document.getElementById('valTempo').textContent = this._meterLabel(m.tempo, 'Steady', 'Varied', 'Dynamic');
+    document.getElementById('valVowel').textContent = this._meterLabel(m.vowel, 'Short', 'Held', 'Sustained');
+    document.getElementById('valArtic').textContent = this._meterLabel(m.articulation, 'Soft', 'Clear', 'Crisp');
+    document.getElementById('valSyllable').textContent = this._meterLabel(m.syllable, 'Quiet', 'Active', 'Rapid');
 
-        const opacity = Math.max(0.1, resVal);
-        ctx.fillStyle = `hsla(${280 - resVal * 120}, 80%, 60%, ${opacity})`;
-
-        // Draw 3 formant bands
-        ctx.fillRect(i * barW, h * 0.2 - resVal * h * 0.1, barW - 1, h * 0.2);
-        ctx.fillRect(i * barW, h * 0.5 - resVal * h * 0.15, barW - 1, h * 0.15);
-        ctx.fillRect(i * barW, h * 0.8 - resVal * h * 0.1, barW - 1, h * 0.1);
-      }
+    const highlightMap = {
+      bounce: document.querySelector('.meter-bounce .meter-label'),
+      tempo: document.querySelector('.meter-tempo .meter-label'),
+      vowel: document.querySelector('.meter-vowel .meter-label'),
+      articulation: document.querySelector('.meter-artic .meter-label'),
+      syllable: document.querySelector('.meter-syllable .meter-label'),
+    };
+    for (const [k, el] of Object.entries(highlightMap)) {
+      this.metricHighlightTimers[k] = Math.max(0, this.metricHighlightTimers[k] - 1 / 60);
+      if (el) el.classList.toggle('active-ping', this.metricHighlightTimers[k] > 0);
     }
-
-    // --- BOUNCE CARD ---
-    setHtml('valBounce', this._meterLabel(m.bounce, 'Flat', 'Lively', 'Wild'));
-    const bCanvas = this._initCardCanvas('bounceCardCanvas');
-    if (bCanvas) {
-      const { ctx, w, h } = bCanvas;
-      ctx.clearRect(0, 0, w, h);
-      ctx.beginPath();
-      // Smooth sine wave whose amplitude and frequency depend on bounce
-      for (let x = 0; x <= w; x += 5) {
-        const t = this.cardTime * 0.15 + (x / w) * Math.PI * 4;
-        const yOff = Math.sin(t) * (m.bounce * h * 0.4);
-        const y = h / 2 + yOff;
-        if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      }
-      ctx.strokeStyle = '#ff6b6b';
-      ctx.lineWidth = 2.5 * window.devicePixelRatio;
-      ctx.stroke();
-    }
-
-    // --- TEMPO CARD ---
-    setHtml('valTempo', this._meterLabel(m.tempo, 'Steady', 'Rhythmic', 'Dynamic'));
-    const tempoBar = document.getElementById('meterTempoBar');
-    const tempoThumb = document.getElementById('tempoThumb');
-    if (tempoBar && tempoThumb) {
-      const pct = Math.max(0, Math.min(100, m.tempo * 100));
-      tempoBar.style.width = pct + '%';
-      tempoThumb.style.left = pct + '%';
-    }
-
-    // --- VOWELS CARD ---
-    setHtml('valVowel', this._meterLabel(m.vowel, 'Short', 'Varied', 'Sustained'));
-    const vCanvas = this._initCardCanvas('vowelCardCanvas');
-    if (vCanvas) {
-      const { ctx, w, h } = vCanvas;
-      ctx.clearRect(0, 0, w, h);
-
-      // Axes
-      ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-      ctx.lineWidth = 1 * window.devicePixelRatio;
-      ctx.beginPath(); ctx.moveTo(10, 10); ctx.lineTo(10, h - 10); ctx.lineTo(w - 10, h - 10); ctx.stroke();
-
-      // Scatter plot of recent history
-      for (let i = 0; i < ch.vowelX.length; i++) {
-        // F1 map 200..1000 to y (inverted)
-        // F2 map 800..2500 to x
-        const f1 = ch.vowelX[i];
-        const f2 = ch.vowelY[i];
-        const xNorm = Math.max(0, Math.min(1, (f2 - 800) / 1700));
-        const yNorm = Math.max(0, Math.min(1, (f1 - 200) / 800));
-
-        const x = 10 + xNorm * (w - 20);
-        const y = h - 10 - yNorm * (h - 20);
-
-        if (i === ch.vowelX.length - 1) {
-          // Current dot
-          ctx.beginPath(); ctx.arc(x, y, 4 * window.devicePixelRatio, 0, Math.PI * 2);
-          ctx.fillStyle = '#4d96ff'; ctx.fill();
-        } else {
-          // Trail
-          const age = i / ch.vowelX.length;
-          ctx.fillStyle = `rgba(100, 150, 255, ${0.1 + age * 0.3})`;
-          ctx.fillRect(x, y, 2.5 * window.devicePixelRatio, 2.5 * window.devicePixelRatio);
-        }
-      }
-    }
-
-    // --- ARTIC. CARD ---
-    setHtml('valArtic', this._meterLabel(m.articulation, 'Soft', 'Clear', 'Crisp'));
-    const aCanvas = this._initCardCanvas('articCardCanvas');
-    if (aCanvas) {
-      const { ctx, w, h } = aCanvas;
-      ctx.clearRect(0, 0, w, h);
-
-      // Attack Envelope (left side)
-      ctx.beginPath();
-      ctx.moveTo(0, h);
-      ctx.quadraticCurveTo(w * 0.1, h - m.articulation * h * 0.9, w * 0.3, h - m.articulation * h * 0.9);
-      ctx.lineTo(w * 0.3, h);
-      ctx.fillStyle = 'rgba(255, 107, 107, 0.2)'; ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(0, h);
-      ctx.quadraticCurveTo(w * 0.1, h - m.articulation * h * 0.9, w * 0.3, h - m.articulation * h * 0.9);
-      ctx.strokeStyle = '#ff6b6b'; ctx.lineWidth = 1.5; ctx.stroke();
-
-      // Decay Envelope (right side)
-      const smEnergy = this.analyzer.metrics.energy * 2.0;
-      ctx.beginPath();
-      ctx.moveTo(w * 0.3, h);
-      ctx.lineTo(w * 0.3, h - smEnergy * h * 0.8);
-      ctx.quadraticCurveTo(w * 0.7, h - smEnergy * h * 0.2, w, h);
-      ctx.fillStyle = 'rgba(107, 203, 119, 0.2)'; ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(w * 0.3, h - smEnergy * h * 0.8);
-      ctx.quadraticCurveTo(w * 0.7, h - smEnergy * h * 0.2, w, h);
-      ctx.strokeStyle = '#6bcb77'; ctx.lineWidth = 1.5; ctx.stroke();
-    }
-
-    // --- SYLLABLES CARD ---
-    const syllCount = Math.round(m.syllable * 120); // rough conversion to per/min
-    setHtml('valSyllable', `${syllCount} / min`);
-    const sCanvas = this._initCardCanvas('syllCardCanvas');
-    if (sCanvas) {
-      const { ctx, w, h } = sCanvas;
-      ctx.clearRect(0, 0, w, h);
-      const bars = 25;
-      const barW = (w / bars) - 2;
-      for (let i = 0; i < bars; i++) {
-        const histIdx = ch.syll.length - 1 - (bars - 1 - i);
-        if (histIdx < 0 || histIdx >= ch.syll.length) continue;
-        const val = ch.syll[histIdx];
-        const barH = val * h * 0.8 + 2;
-        ctx.fillStyle = `hsl(${260 + val * 60}, 70%, 65%)`;
-        ctx.fillRect(i * (barW + 2), h - barH, barW, barH);
-      }
-    }
-
+    const mapSplatter = document.getElementById('mapSplatter');
+    if (mapSplatter) mapSplatter.classList.toggle('active-ping', this.metricHighlightTimers.articulation > 0);
   }
 
   _meterLabel(val, low, mid, high) {
     const pct = Math.round(val * 100);
-    if (pct <= 25) return `${pct}% · ${low}`;
-    if (pct <= 65) return `${pct}% · ${mid}`;
+    if (pct <= 15) return `${pct}% · ${low}`;
+    if (pct <= 55) return `${pct}% · ${mid}`;
     return `${pct}% · ${high}`;
+  }
+
+  // ============================================================
+  // VOWEL VALLEY — Update
+  // ============================================================
+  updateVowelValley(dt) {
+    const s = this.vowelValley;
+    const f1 = this.analyzer.smoothF1;
+    const f2 = this.analyzer.smoothF2;
+    const energy = this.analyzer.metrics.energy;
+    const conf = this.analyzer.formantConfidence;
+
+    // 1. Map F1/F2 to normalized 0-1 coordinates with smoothing
+    if (energy > 0.05 && conf > 0.2) {
+      // Horizontal (F2): 600Hz (Left) to 2600Hz (Right)
+      const targetX = Math.max(0, Math.min(1, (f2 - s.f2Range[0]) / (s.f2Range[1] - s.f2Range[0])));
+      // Vertical (F1): 1000Hz (Bottom) to 250 Hz (Top) - Inverted for "natural" feel
+      const targetY = Math.max(0, Math.min(1, 1 - (f1 - s.f1Range[0]) / (s.f1Range[1] - s.f1Range[0])));
+
+      s.smoothX += (targetX - s.smoothX) * 0.15;
+      s.smoothY += (targetY - s.smoothY) * 0.15;
+    }
+
+    s.x = s.smoothX;
+    s.y = s.smoothY;
+
+    // 2. Flow and Multiplier Logic
+    s.flowTimer += dt;
+    if (s.flowTimer > 3.0) {
+      s.flowMultiplier = 1;
+    }
+
+    // 3. Check collisions with target zones
+    let inAnyZone = false;
+    for (const t of s.targets) {
+      // Map target F1/F2 to normalized space
+      const tx = (t.f2 - s.f2Range[0]) / (s.f2Range[1] - s.f2Range[0]);
+      const ty = 1 - (t.f1 - s.f1Range[0]) / (s.f1Range[1] - s.f1Range[0]);
+
+      const dx = s.x - tx;
+      const dy = s.y - ty;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < 0.15 && energy > 0.1 && conf > 0.3) {
+        t.active = true;
+        t.charge = Math.min(1, t.charge + dt * 1.5);
+        inAnyZone = true;
+
+        if (t.charge >= 1) {
+          // Flow logic: Different target hit quickly
+          if (s.lastTargetHit && s.lastTargetHit !== t.name && s.flowTimer < 2.0) {
+            s.flowMultiplier = Math.min(4, s.flowMultiplier + 1);
+            s.popups.push({
+              x: tx * this.width, y: ty * this.height - 40,
+              text: `FLOW x${s.flowMultiplier}`, life: 1.0, color: '#fff'
+            });
+          }
+
+          s.score += 10 * s.flowMultiplier;
+          t.charge = 0;
+          s.lastTargetHit = t.name;
+          s.flowTimer = 0;
+
+          // Spawn "score" particles
+          for (let i = 0; i < 8; i++) {
+            const ang = Math.random() * Math.PI * 2;
+            s.particles.push({
+              x: tx * this.width, y: ty * this.height,
+              vx: Math.cos(ang) * 150, vy: Math.sin(ang) * 150,
+              life: 0.6, color: t.color, size: 4
+            });
+          }
+        }
+      } else {
+        t.active = false;
+        t.charge = Math.max(0, t.charge - dt * 0.5);
+      }
+    }
+
+    // 4. Update Trail
+    if (energy > 0.05) {
+      s.trail.push({
+        x: s.x * this.width, y: s.y * this.height,
+        life: 1.0,
+        flow: s.flowMultiplier
+      });
+    }
+    for (let i = s.trail.length - 1; i >= 0; i--) {
+      s.trail[i].life -= dt * 1.2;
+      if (s.trail[i].life <= 0) s.trail.splice(i, 1);
+    }
+
+    // 5. Update Popups
+    for (let i = s.popups.length - 1; i >= 0; i--) {
+      const p = s.popups[i];
+      p.y -= dt * 40;
+      p.life -= dt;
+      if (p.life <= 0) s.popups.splice(i, 1);
+    }
+
+    // 6. Update particles
+    for (let i = s.particles.length - 1; i >= 0; i--) {
+      const p = s.particles[i];
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= dt;
+      if (p.life <= 0) s.particles.splice(i, 1);
+    }
+  }
+
+  // ============================================================
+  // VOWEL VALLEY — Draw
+  // ============================================================
+  drawVowelValleyScene(prosodyGlow) {
+    const ctx = this.ctx;
+    const w = this.width;
+    const h = this.height;
+    const s = this.vowelValley;
+
+    // 1. Background
+    ctx.fillStyle = '#050510';
+    ctx.fillRect(0, 0, w, h);
+
+    // 2. Grid
+    ctx.strokeStyle = `rgba(255,255,255,${s.gridAlpha})`;
+    ctx.lineWidth = 1;
+    for (let i = 1; i < 10; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i * w / 10, 0); ctx.lineTo(i * w / 10, h);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, i * h / 10); ctx.lineTo(w, i * h / 10);
+      ctx.stroke();
+    }
+
+    // 3. Draw Target Zones
+    ctx.font = 'bold 16px "Space Mono", monospace';
+    ctx.textAlign = 'center';
+    for (const t of s.targets) {
+      const tx = (t.f2 - s.f2Range[0]) / (s.f2Range[1] - s.f2Range[0]) * w;
+      const ty = (1 - (t.f1 - s.f1Range[0]) / (s.f1Range[1] - s.f1Range[0])) * h;
+
+      // Outer glow
+      const grad = ctx.createRadialGradient(tx, ty, 20, tx, ty, 60);
+      grad.addColorStop(0, t.color + (t.active ? '66' : '22'));
+      grad.addColorStop(1, 'transparent');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(tx, ty, 60, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Core
+      ctx.fillStyle = t.color;
+      ctx.globalAlpha = 0.3 + t.charge * 0.7;
+      ctx.beginPath();
+      ctx.arc(tx, ty, 15 + t.charge * 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // Label
+      ctx.fillStyle = '#fff';
+      ctx.fillText(t.name, tx, ty - 70);
+
+      // Progress ring
+      if (t.charge > 0) {
+        ctx.strokeStyle = t.color;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(tx, ty, 25, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * t.charge));
+        ctx.stroke();
+      }
+    }
+
+    // 4. Draw Trail
+    ctx.lineWidth = 2;
+    for (let i = 1; i < s.trail.length; i++) {
+      const p1 = s.trail[i - 1];
+      const p2 = s.trail[i];
+      const alpha = p2.life * 0.5;
+      ctx.strokeStyle = `hsla(${200 + p2.flow * 40}, 80%, 70%, ${alpha})`;
+      ctx.lineWidth = 2 + p2.flow * 1.5;
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
+    }
+
+    // 5. Draw Particles
+    for (const p of s.particles) {
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = p.life / 0.6;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // 6. Draw Popups
+    ctx.font = 'bold 20px "Outfit", sans-serif';
+    for (const p of s.popups) {
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = p.life;
+      ctx.fillText(p.text, p.x, p.y);
+    }
+    ctx.globalAlpha = 1;
+
+    // 7. Draw Character (Vocal Spark)
+    const cx = s.x * w;
+    const cy = s.y * h;
+
+    // Character glow
+    const charGlow = ctx.createRadialGradient(cx, cy, 5, cx, cy, 30 + prosodyGlow * 20 + s.flowMultiplier * 10);
+    charGlow.addColorStop(0, '#fff');
+    charGlow.addColorStop(0.3, this.getBallColor(0.6));
+    charGlow.addColorStop(1, 'transparent');
+    ctx.fillStyle = charGlow;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 30 + prosodyGlow * 20 + s.flowMultiplier * 10, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Character core
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 8. Score HUD
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.font = '700 24px "Outfit", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`SCORE: ${s.score}`, 20, 40);
+
+    if (s.flowMultiplier > 1) {
+      ctx.fillStyle = '#6bcb77';
+      ctx.fillText(`FLOW x${s.flowMultiplier}`, 20, 75);
+    }
   }
 }
 
