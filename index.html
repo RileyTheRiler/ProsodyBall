@@ -70,6 +70,45 @@
       z-index: 10;
       border-bottom: 1px solid rgba(255, 255, 255, 0.05);
       flex-shrink: 0;
+      transition: padding 0.3s ease;
+    }
+
+    .mobile-only {
+      display: none !important;
+    }
+
+    @media (max-width: 600px) {
+      .mobile-only {
+        display: flex !important;
+      }
+
+      .desktop-only {
+        display: none !important;
+      }
+
+      .hud {
+        padding: 8px 10px;
+        gap: 6px;
+      }
+
+      .hud-title {
+        display: none;
+      }
+
+      .hud-left {
+        min-width: 0;
+        flex: 0 1 auto;
+      }
+
+      .hud-controls {
+        gap: 4px;
+      }
+
+      .btn {
+        padding: 6px 12px;
+        font-size: 0.85rem;
+        min-height: 32px;
+      }
     }
 
     .hud-title {
@@ -764,24 +803,6 @@
       background: rgba(255, 107, 107, 0.1);
     }
 
-    @media (max-width: 600px) {
-      .summary-grid {
-        grid-template-columns: 1fr 1fr;
-        gap: 8px;
-      }
-
-      .summary-title {
-        font-size: 1.2rem;
-      }
-
-      .summary-stat {
-        padding: 10px;
-      }
-
-      .summary-stat-value {
-        font-size: 1.1rem;
-      }
-    }
 
     .game-area {
       flex: 1;
@@ -1589,7 +1610,6 @@
         line-height: 1.2;
       }
 
-      /* Detail panel takes full width */
       .menu-right {
         padding: 14px 12px;
         flex: none;
@@ -1597,7 +1617,34 @@
 
       .rules-grid {
         grid-template-columns: 1fr;
-        gap: 8px;
+        gap: 10px;
+      }
+
+      /* Premium touch feel for chips */
+      .mode-card {
+        background: rgba(255, 255, 255, 0.05);
+        border-color: rgba(255, 255, 255, 0.08);
+        padding: 10px 14px;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        flex-shrink: 0;
+        min-width: 68px;
+        transform: none !important;
+      }
+
+      .mode-card.selected {
+        background: rgba(192, 132, 252, 0.15);
+        border-color: rgba(192, 132, 252, 0.5);
+      }
+
+      .rule-card {
+        margin-bottom: 12px;
+      }
+
+      .rule-card {
         margin-bottom: 12px;
       }
 
@@ -1677,18 +1724,12 @@
 
       .hud {
         padding: 8px 10px;
-        flex-wrap: wrap;
-        gap: 8px;
-        align-items: flex-start;
+        gap: 6px;
       }
 
-      .hud>.hud-title {
-        flex: 1;
+      .hud-left {
         min-width: 0;
-      }
-
-      .hud-title {
-        font-size: 1.05rem;
+        flex: 0 1 auto;
       }
 
       .session-timer {
@@ -1700,20 +1741,45 @@
       }
 
       .hud-controls {
-        gap: 6px;
-        flex-wrap: wrap;
-        justify-content: flex-start;
-        width: 100%;
-        order: 3;
+        gap: 4px;
+      }
+
+      .hud-primary {
+        order: 1;
+        flex: 1;
       }
 
       .hud-secondary {
-        flex-wrap: wrap;
-        overflow: visible;
+        order: 3;
+        flex: 0 0 auto;
+        padding: 0;
         background: none;
         border: none;
         box-shadow: none;
-        padding: 0;
+        position: relative;
+        overflow: visible;
+      }
+
+      .hud-secondary-inner {
+        display: none;
+        position: absolute;
+        top: calc(100% + 10px);
+        right: 0;
+        background: var(--bg-surface);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 12px;
+        padding: 12px;
+        flex-direction: column;
+        gap: 8px;
+        z-index: 100;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+        min-width: 220px;
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+      }
+
+      .hud-secondary-inner.show {
+        display: flex;
       }
 
       .hud-controls .btn {
@@ -1742,29 +1808,89 @@
         display: none;
       }
 
-      .meter-resonance {
-        flex: 1.2;
+      .summary-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .summary-title {
+        font-size: 1.35rem;
+        margin-bottom: 8px;
+      }
+
+      .summary-stat {
+        padding: 12px 10px;
+        background: rgba(255, 255, 255, 0.06);
+        border-radius: 12px;
+      }
+
+      .summary-stat-value {
+        font-size: 1.25rem;
+      }
+
+      .summary-stat-label {
+        font-size: 0.72rem;
+        letter-spacing: 0.08em;
       }
 
       .summary-actions {
         width: 100%;
         flex-direction: column;
+        gap: 10px;
+        margin-top: 14px;
       }
 
       .summary-actions .btn {
         width: 100%;
         min-width: 0;
+        padding: 12px;
+        font-size: 1rem;
       }
 
-      /* Creature style picker wraps tighter on mobile */
+      /* Premium touch feel for chips */
+      .mode-card {
+        background: rgba(255, 255, 255, 0.05);
+        border-color: rgba(255, 255, 255, 0.08);
+        padding: 12px 16px;
+        border-radius: 16px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        flex-shrink: 0;
+        min-width: 80px;
+        transform: none !important;
+        transition: background 0.2s, border-color 0.2s, transform 0.1s active;
+      }
+
+      .mode-card:active {
+        transform: scale(0.96) !important;
+      }
+
+      .mode-card.selected {
+        background: rgba(192, 132, 252, 0.2);
+        border-color: rgba(192, 132, 252, 0.6);
+        box-shadow: 0 0 20px rgba(192, 132, 252, 0.25);
+      }
+
+      .mode-name {
+        font-size: 0.75rem;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+      }
+
       .creature-style-picker {
-        gap: 4px;
-        margin-bottom: 10px;
+        gap: 6px;
+        margin-bottom: 14px;
+        padding: 4px;
+        background: rgba(255, 255, 255, 0.03);
+        border-radius: 20px;
       }
 
       .style-pill {
-        font-size: 0.78rem;
-        padding: 5px 10px;
+        font-size: 0.8rem;
+        padding: 6px 12px;
+        border-radius: 16px;
       }
     }
 
@@ -2715,54 +2841,58 @@
         <button class="btn btn-cb canvas-only" id="clearCanvasBtn" title="Clear current canvas drawing"
           style="padding: 6px 14px; font-weight: 600; border-radius: 8px;">Clear</button>
       </div>
-      <div class="hud-controls hud-secondary" aria-label="Secondary settings">
+      <div class="hud-controls hud-secondary" id="hudSecondary" aria-label="Secondary settings">
+        <button class="btn btn-cb mobile-only" id="moreControlsBtn" title="Toggle More Controls">More</button>
+        <div class="hud-secondary-inner" id="hudSecondaryInner">
 
-        <button class="btn btn-cb" id="settingsBtn" title="Open Settings" aria-label="Open Settings">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-            stroke-linecap="round">
-            <circle cx="12" cy="12" r="3" />
-            <path
-              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-          </svg>
-        </button>
-        <select id="teleprompterModeSelect" class="theme-select" aria-label="Teleprompter mode">
-          <option value="off" selected>Teleprompter: Off</option>
-          <option value="rainbow">Teleprompter: Rainbow Passage</option>
-          <option value="custom">Teleprompter: Custom Text</option>
-        </select>
-        <button class="btn btn-help" id="teleprompterCustomBtn" title="Edit custom teleprompter text">Edit Text</button>
-        <button class="btn btn-cb" id="cbToggle" aria-label="Toggle colorblind mode" title="Colorblind mode">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-            stroke-linecap="round">
-            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" />
-            <circle cx="12" cy="12" r="3" />
-          </svg>
-        </button>
-        <button class="btn btn-vib" id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-            stroke-linecap="round">
-            <rect x="8" y="4" width="8" height="16" rx="2" />
-            <path d="M4 8v8" />
-            <path d="M20 8v8" />
-            <path d="M2 10v4" />
-            <path d="M22 10v4" />
-          </svg>
-        </button>
-        <button class="btn btn-cb" id="cameraBtn" title="Camera Mirror" aria-label="Camera Mirror">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-            stroke-linecap="round" stroke-linejoin="round">
-            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
-            <circle cx="12" cy="13" r="4"></circle>
-          </svg>
-        </button>
-        <button class="btn btn-help" id="helpBtn">How to Play</button>
+          <button class="btn btn-cb" id="settingsBtn" title="Open Settings" aria-label="Open Settings">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round">
+              <circle cx="12" cy="12" r="3" />
+              <path
+                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+          <select id="teleprompterModeSelect" class="theme-select" aria-label="Teleprompter mode">
+            <option value="off" selected>Teleprompter: Off</option>
+            <option value="rainbow">Teleprompter: Rainbow Passage</option>
+            <option value="custom">Teleprompter: Custom Text</option>
+          </select>
+          <button class="btn btn-help" id="teleprompterCustomBtn" title="Edit custom teleprompter text">Edit
+            Text</button>
+          <button class="btn btn-cb" id="cbToggle" aria-label="Toggle colorblind mode" title="Colorblind mode">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </button>
+          <button class="btn btn-vib" id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round">
+              <rect x="8" y="4" width="8" height="16" rx="2" />
+              <path d="M4 8v8" />
+              <path d="M20 8v8" />
+              <path d="M2 10v4" />
+              <path d="M22 10v4" />
+            </svg>
+          </button>
+          <button class="btn btn-cb" id="cameraBtn" title="Camera Mirror" aria-label="Camera Mirror">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+              <circle cx="12" cy="13" r="4"></circle>
+            </svg>
+          </button>
+        </div>
+        <button class="btn btn-help desktop-only" id="helpBtn">How to Play</button>
         <button class="btn btn-help" id="homeBtn" title="Return to Main Menu">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
             <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
             <polyline points="9 22 9 12 15 12 15 22" />
           </svg>
-          Menu
+          <span class="desktop-only">Menu</span>
         </button>
         <button class="btn btn-help" id="recoverMicBtn" title="Recover microphone session" style="display:none;">Recover
           Mic</button>

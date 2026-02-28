@@ -2389,6 +2389,8 @@ class ProsodyBallGame {
     const perfBtn = document.getElementById('perfBtn');
     const pauseCanvasBtn = document.getElementById('pauseCanvasBtn');
     const clearCanvasBtn = document.getElementById('clearCanvasBtn');
+    const moreControlsBtn = document.getElementById('moreControlsBtn');
+    const hudSecondaryInner = document.getElementById('hudSecondaryInner');
     const teleprompterOverlay = document.getElementById('teleprompterOverlay');
     const diagPanel = document.getElementById('diagPanel');
 
@@ -2496,6 +2498,20 @@ class ProsodyBallGame {
 
     cameraBtn?.addEventListener('click', toggleCamera);
     cameraClose?.addEventListener('click', stopCamera);
+
+    // Mobile More Controls Toggle
+    moreControlsBtn?.addEventListener('click', (e) => {
+      hudSecondaryInner?.classList.toggle('show');
+      e.stopPropagation();
+    });
+
+    document.addEventListener('click', (e) => {
+      if (hudSecondaryInner?.classList.contains('show')) {
+        if (!hudSecondaryInner.contains(e.target) && e.target !== moreControlsBtn) {
+          hudSecondaryInner.classList.remove('show');
+        }
+      }
+    });
 
     // Zoom Logic
     cameraZoom?.addEventListener('input', (e) => {
