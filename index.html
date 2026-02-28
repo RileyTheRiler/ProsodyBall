@@ -771,15 +771,16 @@
       }
 
       .summary-title {
-        font-size: 1.3rem;
+        font-size: 1.4rem;
       }
 
       .summary-stat {
         padding: 12px 10px;
+        border-radius: 12px;
       }
 
       .summary-stat-value {
-        font-size: 1.15rem;
+        font-size: 1.25rem;
       }
 
       .summary-stat-label {
@@ -1537,18 +1538,44 @@
         padding-right: env(safe-area-inset-right, 0px);
         /* Eliminate 300ms double-tap-to-zoom delay on all taps */
         touch-action: manipulation;
+        /* Use stable dynamic viewport height so mobile address bar
+           doesn't cause layout jumps when it shows/hides */
+        height: 100svh;
+        min-height: -webkit-fill-available;
       }
 
       /* Prevent iOS auto-zoom on input focus (triggers below 16px) */
       select,
       input[type="text"],
       input[type="number"],
-      input[type="range"],
       textarea {
-        font-size: max(16px, 1em);
+        font-size: 16px;
       }
 
-      /* --- HUD HEADER: compact single-row with overflow actions --- */
+      /* --- GLOBAL TYPOGRAPHY FIXES: bump up tiny labels for readability --- */
+      .settings-label {
+        font-size: 0.82rem;
+        letter-spacing: 0.08em;
+      }
+
+      .vib-panel-sub {
+        font-size: 0.85rem;
+        line-height: 1.5;
+      }
+
+      .vib-rule-unit {
+        font-size: 0.78rem;
+      }
+
+      .session-timer {
+        font-size: 0.78rem;
+      }
+
+      .session-timer.active {
+        display: inline;
+      }
+
+      /* --- HUD HEADER: compact mobile layout --- */
       .hud {
         padding: 6px 10px;
         padding-top: max(6px, env(safe-area-inset-top, 0px));
@@ -1557,6 +1584,7 @@
         align-items: center;
         position: sticky;
         top: 0;
+        z-index: 15;
       }
 
       .hud-left {
@@ -1574,14 +1602,6 @@
         font-size: 1rem;
       }
 
-      .session-timer {
-        font-size: 0.75rem;
-        margin-left: 0;
-        order: 2;
-        flex: 0 0 auto;
-        align-self: center;
-      }
-
       .hud-controls {
         gap: 6px;
         flex-wrap: wrap;
@@ -1590,7 +1610,7 @@
         order: 3;
       }
 
-      /* Primary controls: single row with larger touch targets */
+      /* Primary controls: large touch targets */
       .hud-primary {
         justify-content: flex-start;
       }
@@ -1630,21 +1650,24 @@
 
       .hud-secondary .btn {
         flex-shrink: 0;
-        min-height: 40px;
-        min-width: 40px;
+        min-height: 44px;
+        min-width: 44px;
       }
 
-      /* Keep help button visible but compact on mobile */
       .btn-help {
         display: none;
       }
 
-      /* Ensure settings & key action buttons remain visible */
+      /* All icon buttons: consistent 44px touch targets */
       .hud-secondary .btn-cb,
-      .hud-secondary .btn-vib {
-        min-height: 40px;
-        min-width: 40px;
+      .hud-secondary .btn-vib,
+      .hud-secondary .btn-perf {
+        min-height: 44px;
+        min-width: 44px;
         padding: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
       }
 
       .theme-select {
@@ -1656,14 +1679,35 @@
         display: inline-block;
         flex: 1;
         min-width: 130px;
-        min-height: 40px;
-        font-size: 0.82rem;
+        min-height: 44px;
+        font-size: 16px;
       }
 
       #teleprompterCustomBtn.btn-help {
         display: inline-flex;
-        min-height: 40px;
+        min-height: 44px;
+        min-width: 44px;
         align-items: center;
+        justify-content: center;
+      }
+
+      /* Teleprompter overlay: fit above game without obscuring */
+      .teleprompter-overlay {
+        top: auto;
+        bottom: calc(100% - 80px);
+        left: 8px;
+        right: 8px;
+        width: auto;
+        transform: translateY(4px);
+        font-size: 0.88rem;
+        padding: 10px 14px;
+        max-height: 30vh;
+        overflow-y: auto;
+        border-radius: 10px;
+      }
+
+      .teleprompter-overlay.show {
+        transform: translateY(0);
       }
 
       /* --- OVERLAY / MENU: improved mobile layout --- */
@@ -1717,6 +1761,16 @@
       /* --- SCROLL FADE INDICATORS: show more content exists --- */
       .mobile-scroll-fade {
         position: relative;
+        --fade-color: var(--bg-deep, #0a0a12);
+      }
+
+      /* Contextual fade colors for different backgrounds */
+      .overlay .mobile-scroll-fade {
+        --fade-color: rgba(10, 10, 18, 0.92);
+      }
+
+      .hud .mobile-scroll-fade {
+        --fade-color: rgba(18, 18, 31, 0.95);
       }
 
       .mobile-scroll-fade::before,
@@ -1725,21 +1779,21 @@
         position: absolute;
         top: 0;
         bottom: 0;
-        width: 28px;
+        width: 24px;
         pointer-events: none;
         z-index: 2;
         opacity: 0;
-        transition: opacity 0.25s ease;
+        transition: opacity 0.2s ease;
       }
 
       .mobile-scroll-fade::before {
         left: 0;
-        background: linear-gradient(to right, var(--bg-deep, #0a0a12) 0%, transparent 100%);
+        background: linear-gradient(to right, var(--fade-color) 0%, transparent 100%);
       }
 
       .mobile-scroll-fade::after {
         right: 0;
-        background: linear-gradient(to left, var(--bg-deep, #0a0a12) 0%, transparent 100%);
+        background: linear-gradient(to left, var(--fade-color) 0%, transparent 100%);
       }
 
       .mobile-scroll-fade.fade-right::after {
@@ -1772,6 +1826,7 @@
 
       .mode-card.selected {
         border-width: 2px;
+        box-shadow: 0 0 18px rgba(192, 132, 252, 0.3);
       }
 
       .mode-icon {
@@ -1782,7 +1837,7 @@
         font-size: 0.72rem;
         white-space: normal;
         text-align: center;
-        line-height: 1.2;
+        line-height: 1.25;
         max-width: 72px;
       }
 
@@ -1803,7 +1858,8 @@
 
       .detail-blurb {
         font-size: 0.92rem;
-        line-height: 1.45;
+        line-height: 1.5;
+        color: rgba(255, 255, 255, 0.6);
       }
 
       .rules-grid {
@@ -1822,11 +1878,13 @@
 
       .rule-name {
         font-size: 0.88rem;
+        margin-bottom: 3px;
       }
 
       .rule-desc {
-        font-size: 0.82rem;
-        line-height: 1.4;
+        font-size: 0.85rem;
+        line-height: 1.45;
+        color: rgba(255, 255, 255, 0.6);
       }
 
       /* Start button: big, thumb-friendly, full width */
@@ -1843,14 +1901,19 @@
         margin-top: 10px;
       }
 
+      /* --- GAME AREA: ensure minimum playable height --- */
+      .game-area {
+        min-height: 200px;
+      }
+
       /* --- METERS PANEL: two-row grid for readability --- */
       .meters-panel {
-        padding: 8px 10px 12px;
-        padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
-        gap: 6px;
+        padding: 8px 10px 10px;
+        padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
+        gap: 6px 8px;
         display: grid;
         grid-template-columns: repeat(4, 1fr);
-        grid-template-rows: auto auto;
+        grid-auto-rows: auto;
       }
 
       .meter {
@@ -1858,6 +1921,7 @@
         gap: 3px;
       }
 
+      /* Pitch and Resonance span two columns each on first row */
       .meter-pitch {
         grid-column: 1 / 3;
       }
@@ -1867,12 +1931,15 @@
         flex: unset;
       }
 
+      /* Remaining 5 meters auto-flow into subsequent rows */
+
       .meter-label {
-        font-size: 0.65rem;
+        font-size: 0.7rem;
       }
 
       .meter-value {
-        font-size: 0.68rem;
+        font-size: 0.72rem;
+        font-weight: 700;
       }
 
       .meter-bar-bg {
@@ -1881,20 +1948,22 @@
       }
 
       .res-method-select {
-        font-size: 0.55rem;
-        padding: 1px 2px;
-        min-height: 20px;
+        font-size: 16px;
+        padding: 2px 4px;
+        min-height: 24px;
+        border-radius: 4px;
       }
 
       /* --- CONTEXT BAR: horizontal scroll, larger targets --- */
       .context-bar {
         padding: 6px 10px;
-        gap: 6px;
+        gap: 8px;
         overflow-x: auto;
         flex-wrap: nowrap;
         scrollbar-width: none;
         justify-content: flex-start;
         -webkit-overflow-scrolling: touch;
+        position: relative;
       }
 
       .context-bar::-webkit-scrollbar {
@@ -1903,12 +1972,14 @@
 
       .context-bar .theme-select {
         display: inline-block;
-        min-height: 38px;
-        font-size: 0.82rem;
+        min-height: 44px;
+        font-size: 16px;
         flex-shrink: 0;
+        border-radius: 10px;
+        padding: 8px 12px;
       }
 
-      /* --- RECORDINGS DRAWER: slide-up sheet --- */
+      /* --- RECORDINGS DRAWER: bottom sheet --- */
       .recordings-drawer {
         max-width: 100%;
         right: 0;
@@ -1916,250 +1987,427 @@
         top: auto;
         bottom: 0;
         border-radius: 16px 16px 0 0;
-        max-height: 70vh;
+        max-height: 75vh;
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+      }
+
+      /* Drag handle hint at top of sheet */
+      .recordings-drawer::before {
+        content: '';
+        display: block;
+        width: 36px;
+        height: 4px;
+        border-radius: 2px;
+        background: rgba(255, 255, 255, 0.2);
+        margin: 8px auto 0;
       }
 
       .recordings-header {
-        padding: 16px 16px 12px;
+        padding: 12px 16px;
+      }
+
+      .recordings-header h3 {
+        font-size: 1rem;
       }
 
       .rec-item {
-        padding: 12px;
+        padding: 12px 14px;
         gap: 10px;
       }
 
+      .rec-item-name {
+        font-size: 0.9rem;
+      }
+
+      .rec-item-meta {
+        font-size: 0.82rem;
+      }
+
       .rec-btn {
-        width: 38px;
-        height: 38px;
-        min-width: 38px;
-        border-radius: 8px;
+        width: 44px;
+        height: 44px;
+        min-width: 44px;
+        border-radius: 10px;
+        font-size: 0.95rem;
       }
 
       .btn-recordings span:first-child {
         display: none;
       }
 
-      /* --- VIBRATION PANEL: full-width sheet --- */
+      .btn-clear-all {
+        min-height: 36px;
+        font-size: 0.85rem;
+      }
+
+      /* --- VIBRATION PANEL: mobile-optimized --- */
       .vib-panel {
         right: 4px;
         left: 4px;
         max-width: 100%;
         max-height: 80vh;
         border-radius: 14px;
+        padding-bottom: env(safe-area-inset-bottom, 8px);
       }
 
+      /* Vib rules: stack label/controls vertically on mobile */
       .vib-rule {
-        grid-template-columns: 1fr auto;
-        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px;
       }
 
-      .vib-rule select,
+      .vib-rule-config {
+        width: 100%;
+      }
+
+      .vib-rule-top {
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .vib-rule select {
+        min-height: 44px;
+        font-size: 16px;
+        padding: 8px 10px;
+        flex: 1;
+        min-width: 100px;
+        border-radius: 8px;
+      }
+
       .vib-rule input[type="number"] {
-        min-height: 36px;
-        font-size: 0.82rem;
-        padding: 6px 8px;
+        min-height: 44px;
+        font-size: 16px;
+        padding: 8px 10px;
+        width: 80px;
+        border-radius: 8px;
       }
 
       .vib-add-btn {
-        min-height: 44px;
-        font-size: 0.85rem;
+        min-height: 48px;
+        font-size: 0.9rem;
+        border-radius: 10px;
       }
 
       .vib-rule-del {
-        min-width: 36px;
-        min-height: 36px;
-        font-size: 1.1rem;
+        min-width: 44px;
+        min-height: 44px;
+        font-size: 1.2rem;
         display: flex;
         align-items: center;
         justify-content: center;
+        border-radius: 8px;
+        align-self: flex-end;
       }
 
-      /* --- SETTINGS PANEL: larger controls --- */
+      .vib-master {
+        padding: 10px 12px;
+        border-radius: 10px;
+      }
+
+      .vib-master label {
+        font-size: 0.92rem;
+      }
+
+      /* --- SETTINGS PANEL: full-width mobile sheet --- */
       .settings-panel {
         max-width: 100%;
-        width: 94vw;
+        width: 96vw;
+        max-height: 85vh;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
         border-radius: 16px;
         padding: 20px 18px;
+      }
+
+      .settings-panel h3 {
+        font-size: 1.15rem;
       }
 
       .settings-panel .theme-select {
         display: block;
         min-height: 44px;
-        font-size: 0.9rem;
+        font-size: 16px;
+        border-radius: 10px;
+        padding: 10px 12px;
+      }
+
+      .settings-group {
+        gap: 12px;
+      }
+
+      .settings-label {
+        font-size: 0.85rem;
       }
 
       .btn-close-settings {
-        min-height: 48px;
-        font-size: 1rem;
+        min-height: 52px;
+        font-size: 1.05rem;
+        border-radius: 12px;
+        margin-top: 12px;
       }
 
       .settings-panel .btn-help {
         display: block;
         min-height: 44px;
-        font-size: 0.9rem;
+        font-size: 0.92rem;
         text-align: center;
+        border-radius: 10px;
       }
 
-      /* --- CAMERA MODAL: better mobile sizing --- */
+      /* --- CAMERA MODAL: mobile-optimized --- */
       .camera-modal {
         right: 8px;
         left: 8px;
         top: auto;
         bottom: 80px;
         width: auto;
-        height: 200px;
+        height: 180px;
         min-width: 0;
+        min-height: 120px;
         border-radius: 14px;
+        resize: none;
+      }
+
+      .camera-header {
+        padding: 8px 12px;
       }
 
       .camera-close {
-        min-width: 36px;
-        min-height: 36px;
+        min-width: 44px;
+        min-height: 44px;
         display: flex;
         align-items: center;
         justify-content: center;
+        font-size: 1.1rem;
       }
 
-      /* --- SUMMARY OVERLAY: better mobile spacing --- */
+      .camera-controls {
+        padding: 6px 12px;
+      }
+
+      .camera-controls label {
+        font-size: 0.82rem;
+      }
+
+      /* --- SUMMARY OVERLAY: polished mobile results screen --- */
       .summary-overlay {
-        padding: 20px 16px;
+        padding: 24px 16px;
+        padding-bottom: max(24px, env(safe-area-inset-bottom, 0px));
       }
 
       .summary-title {
-        font-size: 1.3rem;
+        font-size: 1.4rem;
+        margin-bottom: 2px;
+      }
+
+      .summary-duration {
+        font-size: 0.88rem;
+        margin-bottom: 16px;
       }
 
       .summary-grid {
         grid-template-columns: 1fr 1fr;
         gap: 8px;
+        max-width: 100%;
       }
 
       .summary-stat {
-        padding: 10px;
+        padding: 12px 10px;
+        border-radius: 12px;
       }
 
       .summary-stat-value {
-        font-size: 1.15rem;
+        font-size: 1.25rem;
+      }
+
+      .summary-stat-label {
+        font-size: 0.78rem;
+        margin-top: 4px;
+      }
+
+      .summary-prosody-bar {
+        height: 28px;
       }
 
       .summary-actions {
         width: 100%;
         flex-direction: column;
         gap: 10px;
+        margin-top: 8px;
       }
 
       .summary-actions .btn {
         width: 100%;
         min-width: 0;
-        min-height: 48px;
-        font-size: 1rem;
+        min-height: 52px;
+        font-size: 1.05rem;
+        border-radius: 12px;
       }
 
       /* --- CALIBRATION: mobile-friendly --- */
       .calibration-card {
         padding: 20px 16px;
+        border-radius: 16px;
+      }
+
+      .calibration-title {
+        font-size: 1.1rem;
+      }
+
+      .calibration-desc {
+        font-size: 0.95rem;
+        line-height: 1.5;
+      }
+
+      .cal-actions {
+        gap: 8px;
       }
 
       .cal-btn-primary,
       .cal-btn-secondary {
-        min-height: 44px;
+        min-height: 48px;
         padding: 12px 24px;
+        font-size: 1rem;
       }
 
-      /* --- CREATURE STYLE PICKER: larger pills --- */
+      /* --- CREATURE STYLE PICKER: mobile-optimized pills --- */
       .creature-style-picker {
         gap: 6px;
         margin-bottom: 12px;
+        flex-wrap: wrap;
+        justify-content: center;
       }
 
       .style-pill {
-        font-size: 0.82rem;
-        padding: 8px 14px;
-        min-height: 38px;
+        font-size: 0.85rem;
+        padding: 10px 14px;
+        min-height: 44px;
+        border-radius: 10px;
       }
 
       .creature-style-hud .style-pill {
-        font-size: 0.78rem;
-        padding: 6px 12px;
-        min-height: 34px;
+        font-size: 0.82rem;
+        padding: 8px 12px;
+        min-height: 38px;
       }
 
       /* --- PRISM SETTINGS: mobile layout --- */
       .prism-settings-row {
         grid-template-columns: 1fr;
-        gap: 10px;
+        gap: 12px;
+      }
+
+      .prism-label {
+        font-size: 0.82rem;
       }
 
       .prism-select {
-        min-height: 42px;
-        font-size: 0.88rem;
+        min-height: 44px;
+        font-size: 16px;
+        border-radius: 10px;
+        padding: 8px 12px;
       }
 
       .prism-textarea {
         min-height: 80px;
-        font-size: 0.88rem;
+        font-size: 16px;
+        border-radius: 10px;
+        padding: 10px 12px;
       }
 
-      /* --- INFO TOOLTIPS: full-width on mobile --- */
+      /* --- INFO TOOLTIPS: better mobile sizing --- */
       .info-popup {
-        max-width: 200px;
-        font-size: 0.78rem;
-        padding: 8px 12px;
+        max-width: 220px;
+        font-size: 0.82rem;
+        padding: 10px 14px;
+        line-height: 1.5;
+        border-radius: 10px;
       }
 
       .info-trigger {
-        width: 20px;
-        height: 20px;
-        font-size: 0.7rem;
+        width: 24px;
+        height: 24px;
+        font-size: 0.72rem;
       }
 
-      /* --- HELP TOOLTIP: full-width bottom sheet --- */
+      /* --- HELP TOOLTIP: full-width panel --- */
       .tooltip {
         right: 4px;
         left: 4px;
         max-width: 100%;
-        max-height: 65vh;
+        max-height: 70vh;
         overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
         border-radius: 14px;
+        padding: 16px;
+      }
+
+      .tooltip h3 {
+        font-size: 1.05rem;
+      }
+
+      .tooltip p {
+        font-size: 0.9rem;
+        line-height: 1.55;
       }
 
       .help-tab {
-        min-height: 40px;
-        font-size: 0.85rem;
+        min-height: 44px;
+        font-size: 0.88rem;
+        border-radius: 10px;
       }
 
       /* --- ERROR & NOTICE BANNERS --- */
       .error-banner,
       .iframe-notice {
         width: 95%;
-        font-size: 0.9rem;
-        padding: 12px 14px;
+        font-size: 0.92rem;
+        padding: 14px 16px;
+        border-radius: 12px;
+        line-height: 1.5;
+      }
+
+      .error-banner a,
+      .iframe-notice a {
+        padding: 10px 20px;
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
       }
 
       /* --- PITCH PILOT RANGE OVERLAY --- */
       .range-grid {
-        gap: 8px;
+        gap: 10px;
+        width: 100%;
+        max-width: 360px;
       }
 
       .range-btn {
         padding: 16px;
         font-size: 0.95rem;
-        min-height: 48px;
+        min-height: 52px;
+        border-radius: 12px;
       }
 
-      /* --- TOGGLE SWITCHES: slightly larger on mobile --- */
+      .range-btn.primary {
+        font-size: 1rem;
+      }
+
+      /* --- TOGGLE SWITCHES: larger on mobile --- */
       .toggle-switch {
-        width: 42px;
-        height: 24px;
+        width: 48px;
+        height: 28px;
       }
 
       .toggle-slider::before {
-        height: 18px;
-        width: 18px;
+        height: 22px;
+        width: 22px;
       }
 
       .toggle-switch input:checked+.toggle-slider::before {
-        transform: translateX(18px);
+        transform: translateX(20px);
       }
 
       /* --- PERF PANEL: mobile position --- */
@@ -2169,11 +2417,19 @@
         bottom: auto;
         top: 60px;
         min-width: 0;
+        font-size: 0.72rem;
+        border-radius: 10px;
+      }
+
+      /* --- MODAL BACKDROP: ensure full coverage on mobile --- */
+      .modal-backdrop {
+        -webkit-backdrop-filter: blur(8px);
       }
     }
 
     /* ====== SMALL PHONE STYLES (≤420px) ====== */
     @media (max-width: 420px) {
+
       .hud-title {
         font-size: 0.88rem;
         letter-spacing: 0;
@@ -2182,6 +2438,7 @@
       .hud-controls .btn {
         padding: 8px 10px;
         font-size: 0.82rem;
+        min-height: 44px;
       }
 
       .btn-start {
@@ -2194,7 +2451,7 @@
       }
 
       .overlay-subtitle {
-        margin-bottom: 16px;
+        margin-bottom: 14px;
         line-height: 1.45;
         font-size: 0.88rem;
       }
@@ -2206,9 +2463,10 @@
         font-size: 1.1rem;
       }
 
-      /* Mode cards even more compact on tiny screens */
+      /* Mode cards: still tappable on tiny screens */
       .mode-card {
         min-width: 68px;
+        min-height: 66px;
         padding: 10px 8px 8px;
       }
 
@@ -2217,13 +2475,15 @@
       }
 
       .mode-name {
-        font-size: 0.65rem;
+        font-size: 0.68rem;
+        max-width: 64px;
       }
 
       /* Meters: 3-column on tiny screens for more breathing room */
       .meters-panel {
         grid-template-columns: repeat(3, 1fr);
         padding: 6px 8px 10px;
+        padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
       }
 
       .meter-pitch {
@@ -2243,27 +2503,72 @@
       }
 
       .summary-stat-value {
-        font-size: 1rem;
+        font-size: 1.05rem;
       }
 
       .summary-stat-label {
         font-size: 0.72rem;
+      }
+
+      /* Vib panel controls: slightly more compact */
+      .vib-rule select,
+      .vib-rule input[type="number"] {
+        min-height: 40px;
+      }
+
+      /* Style pills: wrap into 2 rows on tiny screens */
+      .style-pill {
+        padding: 8px 10px;
+        font-size: 0.78rem;
+        min-height: 40px;
+      }
+
+      /* Range buttons: full width */
+      .range-btn {
+        font-size: 0.9rem;
+        padding: 14px 12px;
+      }
+
+      /* Summary: tighter */
+      .summary-title {
+        font-size: 1.2rem;
+      }
+
+      .summary-actions .btn {
+        min-height: 48px;
+        font-size: 1rem;
+      }
+
+      /* Recordings: more compact items */
+      .rec-btn {
+        width: 40px;
+        height: 40px;
+        min-width: 40px;
       }
     }
 
     /* ====== MOBILE LANDSCAPE (phones rotated sideways) ====== */
     @media (max-width: 900px) and (max-height: 500px) and (orientation: landscape) {
 
-      /* HUD: single compact row */
+      /* Maximize canvas space in landscape */
+      body,
+      #app {
+        height: 100svh;
+        min-height: -webkit-fill-available;
+      }
+
+      /* HUD: ultra-compact single row */
       .hud {
-        padding: 4px 12px;
+        padding: 3px 12px;
+        padding-left: max(12px, env(safe-area-inset-left, 0px));
+        padding-right: max(12px, env(safe-area-inset-right, 0px));
         gap: 6px;
         flex-wrap: nowrap;
         align-items: center;
       }
 
       .hud-title {
-        font-size: 0.88rem;
+        font-size: 0.85rem;
       }
 
       .hud-controls {
@@ -2273,9 +2578,9 @@
       }
 
       .hud-controls .btn {
-        padding: 6px 10px;
-        font-size: 0.82rem;
-        min-height: 34px;
+        padding: 5px 10px;
+        font-size: 0.8rem;
+        min-height: 32px;
       }
 
       .hud-secondary {
@@ -2290,9 +2595,17 @@
         display: none;
       }
 
-      /* Meters: horizontal strip, minimal height */
+      .hud-secondary .btn {
+        min-height: 32px;
+        min-width: 32px;
+        padding: 4px 6px;
+      }
+
+      /* Meters: inline horizontal strip, minimal height */
       .meters-panel {
-        padding: 4px 12px 6px;
+        padding: 3px 12px 4px;
+        padding-left: max(12px, env(safe-area-inset-left, 0px));
+        padding-right: max(12px, env(safe-area-inset-right, 0px));
         gap: 4px;
         display: flex;
         flex-direction: row;
@@ -2305,126 +2618,238 @@
       }
 
       .meter {
-        min-width: 60px;
+        min-width: 55px;
         flex-shrink: 0;
-        gap: 2px;
+        gap: 1px;
       }
 
       .meter-label {
-        font-size: 0.58rem;
+        font-size: 0.55rem;
       }
 
       .meter-value {
-        font-size: 0.6rem;
+        font-size: 0.58rem;
       }
 
       .meter-bar-bg {
-        height: 5px;
+        height: 4px;
       }
 
-      /* Overlay: side-by-side layout preserved, scroll vertically */
+      /* Maximize game canvas in landscape */
+      .game-area {
+        min-height: 180px;
+      }
+
+      /* Overlay: side-by-side layout, scrollable */
       .overlay {
-        padding: 8px 12px;
+        padding: 6px 12px;
+        padding-left: max(12px, env(safe-area-inset-left, 0px));
+        padding-right: max(12px, env(safe-area-inset-right, 0px));
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
       }
 
       .overlay-title {
-        font-size: 1.2rem;
-        margin-bottom: 4px;
+        font-size: 1.15rem;
+        margin-bottom: 2px;
       }
 
       .overlay-subtitle {
-        font-size: 0.85rem;
-        margin-bottom: 6px;
+        font-size: 0.82rem;
+        margin-bottom: 4px;
       }
 
       /* Menu split: side by side in landscape */
       .menu-split {
         flex-direction: row;
         gap: 10px;
+        flex: 1;
+        min-height: 0;
       }
 
       .menu-left {
         flex-direction: column;
-        width: 120px;
+        width: 110px;
         overflow-y: auto;
         overflow-x: hidden;
-        max-height: calc(100vh - 120px);
+        flex-shrink: 0;
+        scrollbar-width: none;
+      }
+
+      .menu-left::-webkit-scrollbar {
+        display: none;
       }
 
       .mode-card {
         flex-direction: row;
-        padding: 8px 10px;
+        padding: 7px 8px;
         min-width: 0;
-        gap: 6px;
+        min-height: 0;
+        gap: 5px;
       }
 
       .mode-icon {
-        font-size: 1.1rem;
+        font-size: 1rem;
       }
 
       .mode-name {
-        font-size: 0.7rem;
+        font-size: 0.68rem;
         white-space: nowrap;
       }
 
       .menu-right {
         flex: 1;
-        max-height: calc(100vh - 120px);
         overflow-y: auto;
-        padding: 12px;
+        padding: 10px;
+        min-height: 0;
+      }
+
+      .detail-header {
+        margin-bottom: 6px;
+      }
+
+      .detail-title {
+        font-size: 1rem;
+      }
+
+      .detail-blurb {
+        font-size: 0.82rem;
+        line-height: 1.35;
       }
 
       .rules-grid {
         grid-template-columns: 1fr 1fr;
-        gap: 6px;
+        gap: 5px;
+      }
+
+      .rule-card {
+        padding: 6px 8px;
+      }
+
+      .rule-name {
+        font-size: 0.78rem;
+      }
+
+      .rule-desc {
+        font-size: 0.72rem;
+        line-height: 1.35;
       }
 
       .btn-big {
         padding: 10px 20px;
-        font-size: 1rem;
-        margin-top: 8px;
+        font-size: 0.95rem;
+        margin-top: 6px;
+        min-height: 40px;
       }
 
       /* Context bar: compact */
       .context-bar {
-        padding: 4px 10px;
+        padding: 3px 10px;
         gap: 4px;
       }
 
-      /* Summary: compact landscape layout */
+      /* Summary: landscape-optimized with horizontal layout */
       .summary-overlay {
-        padding: 12px 16px;
+        padding: 10px 16px;
+        padding-left: max(16px, env(safe-area-inset-left, 0px));
+        padding-right: max(16px, env(safe-area-inset-right, 0px));
+        flex-direction: column;
+      }
+
+      .summary-title {
+        font-size: 1.15rem;
+        margin-bottom: 2px;
+      }
+
+      .summary-duration {
+        margin-bottom: 8px;
       }
 
       .summary-grid {
         grid-template-columns: repeat(4, 1fr);
         gap: 6px;
+        max-width: 600px;
+      }
+
+      .summary-stat {
+        padding: 8px 6px;
+      }
+
+      .summary-stat-value {
+        font-size: 1rem;
       }
 
       .summary-actions {
         flex-direction: row;
         gap: 8px;
+        max-width: 400px;
       }
 
       .summary-actions .btn {
         min-height: 40px;
+        font-size: 0.9rem;
       }
 
-      /* Recordings & panels: constrain height */
+      /* Recordings & panels: constrain height in landscape */
       .recordings-drawer {
-        max-height: 80vh;
+        max-height: 85vh;
       }
 
       .vib-panel {
         max-height: 85vh;
       }
 
-      /* Camera modal: compact for landscape */
+      /* Camera modal: side-anchored for landscape */
       .camera-modal {
-        height: 160px;
-        bottom: 60px;
+        height: 140px;
+        width: 200px;
+        bottom: 50px;
+        right: max(12px, env(safe-area-inset-right, 0px));
+        left: auto;
+        min-width: 160px;
+      }
+
+      /* Calibration: compact in landscape */
+      .calibration-card {
+        padding: 14px;
+      }
+
+      .cal-btn-primary,
+      .cal-btn-secondary {
+        min-height: 38px;
+        padding: 8px 20px;
+        font-size: 0.9rem;
+      }
+
+      /* Range selector: two columns in landscape */
+      .range-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+      }
+
+      .range-btn {
+        padding: 10px;
+        font-size: 0.85rem;
+        min-height: 38px;
+      }
+
+      /* Teleprompter: narrower in landscape */
+      .teleprompter-overlay {
+        max-height: 25vh;
+        font-size: 0.82rem;
+      }
+
+      /* Prism reader: less height */
+      .prism-scroll-container {
+        max-height: 55%;
+        font-size: 0.95rem;
+        line-height: 1.7;
+      }
+
+      /* Settings: constrain */
+      .settings-panel {
+        max-height: 90vh;
       }
     }
 
