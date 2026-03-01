@@ -3588,11 +3588,13 @@ class VoxBallGame {
     const metersPanel = document.getElementById('metersPanel');
     const metersExpandToggle = document.getElementById('metersExpandToggle');
     const metersExpanded = document.getElementById('metersExpanded');
+    const appEl = document.getElementById('app');
     metersExpandToggle?.addEventListener('click', () => {
       this.metersExpanded = !this.metersExpanded;
       metersPanel.classList.toggle('expanded', this.metersExpanded);
+      appEl.classList.toggle('meters-open', this.metersExpanded);
       metersExpandToggle.setAttribute('aria-expanded', this.metersExpanded ? 'true' : 'false');
-      // Size canvases after layout settles (fixed positioning needs a frame)
+      // Size canvases after layout settles
       if (this.metersExpanded) {
         requestAnimationFrame(() => this._sizeExpandedCanvases());
       }

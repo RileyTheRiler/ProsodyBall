@@ -800,7 +800,6 @@
       position: relative;
       overflow: hidden;
       min-height: 0;
-      z-index: 6;
     }
 
     #gameCanvas {
@@ -1028,14 +1027,18 @@
       transform: rotate(180deg);
     }
 
-    /* When expanded, the meters panel becomes a full-screen overlay
-       that sits BEHIND the game canvas */
+    /* When expanded, the meters panel grows to fill most of the screen,
+       shrinking the game canvas above it */
     .meters-panel.expanded {
-      position: fixed;
-      inset: 0;
-      z-index: 5;
+      flex: 1;
+      min-height: 0;
       overflow: hidden;
-      background: rgba(10, 10, 18, 0.98);
+    }
+
+    #app.meters-open .game-area {
+      flex: 0 0 auto;
+      height: 120px;
+      min-height: 120px;
     }
 
     .meters-panel.expanded .meters-bar {
