@@ -1331,21 +1331,6 @@
       box-shadow: 0 0 18px rgba(213, 94, 0, 0.25), 0 0 6px rgba(230, 159, 0, 0.15);
     }
 
-    /* Category labels in sidebar */
-    .mode-category-label {
-      font-family: 'Space Mono', monospace;
-      font-size: 0.65rem;
-      text-transform: uppercase;
-      letter-spacing: 0.14em;
-      color: rgba(255, 255, 255, 0.3);
-      padding: 10px 4px 4px;
-      flex-shrink: 0;
-    }
-
-    .mode-category-label:first-child {
-      padding-top: 0;
-    }
-
     .mode-icon {
       font-size: 1.6rem;
       flex-shrink: 0;
@@ -2114,18 +2099,6 @@
 
       .menu-left::-webkit-scrollbar {
         display: none;
-      }
-
-      /* Category labels span full grid width on mobile */
-      .mode-category-label {
-        grid-column: 1 / -1;
-        padding: 6px 4px 2px;
-        font-size: 0.6rem;
-        text-align: center;
-      }
-
-      .mode-category-label:first-child {
-        padding-top: 2px;
       }
 
       /* --- SCROLL FADE INDICATORS: show more content exists --- */
@@ -3155,12 +3128,6 @@
         display: none;
       }
 
-      /* Category labels in landscape sidebar */
-      .mode-category-label {
-        font-size: 0.55rem;
-        padding: 6px 4px 2px;
-        text-align: left;
-      }
 
       .mode-card {
         flex-direction: row;
@@ -4733,7 +4700,6 @@
           <!-- Left: game card list -->
           <div class="menu-left">
             <div class="mode-picker" id="modePicker">
-              <div class="mode-category-label">Pitch & Resonance</div>
               <div class="mode-card" data-mode="ball">
                 <div class="mode-icon">⚽</div>
                 <div class="mode-name">Vox Ball</div>
@@ -4750,7 +4716,6 @@
                 <div class="mode-icon">🎈</div>
                 <div class="mode-name">Spectral Ascent</div>
               </div>
-              <div class="mode-category-label">Articulation</div>
               <div class="mode-card" data-mode="prism">
                 <div class="mode-icon">🔮</div>
                 <div class="mode-name">Prism Reader</div>
@@ -4763,7 +4728,6 @@
                 <div class="mode-icon">⛰️</div>
                 <div class="mode-name">Vowel Valley</div>
               </div>
-              <div class="mode-category-label">Creative</div>
               <div class="mode-card" data-mode="creature">
                 <div class="mode-icon">🐉</div>
                 <div class="mode-name">Voice Creature</div>
