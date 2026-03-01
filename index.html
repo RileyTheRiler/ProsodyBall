@@ -35,8 +35,8 @@
       --accent-vowel: #6bcb77;
       --accent-artic: #4d96ff;
       --accent-syllable: #c084fc;
-      --text-primary: #e8e6f0;
-      --text-muted: #7a7890;
+      --text-primary: #eceaf4;
+      --text-muted: #908da5;
     }
 
     /* Okabe-Ito colorblind-safe palette overrides */
@@ -810,11 +810,11 @@
 
     .meters-panel {
       display: flex;
-      gap: 4px;
+      gap: 6px;
       padding: 10px 16px 14px;
-      background: linear-gradient(0deg, rgba(18, 18, 31, 0.98) 0%, rgba(18, 18, 31, 0.8) 100%);
+      background: linear-gradient(0deg, rgba(12, 12, 22, 0.98) 0%, rgba(18, 18, 31, 0.85) 100%);
       backdrop-filter: blur(12px);
-      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
       z-index: 10;
       flex-shrink: 0;
     }
@@ -824,76 +824,81 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 5px;
+      gap: 4px;
+      padding: 4px 2px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.04);
     }
 
     .meter-label {
       font-family: 'Space Mono', monospace;
-      font-size: 0.85rem;
+      font-size: 0.72rem;
       text-transform: uppercase;
       letter-spacing: 0.08em;
-      opacity: 0.7;
+      color: rgba(200, 200, 220, 0.6);
     }
 
     .meter-bar-bg {
-      width: 100%;
-      height: 6px;
+      width: 90%;
+      height: 10px;
       background: rgba(255, 255, 255, 0.06);
-      border-radius: 3px;
+      border-radius: 5px;
       overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.04);
     }
 
     .meter-bar-fill {
       height: 100%;
-      border-radius: 3px;
+      border-radius: 5px;
       transition: width 0.1s ease-out;
       width: 0%;
     }
 
     .meter-bounce .meter-bar-fill {
-      background: var(--accent-bounce);
-      box-shadow: 0 0 8px rgba(255, 107, 107, 0.4);
+      background: linear-gradient(90deg, var(--accent-bounce), rgba(255, 107, 107, 0.7));
+      box-shadow: 0 0 10px rgba(255, 107, 107, 0.5), inset 0 1px 0 rgba(255,255,255,0.15);
     }
 
     .meter-tempo .meter-bar-fill {
-      background: var(--accent-tempo);
-      box-shadow: 0 0 8px rgba(255, 217, 61, 0.4);
+      background: linear-gradient(90deg, var(--accent-tempo), rgba(255, 217, 61, 0.7));
+      box-shadow: 0 0 10px rgba(255, 217, 61, 0.5), inset 0 1px 0 rgba(255,255,255,0.15);
     }
 
     .meter-vowel .meter-bar-fill {
-      background: var(--accent-vowel);
-      box-shadow: 0 0 8px rgba(107, 203, 119, 0.4);
+      background: linear-gradient(90deg, var(--accent-vowel), rgba(107, 203, 119, 0.7));
+      box-shadow: 0 0 10px rgba(107, 203, 119, 0.5), inset 0 1px 0 rgba(255,255,255,0.15);
     }
 
     .meter-artic .meter-bar-fill {
-      background: var(--accent-artic);
-      box-shadow: 0 0 8px rgba(77, 150, 255, 0.4);
+      background: linear-gradient(90deg, var(--accent-artic), rgba(77, 150, 255, 0.7));
+      box-shadow: 0 0 10px rgba(77, 150, 255, 0.5), inset 0 1px 0 rgba(255,255,255,0.15);
     }
 
     .meter-syllable .meter-bar-fill {
-      background: var(--accent-syllable);
-      box-shadow: 0 0 8px rgba(192, 132, 252, 0.4);
+      background: linear-gradient(90deg, var(--accent-syllable), rgba(192, 132, 252, 0.7));
+      box-shadow: 0 0 10px rgba(192, 132, 252, 0.5), inset 0 1px 0 rgba(255,255,255,0.15);
     }
 
     /* Colorblind: fix hardcoded box-shadow colors to match Okabe-Ito palette */
     :root.colorblind .meter-bounce .meter-bar-fill {
-      box-shadow: 0 0 8px rgba(213, 94, 0, 0.5);
+      box-shadow: 0 0 10px rgba(213, 94, 0, 0.5);
     }
 
     :root.colorblind .meter-tempo .meter-bar-fill {
-      box-shadow: 0 0 8px rgba(240, 228, 66, 0.5);
+      box-shadow: 0 0 10px rgba(240, 228, 66, 0.5);
     }
 
     :root.colorblind .meter-vowel .meter-bar-fill {
-      box-shadow: 0 0 8px rgba(0, 158, 115, 0.5);
+      box-shadow: 0 0 10px rgba(0, 158, 115, 0.5);
     }
 
     :root.colorblind .meter-artic .meter-bar-fill {
-      box-shadow: 0 0 8px rgba(86, 180, 233, 0.5);
+      box-shadow: 0 0 10px rgba(86, 180, 233, 0.5);
     }
 
     :root.colorblind .meter-syllable .meter-bar-fill {
-      box-shadow: 0 0 8px rgba(204, 121, 167, 0.5);
+      box-shadow: 0 0 10px rgba(204, 121, 167, 0.5);
     }
 
     /* Colorblind: pitch gradient → blue-cyan-yellow (luminance-safe) */
@@ -914,10 +919,10 @@
 
     .meter-pitch .meter-bar-fill {
       position: absolute;
-      width: 3px !important;
+      width: 4px !important;
       height: 100%;
       background: #fff;
-      box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
+      box-shadow: 0 0 8px rgba(255, 255, 255, 0.9), 0 0 16px rgba(255, 255, 255, 0.3);
       border-radius: 2px;
       left: 0%;
       transition: left 0.12s ease-out, width 0s;
@@ -931,10 +936,10 @@
 
     .meter-resonance .meter-bar-fill {
       position: absolute;
-      width: 3px !important;
+      width: 4px !important;
       height: 100%;
       background: #fff;
-      box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
+      box-shadow: 0 0 8px rgba(255, 255, 255, 0.9), 0 0 16px rgba(255, 255, 255, 0.3);
       border-radius: 2px;
       left: 50%;
       transition: left 0.15s ease-out, width 0s;
@@ -946,8 +951,9 @@
 
     .meter-value {
       font-family: 'Space Mono', monospace;
-      font-size: 0.78rem;
-      opacity: 0.5;
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: rgba(232, 230, 240, 0.85);
     }
 
     .res-method-select {
@@ -1218,7 +1224,7 @@
 
     .overlay-subtitle {
       font-size: 1rem;
-      color: rgba(255, 255, 255, 0.55);
+      color: rgba(190, 200, 220, 0.7);
       margin-bottom: 12px;
       text-align: center;
       max-width: 700px;
@@ -1288,15 +1294,30 @@
     }
 
     .mode-card.selected {
-      border-color: rgba(192, 132, 252, 0.7);
-      background: rgba(192, 132, 252, 0.1);
-      box-shadow: 0 0 14px rgba(192, 132, 252, 0.2);
+      border-color: rgba(255, 142, 83, 0.8);
+      background: linear-gradient(135deg, rgba(255, 107, 107, 0.12), rgba(255, 142, 83, 0.10));
+      box-shadow: 0 0 18px rgba(255, 107, 107, 0.25), 0 0 6px rgba(255, 142, 83, 0.15), inset 0 0 12px rgba(255, 107, 107, 0.06);
     }
 
     :root.colorblind .mode-card.selected {
-      border-color: rgba(86, 180, 233, 0.7);
-      background: rgba(86, 180, 233, 0.1);
-      box-shadow: 0 0 14px rgba(86, 180, 233, 0.2);
+      border-color: rgba(213, 94, 0, 0.8);
+      background: linear-gradient(135deg, rgba(213, 94, 0, 0.12), rgba(230, 159, 0, 0.10));
+      box-shadow: 0 0 18px rgba(213, 94, 0, 0.25), 0 0 6px rgba(230, 159, 0, 0.15);
+    }
+
+    /* Category labels in sidebar */
+    .mode-category-label {
+      font-family: 'Space Mono', monospace;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: rgba(255, 255, 255, 0.3);
+      padding: 10px 4px 4px;
+      flex-shrink: 0;
+    }
+
+    .mode-category-label:first-child {
+      padding-top: 0;
     }
 
     .mode-icon {
@@ -1371,7 +1392,7 @@
 
     .detail-blurb {
       font-size: 1.05rem;
-      color: rgba(255, 255, 255, 0.5);
+      color: rgba(190, 200, 220, 0.75);
       margin-top: 4px;
       line-height: 1.5;
     }
@@ -1385,6 +1406,40 @@
       to {
         opacity: 1;
         transform: translateY(0);
+      }
+    }
+
+    /* Micro-interaction: icon wiggle on hover */
+    @keyframes iconWiggle {
+      0%, 100% { transform: rotate(0deg) scale(1.15); }
+      20% { transform: rotate(-8deg) scale(1.15); }
+      40% { transform: rotate(6deg) scale(1.15); }
+      60% { transform: rotate(-4deg) scale(1.15); }
+      80% { transform: rotate(2deg) scale(1.15); }
+    }
+
+    /* Micro-interaction: icon glitch on hover */
+    @keyframes iconGlitch {
+      0%, 100% { transform: scale(1.15); filter: none; }
+      15% { transform: scale(1.15) translate(2px, -1px); filter: hue-rotate(90deg); }
+      30% { transform: scale(1.15) translate(-1px, 1px); filter: hue-rotate(-90deg); }
+      45% { transform: scale(1.15) translate(1px, 0px); filter: none; }
+      60% { transform: scale(1.15) translate(-1px, 1px); filter: hue-rotate(45deg); }
+      75% { transform: scale(1.15); filter: none; }
+    }
+
+    .mode-card:hover .mode-icon {
+      animation: iconWiggle 0.5s ease-in-out;
+    }
+
+    .mode-card[data-mode="creature"]:hover .mode-icon {
+      animation: iconGlitch 0.4s ease-in-out;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .mode-card:hover .mode-icon {
+        animation: none;
+        transform: scale(1.15);
       }
     }
 
@@ -1404,24 +1459,28 @@
     }
 
     .rule-card {
-      padding: 12px 14px;
-      border-radius: 10px;
+      padding: 14px 16px;
+      border-radius: 12px;
       background: rgba(255, 255, 255, 0.04);
       border: 1px solid rgba(255, 255, 255, 0.06);
+      transition: background 0.2s, border-color 0.2s;
     }
 
-
+    .rule-card:hover {
+      background: rgba(255, 255, 255, 0.07);
+      border-color: rgba(255, 255, 255, 0.12);
+    }
 
     .rule-name {
       font-weight: 700;
-      font-size: 0.9rem;
+      font-size: 0.92rem;
       margin-bottom: 4px;
     }
 
     .rule-desc {
-      font-size: 0.95rem;
-      color: rgba(255, 255, 255, 0.55);
-      line-height: 1.45;
+      font-size: 0.88rem;
+      color: rgba(200, 200, 220, 0.7);
+      line-height: 1.5;
     }
 
     .rule-bounce .rule-name {
@@ -1446,36 +1505,56 @@
 
     .btn-big {
       font-family: 'Outfit', sans-serif;
-      font-weight: 700;
-      font-size: 1.15rem;
-      padding: 14px 36px;
+      font-weight: 800;
+      font-size: 1.25rem;
+      padding: 18px 36px;
       border: none;
-      border-radius: 12px;
+      border-radius: 14px;
       cursor: pointer;
       background: linear-gradient(135deg, #ff6b6b, #ff8e53);
       color: #fff;
-      box-shadow: 0 4px 20px rgba(255, 107, 107, 0.35);
-      transition: all 0.2s;
+      box-shadow: 0 4px 24px rgba(255, 107, 107, 0.4), 0 0 40px rgba(255, 107, 107, 0.15);
+      transition: all 0.25s cubic-bezier(0.18, 0.89, 0.32, 1.15);
       flex-shrink: 0;
-      margin-top: 14px;
+      margin-top: 16px;
       width: 100%;
+      letter-spacing: 0.03em;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .btn-big::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.15) 0%, transparent 50%);
+      opacity: 0;
+      transition: opacity 0.25s;
     }
 
     .btn-big:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 6px 28px rgba(255, 107, 107, 0.5);
+      transform: translateY(-3px) scale(1.02);
+      box-shadow: 0 8px 32px rgba(255, 107, 107, 0.55), 0 0 50px rgba(255, 107, 107, 0.2);
+    }
+
+    .btn-big:hover::before {
+      opacity: 1;
+    }
+
+    .btn-big:active {
+      transform: translateY(0) scale(0.98);
     }
 
     :root.colorblind .btn-big {
       background: linear-gradient(135deg, #D55E00, #E69F00);
-      box-shadow: 0 4px 20px rgba(213, 94, 0, 0.35);
+      box-shadow: 0 4px 24px rgba(213, 94, 0, 0.4);
     }
 
     .mic-note {
       margin-top: 8px;
       font-size: 0.8rem;
       color: var(--text-muted);
-      opacity: 0.55;
+      opacity: 0.7;
       text-align: center;
       flex-shrink: 0;
     }
@@ -2009,6 +2088,18 @@
 
       .menu-left::-webkit-scrollbar {
         display: none;
+      }
+
+      /* Category labels span full grid width on mobile */
+      .mode-category-label {
+        grid-column: 1 / -1;
+        padding: 6px 4px 2px;
+        font-size: 0.6rem;
+        text-align: center;
+      }
+
+      .mode-category-label:first-child {
+        padding-top: 2px;
       }
 
       /* --- SCROLL FADE INDICATORS: show more content exists --- */
@@ -3041,6 +3132,13 @@
 
       .menu-left::-webkit-scrollbar {
         display: none;
+      }
+
+      /* Category labels in landscape sidebar */
+      .mode-category-label {
+        font-size: 0.55rem;
+        padding: 6px 4px 2px;
+        text-align: left;
       }
 
       .mode-card {
@@ -4607,25 +4705,10 @@
           <!-- Left: game card list -->
           <div class="menu-left">
             <div class="mode-picker" id="modePicker">
+              <div class="mode-category-label">Pitch & Resonance</div>
               <div class="mode-card" data-mode="ball">
                 <div class="mode-icon">⚽</div>
                 <div class="mode-name">Vox Ball</div>
-              </div>
-              <div class="mode-card" data-mode="creature">
-                <div class="mode-icon">🐉</div>
-                <div class="mode-name">Voice Creature</div>
-              </div>
-              <div class="mode-card" data-mode="garden">
-                <div class="mode-icon">🌱</div>
-                <div class="mode-name">Voice Garden</div>
-              </div>
-              <div class="mode-card" data-mode="canvas">
-                <div class="mode-icon">🎨</div>
-                <div class="mode-name">Voice Canvas</div>
-              </div>
-              <div class="mode-card" data-mode="keyboard">
-                <div class="mode-icon">🎹</div>
-                <div class="mode-name">Vocal Keyboard</div>
               </div>
               <div class="mode-card" data-mode="pilot">
                 <div class="mode-icon">✨</div>
@@ -4639,13 +4722,31 @@
                 <div class="mode-icon">🎈</div>
                 <div class="mode-name">Spectral Ascent</div>
               </div>
+              <div class="mode-category-label">Articulation</div>
               <div class="mode-card" data-mode="prism">
                 <div class="mode-icon">🔮</div>
                 <div class="mode-name">Prism Reader</div>
               </div>
+              <div class="mode-card" data-mode="keyboard">
+                <div class="mode-icon">🎹</div>
+                <div class="mode-name">Vocal Keyboard</div>
+              </div>
               <div class="mode-card" data-mode="vowelvalley">
                 <div class="mode-icon">⛰️</div>
                 <div class="mode-name">Vowel Valley</div>
+              </div>
+              <div class="mode-category-label">Creative</div>
+              <div class="mode-card" data-mode="creature">
+                <div class="mode-icon">🐉</div>
+                <div class="mode-name">Voice Creature</div>
+              </div>
+              <div class="mode-card" data-mode="garden">
+                <div class="mode-icon">🌱</div>
+                <div class="mode-name">Voice Garden</div>
+              </div>
+              <div class="mode-card" data-mode="canvas">
+                <div class="mode-icon">🎨</div>
+                <div class="mode-name">Voice Canvas</div>
               </div>
             </div>
           </div>
