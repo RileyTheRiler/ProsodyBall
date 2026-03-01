@@ -811,14 +811,19 @@
 
     .meters-panel {
       display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      padding: 10px 16px 14px;
+      flex-direction: column;
       background: linear-gradient(0deg, rgba(12, 12, 22, 0.98) 0%, rgba(18, 18, 31, 0.85) 100%);
       backdrop-filter: blur(12px);
       border-top: 1px solid rgba(255, 255, 255, 0.08);
       z-index: 10;
       flex-shrink: 0;
+    }
+
+    .meters-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 10px 16px 14px;
     }
 
     .meter {
@@ -1029,10 +1034,12 @@
       position: fixed;
       inset: 0;
       z-index: 5;
-      flex-direction: column;
-      overflow-y: auto;
-      padding-top: 16px;
+      overflow: hidden;
       background: rgba(10, 10, 18, 0.98);
+    }
+
+    .meters-panel.expanded .meters-bar {
+      flex-shrink: 0;
     }
 
     .meters-expanded {
@@ -1044,7 +1051,9 @@
     .meters-panel.expanded .meters-expanded {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      align-content: start;
       flex: 1;
+      min-height: 0;
       padding: 12px 16px 24px;
       overflow-y: auto;
       animation: metersSlideUp 0.3s ease-out;
@@ -1320,21 +1329,6 @@
       border-color: rgba(213, 94, 0, 0.8);
       background: linear-gradient(135deg, rgba(213, 94, 0, 0.12), rgba(230, 159, 0, 0.10));
       box-shadow: 0 0 18px rgba(213, 94, 0, 0.25), 0 0 6px rgba(230, 159, 0, 0.15);
-    }
-
-    /* Category labels in sidebar */
-    .mode-category-label {
-      font-family: 'Space Mono', monospace;
-      font-size: 0.65rem;
-      text-transform: uppercase;
-      letter-spacing: 0.14em;
-      color: rgba(255, 255, 255, 0.3);
-      padding: 10px 4px 4px;
-      flex-shrink: 0;
-    }
-
-    .mode-category-label:first-child {
-      padding-top: 0;
     }
 
     .mode-icon {
@@ -2107,18 +2101,6 @@
         display: none;
       }
 
-      /* Category labels span full grid width on mobile */
-      .mode-category-label {
-        grid-column: 1 / -1;
-        padding: 6px 4px 2px;
-        font-size: 0.6rem;
-        text-align: center;
-      }
-
-      .mode-category-label:first-child {
-        padding-top: 2px;
-      }
-
       /* --- SCROLL FADE INDICATORS: show more content exists --- */
       .mobile-scroll-fade {
         position: relative;
@@ -2279,14 +2261,18 @@
         min-height: 200px;
       }
 
-      /* --- METERS PANEL: two-row grid for readability --- */
-      .meters-panel {
+      /* --- METERS BAR: two-row grid for readability --- */
+      .meters-bar {
         padding: 8px 10px 10px;
         padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
         gap: 6px 6px;
         display: grid;
         grid-template-columns: repeat(5, 1fr);
         grid-auto-rows: auto;
+      }
+
+      .meters-panel.expanded .meters-bar {
+        padding-bottom: 4px;
       }
 
       .meter {
@@ -2931,7 +2917,7 @@
       }
 
       /* Meters: 3-column on tiny screens for more breathing room */
-      .meters-panel {
+      .meters-bar {
         grid-template-columns: repeat(3, 1fr);
         padding: 6px 8px 10px;
         padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
@@ -3053,7 +3039,7 @@
       }
 
       /* Meters: inline horizontal strip, minimal height */
-      .meters-panel {
+      .meters-bar {
         padding: 3px 12px 4px;
         padding-left: max(12px, env(safe-area-inset-left, 0px));
         padding-right: max(12px, env(safe-area-inset-right, 0px));
@@ -3064,7 +3050,7 @@
         scrollbar-width: none;
       }
 
-      .meters-panel::-webkit-scrollbar {
+      .meters-bar::-webkit-scrollbar {
         display: none;
       }
 
@@ -3142,12 +3128,6 @@
         display: none;
       }
 
-      /* Category labels in landscape sidebar */
-      .mode-category-label {
-        font-size: 0.55rem;
-        padding: 6px 4px 2px;
-        text-align: left;
-      }
 
       .mode-card {
         flex-direction: row;
@@ -4583,15 +4563,11 @@
               d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
           </svg>
         </button>
-        <select id="teleprompterModeSelect" class="theme-select hud-setting" hidden style="display:none" aria-label="Teleprompter mode">
-
         <select id="teleprompterModeSelect" class="theme-select" aria-label="Teleprompter mode">
           <option value="off" selected>Teleprompter: Off</option>
           <option value="rainbow">Teleprompter: Rainbow Passage</option>
           <option value="custom">Teleprompter: Custom Text</option>
         </select>
-        <button class="btn btn-help hud-setting" hidden style="display:none" id="teleprompterCustomBtn" title="Edit custom teleprompter text">Edit Text</button>
-        <button class="btn btn-cb hud-setting" hidden style="display:none" id="cbToggle" aria-label="Toggle colorblind mode" title="Colorblind mode">
         <button class="btn btn-help" id="teleprompterCustomBtn" title="Edit custom teleprompter text">Edit Text</button>
 
         <button class="btn btn-cb" id="cbToggle" aria-label="Toggle colorblind mode" title="Colorblind mode">
@@ -4724,7 +4700,6 @@
           <!-- Left: game card list -->
           <div class="menu-left">
             <div class="mode-picker" id="modePicker">
-              <div class="mode-category-label">Pitch & Resonance</div>
               <div class="mode-card" data-mode="ball">
                 <div class="mode-icon">⚽</div>
                 <div class="mode-name">Vox Ball</div>
@@ -4741,7 +4716,6 @@
                 <div class="mode-icon">🎈</div>
                 <div class="mode-name">Spectral Ascent</div>
               </div>
-              <div class="mode-category-label">Articulation</div>
               <div class="mode-card" data-mode="prism">
                 <div class="mode-icon">🔮</div>
                 <div class="mode-name">Prism Reader</div>
@@ -4754,7 +4728,6 @@
                 <div class="mode-icon">⛰️</div>
                 <div class="mode-name">Vowel Valley</div>
               </div>
-              <div class="mode-category-label">Creative</div>
               <div class="mode-card" data-mode="creature">
                 <div class="mode-icon">🐉</div>
                 <div class="mode-name">Voice Creature</div>
@@ -5358,6 +5331,7 @@
           <polyline points="18 15 12 9 6 15"></polyline>
         </svg>
       </button>
+      <div class="meters-bar">
       <div class="meter meter-pitch">
         <div class="meter-label">Pitch
           <div class="info-wrapper">
@@ -5435,6 +5409,7 @@
           <div class="meter-bar-fill" id="meterSyllable"></div>
         </div>
         <div class="meter-value" id="valSyllable">0</div>
+      </div>
       </div>
       <!-- Expanded metric cards -->
       <div class="meters-expanded" id="metersExpanded">
