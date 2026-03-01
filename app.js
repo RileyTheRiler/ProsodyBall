@@ -1775,7 +1775,7 @@ class ProsodyBallGame {
 
   /** Mobile-only UX enhancements (no-op on desktop/tablet) */
   _setupMobile() {
-    const mobileQuery = window.matchMedia('(max-width: 600px)');
+    const mobileQuery = window.matchMedia('(max-width: 600px) and (pointer: coarse)');
     if (!mobileQuery.matches) return;
 
     // 1. Auto-scroll selected mode card into view
@@ -1829,7 +1829,7 @@ class ProsodyBallGame {
     // 5. Inject mobile active state CSS (visual feedback on tap)
     const mobileStyle = document.createElement('style');
     mobileStyle.textContent = `
-      @media (max-width: 600px) {
+      @media (max-width: 600px) and (pointer: coarse) {
         .mobile-active {
           opacity: 0.85;
           transform: scale(0.97) !important;

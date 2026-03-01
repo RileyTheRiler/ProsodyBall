@@ -764,7 +764,7 @@
       background: rgba(255, 107, 107, 0.1);
     }
 
-    @media (max-width: 600px) {
+    @media (max-width: 600px) and (pointer: coarse) {
       .summary-grid {
         grid-template-columns: 1fr 1fr;
         gap: 8px;
@@ -1527,8 +1527,8 @@
       background: linear-gradient(135deg, #56B4E9, #009E73);
     }
 
-    /* ====== MOBILE-ONLY STYLES (phones ≤600px) ====== */
-    @media (max-width: 600px) {
+    /* ====== MOBILE-ONLY STYLES (phones ≤600px, touch devices only) ====== */
+    @media (max-width: 600px) and (pointer: coarse) {
 
       body,
       #app {
@@ -2427,8 +2427,8 @@
       }
     }
 
-    /* ====== SMALL PHONE STYLES (≤420px) ====== */
-    @media (max-width: 420px) {
+    /* ====== SMALL PHONE STYLES (≤420px, touch devices only) ====== */
+    @media (max-width: 420px) and (pointer: coarse) {
 
       .hud-title {
         font-size: 0.88rem;
@@ -2547,8 +2547,8 @@
       }
     }
 
-    /* ====== MOBILE LANDSCAPE (phones rotated sideways) ====== */
-    @media (max-width: 900px) and (max-height: 500px) and (orientation: landscape) {
+    /* ====== MOBILE LANDSCAPE (touch phones rotated sideways only) ====== */
+    @media (max-width: 900px) and (max-height: 500px) and (orientation: landscape) and (pointer: coarse) {
 
       /* Maximize canvas space in landscape */
       body,
@@ -3392,7 +3392,7 @@
       opacity: 1;
     }
 
-    @media (max-width: 600px) {
+    @media (max-width: 600px) and (pointer: coarse) {
       .prism-scroll-container {
         margin-top: 36px;
         padding: 16px 14px;
