@@ -3592,8 +3592,10 @@ class VoxBallGame {
       this.metersExpanded = !this.metersExpanded;
       metersPanel.classList.toggle('expanded', this.metersExpanded);
       metersExpandToggle.setAttribute('aria-expanded', this.metersExpanded ? 'true' : 'false');
-      // Size canvases on first expand
-      if (this.metersExpanded) this._sizeExpandedCanvases();
+      // Size canvases after layout settles (fixed positioning needs a frame)
+      if (this.metersExpanded) {
+        requestAnimationFrame(() => this._sizeExpandedCanvases());
+      }
     });
 
     // Metric card click → open popup
