@@ -2902,6 +2902,7 @@ class ProsodyBallGame {
       document.getElementById('summaryOverlay').classList.remove('show');
 
       welcomeOverlay.classList.add('hidden');
+      document.getElementById('app').classList.add('playing');
       if (iframeNotice) iframeNotice.classList.remove('show');
       helpTooltip.classList.remove('show');
       vibPanel.classList.remove('show');
@@ -2955,6 +2956,7 @@ class ProsodyBallGame {
         this.drawIdleScene(); // animate behind semi-transparent summary
       } else {
         welcomeOverlay.classList.remove('hidden');
+      document.getElementById('app').classList.remove('playing');
         this.drawIdleScene();
       }
     };
@@ -2994,6 +2996,7 @@ class ProsodyBallGame {
 
       // Show the menu directly
       welcomeOverlay.classList.remove('hidden');
+      document.getElementById('app').classList.remove('playing');
       document.getElementById('summaryOverlay').classList.remove('show');
       this.drawIdleScene();
     });
@@ -3002,6 +3005,7 @@ class ProsodyBallGame {
     document.getElementById('summaryBackBtn')?.addEventListener('click', () => {
       document.getElementById('summaryOverlay').classList.remove('show');
       welcomeOverlay.classList.remove('hidden');
+      document.getElementById('app').classList.remove('playing');
       // Reset mode selection so user can pick fresh
       modeDetails.classList.remove('show');
       modeCards.forEach(c => c.classList.remove('selected'));
@@ -3051,6 +3055,7 @@ class ProsodyBallGame {
         if (document.getElementById('summaryOverlay').classList.contains('show')) {
           document.getElementById('summaryOverlay').classList.remove('show');
           welcomeOverlay.classList.remove('hidden');
+      document.getElementById('app').classList.remove('playing');
           this.drawIdleScene();
         }
       }
