@@ -800,6 +800,7 @@
       position: relative;
       overflow: hidden;
       min-height: 0;
+      z-index: 6;
     }
 
     #gameCanvas {
@@ -810,6 +811,7 @@
 
     .meters-panel {
       display: flex;
+      flex-wrap: wrap;
       gap: 6px;
       padding: 10px 16px 14px;
       background: linear-gradient(0deg, rgba(12, 12, 22, 0.98) 0%, rgba(18, 18, 31, 0.85) 100%);
@@ -825,10 +827,10 @@
       flex-direction: column;
       align-items: center;
       gap: 4px;
-      padding: 4px 2px;
+      padding: 6px 4px;
       border-radius: 8px;
-      background: rgba(255, 255, 255, 0.02);
-      border: 1px solid rgba(255, 255, 255, 0.04);
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
     }
 
     .meter-label {
@@ -840,7 +842,7 @@
     }
 
     .meter-bar-bg {
-      width: 90%;
+      width: 100%;
       height: 10px;
       background: rgba(255, 255, 255, 0.06);
       border-radius: 5px;
@@ -1021,6 +1023,18 @@
       transform: rotate(180deg);
     }
 
+    /* When expanded, the meters panel becomes a full-screen overlay
+       that sits BEHIND the game canvas */
+    .meters-panel.expanded {
+      position: fixed;
+      inset: 0;
+      z-index: 5;
+      flex-direction: column;
+      overflow-y: auto;
+      padding-top: 16px;
+      background: rgba(10, 10, 18, 0.98);
+    }
+
     .meters-expanded {
       display: none;
       padding: 0 16px 8px;
@@ -1030,6 +1044,9 @@
     .meters-panel.expanded .meters-expanded {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      flex: 1;
+      padding: 12px 16px 24px;
+      overflow-y: auto;
       animation: metersSlideUp 0.3s ease-out;
     }
 
@@ -2266,9 +2283,9 @@
       .meters-panel {
         padding: 8px 10px 10px;
         padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
-        gap: 6px 8px;
+        gap: 6px 6px;
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(5, 1fr);
         grid-auto-rows: auto;
       }
 
@@ -2277,17 +2294,17 @@
         gap: 3px;
       }
 
-      /* Pitch and Resonance span two columns each on first row */
+      /* Pitch and Resonance: first row, wider */
       .meter-pitch {
         grid-column: 1 / 3;
       }
 
       .meter-resonance {
-        grid-column: 3 / 5;
+        grid-column: 3 / 6;
         flex: unset;
       }
 
-      /* Remaining 5 meters auto-flow into subsequent rows */
+      /* Remaining 5 meters fill second row evenly */
 
       .meter-label {
         font-size: 0.7rem;
@@ -2323,7 +2340,7 @@
       /* --- EXPANDED METRICS: 2-col on mobile --- */
       .meters-panel.expanded .meters-expanded {
         grid-template-columns: repeat(2, 1fr);
-        padding: 0 10px 8px;
+        padding: 12px 10px 24px;
         gap: 6px;
       }
 
@@ -3074,20 +3091,11 @@
         min-height: 180px;
       }
 
-      /* Overlay: side-by-side layout, scrollable */
-      /* Expanded metrics: single row scroll in landscape */
+      /* Expanded metrics: grid in landscape fullscreen */
       .meters-panel.expanded .meters-expanded {
-        display: flex;
-        flex-wrap: nowrap;
-        overflow-x: auto;
-        scrollbar-width: none;
-        padding: 0 8px 4px;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        padding: 8px 8px 24px;
         gap: 6px;
-      }
-
-      .meters-panel.expanded .meters-expanded .metric-card {
-        min-width: 160px;
-        flex-shrink: 0;
       }
 
       .metric-card-canvas {
@@ -4227,24 +4235,22 @@
       transform: translateX(-50%) translateY(4px);
       width: max-content;
       max-width: 260px;
-      background: rgba(18, 18, 31, 0.95);
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      border-radius: 8px;
-      padding: 10px 14px;
-      color: rgba(255, 255, 255, 0.9);
+      background: #1a1a2e;
+      border: 1px solid rgba(192, 132, 252, 0.4);
+      border-radius: 10px;
+      padding: 12px 16px;
+      color: #e6e4f0;
       font-family: 'Outfit', sans-serif;
-      font-size: 0.8rem;
+      font-size: 0.82rem;
       font-weight: 500;
-      line-height: 1.4;
+      line-height: 1.5;
       text-transform: none;
       letter-spacing: normal;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7), 0 0 16px rgba(192, 132, 252, 0.12);
       opacity: 0;
       visibility: hidden;
       transition: all 0.2s cubic-bezier(0.18, 0.89, 0.32, 1.28);
-      z-index: 100;
+      z-index: 200;
       pointer-events: none;
       text-align: left;
     }
@@ -4258,7 +4264,7 @@
       transform: translateX(-50%);
       border-width: 6px;
       border-style: solid;
-      border-color: rgba(18, 18, 31, 0.95) transparent transparent transparent;
+      border-color: #1a1a2e transparent transparent transparent;
     }
 
     /* Arrow outline */
@@ -4270,7 +4276,7 @@
       transform: translateX(-50%);
       border-width: 7px;
       border-style: solid;
-      border-color: rgba(255, 255, 255, 0.15) transparent transparent transparent;
+      border-color: rgba(192, 132, 252, 0.4) transparent transparent transparent;
       z-index: -1;
     }
 
@@ -4283,7 +4289,20 @@
 
     /* Specific positioning overrides to prevent clipping */
     .meter .info-popup {
-      bottom: calc(100% + 10px);
+      bottom: calc(100% + 12px);
+      left: 0;
+      transform: translateX(0) translateY(4px);
+    }
+
+    .meter .info-popup::after,
+    .meter .info-popup::before {
+      left: 12px;
+      transform: none;
+    }
+
+    .meter .info-wrapper:hover .info-popup,
+    .meter .info-trigger:focus+.info-popup {
+      transform: translateX(0) translateY(0);
     }
 
     .prism-settings-field .info-popup {
@@ -4295,13 +4314,13 @@
     .prism-settings-field .info-popup::after {
       top: auto;
       bottom: 100%;
-      border-color: transparent transparent rgba(18, 18, 31, 0.95) transparent;
+      border-color: transparent transparent #1a1a2e transparent;
     }
 
     .prism-settings-field .info-popup::before {
       top: auto;
       bottom: 100%;
-      border-color: transparent transparent rgba(255, 255, 255, 0.15) transparent;
+      border-color: transparent transparent rgba(192, 132, 252, 0.4) transparent;
     }
 
     .prism-settings-field .info-wrapper:hover .info-popup,
