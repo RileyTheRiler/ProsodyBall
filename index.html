@@ -838,11 +838,16 @@
     }
 
     .meter-label {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
       font-family: 'Space Mono', monospace;
       font-size: 0.72rem;
       text-transform: uppercase;
       letter-spacing: 0.08em;
       color: rgba(200, 200, 220, 0.6);
+      white-space: nowrap;
     }
 
     .meter-bar-bg {
@@ -3372,7 +3377,7 @@
     .btn-recordings.visible {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
     }
 
     .btn-recordings .badge {
@@ -3382,6 +3387,7 @@
       border-radius: 10px;
       padding: 1px 6px;
       min-width: 16px;
+      margin-left: 0;
       text-align: center;
       font-weight: 700;
     }
@@ -4215,11 +4221,11 @@
       bottom: calc(100% + 8px);
       left: 50%;
       transform: translateX(-50%) translateY(4px);
-      width: max-content;
-      max-width: 260px;
-      background: #1a1a2e;
+      width: clamp(220px, 24vw, 320px);
+      max-width: min(320px, calc(100vw - 24px));
+      background: #17172a;
       border: 1px solid rgba(192, 132, 252, 0.4);
-      border-radius: 10px;
+      border-radius: 6px;
       padding: 12px 16px;
       color: #e6e4f0;
       font-family: 'Outfit', sans-serif;
@@ -4235,6 +4241,7 @@
       z-index: 200;
       pointer-events: none;
       text-align: left;
+      white-space: normal;
     }
 
     /* Little triangle arrow pointing down */
@@ -4549,7 +4556,7 @@
         <button class="btn btn-help" id="prismSaveRecBtn"
           style="display: none; opacity: 0; transform: scale(0.95); transition: all 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);">Save
           Clip</button>
-        <button class="btn btn-recordings" id="recordingsBtn"><span>Clips</span><span class="badge"
+        <button class="btn btn-recordings" id="recordingsBtn"><span>Clips&nbsp;</span><span class="badge"
             id="recBadge">0</span></button>
         <button class="btn btn-cb canvas-only" id="pauseCanvasBtn" title="Pause paint updates"
           style="padding: 6px 14px; font-weight: 600; border-radius: 8px;">Pause</button>
