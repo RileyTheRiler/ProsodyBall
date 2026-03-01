@@ -3518,6 +3518,7 @@ class VoxBallGame {
     metersExpandToggle?.addEventListener('click', () => {
       this.metersExpanded = !this.metersExpanded;
       metersPanel.classList.toggle('expanded', this.metersExpanded);
+      metersExpandToggle.setAttribute('aria-expanded', this.metersExpanded ? 'true' : 'false');
       // Size canvases on first expand
       if (this.metersExpanded) this._sizeExpandedCanvases();
     });
