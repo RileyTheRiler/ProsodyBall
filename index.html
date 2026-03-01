@@ -1027,17 +1027,16 @@
       transform: rotate(180deg);
     }
 
-    /* When expanded, the meters panel grows to fill most of the screen,
-       shrinking the game canvas above it */
+    /* When expanded, the meters panel sizes to fit its visualizations */
     .meters-panel.expanded {
-      flex: 1;
+      flex: 0 1 auto;
       min-height: 0;
       overflow: hidden;
+      max-height: 50vh;
     }
 
     #app.meters-open .game-area {
-      flex: 0 0 auto;
-      height: 120px;
+      flex: 1;
       min-height: 120px;
     }
 
