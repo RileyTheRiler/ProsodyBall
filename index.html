@@ -5,6 +5,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Vox Arcade — Voice Training Game</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Space+Mono:wght@400;700&display=swap">
   <style>
     /* Critical resets: ensure hidden-by-default elements stay hidden until JS toggles them */
@@ -15,6 +17,7 @@
     }
 
     .info-popup {
+      position: absolute;
       opacity: 0;
       visibility: hidden;
       pointer-events: none;
@@ -776,6 +779,27 @@
       background: rgba(255, 107, 107, 0.1);
     }
 
+    /* ====== RESPONSIVE LAYOUT (all narrow viewports ≤600px) ====== */
+    @media (max-width: 600px) {
+      .summary-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .summary-title {
+        font-size: 1.2rem;
+      }
+
+      .summary-stat {
+        padding: 10px;
+      }
+
+      .summary-stat-value {
+        font-size: 1.1rem;
+      }
+    }
+
+    /* Mobile-specific overrides for summary (touch devices only) */
     @media (max-width: 600px) and (pointer: coarse) {
       .summary-grid {
         grid-template-columns: 1fr 1fr;
@@ -1537,6 +1561,275 @@
 
     :root.colorblind .iframe-notice a {
       background: linear-gradient(135deg, #56B4E9, #009E73);
+    }
+
+    /* ====== RESPONSIVE LAYOUT (all narrow viewports ≤600px, desktop + mobile) ====== */
+    @media (max-width: 600px) {
+
+      body,
+      #app {
+        overflow: auto;
+      }
+
+      .overlay-title {
+        font-size: 1.6rem;
+      }
+
+      .overlay-subtitle {
+        font-size: 0.95rem;
+        margin-bottom: 8px;
+      }
+
+      .overlay {
+        padding: 12px 10px 20px;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        justify-content: flex-start;
+      }
+
+      .menu-split {
+        flex-direction: column;
+        gap: 10px;
+        min-height: 0;
+        flex: none;
+      }
+
+      .menu-left {
+        width: 100%;
+        flex-direction: row;
+        overflow-x: auto;
+        overflow-y: hidden;
+        flex-shrink: 0;
+        padding-right: 0;
+        padding-bottom: 4px;
+        gap: 6px;
+        scrollbar-width: thin;
+      }
+
+      .mode-card {
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        padding: 8px 10px;
+        flex-shrink: 0;
+        min-width: 68px;
+        transform: none !important;
+      }
+
+      .mode-icon {
+        font-size: 1.4rem;
+      }
+
+      .mode-name {
+        font-size: 0.7rem;
+        white-space: normal;
+        text-align: center;
+        line-height: 1.2;
+      }
+
+      .menu-right {
+        padding: 14px 12px;
+        flex: none;
+      }
+
+      .rules-grid {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .rule-card:last-child {
+        max-width: 100%;
+      }
+
+      .rule-name {
+        font-size: 0.9rem;
+      }
+
+      .rule-desc {
+        font-size: 0.82rem;
+      }
+
+      .btn-big {
+        font-size: 1.1rem;
+        padding: 13px 24px;
+        margin-top: 10px;
+      }
+
+      .meters-panel {
+        padding: 8px 10px 10px;
+        gap: 8px;
+        overflow-x: auto;
+        scrollbar-width: thin;
+      }
+
+      .meter {
+        min-width: 72px;
+      }
+
+      .meter-label {
+        font-size: 0.62rem;
+      }
+
+      .meter-value {
+        font-size: 0.65rem;
+      }
+
+      .theme-select {
+        display: none;
+      }
+
+      #teleprompterModeSelect.theme-select {
+        display: inline-block;
+        flex: 1;
+        min-width: 140px;
+      }
+
+      #teleprompterCustomBtn.btn-help {
+        display: inline-block;
+      }
+
+      .res-method-select {
+        font-size: 0.52rem;
+        padding: 0 1px;
+      }
+
+      .recordings-drawer {
+        max-width: 100%;
+        right: 0;
+        left: 0;
+        border-radius: 12px 12px 0 0;
+      }
+
+      .vib-panel {
+        right: 4px;
+        left: 4px;
+        max-width: 100%;
+      }
+
+      .vib-rule {
+        grid-template-columns: 1fr auto;
+      }
+
+      .hud {
+        padding: 8px 10px;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: flex-start;
+      }
+
+      .hud>.hud-title {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .hud-title {
+        font-size: 1.05rem;
+      }
+
+      .session-timer {
+        font-size: 0.72rem;
+        margin-left: 0;
+        order: 2;
+        flex: 0 0 auto;
+        align-self: center;
+      }
+
+      .hud-controls {
+        gap: 6px;
+        flex-wrap: wrap;
+        justify-content: flex-start;
+        width: 100%;
+        order: 3;
+      }
+
+      .hud-secondary {
+        flex-wrap: wrap;
+        overflow: visible;
+        background: none;
+        border: none;
+        box-shadow: none;
+        padding: 0;
+      }
+
+      .hud-controls .btn {
+        font-size: 0.85rem;
+        padding: 6px 10px;
+      }
+
+      .btn-help {
+        display: none;
+      }
+
+      .context-bar {
+        padding: 6px 10px;
+        gap: 6px;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        scrollbar-width: none;
+        justify-content: flex-start;
+      }
+
+      .context-bar::-webkit-scrollbar {
+        display: none;
+      }
+
+      .btn-recordings span:first-child {
+        display: none;
+      }
+
+      .meter-resonance {
+        flex: 1.2;
+      }
+
+      .summary-actions {
+        width: 100%;
+        flex-direction: column;
+      }
+
+      .summary-actions .btn {
+        width: 100%;
+        min-width: 0;
+      }
+
+      .creature-style-picker {
+        gap: 4px;
+        margin-bottom: 10px;
+      }
+
+      .style-pill {
+        font-size: 0.78rem;
+        padding: 5px 10px;
+      }
+    }
+
+    @media (max-width: 420px) {
+      .hud-title {
+        font-size: 0.88rem;
+        letter-spacing: 0;
+      }
+
+      .hud-controls .btn {
+        padding: 6px 8px;
+        font-size: 0.8rem;
+      }
+
+      .btn-start {
+        flex: 1 1 auto;
+        justify-content: center;
+      }
+
+      .overlay-subtitle {
+        margin-bottom: 20px;
+        line-height: 1.45;
+      }
+
+      .btn-big {
+        width: 100%;
+        max-width: 320px;
+        padding: 13px 16px;
+        font-size: 1.1rem;
+      }
     }
 
     /* ====== MOBILE-ONLY STYLES (phones ≤600px, touch devices only) ====== */
@@ -3402,6 +3695,16 @@
 
     .prism-keep-reading.show {
       opacity: 1;
+    }
+
+    @media (max-width: 600px) {
+      .prism-scroll-container {
+        margin-top: 40px;
+        padding: 16px 18px;
+        font-size: 1.1rem;
+        line-height: 2.0;
+        max-height: 60%;
+      }
     }
 
     @media (max-width: 600px) and (pointer: coarse) {
