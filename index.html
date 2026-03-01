@@ -2446,20 +2446,20 @@
               d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
           </svg>
         </button>
-        <select id="teleprompterModeSelect" class="theme-select" aria-label="Teleprompter mode">
+        <select id="teleprompterModeSelect" class="theme-select hud-setting" hidden style="display:none" aria-label="Teleprompter mode">
           <option value="off" selected>Teleprompter: Off</option>
           <option value="rainbow">Teleprompter: Rainbow Passage</option>
           <option value="custom">Teleprompter: Custom Text</option>
         </select>
-        <button class="btn btn-help" id="teleprompterCustomBtn" title="Edit custom teleprompter text">Edit Text</button>
-        <button class="btn btn-cb" id="cbToggle" aria-label="Toggle colorblind mode" title="Colorblind mode">
+        <button class="btn btn-help hud-setting" hidden style="display:none" id="teleprompterCustomBtn" title="Edit custom teleprompter text">Edit Text</button>
+        <button class="btn btn-cb hud-setting" hidden style="display:none" id="cbToggle" aria-label="Toggle colorblind mode" title="Colorblind mode">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" />
             <circle cx="12" cy="12" r="3" />
           </svg>
         </button>
-        <button class="btn btn-vib" id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts">
+        <button class="btn btn-vib hud-setting" hidden style="display:none" id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
             <rect x="8" y="4" width="8" height="16" rx="2" />
@@ -2469,15 +2469,15 @@
             <path d="M22 10v4" />
           </svg>
         </button>
-        <button class="btn btn-cb" id="cameraBtn" title="Camera Mirror" aria-label="Camera Mirror">
+        <button class="btn btn-cb hud-setting" hidden style="display:none" id="cameraBtn" title="Camera Mirror" aria-label="Camera Mirror">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round" stroke-linejoin="round">
             <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
             <circle cx="12" cy="13" r="4"></circle>
           </svg>
         </button>
-        <button class="btn btn-help" id="helpBtn">How to Play</button>
-        <button class="btn btn-help" id="homeBtn" title="Return to Main Menu">
+        <button class="btn btn-help hud-setting" hidden style="display:none" id="helpBtn">How to Play</button>
+        <button class="btn btn-help hud-setting" hidden style="display:none" id="homeBtn" title="Return to Main Menu">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
             <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
@@ -2491,7 +2491,7 @@
     </div>
 
     <div id="modalBackdrop" class="modal-backdrop"></div>
-    <div id="settingsPanel" class="settings-panel">
+    <div id="settingsPanel" class="settings-panel" hidden style="display:none">
       <h3>Session Settings</h3>
 
       <div class="settings-group">
@@ -2845,7 +2845,7 @@
                   <label>Target Tone
                     <div class="info-wrapper">
                       <button class="info-trigger" aria-label="More Info">?</button>
-                      <div class="info-popup" style="position:absolute;opacity:0;visibility:hidden">Pick Bright or Dark posture. The road color palette flips to match your
+                      <div class="info-popup" hidden style="display:none">Pick Bright or Dark posture. The road color palette flips to match your
                         training goal.</div>
                     </div>
                     <select id="roadTargetSelect" class="theme-select" aria-label="Resonance Road target tone">
@@ -2946,7 +2946,7 @@
                         <span class="prism-label-icon">🎙️</span>Mode
                         <div class="info-wrapper">
                           <button class="info-trigger" aria-label="More Info">?</button>
-                          <div class="info-popup" style="position:absolute;opacity:0;visibility:hidden">'Real-Time' animates as you speak. 'Record & Process' analyzes a whole
+                          <div class="info-popup" hidden style="display:none">'Real-Time' animates as you speak. 'Record & Process' analyzes a whole
                             clip for higher accuracy playback.</div>
                         </div>
                       </label>
@@ -2961,7 +2961,7 @@
                         <span class="prism-label-icon">⏱</span>Pacing Mode
                         <div class="info-wrapper">
                           <button class="info-trigger" aria-label="More Info">?</button>
-                          <div class="info-popup" style="position:absolute;opacity:0;visibility:hidden">Choose how text advances. 'Auto' detects your speech rhythm. 'Manual'
+                          <div class="info-popup" hidden style="display:none">Choose how text advances. 'Auto' detects your speech rhythm. 'Manual'
                             lets you control the pace with Spacebar or Taps.</div>
                         </div>
                       </label>
@@ -3168,7 +3168,7 @@
         <div class="meter-label">Pitch
           <div class="info-wrapper">
             <button class="info-trigger" aria-label="More Info">?</button>
-            <div class="info-popup" style="position:absolute;opacity:0;visibility:hidden">How high or low your voice sounds in Hertz (Hz).</div>
+            <div class="info-popup" hidden style="display:none">How high or low your voice sounds in Hertz (Hz).</div>
           </div>
         </div>
         <div class="meter-bar-bg meter-bar-pitch-bg">
@@ -3181,7 +3181,7 @@
           Resonance
           <div class="info-wrapper">
             <button class="info-trigger" aria-label="More Info">?</button>
-            <div class="info-popup" style="position:absolute;opacity:0;visibility:hidden">Your vocal tone quality. High resonance sounds 'forward' or 'bright'; low resonance
+            <div class="info-popup" hidden style="display:none">Your vocal tone quality. High resonance sounds 'forward' or 'bright'; low resonance
               sounds 'deep' or 'hollow'.</div>
           </div>
           <select id="resMethodSelect" class="res-method-select" aria-label="Resonance method">
@@ -3200,7 +3200,7 @@
         <div class="meter-label">Bounce
           <div class="info-wrapper">
             <button class="info-trigger" aria-label="More Info">?</button>
-            <div class="info-popup" style="position:absolute;opacity:0;visibility:hidden">Measures your pitch variance. More 'bounce' means more expressive pitch changes.
+            <div class="info-popup" hidden style="display:none">Measures your pitch variance. More 'bounce' means more expressive pitch changes.
             </div>
           </div>
         </div>
@@ -3213,7 +3213,7 @@
         <div class="meter-label">Tempo
           <div class="info-wrapper">
             <button class="info-trigger" aria-label="More Info">?</button>
-            <div class="info-popup" style="position:absolute;opacity:0;visibility:hidden">The speed of your speech rhythms.</div>
+            <div class="info-popup" hidden style="display:none">The speed of your speech rhythms.</div>
           </div>
         </div>
         <div class="meter-bar-bg">

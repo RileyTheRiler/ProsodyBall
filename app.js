@@ -1769,9 +1769,39 @@ class ProsodyBallGame {
     this.setupUI();
     this._updateHelpContent();
     this._setupMobile();
+    this._setupInfoPopups();
     this.drawIdleScene();
   }
 
+
+  /** Show/hide info-popup tooltips via JS (CSS-only approach was unreliable) */
+  _setupInfoPopups() {
+    document.querySelectorAll('.info-wrapper').forEach(wrapper => {
+      const popup = wrapper.querySelector('.info-popup');
+      const trigger = wrapper.querySelector('.info-trigger');
+      if (!popup || !trigger) return;
+
+      const show = () => {
+        popup.removeAttribute('hidden');
+        popup.style.display = '';
+        popup.style.opacity = '1';
+        popup.style.visibility = 'visible';
+        popup.style.pointerEvents = 'auto';
+      };
+      const hide = () => {
+        popup.style.display = 'none';
+        popup.style.opacity = '0';
+        popup.style.visibility = 'hidden';
+        popup.style.pointerEvents = 'none';
+        popup.setAttribute('hidden', '');
+      };
+
+      wrapper.addEventListener('mouseenter', show);
+      wrapper.addEventListener('mouseleave', hide);
+      trigger.addEventListener('focus', show);
+      trigger.addEventListener('blur', hide);
+    });
+  }
 
   /** Mobile-only UX enhancements (no-op on desktop/tablet) */
   _setupMobile() {
@@ -2673,6 +2703,19 @@ class ProsodyBallGame {
       }
     });
 
+    // Show/hide HUD secondary controls (hidden on main menu, visible during play)
+    const setHudSettingsVisible = (visible) => {
+      document.querySelectorAll('.hud-setting').forEach(el => {
+        if (visible) {
+          el.removeAttribute('hidden');
+          el.style.display = '';
+        } else {
+          el.setAttribute('hidden', '');
+          el.style.display = 'none';
+        }
+      });
+    };
+
     const startGame = async () => {
       this._resetKeyboardModeState();
       if (this.gameMode === 'keyboard') {
@@ -2903,6 +2946,7 @@ class ProsodyBallGame {
 
       welcomeOverlay.classList.add('hidden');
       document.getElementById('app').classList.add('playing');
+      setHudSettingsVisible(true);
       if (iframeNotice) iframeNotice.classList.remove('show');
       helpTooltip.classList.remove('show');
       vibPanel.classList.remove('show');
@@ -2957,6 +3001,7 @@ class ProsodyBallGame {
       } else {
         welcomeOverlay.classList.remove('hidden');
       document.getElementById('app').classList.remove('playing');
+      setHudSettingsVisible(false);
         this.drawIdleScene();
       }
     };
@@ -2997,6 +3042,7 @@ class ProsodyBallGame {
       // Show the menu directly
       welcomeOverlay.classList.remove('hidden');
       document.getElementById('app').classList.remove('playing');
+      setHudSettingsVisible(false);
       document.getElementById('summaryOverlay').classList.remove('show');
       this.drawIdleScene();
     });
@@ -3006,6 +3052,7 @@ class ProsodyBallGame {
       document.getElementById('summaryOverlay').classList.remove('show');
       welcomeOverlay.classList.remove('hidden');
       document.getElementById('app').classList.remove('playing');
+      setHudSettingsVisible(false);
       // Reset mode selection so user can pick fresh
       modeDetails.classList.remove('show');
       modeCards.forEach(c => c.classList.remove('selected'));
@@ -3056,6 +3103,7 @@ class ProsodyBallGame {
           document.getElementById('summaryOverlay').classList.remove('show');
           welcomeOverlay.classList.remove('hidden');
       document.getElementById('app').classList.remove('playing');
+      setHudSettingsVisible(false);
           this.drawIdleScene();
         }
       }
@@ -3415,10 +3463,20 @@ class ProsodyBallGame {
       settingsPanel.classList.toggle('show', isVisible);
       modalBackdrop.classList.toggle('show', isVisible);
 
+      // Force DOM visibility (bypass any CSS specificity issues)
       if (isVisible) {
+        settingsPanel.removeAttribute('hidden');
+        settingsPanel.style.display = 'flex';
+        settingsPanel.style.opacity = '1';
+        settingsPanel.style.pointerEvents = 'auto';
         helpTooltip.classList.remove('show');
         recordingsDrawer.classList.remove('show');
         vibPanel.classList.remove('show');
+      } else {
+        settingsPanel.style.display = 'none';
+        settingsPanel.style.opacity = '0';
+        settingsPanel.style.pointerEvents = 'none';
+        settingsPanel.setAttribute('hidden', '');
       }
     };
 
