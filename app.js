@@ -3594,6 +3594,10 @@ class VoxBallGame {
       metersPanel.classList.toggle('expanded', this.metersExpanded);
       appEl.classList.toggle('meters-open', this.metersExpanded);
       metersExpandToggle.setAttribute('aria-expanded', this.metersExpanded ? 'true' : 'false');
+      // Reflow the game canvas after panel height changes so the ball/ground stay in view.
+      requestAnimationFrame(() => this.resize());
+      // Expansion animation shifts layout over ~300ms; run one more resize after it settles.
+      setTimeout(() => this.resize(), 320);
       // Size canvases after layout settles
       if (this.metersExpanded) {
         requestAnimationFrame(() => this._sizeExpandedCanvases());
@@ -4471,7 +4475,7 @@ class VoxBallGame {
     const heightAboveGround = Math.max(0, localGround - this.ball.radius - this.ball.y);
     const heightRatio = Math.min(1, heightAboveGround / (this.height * 0.5));
     const speedFactor = Math.min(1, this.scrollSpeed / 300);
-    this.targetZoom = 1.4 - heightRatio * 0.3 - speedFactor * 0.08; // 1.4 → 1.02
+    this.targetZoom = 1.48 - heightRatio * 0.3 - speedFactor * 0.08; // 1.48 → 1.10
     this.cameraZoom += (this.targetZoom - this.cameraZoom) * 0.04;
 
     // ==========================================================
