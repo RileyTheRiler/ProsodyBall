@@ -2871,7 +2871,10 @@ class VoxBallGame {
       // Check if we have an audio file OR microphone
       if (!selectedAudioFile && (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)) {
         const errNode = document.createElement('div');
-        errNode.innerHTML = '🎙 Microphone API not available and no audio file selected.<br>This requires HTTPS and a modern browser. ';
+        errNode.textContent = '';
+        errNode.appendChild(document.createTextNode('🎙 Microphone API not available and no audio file selected.'));
+        errNode.appendChild(document.createElement('br'));
+        errNode.appendChild(document.createTextNode('This requires HTTPS and a modern browser. '));
         if (isInIframe) {
           const link = document.createElement('a');
           link.href = window.location.href;
@@ -2898,7 +2901,9 @@ class VoxBallGame {
         if (result.error === 'NotAllowedError') {
           if (isInIframe) {
             msg = document.createElement('div');
-            msg.innerHTML = '🎙 Microphone blocked by browser — this usually happens inside iframes.<br>';
+            msg.textContent = '';
+            msg.appendChild(document.createTextNode('🎙 Microphone blocked by browser — this usually happens inside iframes.'));
+            msg.appendChild(document.createElement('br'));
             const link = document.createElement('a');
             link.href = window.location.href;
             link.target = '_blank';
@@ -8001,11 +8006,6 @@ class VoxBallGame {
 
     // Keep the rider centered when the user is reasonably close to the selected tone.
     // This avoids constant side-drift from tiny resonance fluctuations.
-    const deadZone = 0.08;
-    const outsideDeadZone = Math.max(0, Math.abs(diff) - deadZone);
-    const normalizedDrift = outsideDeadZone / Math.max(0.0001, 1 - deadZone);
-    const driftMagnitude = Math.min(1, normalizedDrift * 2.6);
-    const drift = Math.sign(diff) * driftMagnitude;
     const deadZone = 0.12;
     const outsideDeadZone = Math.max(0, Math.abs(diff) - deadZone);
     const normalizedDrift = outsideDeadZone / Math.max(0.0001, 1 - deadZone);
@@ -8020,10 +8020,8 @@ class VoxBallGame {
     rr.centerX += drift * steerPower * dt;
 
     // Strong re-centering only when near target; weaken it when off-target so drift is visible.
-    const centerAssist = Math.max(0, 1 - driftMagnitude);
+    const centerAssist = Math.max(0, 1 - Math.abs(drift));
     const centerPull = 0.25 + centerAssist * 3.95;
-    // Gentle re-centering to keep the motorcycle on the lane when tone is on target.
-    const centerPull = 4.2;
     rr.centerX += (this.width * 0.5 - rr.centerX) * Math.min(1, dt * centerPull);
     const pad = rr.roadHalfWidth * 0.5;
     rr.centerX = Math.max(pad, Math.min(this.width - pad, rr.centerX));
