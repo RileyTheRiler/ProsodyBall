@@ -1932,16 +1932,19 @@ class VoxBallGame {
       if (vibPanel?.classList.contains('show') && !vibPanel.contains(e.target) && e.target !== vibToggle) {
         vibPanel.classList.remove('show');
         vibToggle?.classList.remove('active');
+        vibToggle?.setAttribute('aria-expanded', 'false');
       }
       const recDrawer = document.getElementById('recordingsDrawer');
       const recBtn = document.getElementById('recordingsBtn');
       if (recDrawer?.classList.contains('show') && !recDrawer.contains(e.target) && e.target !== recBtn && !recBtn?.contains(e.target)) {
         recDrawer.classList.remove('show');
+        recBtn?.setAttribute('aria-expanded', 'false');
       }
       const helpTooltip = document.getElementById('helpTooltip');
       const helpBtn = document.getElementById('helpBtn');
       if (helpTooltip?.classList.contains('show') && !helpTooltip.contains(e.target) && e.target !== helpBtn) {
         helpTooltip.classList.remove('show');
+        helpBtn?.setAttribute('aria-expanded', 'false');
       }
     });
 
@@ -3688,6 +3691,7 @@ class VoxBallGame {
       const isVisible = show !== undefined ? show : !settingsPanel.classList.contains('show');
       settingsPanel.classList.toggle('show', isVisible);
       modalBackdrop.classList.toggle('show', isVisible);
+      settingsBtn?.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
 
       // Force DOM visibility (bypass any CSS specificity issues)
       if (isVisible) {
@@ -3729,7 +3733,10 @@ class VoxBallGame {
     if (vibBtn) {
       vibBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (vibPanel) vibPanel.classList.toggle('show');
+        if (vibPanel) {
+          vibPanel.classList.toggle('show');
+          vibBtn.setAttribute('aria-expanded', vibPanel.classList.contains('show') ? 'true' : 'false');
+        }
         if (helpTooltip) helpTooltip.classList.remove('show');
         if (recordingsDrawer) recordingsDrawer.classList.remove('show');
         if (settingsPanel) settingsPanel.classList.remove('show');
@@ -3940,6 +3947,7 @@ class VoxBallGame {
       e.stopPropagation();
       this._updateHelpContent();
       helpTooltip.classList.toggle('show');
+      helpBtn.setAttribute('aria-expanded', helpTooltip.classList.contains('show') ? 'true' : 'false');
       recordingsDrawer.classList.remove('show');
       vibPanel.classList.remove('show');
     });
@@ -3957,12 +3965,15 @@ class VoxBallGame {
     document.addEventListener('click', (e) => {
       if (helpTooltip && !helpTooltip.contains(e.target) && e.target !== helpBtn) {
         helpTooltip.classList.remove('show');
+        helpBtn?.setAttribute('aria-expanded', 'false');
       }
       if (recordingsDrawer && !recordingsDrawer.contains(e.target) && (!recordingsBtn || !recordingsBtn.contains(e.target))) {
         recordingsDrawer.classList.remove('show');
+        recordingsBtn?.setAttribute('aria-expanded', 'false');
       }
       if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || !vibBtn.contains(e.target))) {
         vibPanel.classList.remove('show');
+        vibBtn?.setAttribute('aria-expanded', 'false');
       }
     });
 
@@ -4000,6 +4011,7 @@ class VoxBallGame {
     recordingsBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       recordingsDrawer.classList.toggle('show');
+      recordingsBtn.setAttribute('aria-expanded', recordingsDrawer.classList.contains('show') ? 'true' : 'false');
       helpTooltip.classList.remove('show');
       vibPanel.classList.remove('show');
     });
@@ -8006,10 +8018,6 @@ class VoxBallGame {
     const normalizedDrift = outsideDeadZone / Math.max(0.0001, 1 - deadZone);
     const driftMagnitude = Math.min(1, normalizedDrift * 2.6);
     const drift = Math.sign(diff) * driftMagnitude;
-    const deadZone = 0.12;
-    const outsideDeadZone = Math.max(0, Math.abs(diff) - deadZone);
-    const normalizedDrift = outsideDeadZone / Math.max(0.0001, 1 - deadZone);
-    const drift = Math.sign(diff) * Math.min(1, normalizedDrift * 2.1);
     rr.driftStrength = drift;
 
     const speaking = m.energy > 0.028;
@@ -8022,8 +8030,6 @@ class VoxBallGame {
     // Strong re-centering only when near target; weaken it when off-target so drift is visible.
     const centerAssist = Math.max(0, 1 - driftMagnitude);
     const centerPull = 0.25 + centerAssist * 3.95;
-    // Gentle re-centering to keep the motorcycle on the lane when tone is on target.
-    const centerPull = 4.2;
     rr.centerX += (this.width * 0.5 - rr.centerX) * Math.min(1, dt * centerPull);
     const pad = rr.roadHalfWidth * 0.5;
     rr.centerX = Math.max(pad, Math.min(this.width - pad, rr.centerX));
