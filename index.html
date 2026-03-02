@@ -3377,7 +3377,7 @@
     .btn-recordings.visible {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
     }
 
     .btn-recordings .badge {
@@ -3387,6 +3387,7 @@
       border-radius: 10px;
       padding: 1px 6px;
       min-width: 16px;
+      margin-left: 0;
       margin-left: 2px;
       text-align: center;
       font-weight: 700;
@@ -4556,7 +4557,7 @@
         <button class="btn btn-help" id="prismSaveRecBtn"
           style="display: none; opacity: 0; transform: scale(0.95); transition: all 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);">Save
           Clip</button>
-        <button class="btn btn-recordings" id="recordingsBtn"><span>Clips</span><span class="badge"
+        <button class="btn btn-recordings" id="recordingsBtn"><span>Clips&nbsp;</span><span class="badge"
             id="recBadge">0</span></button>
         <button class="btn btn-cb canvas-only" id="pauseCanvasBtn" title="Pause paint updates"
           style="padding: 6px 14px; font-weight: 600; border-radius: 8px;">Pause</button>
@@ -5345,7 +5346,7 @@
         <div class="meter-label">Pitch
           <div class="info-wrapper">
             <button class="info-trigger" aria-label="More Info">?</button>
-            <div class="info-popup" hidden style="display:none">How high or low your voice sounds in Hertz (Hz).</div>
+            <div class="info-popup">How high or low your voice sounds in Hertz (Hz).</div>
           </div>
         </div>
         <div class="meter-bar-bg meter-bar-pitch-bg">
@@ -5358,7 +5359,7 @@
           Resonance
           <div class="info-wrapper">
             <button class="info-trigger" aria-label="More Info">?</button>
-            <div class="info-popup" hidden style="display:none">Your vocal tone quality. High resonance sounds 'forward' or 'bright'; low resonance
+            <div class="info-popup">Your vocal tone quality. High resonance sounds 'forward' or 'bright'; low resonance
               sounds 'deep' or 'hollow'.</div>
           </div>
           <select id="resMethodSelect" class="res-method-select" aria-label="Resonance method">
@@ -5377,7 +5378,7 @@
         <div class="meter-label">Bounce
           <div class="info-wrapper">
             <button class="info-trigger" aria-label="More Info">?</button>
-            <div class="info-popup" hidden style="display:none">Measures your pitch variance. More 'bounce' means more expressive pitch changes.
+            <div class="info-popup">Measures your pitch variance. More 'bounce' means more expressive pitch changes.
             </div>
           </div>
         </div>
@@ -5390,7 +5391,7 @@
         <div class="meter-label">Tempo
           <div class="info-wrapper">
             <button class="info-trigger" aria-label="More Info">?</button>
-            <div class="info-popup" hidden style="display:none">The speed of your speech rhythms.</div>
+            <div class="info-popup">The speed of your speech rhythms.</div>
           </div>
         </div>
         <div class="meter-bar-bg">
