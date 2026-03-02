@@ -8000,6 +8000,11 @@ class VoxBallGame {
 
     // Keep the rider centered when the user is reasonably close to the selected tone.
     // This avoids constant side-drift from tiny resonance fluctuations.
+    const deadZone = 0.08;
+    const outsideDeadZone = Math.max(0, Math.abs(diff) - deadZone);
+    const normalizedDrift = outsideDeadZone / Math.max(0.0001, 1 - deadZone);
+    const driftMagnitude = Math.min(1, normalizedDrift * 2.6);
+    const drift = Math.sign(diff) * driftMagnitude;
     const deadZone = 0.12;
     const outsideDeadZone = Math.max(0, Math.abs(diff) - deadZone);
     const normalizedDrift = outsideDeadZone / Math.max(0.0001, 1 - deadZone);
@@ -8013,6 +8018,9 @@ class VoxBallGame {
     const steerPower = 260;
     rr.centerX += drift * steerPower * dt;
 
+    // Strong re-centering only when near target; weaken it when off-target so drift is visible.
+    const centerAssist = Math.max(0, 1 - driftMagnitude);
+    const centerPull = 0.25 + centerAssist * 3.95;
     // Gentle re-centering to keep the motorcycle on the lane when tone is on target.
     const centerPull = 4.2;
     rr.centerX += (this.width * 0.5 - rr.centerX) * Math.min(1, dt * centerPull);
