@@ -7997,15 +7997,25 @@ class VoxBallGame {
     const m = this.analyzer.metrics;
     const targetRes = rr.targetTone === 'bright' ? 0.72 : 0.28;
     const diff = this.analyzer.smoothResonance - targetRes;
-    const drift = Math.max(-1, Math.min(1, diff * 3.2));
+
+    // Keep the rider centered when the user is reasonably close to the selected tone.
+    // This avoids constant side-drift from tiny resonance fluctuations.
+    const deadZone = 0.12;
+    const outsideDeadZone = Math.max(0, Math.abs(diff) - deadZone);
+    const normalizedDrift = outsideDeadZone / Math.max(0.0001, 1 - deadZone);
+    const drift = Math.sign(diff) * Math.min(1, normalizedDrift * 2.1);
     rr.driftStrength = drift;
 
     const speaking = m.energy > 0.028;
     const targetSpeed = speaking ? 70 + m.energy * 360 : 12;
     rr.speed += (targetSpeed - rr.speed) * Math.min(1, dt * 3.8);
 
-    const steerPower = 320;
+    const steerPower = 260;
     rr.centerX += drift * steerPower * dt;
+
+    // Gentle re-centering to keep the motorcycle on the lane when tone is on target.
+    const centerPull = 4.2;
+    rr.centerX += (this.width * 0.5 - rr.centerX) * Math.min(1, dt * centerPull);
     const pad = rr.roadHalfWidth * 0.5;
     rr.centerX = Math.max(pad, Math.min(this.width - pad, rr.centerX));
 
