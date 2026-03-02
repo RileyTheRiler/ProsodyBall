@@ -1598,6 +1598,7 @@ class VoxBallGame {
       multiplier: 1,
       driftStrength: 0,
     };
+    this.roadRiderAvatar = this._createRoadRiderAvatar();
 
     this.spectralAscent = {
       balloonX: 0,
@@ -1840,6 +1841,37 @@ class VoxBallGame {
     this._setupMobile();
     this._setupInfoPopups();
     this.drawIdleScene();
+  }
+
+  _createRoadRiderAvatar() {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 120" role="img" aria-label="Motorcycle avatar">
+      <defs>
+        <linearGradient id="bikeBody" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#88f5ff"/>
+          <stop offset="100%" stop-color="#3c7dff"/>
+        </linearGradient>
+        <linearGradient id="wheelShine" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#ffffff" stop-opacity="0.5"/>
+          <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <circle cx="54" cy="84" r="28" fill="#10162f"/>
+      <circle cx="54" cy="84" r="16" fill="#2d3b72"/>
+      <circle cx="186" cy="84" r="28" fill="#10162f"/>
+      <circle cx="186" cy="84" r="16" fill="#2d3b72"/>
+      <rect x="36" y="52" width="58" height="12" rx="6" fill="url(#bikeBody)"/>
+      <path d="M74 58 L122 44 Q138 40 154 48 L180 58 L168 68 L134 60 L104 74 L78 70 Z" fill="url(#bikeBody)"/>
+      <path d="M106 43 Q117 28 137 26 Q149 25 155 32 Q143 33 136 39 Q124 49 116 57 Z" fill="#f6fbff" opacity="0.85"/>
+      <rect x="94" y="37" width="18" height="7" rx="3.5" fill="#f6fbff"/>
+      <path d="M166 48 L188 38 L192 43 L171 56 Z" fill="#f6fbff"/>
+      <circle cx="54" cy="84" r="28" fill="url(#wheelShine)"/>
+      <circle cx="186" cy="84" r="28" fill="url(#wheelShine)"/>
+      <ellipse cx="118" cy="94" rx="86" ry="12" fill="#57c5ff" opacity="0.24"/>
+    </svg>`;
+
+    const img = new Image();
+    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    return img;
   }
 
 
@@ -8070,10 +8102,19 @@ class VoxBallGame {
       ctx.stroke();
     }
 
-    ctx.fillStyle = bright ? 'rgba(230,255,140,0.95)' : 'rgba(210,200,255,0.95)';
-    ctx.beginPath();
-    ctx.ellipse(rr.centerX, h * 0.78, 30, 14, 0, 0, Math.PI * 2);
-    ctx.fill();
+    const riderW = 128;
+    const riderH = 64;
+    const riderX = rr.centerX - riderW * 0.5;
+    const riderY = h * 0.78 - riderH * 0.62;
+    const avatarReady = this.roadRiderAvatar && this.roadRiderAvatar.complete && this.roadRiderAvatar.naturalWidth > 0;
+    if (avatarReady) {
+      ctx.drawImage(this.roadRiderAvatar, riderX, riderY, riderW, riderH);
+    } else {
+      ctx.fillStyle = bright ? 'rgba(230,255,140,0.95)' : 'rgba(210,200,255,0.95)';
+      ctx.beginPath();
+      ctx.ellipse(rr.centerX, h * 0.78, 30, 14, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     ctx.fillStyle = 'rgba(245,248,255,0.95)';
     ctx.font = '600 30px "Space Mono", monospace';
