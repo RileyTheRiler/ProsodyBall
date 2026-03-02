@@ -1669,6 +1669,7 @@ class VoxBallGame {
       isPlayingBack: false,
       playbackIndex: 0,
       freestyleTranscript: '',
+      freestyleInterimTranscript: '',
       speechRecognition: null
     };
 
@@ -8551,6 +8552,7 @@ class VoxBallGame {
     pr.startTime = performance.now();
     pr.firstOnsetTime = 0;
     pr.wordsCompleted = 0;
+    pr.freestyleInterimTranscript = '';
 
     // Clear any existing recordings if not explicitly retained
     if (pr.isPlayingBack) this._stopPrismPlayback();
@@ -8629,7 +8631,9 @@ class VoxBallGame {
     const idlePrompt = document.getElementById('prismIdlePrompt');
     if (idlePrompt) {
       if (pr.passageMode === 'freestyle') {
-        idlePrompt.textContent = "Speak freely to begin transcribing...";
+        idlePrompt.textContent = pr.processMode === 'realtime'
+          ? "Speak freely. Press Start to stop dictation."
+          : "Click Rec to start free dictation.";
         if (pr.processMode === 'realtime') {
           idlePrompt.classList.add('show');
         }
@@ -8942,16 +8946,25 @@ class VoxBallGame {
     if (pr.passageMode !== 'freestyle') return;
 
     let finalTranscript = '';
+    let interimTranscript = '';
     for (let i = event.resultIndex; i < event.results.length; ++i) {
       if (event.results[i].isFinal) {
         finalTranscript += event.results[i][0].transcript + ' ';
+      } else {
+        interimTranscript += event.results[i][0].transcript + ' ';
       }
+    }
+
+    pr.freestyleInterimTranscript = interimTranscript.trim();
+    const idlePrompt = document.getElementById('prismIdlePrompt');
+    if (idlePrompt && pr.freestyleInterimTranscript) {
+      idlePrompt.textContent = `Listening… ${pr.freestyleInterimTranscript}`;
+      idlePrompt.classList.add('show');
     }
 
     if (finalTranscript.trim()) {
       pr.freestyleTranscript += finalTranscript;
-
-      const idlePrompt = document.getElementById('prismIdlePrompt');
+      pr.freestyleInterimTranscript = '';
       if (idlePrompt) idlePrompt.classList.remove('show');
 
       if (pr.processMode === 'realtime') {
