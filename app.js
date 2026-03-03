@@ -3335,7 +3335,7 @@ class VoxBallGame {
       return;
     }
 
-    const activateFromEvent = (event, preventDefault = false) => {
+    const activateFromEvent = (event, preventDefault = false, autoStart = false) => {
       const target = event.target instanceof Element
         ? event.target
         : event.target && event.target.parentElement;
@@ -3344,10 +3344,13 @@ class VoxBallGame {
       if (!card || !modePicker.contains(card)) return;
       if (preventDefault) event.preventDefault();
       selectMode(card.dataset.mode, card);
+      if (autoStart && !this.isRunning) {
+        startGame();
+      }
     };
 
-    modePicker?.addEventListener('click', (event) => activateFromEvent(event, false));
-    modePicker?.addEventListener('touchend', (event) => activateFromEvent(event, true), { passive: false });
+    modePicker?.addEventListener('click', (event) => activateFromEvent(event, false, true));
+    modePicker?.addEventListener('touchend', (event) => activateFromEvent(event, true, true), { passive: false });
 
     contextToggleBtn?.addEventListener('click', () => {
       if (!canvasContextBar) return;
@@ -3362,15 +3365,25 @@ class VoxBallGame {
     modeCards.forEach((card) => {
       card.setAttribute('role', 'button');
       card.setAttribute('tabindex', '0');
-      card.addEventListener('click', () => selectMode(card.dataset.mode, card));
+      card.addEventListener('click', (event) => {
+        // Prevent delegated modePicker click from double-triggering startGame
+        // before isRunning flips true (startGame has async preflight work).
+        event.stopPropagation();
+        selectMode(card.dataset.mode, card);
+        if (!this.isRunning) startGame();
+      });
       card.addEventListener('touchend', (event) => {
         event.preventDefault();
+        // Prevent delegated modePicker touchend from double-triggering startGame.
+        event.stopPropagation();
         selectMode(card.dataset.mode, card);
+        if (!this.isRunning) startGame();
       }, { passive: false });
       card.addEventListener('keydown', (event) => {
         if (event.code === 'Enter' || event.code === 'Space') {
           event.preventDefault();
           selectMode(card.dataset.mode, card);
+          if (!this.isRunning) startGame();
         }
       });
     });
