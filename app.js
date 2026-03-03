@@ -4152,6 +4152,9 @@ class VoxBallGame {
         this.drawSpectralAscentScene();
       } else if (this.gameMode === 'prism') {
         this.drawPrismReaderScene();
+      } else if (this.gameMode === 'vowelvalley') {
+        this.updateVowelValley(0.016);
+        this.drawVowelValleyScene(0);
       } else {
         idleScroll.x += 0.5;
         this.scrollX = idleScroll.x;
