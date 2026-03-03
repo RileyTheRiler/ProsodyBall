@@ -1101,27 +1101,34 @@ export class VoiceAnalyzer {
   // Durand-Kerner root finding for LPC polynomial
   // Finds all roots of z^n - a[1]z^(n-1) - a[2]z^(n-2) - ... - a[n] = 0
   _findLPCRoots(a, order) {
+    // Allocate typed arrays once per call to avoid short-lived objects in hot inner loop
+    const rootsRe = this._getBuffer('rootsRe', Float64Array, order);
+    const rootsIm = this._getBuffer('rootsIm', Float64Array, order);
+
     // Initial guesses: evenly distributed on unit circle
-    const roots = [];
     for (let k = 0; k < order; k++) {
       const angle = 2 * Math.PI * (k + 0.5) / order;
       const r = 0.9 + 0.05 * Math.random(); // slightly inside unit circle
-      roots.push({ re: r * Math.cos(angle), im: r * Math.sin(angle) });
+      rootsRe[k] = r * Math.cos(angle);
+      rootsIm[k] = r * Math.sin(angle);
     }
 
-    // Evaluate polynomial at point z: z^order - a[1]*z^(order-1) - ... - a[order]
-    const evalPoly = (z) => {
+    const pz = { re: 0, im: 0 }; // reused object
+
+    // Evaluate polynomial at point (zRe, zIm): z^order - a[1]*z^(order-1) - ... - a[order]
+    const evalPoly = (zRe, zIm) => {
       // Horner's method: P(z) = ((..((z - a[1])*z - a[2])*z ... ) - a[order])
       let re = 1, im = 0; // leading coefficient
       for (let j = 1; j <= order; j++) {
         // Multiply by z
-        const newRe = re * z.re - im * z.im;
-        const newIm = re * z.im + im * z.re;
+        const newRe = re * zRe - im * zIm;
+        const newIm = re * zIm + im * zRe;
         // Subtract a[j]
         re = newRe - a[j];
         im = newIm;
       }
-      return { re, im };
+      pz.re = re;
+      pz.im = im;
     };
 
     // Iterate
@@ -1129,15 +1136,16 @@ export class VoiceAnalyzer {
     for (let iter = 0; iter < maxIter; iter++) {
       let maxDelta = 0;
       for (let k = 0; k < order; k++) {
-        const z = roots[k];
-        const pz = evalPoly(z);
+        const zRe = rootsRe[k];
+        const zIm = rootsIm[k];
+        evalPoly(zRe, zIm);
 
         // Product of (z_k - z_j) for j ≠ k
         let prodRe = 1, prodIm = 0;
         for (let j = 0; j < order; j++) {
           if (j === k) continue;
-          const dRe = z.re - roots[j].re;
-          const dIm = z.im - roots[j].im;
+          const dRe = zRe - rootsRe[j];
+          const dIm = zIm - rootsIm[j];
           const newProdRe = prodRe * dRe - prodIm * dIm;
           const newProdIm = prodRe * dIm + prodIm * dRe;
           prodRe = newProdRe;
@@ -1149,12 +1157,18 @@ export class VoiceAnalyzer {
         const deltaRe = (pz.re * prodRe + pz.im * prodIm) / denom;
         const deltaIm = (pz.im * prodRe - pz.re * prodIm) / denom;
 
-        roots[k] = { re: z.re - deltaRe, im: z.im - deltaIm };
+        rootsRe[k] = zRe - deltaRe;
+        rootsIm[k] = zIm - deltaIm;
         maxDelta = Math.max(maxDelta, Math.sqrt(deltaRe * deltaRe + deltaIm * deltaIm));
       }
       if (maxDelta < 1e-8) break; // converged
     }
 
+    // Convert to expected array of objects format for caller
+    const roots = [];
+    for (let k = 0; k < order; k++) {
+      roots.push({ re: rootsRe[k], im: rootsIm[k] });
+    }
     return roots;
   }
 
@@ -8001,15 +8015,11 @@ class VoxBallGame {
 
     // Keep the rider centered when the user is reasonably close to the selected tone.
     // This avoids constant side-drift from tiny resonance fluctuations.
-    const deadZone = 0.08;
-    const outsideDeadZone = Math.max(0, Math.abs(diff) - deadZone);
-    const normalizedDrift = outsideDeadZone / Math.max(0.0001, 1 - deadZone);
-    const driftMagnitude = Math.min(1, normalizedDrift * 2.6);
-    const drift = Math.sign(diff) * driftMagnitude;
     const deadZone = 0.12;
     const outsideDeadZone = Math.max(0, Math.abs(diff) - deadZone);
     const normalizedDrift = outsideDeadZone / Math.max(0.0001, 1 - deadZone);
-    const drift = Math.sign(diff) * Math.min(1, normalizedDrift * 2.1);
+    const driftMagnitude = Math.min(1, normalizedDrift * 2.1);
+    const drift = Math.sign(diff) * driftMagnitude;
     rr.driftStrength = drift;
 
     const speaking = m.energy > 0.028;
@@ -8022,8 +8032,6 @@ class VoxBallGame {
     // Strong re-centering only when near target; weaken it when off-target so drift is visible.
     const centerAssist = Math.max(0, 1 - driftMagnitude);
     const centerPull = 0.25 + centerAssist * 3.95;
-    // Gentle re-centering to keep the motorcycle on the lane when tone is on target.
-    const centerPull = 4.2;
     rr.centerX += (this.width * 0.5 - rr.centerX) * Math.min(1, dt * centerPull);
     const pad = rr.roadHalfWidth * 0.5;
     rr.centerX = Math.max(pad, Math.min(this.width - pad, rr.centerX));
