@@ -3349,8 +3349,8 @@ class VoxBallGame {
       }
     };
 
-    modePicker?.addEventListener('click', (event) => activateFromEvent(event, false, true));
-    modePicker?.addEventListener('touchend', (event) => activateFromEvent(event, true, true), { passive: false });
+    modePicker?.addEventListener('click', (event) => activateFromEvent(event, false, false));
+    modePicker?.addEventListener('touchend', (event) => activateFromEvent(event, true, false), { passive: false });
 
     contextToggleBtn?.addEventListener('click', () => {
       if (!canvasContextBar) return;
@@ -3366,24 +3366,18 @@ class VoxBallGame {
       card.setAttribute('role', 'button');
       card.setAttribute('tabindex', '0');
       card.addEventListener('click', (event) => {
-        // Prevent delegated modePicker click from double-triggering startGame
-        // before isRunning flips true (startGame has async preflight work).
         event.stopPropagation();
         selectMode(card.dataset.mode, card);
-        if (!this.isRunning) startGame();
       });
       card.addEventListener('touchend', (event) => {
         event.preventDefault();
-        // Prevent delegated modePicker touchend from double-triggering startGame.
         event.stopPropagation();
         selectMode(card.dataset.mode, card);
-        if (!this.isRunning) startGame();
       }, { passive: false });
       card.addEventListener('keydown', (event) => {
         if (event.code === 'Enter' || event.code === 'Space') {
           event.preventDefault();
           selectMode(card.dataset.mode, card);
-          if (!this.isRunning) startGame();
         }
       });
     });
