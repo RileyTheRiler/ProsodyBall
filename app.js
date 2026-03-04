@@ -3201,7 +3201,7 @@ class VoxBallGame {
       // Reset mode selection so user can pick fresh
       modeDetails.classList.remove('show');
       modeCards.forEach(c => c.classList.remove('selected'));
-      [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails, roadDetails, ascentDetails, prismDetails]
+      [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails, roadDetails, ascentDetails, prismDetails, vowelvalleyDetails]
         .forEach(p => p && p.classList.remove('show'));
       this.drawIdleScene();
     });
@@ -3349,8 +3349,8 @@ class VoxBallGame {
       }
     };
 
-    modePicker?.addEventListener('click', (event) => activateFromEvent(event, false, true));
-    modePicker?.addEventListener('touchend', (event) => activateFromEvent(event, true, true), { passive: false });
+    modePicker?.addEventListener('click', (event) => activateFromEvent(event, false, false));
+    modePicker?.addEventListener('touchend', (event) => activateFromEvent(event, true, false), { passive: false });
 
     contextToggleBtn?.addEventListener('click', () => {
       if (!canvasContextBar) return;
@@ -3366,24 +3366,18 @@ class VoxBallGame {
       card.setAttribute('role', 'button');
       card.setAttribute('tabindex', '0');
       card.addEventListener('click', (event) => {
-        // Prevent delegated modePicker click from double-triggering startGame
-        // before isRunning flips true (startGame has async preflight work).
         event.stopPropagation();
         selectMode(card.dataset.mode, card);
-        if (!this.isRunning) startGame();
       });
       card.addEventListener('touchend', (event) => {
         event.preventDefault();
-        // Prevent delegated modePicker touchend from double-triggering startGame.
         event.stopPropagation();
         selectMode(card.dataset.mode, card);
-        if (!this.isRunning) startGame();
       }, { passive: false });
       card.addEventListener('keydown', (event) => {
         if (event.code === 'Enter' || event.code === 'Space') {
           event.preventDefault();
           selectMode(card.dataset.mode, card);
-          if (!this.isRunning) startGame();
         }
       });
     });
@@ -3730,7 +3724,7 @@ class VoxBallGame {
     // Global click-to-close for all overlays
     document.addEventListener('click', (e) => {
       // Settings panel (if clicking outside and not the gear)
-      if (settingsPanel && !settingsPanel.contains(e.target) && e.target !== settingsBtn && !settingsBtn.contains(e.target)) {
+      if (settingsPanel && !settingsPanel.contains(e.target) && e.target !== settingsBtn && (!settingsBtn || !settingsBtn.contains(e.target))) {
         if (settingsPanel.classList.contains('show')) toggleSettings(false);
       }
       // Vibration panel
