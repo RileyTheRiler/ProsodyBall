@@ -3201,7 +3201,7 @@ class VoxBallGame {
       // Reset mode selection so user can pick fresh
       modeDetails.classList.remove('show');
       modeCards.forEach(c => c.classList.remove('selected'));
-      [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails, roadDetails, ascentDetails, prismDetails]
+      [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails, roadDetails, ascentDetails, prismDetails, vowelvalleyDetails]
         .forEach(p => p && p.classList.remove('show'));
       this.drawIdleScene();
     });
@@ -3724,7 +3724,7 @@ class VoxBallGame {
     // Global click-to-close for all overlays
     document.addEventListener('click', (e) => {
       // Settings panel (if clicking outside and not the gear)
-      if (settingsPanel && !settingsPanel.contains(e.target) && e.target !== settingsBtn && !settingsBtn.contains(e.target)) {
+      if (settingsPanel && !settingsPanel.contains(e.target) && e.target !== settingsBtn && (!settingsBtn || !settingsBtn.contains(e.target))) {
         if (settingsPanel.classList.contains('show')) toggleSettings(false);
       }
       // Vibration panel
