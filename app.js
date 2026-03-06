@@ -2692,7 +2692,7 @@ class VoxBallGame {
         errorBanner.appendChild(msg);
         if (statusLiveRegion) statusLiveRegion.textContent = msg.textContent.trim();
       } else {
-        errorBanner.innerHTML = msg;
+        errorBanner.textContent = msg;
         if (statusLiveRegion) statusLiveRegion.textContent = String(msg).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
       }
       errorBanner.classList.add('show');
@@ -2871,7 +2871,9 @@ class VoxBallGame {
       // Check if we have an audio file OR microphone
       if (!selectedAudioFile && (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)) {
         const errNode = document.createElement('div');
-        errNode.innerHTML = '🎙 Microphone API not available and no audio file selected.<br>This requires HTTPS and a modern browser. ';
+        errNode.appendChild(document.createTextNode('🎙 Microphone API not available and no audio file selected.'));
+        errNode.appendChild(document.createElement('br'));
+        errNode.appendChild(document.createTextNode('This requires HTTPS and a modern browser. '));
         if (isInIframe) {
           const link = document.createElement('a');
           link.href = window.location.href;
@@ -2898,16 +2900,18 @@ class VoxBallGame {
         if (result.error === 'NotAllowedError') {
           if (isInIframe) {
             msg = document.createElement('div');
-            msg.innerHTML = '🎙 Microphone blocked by browser — this usually happens inside iframes.<br>';
+            msg.appendChild(document.createTextNode('🎙 Microphone blocked by browser — this usually happens inside iframes.'));
+            msg.appendChild(document.createElement('br'));
             const link = document.createElement('a');
             link.href = window.location.href;
             link.target = '_blank';
             link.textContent = 'Open in a new tab for full mic access ↗';
             msg.appendChild(link);
           } else {
-            msg =
-              '🎙 Microphone permission denied.<br>' +
-              'Click the lock/camera icon in your address bar → Allow microphone → then try again.';
+            msg = document.createElement('div');
+            msg.appendChild(document.createTextNode('🎙 Microphone permission denied.'));
+            msg.appendChild(document.createElement('br'));
+            msg.appendChild(document.createTextNode('Click the lock/camera icon in your address bar → Allow microphone → then try again.'));
           }
         } else if (result.error === 'NotFoundError') {
           msg = '🎙 No microphone detected. Please connect a microphone and try again.';
