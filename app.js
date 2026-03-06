@@ -9284,8 +9284,11 @@ class VoxBallGame {
     ctx.scale(dpr, dpr);
 
     const pitches = crystallized.map(s => s.avgF0);
-    const minP = Math.min(...pitches);
-    const maxP = Math.max(...pitches);
+    let minP = pitches[0] || 0, maxP = pitches[0] || 0;
+    for (let i = 1; i < pitches.length; i++) {
+      if (pitches[i] < minP) minP = pitches[i];
+      if (pitches[i] > maxP) maxP = pitches[i];
+    }
     const range = Math.max(1, maxP - minP);
 
     const padX = 4;
@@ -9400,8 +9403,16 @@ class VoxBallGame {
     // Aggregate pitch stats
     const pitches = crystallized.filter(s => s.avgF0 > 0).map(s => s.avgF0);
     const avgPitch = pitches.length > 0 ? Math.round(pitches.reduce((a, b) => a + b, 0) / pitches.length) : 0;
-    const minPitch = pitches.length > 0 ? Math.round(Math.min(...pitches)) : 0;
-    const maxPitch = pitches.length > 0 ? Math.round(Math.max(...pitches)) : 0;
+    let minPitch = 0, maxPitch = 0;
+    if (pitches.length > 0) {
+      minPitch = pitches[0]; maxPitch = pitches[0];
+      for (let i = 1; i < pitches.length; i++) {
+        if (pitches[i] < minPitch) minPitch = pitches[i];
+        if (pitches[i] > maxPitch) maxPitch = pitches[i];
+      }
+      minPitch = Math.round(minPitch);
+      maxPitch = Math.round(maxPitch);
+    }
     const pitchRange = maxPitch - minPitch;
 
     // Vowel score average
