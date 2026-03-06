@@ -1047,15 +1047,17 @@ export class VoiceAnalyzer {
     // Find roots of A(z) = 1 - a[1]z^-1 - a[2]z^-2 - ...
     // Equivalent polynomial: z^order - a[1]z^(order-1) - ... - a[order] = 0
     // We use Durand-Kerner iterative root finding (works well for moderate orders)
-    const roots = this._findLPCRoots(a, order);
+    const { rootsRe, rootsIm } = this._findLPCRoots(a, order);
 
     // Extract formants from roots: each complex conjugate pair with positive
     // imaginary part gives a formant frequency and bandwidth
     const formants = [];
-    for (const root of roots) {
-      if (root.im <= 0) continue; // only positive-frequency roots
-      const freq = Math.atan2(root.im, root.re) * dsRate / (2 * Math.PI);
-      const mag = Math.sqrt(root.re * root.re + root.im * root.im);
+    for (let i = 0; i < order; i++) {
+      const rootRe = rootsRe[i];
+      const rootIm = rootsIm[i];
+      if (rootIm <= 0) continue; // only positive-frequency roots
+      const freq = Math.atan2(rootIm, rootRe) * dsRate / (2 * Math.PI);
+      const mag = Math.sqrt(rootRe * rootRe + rootIm * rootIm);
       const bw = -dsRate * Math.log(mag) / Math.PI; // bandwidth in Hz
 
       // Reject: frequency out of range, bandwidth too wide (> 600 Hz), or too narrow
@@ -1101,43 +1103,43 @@ export class VoiceAnalyzer {
   // Durand-Kerner root finding for LPC polynomial
   // Finds all roots of z^n - a[1]z^(n-1) - a[2]z^(n-2) - ... - a[n] = 0
   _findLPCRoots(a, order) {
+    const rootsRe = this._getBuffer('lpcRootsRe', Float64Array, order);
+    const rootsIm = this._getBuffer('lpcRootsIm', Float64Array, order);
+
     // Initial guesses: evenly distributed on unit circle
-    const roots = [];
     for (let k = 0; k < order; k++) {
       const angle = 2 * Math.PI * (k + 0.5) / order;
       const r = 0.9 + 0.05 * Math.random(); // slightly inside unit circle
-      roots.push({ re: r * Math.cos(angle), im: r * Math.sin(angle) });
+      rootsRe[k] = r * Math.cos(angle);
+      rootsIm[k] = r * Math.sin(angle);
     }
-
-    // Evaluate polynomial at point z: z^order - a[1]*z^(order-1) - ... - a[order]
-    const evalPoly = (z) => {
-      // Horner's method: P(z) = ((..((z - a[1])*z - a[2])*z ... ) - a[order])
-      let re = 1, im = 0; // leading coefficient
-      for (let j = 1; j <= order; j++) {
-        // Multiply by z
-        const newRe = re * z.re - im * z.im;
-        const newIm = re * z.im + im * z.re;
-        // Subtract a[j]
-        re = newRe - a[j];
-        im = newIm;
-      }
-      return { re, im };
-    };
 
     // Iterate
     const maxIter = 50;
     for (let iter = 0; iter < maxIter; iter++) {
       let maxDelta = 0;
       for (let k = 0; k < order; k++) {
-        const z = roots[k];
-        const pz = evalPoly(z);
+        const zRe = rootsRe[k];
+        const zIm = rootsIm[k];
+
+        // Evaluate polynomial at point z: z^order - a[1]*z^(order-1) - ... - a[order]
+        // Horner's method: P(z) = ((..((z - a[1])*z - a[2])*z ... ) - a[order])
+        let pzRe = 1, pzIm = 0; // leading coefficient
+        for (let j = 1; j <= order; j++) {
+          // Multiply by z
+          const newRe = pzRe * zRe - pzIm * zIm;
+          const newIm = pzRe * zIm + pzIm * zRe;
+          // Subtract a[j]
+          pzRe = newRe - a[j];
+          pzIm = newIm;
+        }
 
         // Product of (z_k - z_j) for j ≠ k
         let prodRe = 1, prodIm = 0;
         for (let j = 0; j < order; j++) {
           if (j === k) continue;
-          const dRe = z.re - roots[j].re;
-          const dIm = z.im - roots[j].im;
+          const dRe = zRe - rootsRe[j];
+          const dIm = zIm - rootsIm[j];
           const newProdRe = prodRe * dRe - prodIm * dIm;
           const newProdIm = prodRe * dIm + prodIm * dRe;
           prodRe = newProdRe;
@@ -1146,16 +1148,17 @@ export class VoiceAnalyzer {
 
         // delta = P(z) / product
         const denom = prodRe * prodRe + prodIm * prodIm + 1e-30;
-        const deltaRe = (pz.re * prodRe + pz.im * prodIm) / denom;
-        const deltaIm = (pz.im * prodRe - pz.re * prodIm) / denom;
+        const deltaRe = (pzRe * prodRe + pzIm * prodIm) / denom;
+        const deltaIm = (pzIm * prodRe - pzRe * prodIm) / denom;
 
-        roots[k] = { re: z.re - deltaRe, im: z.im - deltaIm };
+        rootsRe[k] = zRe - deltaRe;
+        rootsIm[k] = zIm - deltaIm;
         maxDelta = Math.max(maxDelta, Math.sqrt(deltaRe * deltaRe + deltaIm * deltaIm));
       }
       if (maxDelta < 1e-8) break; // converged
     }
 
-    return roots;
+    return { rootsRe, rootsIm };
   }
 
   // ============================================
