@@ -194,8 +194,10 @@ export class CalibrationWizard {
     await new Promise(r => setTimeout(r, 800));
     return { outcome: 'completed', skipped: false, reason: 'completed' };
     } catch (err) {
-      console.error('Calibration wizard failed:', err);
-      return { outcome: 'incomplete', skipped: true, reason: 'exception' };
+      const errName = err && err.name ? err.name : 'UnknownError';
+      const errMsg = err && err.message ? err.message : String(err);
+      console.error(`Calibration wizard failed (${errName}):`, errMsg, err);
+      return { outcome: 'incomplete', skipped: true, reason: 'exception', error: errMsg };
     } finally {
       this._hide();
       this._hideBtn(this.nextBtn);

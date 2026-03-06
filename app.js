@@ -1,4 +1,4 @@
-import { computeProsodyScore, pitchHzToPosition } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition } from './dsp-utils.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { getMicDiagnostics, ensureAudioContextRunning } from './reliability.js';
@@ -13,6 +13,23 @@ function escapeHtml(text) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
+
+// ============================================================
+// DSP TUNING CONSTANTS
+// Centralised so they're easy to find, tweak, and document.
+// ============================================================
+const YIN_THRESHOLD = 0.15;               // CMND threshold for pitch detection (lower = stricter)
+const PITCH_CONFIDENCE_FACTOR = 3.3;      // Maps CMND → confidence: conf = 1 - cmnd * factor
+const BOUNCE_NORM_DIVISOR = 70;           // Hz std-dev mapped to [0,1] bounce
+const TEMPO_TRANSITION_DIVISOR = 12;      // Energy crossings → [0,1] tempo
+const VOWEL_ONSET_SECS = 0.15;           // Seconds of sustain before vowel metric starts rising
+const VOWEL_SATURATION_SECS = 0.6;       // Additional seconds to reach vowel = 1.0
+const VOWEL_SUSTAIN_MULT = 0.4;          // Energy percentile multiplier for vowel detection threshold
+const ARTIC_SENSITIVITY_GAIN = 1.2;      // Gain applied to articulation normalisation
+const SYLLABLE_DEBOUNCE_SECS = 0.08;     // Minimum seconds between syllable onsets
+const SYLLABLE_ON_MULT = 0.6;            // Energy range multiplier for syllable-on threshold
+const SYLLABLE_OFF_MULT = 0.15;          // Energy range multiplier for syllable-off threshold
+const SYLLABLE_IMPULSE_DECAY = 0.88;     // Per-frame decay of syllable impulse
 
 // ============================================================
 // VOICE ANALYZER
@@ -99,6 +116,11 @@ export class VoiceAnalyzer {
       learningDuration: 5.0
     };
 
+    // Adaptive HF energy tracking (for articulation normalisation)
+    this.hfEnergyWindow = [];
+    this.hfEnergyWindowMax = 60;
+    this.hfPercentiles = { p50: 0, p90: 0.02 };
+
     // Noise floor calibration
     this.noiseFloor = 0.015; // default, will be calibrated
     this.hfNoiseFloor = 0; // HF baseline for fans/AC
@@ -114,6 +136,7 @@ export class VoiceAnalyzer {
       articulation: 0, syllable: 0,
       pitch: 0, energy: 0, resonance: 0
     };
+    this.frameConfidence = 0; // overall frame confidence for game-level gating
   }
 
   // Helper to reuse typed arrays to prevent garbage collection spikes in hot loops
@@ -336,7 +359,7 @@ export class VoiceAnalyzer {
 
     // Step 3: Absolute threshold — find first dip below threshold
     // This is the key to YIN's octave-error resistance
-    const yinThreshold = 0.15; // Stricter = more accurate, less sensitive
+    const yinThreshold = YIN_THRESHOLD; // Stricter = more accurate, less sensitive
     let bestTau = -1;
 
     for (let tau = minPeriod; tau <= maxPeriod; tau++) {
@@ -381,7 +404,7 @@ export class VoiceAnalyzer {
 
     // Pitch confidence: CMND < 0.05 = very confident, > 0.3 = unreliable
     // Map inversely: low CMND → high confidence
-    this.pitchConfidence = Math.max(0, Math.min(1, 1 - cmndAtBest * 3.3));
+    this.pitchConfidence = Math.max(0, Math.min(1, 1 - cmndAtBest * PITCH_CONFIDENCE_FACTOR));
 
     // Step 5: Median filter — suppresses octave jumps
     // Keep a small buffer of recent raw detections
@@ -487,7 +510,6 @@ export class VoiceAnalyzer {
             this.pitchProfile.min = Math.max(50, p05 * 0.85);
             this.pitchProfile.max = Math.min(800, p95 * 1.25);
             this.pitchProfile.isLearned = true;
-            console.log(`[VoxBall] Learned User Pitch Range: ${this.pitchProfile.min.toFixed(0)}Hz - ${this.pitchProfile.max.toFixed(0)}Hz`);
             console.log(`[ProsodyBall] Learned User Pitch Range: ${this.pitchProfile.min.toFixed(0)}Hz - ${this.pitchProfile.max.toFixed(0)}Hz`);
           }
         }
@@ -505,6 +527,16 @@ export class VoiceAnalyzer {
     hfEnergy = Math.max(0, hfEnergy - this.hfNoiseFloor);
     // Only gate if WELL below speech level — consonants can be brief and quiet
     if (rms < this.noiseFloor * 1.3) hfEnergy = 0;
+
+    // Track HF energy percentiles for adaptive articulation normalisation
+    if (hfEnergy > 0) {
+      this.hfEnergyWindow.push(hfEnergy);
+      if (this.hfEnergyWindow.length > this.hfEnergyWindowMax) this.hfEnergyWindow.shift();
+      if (this.hfEnergyWindow.length >= 8) {
+        this.hfPercentiles.p50 = this._percentile(this.hfEnergyWindow, 0.5);
+        this.hfPercentiles.p90 = this._percentile(this.hfEnergyWindow, 0.9);
+      }
+    }
 
     this.analyser.getFloatFrequencyData(this.frequencyData);
     const fData = this.frequencyData;
@@ -559,7 +591,6 @@ export class VoiceAnalyzer {
           this.tiltProfile.min = median - spread * 0.55;
           this.tiltProfile.max = median + spread * 0.45;
           this.tiltProfile.isLearned = true;
-          console.log(`[VoxBall] Learned User Tilt Range: ${this.tiltProfile.min.toFixed(1)}dB to ${this.tiltProfile.max.toFixed(1)}dB`);
           console.log(`[ProsodyBall] Learned User Tilt Range: ${this.tiltProfile.min.toFixed(1)}dB to ${this.tiltProfile.max.toFixed(1)}dB`);
         }
       }
@@ -694,7 +725,7 @@ export class VoiceAnalyzer {
     if (this.pitchHistory.length > 3) {
       const mean = this.pitchHistory.reduce((a, b) => a + b, 0) / this.pitchHistory.length;
       const variance = this.pitchHistory.reduce((a, p) => a + (p - mean) ** 2, 0) / this.pitchHistory.length;
-      this.metrics.bounce = Math.min(1, Math.sqrt(variance) / 70);
+      this.metrics.bounce = Math.min(1, Math.sqrt(variance) / BOUNCE_NORM_DIVISOR);
     } else {
       this.metrics.bounce *= 0.95;
     }
@@ -709,31 +740,34 @@ export class VoiceAnalyzer {
       for (let i = 1; i < this.energyHistory.length; i++) {
         if ((this.energyHistory[i - 1] > thresh) !== (this.energyHistory[i] > thresh)) transitions++;
       }
-      this.metrics.tempo = Math.min(1, transitions / 12);
+      this.metrics.tempo = Math.min(1, transitions / TEMPO_TRANSITION_DIVISOR);
     }
 
     // 3. VOWEL ELONGATION — sustained voicing WITH vowel-like formants
     //    Uses vowelLikelihood to distinguish real vowels from "sss" or "mmm"
-    const dynamicSustainThreshold = this.energyPercentiles.p50 + baseEnergyRange * 0.4;
+    const dynamicSustainThreshold = this.energyPercentiles.p50 + baseEnergyRange * VOWEL_SUSTAIN_MULT;
     const isVowelSound = gatedRms > dynamicSustainThreshold && pitch > 0 && this.vowelLikelihood > 0.3;
     if (isVowelSound) {
       this.sustainedDuration += dt * (0.5 + this.vowelLikelihood * 0.5); // stronger vowels accumulate faster
     } else {
       this.sustainedDuration *= 0.85;
     }
-    this.metrics.vowel = Math.min(1, Math.max(0, this.sustainedDuration - 0.15) / 0.6);
+    this.metrics.vowel = Math.min(1, Math.max(0, this.sustainedDuration - VOWEL_ONSET_SECS) / VOWEL_SATURATION_SECS);
 
-    // 4. ARTICULATION — HF bursts (boosted sensitivity for consonant detection)
-    const articTarget = normalizeAgainstPercentiles(hfEnergy, this.hfNoiseFloor, Math.max(this.hfNoiseFloor + 0.02, this.hfNoiseFloor * 3.5), 1.2);
+    // 4. ARTICULATION — HF bursts (adaptive ceiling from running HF percentiles)
+    const hfCeiling = this.hfEnergyWindow.length >= 8
+      ? Math.max(this.hfPercentiles.p90, this.hfNoiseFloor + 0.02)
+      : Math.max(this.hfNoiseFloor + 0.02, this.hfNoiseFloor * 3.5);
+    const articTarget = normalizeAgainstPercentiles(hfEnergy, this.hfNoiseFloor, hfCeiling, ARTIC_SENSITIVITY_GAIN);
     this.metrics.articulation += (articTarget - this.metrics.articulation) * 0.3;
 
     // 5. SYLLABLE SEPARATION — energy onset detection (uses gated energy)
-    const dynamicSyllableOn = this.energyPercentiles.p50 + baseEnergyRange * 0.6;
-    const dynamicSyllableOff = this.energyPercentiles.p50 + baseEnergyRange * 0.15;
+    const dynamicSyllableOn = this.energyPercentiles.p50 + baseEnergyRange * SYLLABLE_ON_MULT;
+    const dynamicSyllableOff = this.energyPercentiles.p50 + baseEnergyRange * SYLLABLE_OFF_MULT;
     const syllableOnThreshold = Math.max(0.005, dynamicSyllableOn);
     const syllableOffThreshold = Math.max(0.002, dynamicSyllableOff);
     if (gatedRms > syllableOnThreshold && this.syllableState === 'silent') {
-      if (now - this.lastSyllableTime > 0.08) {
+      if (now - this.lastSyllableTime > SYLLABLE_DEBOUNCE_SECS) {
         this.lastSyllableTime = now;
         this.syllableImpulse = 1.0;
       }
@@ -741,7 +775,7 @@ export class VoiceAnalyzer {
     } else if (gatedRms < syllableOffThreshold) {
       this.syllableState = 'silent';
     }
-    this.syllableImpulse *= 0.88;
+    this.syllableImpulse *= SYLLABLE_IMPULSE_DECAY;
     this.metrics.syllable = this.syllableImpulse;
 
     const voicedStrength = normalizeAgainstPercentiles(gatedRms, this.energyPercentiles.p50, this.energyPercentiles.p90, 1);
@@ -770,6 +804,9 @@ export class VoiceAnalyzer {
     this.metrics.pitch = pitch > 0 ? Math.max(0, Math.min(1, (pitch - this.pitchProfile.min) / pitchRange)) : this.metrics.pitch * 0.95;
     this.metrics.energy = normalizeAgainstPercentiles(gatedRms, this.energyPercentiles.p50, this.energyPercentiles.p90, 1.1);
     this.metrics.resonance = this.smoothResonance;
+
+    // Expose overall frame confidence so the game loop can gate the prosody score
+    this.frameConfidence = reliableFrame ? confidenceGate : 0.15;
   }
 
   // ============================================
@@ -938,8 +975,15 @@ export class VoiceAnalyzer {
 
     // Confidence
     const specSlice = smoothed.subarray(f1Start, f3End + 1);
-    const specMin = Math.min(...specSlice);
-    const specRange = Math.max(...specSlice) - specMin;
+    let specMin = 0, specRange = 0;
+    if (specSlice.length > 0) {
+      specMin = specSlice[0]; let specMax = specSlice[0];
+      for (let i = 1; i < specSlice.length; i++) {
+        if (specSlice[i] < specMin) specMin = specSlice[i];
+        if (specSlice[i] > specMax) specMax = specSlice[i];
+      }
+      specRange = specMax - specMin;
+    }
     let conf = 0;
     if (specRange > 1) {
       const f1P = f1 > 0 ? Math.min(1, (f1Amp - specMin) / specRange) : 0.1;
@@ -1292,8 +1336,15 @@ export class VoiceAnalyzer {
       f2 = wS > 0 ? w / wS : 1500;
     }
 
-    const envMin = Math.min(...env);
-    const envRange = Math.max(...env) - envMin;
+    let envMin = 0, envRange = 0;
+    if (env.length > 0) {
+      envMin = env[0]; let envMax = env[0];
+      for (let i = 1; i < env.length; i++) {
+        if (env[i] < envMin) envMin = env[i];
+        if (env[i] > envMax) envMax = env[i];
+      }
+      envRange = envMax - envMin;
+    }
     let prominence = 0;
     if (envRange > 0) {
       const f1P = usedF1Fallback ? 0.2 : Math.min(1, (f1Amp - envMin) / envRange);
@@ -1369,8 +1420,7 @@ class VoxBallGame {
     this.sparkles = [];
     this.themeMode = 'highcontrast';
     this.colorblindMode = false;
-    this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road'
-    this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road' | 'ascent' | 'prism'
+    this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road' | 'ascent' | 'prism' | 'vowelvalley'
 
     // ====== CREATURE STATE ======
     this.creature = {
@@ -2334,7 +2384,8 @@ class VoxBallGame {
         reader.onerror = () => { resolve(); };
         reader.readAsDataURL(wavBlob);
       } catch (e) {
-        console.error('Recording save error:', e);
+        const msg = e && e.message ? e.message : String(e);
+        console.error(`Recording save error (${e && e.name || 'Error'}): ${msg}`, e);
         resolve();
       }
     });
@@ -2410,7 +2461,8 @@ class VoxBallGame {
     });
 
     audio.addEventListener('error', (e) => {
-      console.error('Audio playback error:', audio.error?.message || e);
+      const detail = audio.error ? `${audio.error.code}: ${audio.error.message}` : String(e);
+      console.error(`Audio playback error: ${detail}`);
       this.updateRecItemState(index, false);
       this.currentPlayback = null;
     });
@@ -4177,6 +4229,14 @@ class VoxBallGame {
     this.lastTime = now;
 
     this.analyzer.update(dt);
+
+    // Skip rendering when the tab is hidden to save CPU/GPU.
+    // Audio analysis above still runs so calibration state stays warm.
+    if (document.hidden) {
+      requestAnimationFrame(() => this.loop());
+      return;
+    }
+
     this.perfMonitor.sample(dt);
 
     const targetQualityScale = this.perfMonitor.fps > 0 && this.perfMonitor.fps < 30 ? 0.55 : this.perfMonitor.fps > 0 && this.perfMonitor.fps < 42 ? 0.75 : 1;
@@ -4408,8 +4468,11 @@ class VoxBallGame {
     // PROSODY SCORE — the core pedagogical signal
     // Monotone speech ≈ 0. Expressive prosody → 1.
     // Weighted toward variation metrics, NOT raw energy/volume.
+    // During low-confidence frames, slow the smoothing factor so
+    // unreliable data doesn't jerk the score around.
     // ==========================================================
-    this.prosodyScore = computeProsodyScore(this.prosodyScore, m, 0.12);
+    const scoreSmoothing = 0.12 * Math.max(0.2, this.analyzer.frameConfidence);
+    this.prosodyScore = computeProsodyScore(this.prosodyScore, m, scoreSmoothing);
     const ps = this.prosodyScore;
 
     // ==========================================================
@@ -4913,9 +4976,7 @@ class VoxBallGame {
   // ============================================================
   updateCreature(dt) {
     const m = this.analyzer.metrics;
-    const bounceW = 0.30, tempoW = 0.20, vowelW = 0.20, articW = 0.15, sylW = 0.15;
-    const rawPS = m.bounce * bounceW + m.tempo * tempoW + m.vowel * vowelW +
-      m.articulation * articW + m.syllable * sylW;
+    const rawPS = computeRawProsody(m);
     this.prosodyScore += (rawPS - this.prosodyScore) * 2.0 * dt;
     const ps = this.prosodyScore;
 
@@ -5925,8 +5986,7 @@ class VoxBallGame {
     g.time += dt;
 
     // Prosody score
-    const rawPS = m.bounce * 0.30 + m.tempo * 0.20 + m.vowel * 0.20 +
-      m.articulation * 0.15 + m.syllable * 0.15;
+    const rawPS = computeRawProsody(m);
     this.prosodyScore += (rawPS - this.prosodyScore) * 2.0 * dt;
 
     // Vowel → global growth multiplier (sunlight) - exaggerated 1.5x
@@ -6077,6 +6137,7 @@ class VoxBallGame {
       p.life -= dt / p.maxLife;
       if (p.life <= 0) g.pollen.splice(i, 1);
     }
+    if (g.pollen.length > 200) g.pollen.splice(0, g.pollen.length - 200);
 
     // Update fireflies
     for (let i = g.fireflies.length - 1; i >= 0; i--) {
@@ -6620,8 +6681,7 @@ class VoxBallGame {
     vc.time += dt;
 
     // Prosody score
-    const rawPS = m.bounce * 0.30 + m.tempo * 0.20 + m.vowel * 0.20 +
-      m.articulation * 0.15 + m.syllable * 0.15;
+    const rawPS = computeRawProsody(m);
     this.prosodyScore += (rawPS - this.prosodyScore) * 2.0 * dt;
     const ps = this.prosodyScore;
 
@@ -7771,6 +7831,7 @@ class VoxBallGame {
       pp.sparkTargetY = this.height * (0.5 + Math.sin(performance.now() * 0.0018) * 0.12);
       pp.sparkY += (pp.sparkTargetY - pp.sparkY) * Math.min(1, dt * 4);
       pp.trail.push({ x: pp.sparkX, y: pp.sparkY, life: 0.6 });
+      if (pp.trail.length > 120) pp.trail.splice(0, pp.trail.length - 120);
       for (let i = pp.trail.length - 1; i >= 0; i--) {
         pp.trail[i].life -= dt;
         if (pp.trail[i].life <= 0) pp.trail.splice(i, 1);
@@ -7848,6 +7909,7 @@ class VoxBallGame {
     else if (pp.score >= 7) pp.phase = 'steps';
 
     pp.trail.push({ x: pp.sparkX, y: pp.sparkY, life: 0.75 });
+    if (pp.trail.length > 120) pp.trail.splice(0, pp.trail.length - 120);
     for (let i = pp.trail.length - 1; i >= 0; i--) {
       pp.trail[i].life -= dt;
       if (pp.trail[i].life <= 0) pp.trail.splice(i, 1);
@@ -9218,8 +9280,11 @@ class VoxBallGame {
     ctx.scale(dpr, dpr);
 
     const pitches = crystallized.map(s => s.avgF0);
-    const minP = Math.min(...pitches);
-    const maxP = Math.max(...pitches);
+    let minP = pitches[0] || 0, maxP = pitches[0] || 0;
+    for (let i = 1; i < pitches.length; i++) {
+      if (pitches[i] < minP) minP = pitches[i];
+      if (pitches[i] > maxP) maxP = pitches[i];
+    }
     const range = Math.max(1, maxP - minP);
 
     const padX = 4;
@@ -9334,8 +9399,16 @@ class VoxBallGame {
     // Aggregate pitch stats
     const pitches = crystallized.filter(s => s.avgF0 > 0).map(s => s.avgF0);
     const avgPitch = pitches.length > 0 ? Math.round(pitches.reduce((a, b) => a + b, 0) / pitches.length) : 0;
-    const minPitch = pitches.length > 0 ? Math.round(Math.min(...pitches)) : 0;
-    const maxPitch = pitches.length > 0 ? Math.round(Math.max(...pitches)) : 0;
+    let minPitch = 0, maxPitch = 0;
+    if (pitches.length > 0) {
+      minPitch = pitches[0]; maxPitch = pitches[0];
+      for (let i = 1; i < pitches.length; i++) {
+        if (pitches[i] < minPitch) minPitch = pitches[i];
+        if (pitches[i] > maxPitch) maxPitch = pitches[i];
+      }
+      minPitch = Math.round(minPitch);
+      maxPitch = Math.round(maxPitch);
+    }
     const pitchRange = maxPitch - minPitch;
 
     // Vowel score average
@@ -10525,12 +10598,14 @@ class VoxBallGame {
         flow: s.flowMultiplier
       });
     }
+    if (s.trail.length > 120) s.trail.splice(0, s.trail.length - 120);
     for (let i = s.trail.length - 1; i >= 0; i--) {
       s.trail[i].life -= dt * 1.2;
       if (s.trail[i].life <= 0) s.trail.splice(i, 1);
     }
 
     // 5. Update Popups
+    if (s.popups.length > 20) s.popups.splice(0, s.popups.length - 20);
     for (let i = s.popups.length - 1; i >= 0; i--) {
       const p = s.popups[i];
       p.y -= dt * 40;
@@ -10539,6 +10614,7 @@ class VoxBallGame {
     }
 
     // 6. Update particles
+    if (s.particles.length > 60) s.particles.splice(0, s.particles.length - 60);
     for (let i = s.particles.length - 1; i >= 0; i--) {
       const p = s.particles[i];
       p.x += p.vx * dt;
