@@ -889,7 +889,7 @@ export class VoiceAnalyzer {
 
     // Peak-pick with parabolic interpolation
     const minF1Hz = 200, maxF1Hz = 1100;
-    const minF2Hz = 800, maxF2Hz = 3500;
+    const minF2Hz = 600, maxF2Hz = 3500;
     const minF3Hz = 2200, maxF3Hz = 4200;
     const minSepHz = 300;
 
@@ -1215,7 +1215,7 @@ export class VoiceAnalyzer {
   // Finds F1, F2, F3 with constraints, fallbacks, and confidence scoring
   _peakPickFormants(env, f0, numHarmonics) {
     const minF1Hz = 200, maxF1Hz = 1100;
-    const minF2Hz = 800, maxF2Hz = 3500;
+    const minF2Hz = 600, maxF2Hz = 3500;
     const minF3Hz = 2200, maxF3Hz = 4200;
     const minSepHz = 300;
 
