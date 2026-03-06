@@ -30,6 +30,8 @@ const SYLLABLE_DEBOUNCE_SECS = 0.08;     // Minimum seconds between syllable ons
 const SYLLABLE_ON_MULT = 0.6;            // Energy range multiplier for syllable-on threshold
 const SYLLABLE_OFF_MULT = 0.15;          // Energy range multiplier for syllable-off threshold
 const SYLLABLE_IMPULSE_DECAY = 0.88;     // Per-frame decay of syllable impulse
+const MAX_SPARKLES = 100;                // Maximum sparkle particles in ball mode
+const MAX_NEBULA_FLARES = 10;            // Maximum flare particles for nebula creature
 
 // ============================================================
 // VOICE ANALYZER
@@ -281,6 +283,14 @@ export class VoiceAnalyzer {
     this.pitchProfile = { samples: [], min: 80, max: 380, isLearned: false, voicedTime: 0, learningDuration: 5.0 };
     this.tiltProfile = { samples: [], min: -34, max: -4, isLearned: false, voicedTime: 0, learningDuration: 5.0 };
     for (const k in this.metrics) this.metrics[k] = 0;
+  }
+
+  /** Reset calibration state so a fresh calibration can run cleanly */
+  resetCalibration() {
+    this.noiseCalibrationSamples = [];
+    this.hfCalibrationSamples = [];
+    this.noiseCalibrationTimer = 0;
+    this.isCalibrated = false;
   }
 
   // ========================================================
@@ -566,7 +576,9 @@ export class VoiceAnalyzer {
 
     const eLowTilt = sumBandPower(lowStartHz, lowEndHz);
     const eHighTilt = sumBandPower(highStartHz, highEndHz);
-    const rawTiltDb = 10 * Math.log10((eHighTilt + eps) / (eLowTilt + eps));
+    let rawTiltDb = 10 * Math.log10((eHighTilt + eps) / (eLowTilt + eps));
+    // Guard against -Infinity/NaN when both bands are near-zero
+    if (!isFinite(rawTiltDb)) rawTiltDb = this.spectralTiltSmoothedDb;
     this.spectralTiltRawDb = rawTiltDb;
 
     // EMA smoothing to reduce frame jitter while preserving control latency.
@@ -600,7 +612,7 @@ export class VoiceAnalyzer {
     const heavyAnchorDb = this.tiltProfile.isLearned ? this.tiltProfile.min : -34;
     const lightAnchorDb = this.tiltProfile.isLearned ? this.tiltProfile.max : -4;
     const normalized = normalizeAgainstRange(this.spectralTiltSmoothedDb, heavyAnchorDb, lightAnchorDb);
-    const tiltConfidenceGate = rms > this.noiseFloor * 1.35 ? 1 : Math.max(0, (rms - this.noiseFloor) / Math.max(1e-6, this.noiseFloor * 0.5));
+    const tiltConfidenceGate = rms > this.noiseFloor * 1.35 ? 1 : Math.max(0, (rms - this.noiseFloor) / Math.max(1e-6, this.noiseFloor * 0.5 || 1e-6));
     this.spectralWeight += (normalized - this.spectralWeight) * (0.12 + tiltConfidenceGate * 0.2);
     this.spectralTiltConfidence += (tiltConfidenceGate - this.spectralTiltConfidence) * 0.2;
 
@@ -1392,8 +1404,11 @@ class VoxBallGame {
     this.ctx = this.canvas.getContext('2d');
     this.analyzer = new VoiceAnalyzer();
     this.isRunning = false;
+    this._isStarting = false; // guard for startGame/stopGame race
     this.lastTime = 0;
     this.idleAnimId = null;
+    this._disposables = []; // cleanup callbacks for listeners/observers
+    this._pendingTimeouts = []; // track setTimeout IDs for cleanup
 
     // FIX: Store ball color as HSL components for proper HSLA compositing
     this.ballHue = 275;
@@ -1789,10 +1804,13 @@ class VoxBallGame {
     this.particleScale = 1;
     this.dynamicQualityScale = 1;
     this._applyMotionPreferences();
-    window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', (e) => {
+    const motionMql = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onMotionChange = (e) => {
       this.reducedMotion = e.matches;
       this._applyMotionPreferences();
-    });
+    };
+    motionMql.addEventListener('change', onMotionChange);
+    this._disposables.push(() => motionMql.removeEventListener('change', onMotionChange));
 
     // ====== RUNTIME TOOLS ======
     this.perfMonitor = new PerformanceMonitor({ panelId: 'perfPanel' });
@@ -1886,7 +1904,9 @@ class VoxBallGame {
     this._vowelPlotMax = 80;
 
     this.resize();
-    window.addEventListener('resize', () => this.resize());
+    const onResize = () => this.resize();
+    window.addEventListener('resize', onResize);
+    this._disposables.push(() => window.removeEventListener('resize', onResize));
     this.setupUI();
     this._updateHelpContent();
     this._setupMobile();
@@ -1972,10 +1992,11 @@ class VoxBallGame {
         if (selected) scrollCardIntoView(selected);
       });
       observer.observe(menuLeft, { subtree: true, attributes: true, attributeFilter: ['class'] });
+      this._disposables.push(() => observer.disconnect());
     }
 
     // 2. Close drawers/panels when tapping outside on mobile
-    document.addEventListener('pointerdown', (e) => {
+    const onMobilePointerDown = (e) => {
       if (!mobileQuery.matches) return;
       const vibPanel = document.getElementById('vibPanel');
       const vibToggle = document.getElementById('vibToggle');
@@ -1993,7 +2014,9 @@ class VoxBallGame {
       if (helpTooltip?.classList.contains('show') && !helpTooltip.contains(e.target) && e.target !== helpBtn) {
         helpTooltip.classList.remove('show');
       }
-    });
+    };
+    document.addEventListener('pointerdown', onMobilePointerDown);
+    this._disposables.push(() => document.removeEventListener('pointerdown', onMobilePointerDown));
 
     // 3. Prevent rubber-band bounce on iOS when scrolling at boundaries
     const appEl = document.getElementById('app');
@@ -2001,12 +2024,24 @@ class VoxBallGame {
       appEl.style.overscrollBehavior = 'contain';
     }
 
-    // 4. Add active state feedback for mobile tap (no hover on touch)
-    document.querySelectorAll('.btn, .btn-big, .mode-card, .style-pill, .range-btn, .rec-btn, .help-tab').forEach(el => {
-      el.addEventListener('touchstart', () => el.classList.add('mobile-active'), { passive: true });
-      el.addEventListener('touchend', () => el.classList.remove('mobile-active'), { passive: true });
-      el.addEventListener('touchcancel', () => el.classList.remove('mobile-active'), { passive: true });
-    });
+    // 4. Add active state feedback for mobile tap via event delegation
+    const mobileActiveSelector = '.btn, .btn-big, .mode-card, .style-pill, .range-btn, .rec-btn, .help-tab';
+    const onTouchStart = (e) => {
+      const el = e.target.closest(mobileActiveSelector);
+      if (el) el.classList.add('mobile-active');
+    };
+    const onTouchEnd = (e) => {
+      const el = e.target.closest(mobileActiveSelector);
+      if (el) el.classList.remove('mobile-active');
+    };
+    document.addEventListener('touchstart', onTouchStart, { passive: true });
+    document.addEventListener('touchend', onTouchEnd, { passive: true });
+    document.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    this._disposables.push(
+      () => document.removeEventListener('touchstart', onTouchStart),
+      () => document.removeEventListener('touchend', onTouchEnd),
+      () => document.removeEventListener('touchcancel', onTouchEnd)
+    );
 
     // 5. Inject mobile active state CSS (visual feedback on tap)
     const mobileStyle = document.createElement('style');
@@ -2057,6 +2092,7 @@ class VoxBallGame {
       // Re-check when children change (e.g. mode cards appearing)
       const resizeObs = new ResizeObserver(() => updateFade(el));
       resizeObs.observe(el);
+      this._disposables.push(() => resizeObs.disconnect());
     });
   }
 
@@ -2483,8 +2519,10 @@ class VoxBallGame {
 
   stopPlayback() {
     if (this.currentPlayback) {
-      this.currentPlayback.audio.pause();
-      this.currentPlayback.audio.currentTime = 0;
+      const audio = this.currentPlayback.audio;
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load(); // release media resources
       this.updateRecItemState(this.currentPlayback.index, false);
       const el = document.getElementById(`rec-progress-${this.currentPlayback.index}`);
       if (el) el.style.width = '0%';
@@ -2510,7 +2548,8 @@ class VoxBallGame {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    // Revoke immediately — the download has already been initiated by click()
+    URL.revokeObjectURL(url);
   }
 
   deleteRecording(index) {
@@ -2573,7 +2612,7 @@ class VoxBallGame {
       const btn = e.target.closest('[data-action]');
       if (!btn) return;
       const action = btn.dataset.action;
-      const idx = parseInt(btn.dataset.index);
+      const idx = parseInt(btn.dataset.index, 10);
       if (action === 'play') {
         if (this.currentPlayback && this.currentPlayback.index === idx) {
           this.stopPlayback();
@@ -2904,6 +2943,9 @@ class VoxBallGame {
     };
 
     const startGame = async () => {
+      if (this._isStarting) return; // prevent concurrent start/stop race
+      this._isStarting = true;
+      try {
       this._resetKeyboardModeState();
       if (this.gameMode === 'keyboard') {
         this.canvasMode = 'keyboard';
@@ -3157,9 +3199,15 @@ class VoxBallGame {
       this.isRunning = true;
       this.lastTime = performance.now();
       this.loop();
+      } finally {
+        this._isStarting = false;
+      }
     };
 
     const stopGame = async () => {
+      // Clear any pending timeouts from the game session
+      for (const id of this._pendingTimeouts) clearTimeout(id);
+      this._pendingTimeouts = [];
       // Auto-stop recording if active — must await so recorder can
       // flush its final chunk before we kill the mic stream
       if (this.isRecording) {
@@ -3484,6 +3532,12 @@ class VoxBallGame {
 
     canvasModeSelect?.addEventListener('change', (e) => {
       this.canvasMode = e.target.value;
+      // Reset pause state when switching canvas sub-modes
+      this.voiceCanvasPaused = false;
+      if (pauseCanvasBtn) {
+        pauseCanvasBtn.textContent = 'Pause';
+        pauseCanvasBtn.classList.remove('active');
+      }
       if (canvasModeSelect) canvasModeSelect.style.display = this.gameMode === 'canvas' ? '' : 'none';
       if (keyboardGameSelect) keyboardGameSelect.style.display = this.canvasMode === 'keyboard' ? '' : 'none';
       if (!this.isRunning) this.drawIdleScene();
@@ -3971,6 +4025,8 @@ class VoxBallGame {
         showError('ℹ Start a session first, then tap Recalibrate.');
         return;
       }
+      // Clear stale calibration data so fresh samples are collected
+      this.analyzer.resetCalibration();
       const calResult = await this.calibrationWizard.run(this.analyzer);
       this.hasCompletedCalibration = true;
       this.guidedStartTs = performance.now();
@@ -4043,6 +4099,12 @@ class VoxBallGame {
 
     document.addEventListener('visibilitychange', async () => {
       if (document.visibilityState !== 'visible' || !this.isRunning) return;
+      // Resume AudioContext if it was suspended while tab was hidden
+      try {
+        if (this.analyzer.audioCtx && this.analyzer.audioCtx.state === 'suspended') {
+          await this.analyzer.audioCtx.resume();
+        }
+      } catch (_) { /* non-blocking */ }
       try {
         if (navigator.permissions?.query) {
           const mic = await navigator.permissions.query({ name: 'microphone' });
@@ -4633,7 +4695,7 @@ class VoxBallGame {
       this.sparkles[i].life -= dt;
       if (this.sparkles[i].life <= 0) this.sparkles.splice(i, 1);
     }
-    if (this.sparkles.length > 100) this.sparkles.splice(0, this.sparkles.length - 100);
+    if (this.sparkles.length > MAX_SPARKLES) this.sparkles.splice(0, this.sparkles.length - MAX_SPARKLES);
 
     for (let i = this.particles.length - 1; i >= 0; i--) {
       this.particles[i].update(dt);
@@ -5211,7 +5273,7 @@ class VoxBallGame {
     for (let i = n.flares.length - 1; i >= 0; i--) {
       n.flares[i].life -= dt; if (n.flares[i].life <= 0) n.flares.splice(i, 1);
     }
-    if (n.flares.length > 10) n.flares.splice(0, n.flares.length - 10);
+    if (n.flares.length > MAX_NEBULA_FLARES) n.flares.splice(0, n.flares.length - MAX_NEBULA_FLARES);
   }
 
   // ---------- SPIRIT update ----------
@@ -7283,6 +7345,10 @@ class VoxBallGame {
     kb.heroNotes = [];
     kb.successPulse = 0;
     kb.missPulse = 0;
+    kb.plasmaTrail = [];
+    kb.glowKey = -1;
+    kb.glowStrength = 0;
+    kb.targetMidi = 57;
   }
 
   _getKeyboardLayout(left, keyboardTop, keyboardW, keyboardH) {
@@ -7787,8 +7853,8 @@ class VoxBallGame {
           resolve({
             type: 'preset',
             label: btn.textContent.split('(')[0].trim().replace('✨ ', ''),
-            lowHz: parseFloat(btn.dataset.low),
-            highHz: parseFloat(btn.dataset.high)
+            lowHz: parseFloat(btn.dataset.low) || 80,
+            highHz: parseFloat(btn.dataset.high) || 380
           });
         }
       };
@@ -7803,7 +7869,7 @@ class VoxBallGame {
     pp.awaitingRestartChoice = true;
     const previousRange = { lowHz: pp.lowHz, highHz: pp.highHz, label: pp.selectedRangeLabel };
 
-    setTimeout(async () => {
+    const tid = setTimeout(async () => {
       if (!this.isRunning || this.gameMode !== 'pilot') {
         pp.awaitingRestartChoice = false;
         return;
@@ -7812,6 +7878,7 @@ class VoxBallGame {
       this._resetPitchPilotState();
       this._applyPitchPilotRangeChoice(choice, previousRange);
     }, 20);
+    this._pendingTimeouts.push(tid);
   }
 
   updatePitchPilot(dt) {
@@ -8901,6 +8968,10 @@ class VoxBallGame {
       };
       pr.mediaRecorder.onstop = () => {
         pr.audioBlob = new Blob(pr.audioChunks, { type: 'audio/webm' });
+        // Revoke previous blob URL to prevent memory leak
+        if (pr.audioPlayer.src && pr.audioPlayer.src.startsWith('blob:')) {
+          URL.revokeObjectURL(pr.audioPlayer.src);
+        }
         pr.audioPlayer.src = URL.createObjectURL(pr.audioBlob);
         this._updatePrismRecBtnVisibility();
       };
