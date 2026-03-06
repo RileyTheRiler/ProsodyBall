@@ -1,4 +1,4 @@
-import { computeProsodyScore, pitchHzToPosition } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition } from './dsp-utils.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { getMicDiagnostics, ensureAudioContextRunning } from './reliability.js';
@@ -4976,9 +4976,7 @@ class VoxBallGame {
   // ============================================================
   updateCreature(dt) {
     const m = this.analyzer.metrics;
-    const bounceW = 0.30, tempoW = 0.20, vowelW = 0.20, articW = 0.15, sylW = 0.15;
-    const rawPS = m.bounce * bounceW + m.tempo * tempoW + m.vowel * vowelW +
-      m.articulation * articW + m.syllable * sylW;
+    const rawPS = computeRawProsody(m);
     this.prosodyScore += (rawPS - this.prosodyScore) * 2.0 * dt;
     const ps = this.prosodyScore;
 
@@ -5988,8 +5986,7 @@ class VoxBallGame {
     g.time += dt;
 
     // Prosody score
-    const rawPS = m.bounce * 0.30 + m.tempo * 0.20 + m.vowel * 0.20 +
-      m.articulation * 0.15 + m.syllable * 0.15;
+    const rawPS = computeRawProsody(m);
     this.prosodyScore += (rawPS - this.prosodyScore) * 2.0 * dt;
 
     // Vowel → global growth multiplier (sunlight) - exaggerated 1.5x
@@ -6684,8 +6681,7 @@ class VoxBallGame {
     vc.time += dt;
 
     // Prosody score
-    const rawPS = m.bounce * 0.30 + m.tempo * 0.20 + m.vowel * 0.20 +
-      m.articulation * 0.15 + m.syllable * 0.15;
+    const rawPS = computeRawProsody(m);
     this.prosodyScore += (rawPS - this.prosodyScore) * 2.0 * dt;
     const ps = this.prosodyScore;
 
