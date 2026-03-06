@@ -487,7 +487,6 @@ export class VoiceAnalyzer {
             this.pitchProfile.min = Math.max(50, p05 * 0.85);
             this.pitchProfile.max = Math.min(800, p95 * 1.25);
             this.pitchProfile.isLearned = true;
-            console.log(`[VoxBall] Learned User Pitch Range: ${this.pitchProfile.min.toFixed(0)}Hz - ${this.pitchProfile.max.toFixed(0)}Hz`);
             console.log(`[ProsodyBall] Learned User Pitch Range: ${this.pitchProfile.min.toFixed(0)}Hz - ${this.pitchProfile.max.toFixed(0)}Hz`);
           }
         }
@@ -559,7 +558,6 @@ export class VoiceAnalyzer {
           this.tiltProfile.min = median - spread * 0.55;
           this.tiltProfile.max = median + spread * 0.45;
           this.tiltProfile.isLearned = true;
-          console.log(`[VoxBall] Learned User Tilt Range: ${this.tiltProfile.min.toFixed(1)}dB to ${this.tiltProfile.max.toFixed(1)}dB`);
           console.log(`[ProsodyBall] Learned User Tilt Range: ${this.tiltProfile.min.toFixed(1)}dB to ${this.tiltProfile.max.toFixed(1)}dB`);
         }
       }
@@ -938,8 +936,15 @@ export class VoiceAnalyzer {
 
     // Confidence
     const specSlice = smoothed.subarray(f1Start, f3End + 1);
-    const specMin = Math.min(...specSlice);
-    const specRange = Math.max(...specSlice) - specMin;
+    let specMin = 0, specRange = 0;
+    if (specSlice.length > 0) {
+      specMin = specSlice[0]; let specMax = specSlice[0];
+      for (let i = 1; i < specSlice.length; i++) {
+        if (specSlice[i] < specMin) specMin = specSlice[i];
+        if (specSlice[i] > specMax) specMax = specSlice[i];
+      }
+      specRange = specMax - specMin;
+    }
     let conf = 0;
     if (specRange > 1) {
       const f1P = f1 > 0 ? Math.min(1, (f1Amp - specMin) / specRange) : 0.1;
@@ -1292,8 +1297,15 @@ export class VoiceAnalyzer {
       f2 = wS > 0 ? w / wS : 1500;
     }
 
-    const envMin = Math.min(...env);
-    const envRange = Math.max(...env) - envMin;
+    let envMin = 0, envRange = 0;
+    if (env.length > 0) {
+      envMin = env[0]; let envMax = env[0];
+      for (let i = 1; i < env.length; i++) {
+        if (env[i] < envMin) envMin = env[i];
+        if (env[i] > envMax) envMax = env[i];
+      }
+      envRange = envMax - envMin;
+    }
     let prominence = 0;
     if (envRange > 0) {
       const f1P = usedF1Fallback ? 0.2 : Math.min(1, (f1Amp - envMin) / envRange);
