@@ -2748,6 +2748,7 @@ class VoxBallGame {
       }
       cameraModal?.classList.remove('show');
       cameraBtn?.classList.remove('active');
+      cameraBtn?.setAttribute('aria-expanded', 'false');
     };
 
     const toggleCamera = async () => {
@@ -2765,6 +2766,7 @@ class VoxBallGame {
         }
         cameraModal?.classList.add('show');
         cameraBtn?.classList.add('active');
+        cameraBtn?.setAttribute('aria-expanded', 'true');
       } catch (e) {
         showError('📷 Camera access denied or not available.');
         console.error('Camera error:', e);
@@ -3696,6 +3698,10 @@ class VoxBallGame {
       settingsPanel.classList.toggle('show', isVisible);
       modalBackdrop.classList.toggle('show', isVisible);
 
+      if (settingsBtn) {
+        settingsBtn.setAttribute('aria-expanded', isVisible);
+      }
+
       // Force DOM visibility (bypass any CSS specificity issues)
       if (isVisible) {
         settingsPanel.removeAttribute('hidden');
@@ -3703,8 +3709,11 @@ class VoxBallGame {
         settingsPanel.style.opacity = '1';
         settingsPanel.style.pointerEvents = 'auto';
         helpTooltip.classList.remove('show');
+        if (helpBtn) helpBtn.setAttribute('aria-expanded', 'false');
         recordingsDrawer.classList.remove('show');
+        if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', 'false');
         vibPanel.classList.remove('show');
+        if (vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
       } else {
         settingsPanel.style.display = 'none';
         settingsPanel.style.opacity = '0';
@@ -3729,17 +3738,32 @@ class VoxBallGame {
       }
       // Vibration panel
       if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || e.target !== vibBtn)) {
-        vibPanel.classList.remove('show');
+        if (vibPanel.classList.contains('show')) {
+          vibPanel.classList.remove('show');
+          if (vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
+        }
       }
     });
 
     if (vibBtn) {
       vibBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (vibPanel) vibPanel.classList.toggle('show');
-        if (helpTooltip) helpTooltip.classList.remove('show');
-        if (recordingsDrawer) recordingsDrawer.classList.remove('show');
-        if (settingsPanel) settingsPanel.classList.remove('show');
+        if (vibPanel) {
+          const isVisible = vibPanel.classList.toggle('show');
+          vibBtn.setAttribute('aria-expanded', isVisible);
+        }
+        if (helpTooltip) {
+           helpTooltip.classList.remove('show');
+           if (helpBtn) helpBtn.setAttribute('aria-expanded', 'false');
+        }
+        if (recordingsDrawer) {
+           recordingsDrawer.classList.remove('show');
+           if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', 'false');
+        }
+        if (settingsPanel) {
+           settingsPanel.classList.remove('show');
+           if (settingsBtn) settingsBtn.setAttribute('aria-expanded', 'false');
+        }
       });
     }
 
@@ -3946,9 +3970,16 @@ class VoxBallGame {
     helpBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this._updateHelpContent();
-      helpTooltip.classList.toggle('show');
-      recordingsDrawer.classList.remove('show');
-      vibPanel.classList.remove('show');
+      const isVisible = helpTooltip.classList.toggle('show');
+      if (helpBtn) helpBtn.setAttribute('aria-expanded', isVisible);
+      if (recordingsDrawer) {
+        recordingsDrawer.classList.remove('show');
+        if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', 'false');
+      }
+      if (vibPanel) {
+        vibPanel.classList.remove('show');
+        if (typeof vibBtn !== 'undefined' && vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
+      }
     });
 
     helpTabs.forEach((tab) => {
@@ -3963,13 +3994,22 @@ class VoxBallGame {
 
     document.addEventListener('click', (e) => {
       if (helpTooltip && !helpTooltip.contains(e.target) && e.target !== helpBtn) {
-        helpTooltip.classList.remove('show');
+        if (helpTooltip.classList.contains('show')) {
+          helpTooltip.classList.remove('show');
+          if (helpBtn) helpBtn.setAttribute('aria-expanded', 'false');
+        }
       }
       if (recordingsDrawer && !recordingsDrawer.contains(e.target) && (!recordingsBtn || !recordingsBtn.contains(e.target))) {
-        recordingsDrawer.classList.remove('show');
+        if (recordingsDrawer.classList.contains('show')) {
+          recordingsDrawer.classList.remove('show');
+          if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', 'false');
+        }
       }
-      if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || !vibBtn.contains(e.target))) {
-        vibPanel.classList.remove('show');
+      if (vibPanel && !vibPanel.contains(e.target) && (!typeof vibBtn === 'undefined' || !vibBtn || !vibBtn.contains(e.target))) {
+        if (vibPanel.classList.contains('show')) {
+          vibPanel.classList.remove('show');
+          if (typeof vibBtn !== 'undefined' && vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
+        }
       }
     });
 
@@ -4006,9 +4046,16 @@ class VoxBallGame {
 
     recordingsBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      recordingsDrawer.classList.toggle('show');
-      helpTooltip.classList.remove('show');
-      vibPanel.classList.remove('show');
+      const isVisible = recordingsDrawer.classList.toggle('show');
+      if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', isVisible);
+      if (helpTooltip) {
+        helpTooltip.classList.remove('show');
+        if (helpBtn) helpBtn.setAttribute('aria-expanded', 'false');
+      }
+      if (vibPanel) {
+        vibPanel.classList.remove('show');
+        if (typeof vibBtn !== 'undefined' && vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
+      }
     });
 
     clearAllRecs.addEventListener('click', () => {
