@@ -3039,7 +3039,11 @@ class VoxBallGame {
       // Check if we have an audio file OR microphone
       if (!selectedAudioFile && (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)) {
         const errNode = document.createElement('div');
-        errNode.innerHTML = '🎙 Microphone API not available and no audio file selected.<br>This requires HTTPS and a modern browser. ';
+        errNode.append(
+          '🎙 Microphone API not available and no audio file selected.',
+          document.createElement('br'),
+          'This requires HTTPS and a modern browser. '
+        );
         if (isInIframe) {
           const link = document.createElement('a');
           link.href = window.location.href;
@@ -3080,16 +3084,22 @@ class VoxBallGame {
         if (result.error === 'NotAllowedError') {
           if (isInIframe) {
             msg = document.createElement('div');
-            msg.innerHTML = '🎙 Microphone blocked by browser — this usually happens inside iframes.<br>';
+            msg.append(
+              '🎙 Microphone blocked by browser — this usually happens inside iframes.',
+              document.createElement('br')
+            );
             const link = document.createElement('a');
             link.href = window.location.href;
             link.target = '_blank';
             link.textContent = 'Open in a new tab for full mic access ↗';
             msg.appendChild(link);
           } else {
-            msg =
-              '🎙 Microphone permission denied.<br>' +
-              'Click the lock/camera icon in your address bar → Allow microphone → then try again.';
+            msg = document.createElement('div');
+            msg.append(
+              '🎙 Microphone permission denied.',
+              document.createElement('br'),
+              'Click the lock/camera icon in your address bar → Allow microphone → then try again.'
+            );
           }
         } else if (result.error === 'NotFoundError') {
           msg = '🎙 No microphone detected. Please connect a microphone and try again.';
