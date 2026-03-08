@@ -741,8 +741,19 @@ export class VoiceAnalyzer {
 
     // 1. BOUNCE — pitch variation
     if (this.pitchHistory.length > 3) {
-      const mean = this.pitchHistory.reduce((a, b) => a + b, 0) / this.pitchHistory.length;
-      const variance = this.pitchHistory.reduce((a, p) => a + (p - mean) ** 2, 0) / this.pitchHistory.length;
+      // ⚡ Bolt: Replace .reduce() with standard for-loop to eliminate function allocation
+      // and minimize garbage collection in this per-frame hot path.
+      let sum = 0;
+      for (let i = 0; i < this.pitchHistory.length; i++) {
+        sum += this.pitchHistory[i];
+      }
+      const mean = sum / this.pitchHistory.length;
+
+      let varianceSum = 0;
+      for (let i = 0; i < this.pitchHistory.length; i++) {
+        varianceSum += (this.pitchHistory[i] - mean) ** 2;
+      }
+      const variance = varianceSum / this.pitchHistory.length;
       this.metrics.bounce = Math.min(1, Math.sqrt(variance) / BOUNCE_NORM_DIVISOR);
     } else {
       this.metrics.bounce *= 0.95;
