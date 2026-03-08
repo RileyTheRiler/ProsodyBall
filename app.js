@@ -8880,10 +8880,72 @@ class VoxBallGame {
   // PRISM READER
   // ============================================================
 
+  // Exception dictionary for common irregular syllabifications
+  // Key = lowercase word, Value = array of syllable break indices (in the cleaned string)
+  static _syllableExceptions = {
+    every: 2, every: [2, 3],     // ev-er-y (not ev-ry)
+    different: [3, 5],           // dif-fer-ent
+    beautiful: [3, 5],           // beau-ti-ful
+    comfortable: [3, 6, 8],     // com-fort-a-ble
+    interesting: [2, 5, 8],     // in-ter-est-ing
+    experience: [2, 5, 7],      // ex-pe-ri-ence
+    everything: [2, 4],         // ev-ery-thing
+    amusement: [1, 5],          // a-muse-ment
+    memorable: [3, 5, 7],       // mem-or-a-ble
+    tremendous: [3, 6],         // tre-men-dous
+    undulating: [2, 4, 7],      // un-du-lat-ing
+    exhilarating: [2, 5, 8, 10],// ex-hil-a-rat-ing
+    terrifying: [3, 5, 7],      // ter-ri-fy-ing
+    sensations: [3, 5, 7],      // sen-sa-tions
+    apparently: [2, 5, 7],      // ap-par-ent-ly
+    division: [2, 4],           // di-vi-sion
+    according: [2, 5],          // ac-cord-ing
+    pronounced: [3, 7],         // pro-nounced (2 syl)
+    observe: [2],               // ob-serve
+    skillfully: [5],            // skill-ful-ly ... handled by rules
+    language: [3],              // lan-guage
+    several: [3, 5],            // sev-er-al
+    usually: [2, 4],            // u-su-al-ly
+    cigarette: [3, 5],          // cig-a-rette
+    people: [3],                // peo-ple
+    little: [3],                // lit-tle
+    simple: [3],                // sim-ple
+    purple: [3],                // pur-ple
+    whistle: [4],               // whis-tle
+    castle: [3],                // cas-tle
+    muscle: [3],                // mus-cle
+    article: [2, 4],            // ar-ti-cle
+    vehicle: [2, 4],            // ve-hi-cle
+    miracle: [3, 5],            // mir-a-cle
+    obstacle: [2, 5],           // ob-sta-cle
+  };
+
   _syllabify(word) {
     const clean = word.replace(/[^a-zA-Z]/g, '').toLowerCase();
     if (clean.length === 0) return [word];
     if (clean.length <= 2) return [word];
+
+    // Check exception dictionary first
+    const exc = VoxArcade._syllableExceptions[clean];
+    if (exc) {
+      const breaks = Array.isArray(exc) ? exc : [exc];
+      const result = [];
+      let prev = 0;
+      for (const b of breaks) {
+        if (b > prev && b < word.length) {
+          // Map clean index to original word index
+          let cleanIdx = 0, origIdx = 0;
+          while (origIdx < word.length && cleanIdx < b) {
+            if (/[a-zA-Z]/.test(word[origIdx])) cleanIdx++;
+            origIdx++;
+          }
+          result.push(word.slice(prev, origIdx));
+          prev = origIdx;
+        }
+      }
+      if (prev < word.length) result.push(word.slice(prev));
+      return result.filter(s => s.length > 0);
+    }
 
     const vowels = 'aeiouy';
     const isVowel = (ch) => vowels.includes(ch);
@@ -8904,13 +8966,30 @@ class VoxBallGame {
     if (nuclei.length > 1) {
       const last = nuclei[nuclei.length - 1];
       if (last.end === clean.length && clean.slice(last.start, last.end) === 'e') {
-        // Keep the 'e' nucleus for "-le" endings (e.g., "ta-ble", "peo-ple")
         const beforeE = clean[last.start - 1];
-        if (beforeE !== 'l') {
+        // Keep the 'e' for "-le", "-re", "-ne" endings (e.g., "ta-ble", "cen-tre", "ma-chine")
+        const keepEndings = ['l', 'r', 'n'];
+        if (!keepEndings.includes(beforeE)) {
           nuclei.pop();
         }
       }
     }
+
+    // Handle "-ed" endings: past tense "-ed" is only syllabic after t/d
+    if (nuclei.length > 1 && clean.endsWith('ed')) {
+      const last = nuclei[nuclei.length - 1];
+      const edStart = clean.length - 2;
+      if (last.start === edStart && last.end === edStart + 1) {
+        const beforeEd = clean[edStart - 1];
+        // "-ed" is silent (non-syllabic) unless preceded by t or d
+        if (beforeEd !== 't' && beforeEd !== 'd') {
+          nuclei.pop();
+        }
+      }
+    }
+
+    // Handle "-tion"/"-sion" as single syllable nuclei
+    // These diphthongs are already handled since 'io' merges into one nucleus
 
     if (nuclei.length <= 1) return [word];
 
@@ -8926,9 +9005,11 @@ class VoxBallGame {
     cleanToOrig[clean.length] = word.length;
 
     // Common consonant digraphs that shouldn't be split
-    const digraphs = ['th', 'ch', 'sh', 'ph', 'wh', 'ck', 'ng', 'gh'];
+    const digraphs = ['th', 'ch', 'sh', 'ph', 'wh', 'ck', 'ng', 'gh', 'gn', 'kn', 'wr'];
     // Common onset clusters that prefer to stay together
-    const onsetClusters = ['bl', 'br', 'cl', 'cr', 'dr', 'fl', 'fr', 'gl', 'gr', 'pl', 'pr', 'sc', 'sk', 'sl', 'sm', 'sn', 'sp', 'st', 'sw', 'tr', 'tw', 'str', 'spr', 'scr', 'spl'];
+    const onsetClusters = ['bl', 'br', 'cl', 'cr', 'dr', 'fl', 'fr', 'gl', 'gr', 'pl', 'pr', 'sc', 'sk', 'sl', 'sm', 'sn', 'sp', 'st', 'sw', 'tr', 'tw', 'str', 'spr', 'scr', 'spl', 'shr', 'thr', 'qu'];
+    // Consonant pairs that should stay together as codas (not split)
+    const codaClusters = ['ld', 'lf', 'lk', 'lm', 'lp', 'lt', 'mp', 'nd', 'nk', 'nt', 'pt', 'ft', 'ct', 'sk', 'sp', 'st'];
 
     const syllables = [];
     let prevEnd = 0;
@@ -8947,9 +9028,12 @@ class VoxBallGame {
         // Single consonant goes with following vowel (open syllable preference)
         splitClean = gapStart;
       } else if (gapLen === 2) {
-        // Two consonants: check if they form a valid onset cluster
+        // Two consonants: check if they form a valid onset cluster or digraph
         if (onsetClusters.includes(consonants) || digraphs.includes(consonants)) {
           splitClean = gapStart; // keep together with next syllable
+        } else if (codaClusters.includes(consonants)) {
+          // Coda cluster stays with previous syllable
+          splitClean = gapEnd;
         } else {
           splitClean = gapStart + 1; // split between them
         }
@@ -8961,6 +9045,11 @@ class VoxBallGame {
           if (onsetClusters.includes(candidate)) {
             bestOnset = len;
           }
+        }
+        // Also check if the remaining coda forms a valid cluster
+        const codaPart = consonants.slice(0, gapLen - bestOnset);
+        if (codaPart.length >= 2 && codaClusters.includes(codaPart.slice(-2))) {
+          // Valid coda+onset split, keep bestOnset
         }
         splitClean = gapEnd - bestOnset;
       }
@@ -9034,6 +9123,9 @@ class VoxBallGame {
     pr.firstOnsetTime = 0;
     pr.wordsCompleted = 0;
     pr.freestyleInterimTranscript = '';
+    // Reset adaptive onset tracking
+    pr._onsetBaseline = 0.3;
+    pr._onsetPeak = 1.0;
 
     // Clear any existing recordings if not explicitly retained
     if (pr.isPlayingBack) this._stopPrismPlayback();
@@ -9155,33 +9247,54 @@ class VoxBallGame {
     return { type: 'none', strokeWidth: 0, blur: 0 };
   }
 
-  // ---- Vowel classification from F2 ----
+  // ---- Vowel classification from F2 with pitch-adaptive normalization ----
   _classifyPrismVowel(avgF0, avgF2) {
     if (avgF2 <= 0) return null;
-    const normFactor = avgF0 > 200 ? 0.85 : 1.0;
+    // Pitch-adaptive normalization: higher voices have higher formants
+    // Apply a continuous scaling factor instead of a binary threshold
+    const normFactor = avgF0 > 0 ? Math.max(0.75, Math.min(1.0, 1.0 - (avgF0 - 150) * 0.001)) : 1.0;
     const f2n = avgF2 * normFactor;
-    if (f2n >= 2200) return 'IY';
-    if (f2n >= 1800) return 'IH';
-    if (f2n >= 1500) return 'EH';
-    if (f2n >= 1100) return 'AH';
-    if (f2n >= 750) return 'UW';
-    return 'AH';
+
+    // Use overlapping ranges with a closest-centroid approach for better accuracy
+    const vowelCentroids = [
+      { type: 'IY', f2: 2400 },  // "ee" as in "see"
+      { type: 'IH', f2: 2000 },  // "ih" as in "sit"
+      { type: 'EH', f2: 1700 },  // "eh" as in "set"
+      { type: 'AE', f2: 1600 },  // "ae" as in "sat"
+      { type: 'AH', f2: 1200 },  // "ah" as in "father"
+      { type: 'UH', f2: 1000 },  // "uh" as in "put"
+      { type: 'UW', f2: 800 },   // "oo" as in "boot"
+    ];
+
+    let bestType = 'AH';
+    let bestDist = Infinity;
+    for (const v of vowelCentroids) {
+      const dist = Math.abs(f2n - v.f2);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestType = v.type;
+      }
+    }
+    return bestType;
   }
 
   // ---- Vowel-specific F2 target scoring (Gaussian) ----
   _scorePrismVowelF2(vowelType, measuredF2) {
     if (!vowelType || measuredF2 <= 0) return 0.5;
     const targets = {
-      'IY': { center: 2600, halfWidth: 400 },
-      'IH': { center: 2000, halfWidth: 200 },
-      'EH': { center: 1750, halfWidth: 150 },
-      'AH': { center: 1400, halfWidth: 200 },
-      'UW': { center: 950, halfWidth: 200 },
+      'IY': { center: 2400, halfWidth: 350 },
+      'IH': { center: 2000, halfWidth: 250 },
+      'EH': { center: 1700, halfWidth: 200 },
+      'AE': { center: 1600, halfWidth: 200 },
+      'AH': { center: 1200, halfWidth: 250 },
+      'UH': { center: 1000, halfWidth: 200 },
+      'UW': { center: 800, halfWidth: 200 },
     };
     const t = targets[vowelType];
     if (!t) return 0.5;
     const distance = Math.abs(measuredF2 - t.center);
     const normalized = distance / t.halfWidth;
+    // Gaussian scoring: perfect at center, drops off with distance
     return Math.max(0, Math.min(1, Math.exp(-0.5 * normalized * normalized)));
   }
 
@@ -9219,10 +9332,29 @@ class VoxBallGame {
     const avgVowelLike = avg(syl.vowelLikelihoodSamples);
     syl.strainFlag = (syl.avgWeight < 0.25 && avgEnergy > 0.06);
 
+    // Enhanced confidence scoring with pitch stability
     const pitchConf = syl.pitchSamples.length > 2 ? 1 : syl.pitchSamples.length / 2;
     const durationConf = Math.min(1, syl.durationMs / 300);
     const vowelConf = avgVowelLike;
-    syl.confidence = Math.min(1, pitchConf * 0.3 + durationConf * 0.3 + vowelConf * 0.4);
+    // Pitch stability: low variance in pitch samples = higher confidence
+    let pitchStability = 1;
+    if (syl.pitchSamples.length >= 2) {
+      const pitchMean = avg(syl.pitchSamples);
+      const pitchVar = syl.pitchSamples.reduce((sum, p) => sum + (p - pitchMean) ** 2, 0) / syl.pitchSamples.length;
+      const pitchStdDev = Math.sqrt(pitchVar);
+      // Coefficient of variation — normalized stability measure
+      const cv = pitchMean > 0 ? pitchStdDev / pitchMean : 0;
+      pitchStability = Math.max(0, 1 - cv * 5); // cv of 0.2 = 0 stability
+    }
+    // Energy consistency: stable energy during the syllable boosts confidence
+    let energyConsistency = 1;
+    if (syl.energySamples.length >= 2) {
+      const eMean = avg(syl.energySamples);
+      const eVar = syl.energySamples.reduce((sum, e) => sum + (e - eMean) ** 2, 0) / syl.energySamples.length;
+      const eCV = eMean > 0 ? Math.sqrt(eVar) / eMean : 0;
+      energyConsistency = Math.max(0, 1 - eCV * 3);
+    }
+    syl.confidence = Math.min(1, pitchConf * 0.2 + durationConf * 0.2 + vowelConf * 0.25 + pitchStability * 0.2 + energyConsistency * 0.15);
 
     this._applyPrismVisuals(index);
     syl.state = 'crystallized';
@@ -9573,10 +9705,25 @@ class VoxBallGame {
     // Manual mode: onset stepping is disabled, spacebar advances instead
     if (pr.manualMode) return;
 
-    // Detect syllable onset
-    const onsetDetected = a.syllableImpulse > 0.85;
+    // Adaptive onset detection: track rolling baseline of syllable impulse
+    // and use a dynamic threshold that adapts to the speaker's style
+    if (!pr._onsetBaseline) pr._onsetBaseline = 0.3;
+    if (!pr._onsetPeak) pr._onsetPeak = 1.0;
+    const impulse = a.syllableImpulse;
+    // Slowly adapt baseline toward current impulse level
+    pr._onsetBaseline += (Math.min(impulse, pr._onsetBaseline + 0.1) - pr._onsetBaseline) * 0.02;
+    // Track peak impulse values (decays slowly)
+    if (impulse > pr._onsetPeak) pr._onsetPeak = impulse;
+    else pr._onsetPeak *= 0.998;
+    // Dynamic threshold: midpoint between baseline and peak, clamped to reasonable range
+    const dynamicThreshold = Math.max(0.5, Math.min(0.92,
+      pr._onsetBaseline + (pr._onsetPeak - pr._onsetBaseline) * 0.55));
+    const onsetDetected = impulse > dynamicThreshold;
     const timeSinceLastOnset = now - pr.lastOnsetTime;
-    const debounceOk = timeSinceLastOnset > 0.12;
+    // Adaptive debounce: faster readers get shorter debounce (min 80ms, max 180ms)
+    const avgSylDuration = pr.currentIndex > 0 ? (now - pr.firstOnsetTime / 1000) / pr.currentIndex : 0.3;
+    const debounceTime = Math.max(0.08, Math.min(0.18, avgSylDuration * 0.25));
+    const debounceOk = timeSinceLastOnset > debounceTime;
 
     if (onsetDetected && debounceOk) {
       pr.lastOnsetTime = now;
@@ -9852,6 +9999,39 @@ class VoxBallGame {
       crystallized.reduce((a, s) => a + s.confidence, 0) / crystallized.length * 100
     );
 
+    // Pitch variability (intonation) — semitone standard deviation
+    let intonationScore = 0;
+    let intonationLabel = 'Monotone';
+    if (pitches.length >= 3) {
+      // Convert to semitones relative to mean for perceptual accuracy
+      const semitonePitches = pitches.map(p => 12 * Math.log2(p / avgPitch));
+      const stMean = semitonePitches.reduce((a, b) => a + b, 0) / semitonePitches.length;
+      const stVar = semitonePitches.reduce((sum, st) => sum + (st - stMean) ** 2, 0) / semitonePitches.length;
+      const stStdDev = Math.sqrt(stVar);
+      // Score: 0-2 semitones = monotone, 2-4 = moderate, 4+ = expressive
+      intonationScore = Math.round(Math.min(100, stStdDev * 25));
+      if (stStdDev < 1.5) intonationLabel = 'Monotone';
+      else if (stStdDev < 3) intonationLabel = 'Moderate';
+      else if (stStdDev < 5) intonationLabel = 'Expressive';
+      else intonationLabel = 'Very expressive';
+    }
+
+    // Pace consistency — coefficient of variation of per-syllable durations
+    const durations = crystallized.filter(s => s.durationMs > 0).map(s => s.durationMs);
+    let paceConsistency = 0;
+    let paceLabel = '';
+    if (durations.length >= 3) {
+      const durMean = durations.reduce((a, b) => a + b, 0) / durations.length;
+      const durVar = durations.reduce((sum, d) => sum + (d - durMean) ** 2, 0) / durations.length;
+      const durCV = durMean > 0 ? Math.sqrt(durVar) / durMean : 0;
+      // Lower CV = more consistent pacing. Score inversely
+      paceConsistency = Math.round(Math.max(0, Math.min(100, (1 - durCV) * 100)));
+      if (paceConsistency >= 80) paceLabel = 'Very steady';
+      else if (paceConsistency >= 60) paceLabel = 'Steady';
+      else if (paceConsistency >= 40) paceLabel = 'Variable';
+      else paceLabel = 'Erratic';
+    }
+
     const minutes = Math.floor(elapsed / 60);
     const seconds = Math.floor(elapsed % 60);
 
@@ -9869,6 +10049,11 @@ class VoxBallGame {
           <div class="prism-comp-sub">Range: ${pitchRange} Hz (${minPitch}–${maxPitch})</div>
         </div>
         <div class="prism-comp-card">
+          <div class="prism-comp-label">Intonation</div>
+          <div class="prism-comp-value">${intonationScore}%</div>
+          <div class="prism-comp-sub">${intonationLabel}</div>
+        </div>
+        <div class="prism-comp-card">
           <div class="prism-comp-label">Vowel Accuracy</div>
           <div class="prism-comp-value">${avgVowelScore}%</div>
           <div class="prism-comp-sub">${vowelScores.length} vowels scored</div>
@@ -9878,6 +10063,12 @@ class VoxBallGame {
           <div class="prism-comp-value">${avgResonance}%</div>
           <div class="prism-comp-sub">Forward brightness</div>
         </div>
+        ${durations.length >= 3 ? `
+        <div class="prism-comp-card">
+          <div class="prism-comp-label">Pace Consistency</div>
+          <div class="prism-comp-value">${paceConsistency}%</div>
+          <div class="prism-comp-sub">${paceLabel}</div>
+        </div>` : ''}
         <div class="prism-comp-card">
           <div class="prism-comp-label">Syllables</div>
           <div class="prism-comp-value">${crystallized.length} / ${pr.syllables.length}</div>
@@ -10055,7 +10246,7 @@ class VoxBallGame {
       }
       progressFill.style.width = `${Math.min(100, pct)}%`;
 
-      // Dynamic gradient from crystallized syllable hues
+      // Dynamic gradient from crystallized syllable hues — modulated by confidence & vowel score
       const crystallized = pr.syllables.filter(s => s.state === 'crystallized');
       if (crystallized.length >= 2) {
         const stops = [];
@@ -10063,11 +10254,16 @@ class VoxBallGame {
         for (let i = 0; i < crystallized.length; i += step) {
           const s = crystallized[i];
           const pos = Math.round((i / (crystallized.length - 1)) * 100);
-          stops.push(`hsl(${Math.round(s.hue)}, 65%, 60%) ${pos}%`);
+          // Saturation reflects vowel accuracy, lightness reflects confidence
+          const sat = Math.round(40 + s.vowelScore * 35);
+          const light = Math.round(45 + s.confidence * 20);
+          stops.push(`hsl(${Math.round(s.hue)}, ${sat}%, ${light}%) ${pos}%`);
         }
         // Always include the last one
         const last = crystallized[crystallized.length - 1];
-        stops.push(`hsl(${Math.round(last.hue)}, 65%, 60%) 100%`);
+        const lastSat = Math.round(40 + last.vowelScore * 35);
+        const lastLight = Math.round(45 + last.confidence * 20);
+        stops.push(`hsl(${Math.round(last.hue)}, ${lastSat}%, ${lastLight}%) 100%`);
         progressFill.style.background = `linear-gradient(90deg, ${stops.join(', ')})`;
       }
     }
