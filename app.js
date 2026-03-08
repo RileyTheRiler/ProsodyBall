@@ -1627,6 +1627,31 @@ class VoxBallGame {
       heroNotes: [],
       successPulse: 0,
       missPulse: 0,
+      // Streak & combo system
+      streak: 0,
+      bestStreak: 0,
+      comboMultiplier: 1,
+      // Target practice improvements
+      targetHitThreshold: 0.7, // semitones tolerance (was 0.22 — too strict)
+      targetHoldDuration: 0.7, // seconds to hold note (was implicit 1.0)
+      targetDifficulty: 1,     // progressive difficulty level
+      targetsHit: 0,           // total targets hit this session
+      // Vocal Hero improvements
+      heroSpeed: 0.24,         // base scroll speed multiplier
+      heroSpawnInterval: 1.2,  // seconds between spawns (was 0.75 — too fast)
+      heroHitGrade: '',        // 'perfect' | 'good' | 'ok' | ''
+      heroGradeTimer: 0,       // display timer for grade
+      heroMissCount: 0,        // track total misses
+      heroHitCount: 0,         // track total hits
+      // Visual feedback
+      centsOff: 0,             // how many cents off from nearest note
+      nearestNoteName: '',     // name of the nearest detected note
+      nearestNoteOctave: 0,    // octave of nearest note
+      proximityGlow: 0,        // 0-1 how close to target (for gradient feedback)
+      // Adaptive pitch range
+      adaptiveMinMidi: 41,
+      adaptiveMaxMidi: 96,
+      useAdaptiveRange: false,
     };
     this.activePointerNotes = new Map(); // pointerId -> { oscillator, gain }
 
@@ -7388,12 +7413,44 @@ class VoxBallGame {
     const m = this.analyzer.metrics;
     const hz = this.analyzer.smoothPitchHz;
     const conf = this.analyzer.pitchConfidence;
+    // Use confidence-gated voicing: require higher confidence for scoring
     const isVoiced = this.isRunning && m.energy > 0.04 && conf > 0.18 && hz > 50;
+    const isConfidentVoice = isVoiced && conf > 0.35; // stricter gate for scoring
     const midi = isVoiced ? 69 + 12 * Math.log2(hz / 440) : NaN;
 
     kb.glowStrength = Math.max(0, kb.glowStrength - dt * 2.2);
     kb.successPulse = Math.max(0, kb.successPulse - dt * 2.8);
     kb.missPulse = Math.max(0, kb.missPulse - dt * 2.5);
+    kb.heroGradeTimer = Math.max(0, kb.heroGradeTimer - dt);
+
+    // Update nearest note info and cents-off for visual feedback
+    if (isVoiced && Number.isFinite(midi)) {
+      const roundedMidi = Math.round(midi);
+      kb.centsOff = (midi - roundedMidi) * 100; // cents deviation
+      const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      kb.nearestNoteName = noteNames[((roundedMidi % 12) + 12) % 12];
+      kb.nearestNoteOctave = Math.floor(roundedMidi / 12) - 1;
+    }
+
+    // Adaptive pitch range learning: narrow keyboard to user's actual range
+    if (isVoiced && Number.isFinite(midi) && !kb.useAdaptiveRange) {
+      const profile = this.analyzer.pitchProfile;
+      if (profile.isLearned) {
+        // Map from learned Hz range to MIDI
+        const learnedMinMidi = Math.max(36, Math.floor(69 + 12 * Math.log2(profile.min / 440)) - 3);
+        const learnedMaxMidi = Math.min(96, Math.ceil(69 + 12 * Math.log2(profile.max / 440)) + 3);
+        // Only adapt if the range is reasonable (at least one octave)
+        if (learnedMaxMidi - learnedMinMidi >= 12) {
+          kb.adaptiveMinMidi = learnedMinMidi;
+          kb.adaptiveMaxMidi = learnedMaxMidi;
+          kb.useAdaptiveRange = true;
+        }
+      }
+    }
+
+    // Use adaptive range for gameplay if learned
+    const effectiveMin = kb.useAdaptiveRange ? kb.adaptiveMinMidi : kb.minMidi;
+    const effectiveMax = kb.useAdaptiveRange ? kb.adaptiveMaxMidi : kb.maxMidi;
 
     if (isVoiced && Number.isFinite(midi)) {
       const clamped = Math.max(kb.minMidi, Math.min(kb.maxMidi, midi));
@@ -7410,42 +7467,130 @@ class VoxBallGame {
     if (!this.isRunning || this.canvasMode !== 'keyboard') return;
 
     if (this.keyboardGameMode === 'target') {
-      if (isVoiced && Number.isFinite(midi) && Math.abs(midi - kb.targetMidi) < 0.22) {
-        kb.targetHold += dt;
-        if (kb.targetHold >= 1) {
-          kb.score += 1;
+      // Ensure target is within effective range
+      if (kb.targetMidi < effectiveMin || kb.targetMidi > effectiveMax) {
+        kb.targetMidi = effectiveMin + Math.floor(Math.random() * (effectiveMax - effectiveMin + 1));
+      }
+
+      const dist = isConfidentVoice && Number.isFinite(midi) ? Math.abs(midi - kb.targetMidi) : Infinity;
+      // Tolerance narrows with difficulty: starts at 0.7 semitones, tightens to 0.35
+      const tolerance = Math.max(0.35, kb.targetHitThreshold - (kb.targetDifficulty - 1) * 0.05);
+      // Visual proximity feedback (0=far, 1=on target)
+      kb.proximityGlow = dist < 3 ? Math.max(0, 1 - dist / 3) : 0;
+
+      if (dist < tolerance) {
+        // Confidence-weighted hold: higher confidence = faster fill
+        const confWeight = 0.5 + conf * 0.5;
+        kb.targetHold += dt * confWeight;
+        const holdRequired = kb.targetHoldDuration;
+        if (kb.targetHold >= holdRequired) {
+          // Score with combo multiplier
+          const basePoints = Math.ceil(1 * kb.comboMultiplier);
+          kb.score += basePoints;
+          kb.streak += 1;
+          kb.targetsHit += 1;
+          kb.bestStreak = Math.max(kb.bestStreak, kb.streak);
+          // Increase combo every 3 consecutive hits
+          if (kb.streak % 3 === 0) {
+            kb.comboMultiplier = Math.min(4, kb.comboMultiplier + 0.5);
+          }
+          // Progressive difficulty: every 5 hits, tighten tolerance slightly
+          if (kb.targetsHit % 5 === 0 && kb.targetDifficulty < 8) {
+            kb.targetDifficulty += 1;
+          }
           kb.targetHold = 0;
-          kb.targetMidi = kb.minMidi + Math.floor(Math.random() * (kb.maxMidi - kb.minMidi + 1));
+          // Pick next target within effective range, avoid repeating same note
+          let nextTarget;
+          do {
+            nextTarget = effectiveMin + Math.floor(Math.random() * (effectiveMax - effectiveMin + 1));
+          } while (nextTarget === kb.targetMidi && effectiveMax - effectiveMin > 2);
+          kb.targetMidi = nextTarget;
           kb.successPulse = 1;
           this._playKeyboardSuccessChime();
         }
       } else {
-        kb.targetHold = Math.max(0, kb.targetHold - dt * 1.6);
+        kb.targetHold = Math.max(0, kb.targetHold - dt * 1.2);
+        // Break streak if player is far off while voiced
+        if (isConfidentVoice && dist > 3) {
+          if (kb.streak > 0) {
+            kb.streak = 0;
+            kb.comboMultiplier = 1;
+          }
+        }
       }
     }
 
     if (this.keyboardGameMode === 'hero') {
       kb.heroTime += dt;
       kb.heroSpawn += dt;
-      if (kb.heroSpawn >= 0.75) {
+
+      // Adaptive spawn interval: gets slightly faster as score increases
+      const spawnRate = Math.max(0.6, kb.heroSpawnInterval - kb.heroTime * 0.005);
+      if (kb.heroSpawn >= spawnRate) {
         kb.heroSpawn = 0;
-        const midiTarget = kb.minMidi + Math.floor(Math.random() * (kb.maxMidi - kb.minMidi + 1));
+        // Spawn within effective range for better playability
+        const midiTarget = effectiveMin + Math.floor(Math.random() * (effectiveMax - effectiveMin + 1));
         kb.heroNotes.push({ midi: midiTarget, y: 0, hit: false });
       }
-      const speed = this.height * 0.24;
+
+      // Scroll speed increases gradually
+      const baseSpeed = this.height * kb.heroSpeed;
+      const speedScale = 1 + Math.min(0.6, kb.heroTime * 0.008);
+      const speed = baseSpeed * speedScale;
+
+      const hitLineY = this.height * 0.72;
+      // Wider hit zone for better playability
+      const hitZoneTop = hitLineY - this.height * 0.06;
+      const hitZoneBot = hitLineY + this.height * 0.04;
+
       for (let i = kb.heroNotes.length - 1; i >= 0; i--) {
         const n = kb.heroNotes[i];
         n.y += speed * dt;
-        if (!n.hit && n.y > this.height * 0.7 + 20) {
+
+        // Miss: note passed beyond hit zone
+        if (!n.hit && n.y > hitZoneBot + 20) {
           kb.missPulse = 1;
+          kb.heroMissCount += 1;
+          kb.streak = 0;
+          kb.comboMultiplier = 1;
           kb.heroNotes.splice(i, 1);
           continue;
         }
-        if (isVoiced && Number.isFinite(midi) && !n.hit && Math.abs(midi - n.midi) < 0.3 && n.y >= this.height * 0.68 && n.y <= this.height * 0.74) {
-          kb.score += 10;
-          kb.successPulse = 1;
-          this._playKeyboardSuccessChime();
-          kb.heroNotes.splice(i, 1);
+
+        // Hit detection with grading
+        if (isConfidentVoice && Number.isFinite(midi) && !n.hit) {
+          const pitchDist = Math.abs(midi - n.midi);
+          const inHitZone = n.y >= hitZoneTop && n.y <= hitZoneBot;
+
+          if (inHitZone && pitchDist < 1.0) {
+            // Grade based on pitch accuracy
+            let grade, pointMult;
+            if (pitchDist < 0.25) {
+              grade = 'perfect';
+              pointMult = 1.5;
+            } else if (pitchDist < 0.5) {
+              grade = 'good';
+              pointMult = 1.0;
+            } else {
+              grade = 'ok';
+              pointMult = 0.6;
+            }
+
+            const baseScore = Math.ceil(10 * pointMult * kb.comboMultiplier);
+            kb.score += baseScore;
+            kb.streak += 1;
+            kb.heroHitCount += 1;
+            kb.bestStreak = Math.max(kb.bestStreak, kb.streak);
+            // Build combo every 5 consecutive hits
+            if (kb.streak % 5 === 0) {
+              kb.comboMultiplier = Math.min(4, kb.comboMultiplier + 0.5);
+            }
+            kb.heroHitGrade = grade;
+            kb.heroGradeTimer = 0.6;
+            kb.successPulse = 1;
+            this._playKeyboardSuccessChime();
+            kb.heroNotes.splice(i, 1);
+          }
         }
       }
     }
@@ -7464,6 +7609,24 @@ class VoxBallGame {
     kb.glowKey = -1;
     kb.glowStrength = 0;
     kb.targetMidi = 57;
+    // Reset streak/combo
+    kb.streak = 0;
+    kb.bestStreak = 0;
+    kb.comboMultiplier = 1;
+    kb.targetDifficulty = 1;
+    kb.targetsHit = 0;
+    // Reset hero stats
+    kb.heroSpeed = 0.24;
+    kb.heroSpawnInterval = 1.2;
+    kb.heroHitGrade = '';
+    kb.heroGradeTimer = 0;
+    kb.heroMissCount = 0;
+    kb.heroHitCount = 0;
+    // Reset visual feedback
+    kb.centsOff = 0;
+    kb.nearestNoteName = '';
+    kb.nearestNoteOctave = 0;
+    kb.proximityGlow = 0;
   }
 
   _getKeyboardLayout(left, keyboardTop, keyboardW, keyboardH) {
@@ -7641,20 +7804,50 @@ class VoxBallGame {
 
     if (this.keyboardGameMode === 'target') {
       const x = this._midiToX(kb.targetMidi, layout, left, keyboardW);
-      ctx.strokeStyle = 'rgba(255,75,75,0.9)';
-      ctx.lineWidth = 2.2;
+      // Proximity-based target glow: green when close, red when far
+      const prox = kb.proximityGlow;
+      const targetR = Math.round(255 - prox * 180);
+      const targetG = Math.round(75 + prox * 180);
+      const targetB = Math.round(75 + prox * 85);
+      ctx.strokeStyle = `rgba(${targetR},${targetG},${targetB},0.9)`;
+      ctx.lineWidth = 2.2 + prox * 1.5;
       ctx.beginPath();
       ctx.roundRect(x - whiteW * 0.45, keyboardTop + keyboardH - whiteH + 2, whiteW * 0.9, whiteH - 6, 8);
       ctx.stroke();
+      // Proximity glow behind target key
+      if (prox > 0.1) {
+        ctx.fillStyle = `rgba(${targetR},${targetG},${targetB},${0.08 * prox})`;
+        ctx.beginPath();
+        ctx.roundRect(x - whiteW * 0.45, keyboardTop + keyboardH - whiteH + 2, whiteW * 0.9, whiteH - 6, 8);
+        ctx.fill();
+      }
+      // Target note name label
+      const tNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      const tNoteName = tNames[((kb.targetMidi % 12) + 12) % 12];
+      const tOctave = Math.floor(kb.targetMidi / 12) - 1;
+      ctx.font = '700 11px "Space Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = `rgba(255,120,120,0.9)`;
+      ctx.fillText(`${tNoteName}${tOctave}`, x, keyboardTop + keyboardH - whiteH - 8);
+
       if (kb.targetHold > 0) {
-        const p = Math.min(1, kb.targetHold);
-        ctx.fillStyle = 'rgba(120,255,160,0.85)';
-        ctx.fillRect(left, keyboardTop - 3, keyboardW * p, 2);
+        const p = Math.min(1, kb.targetHold / kb.targetHoldDuration);
+        // Progress bar with gradient
+        const barGrad = ctx.createLinearGradient(left, 0, left + keyboardW * p, 0);
+        barGrad.addColorStop(0, 'rgba(120,255,160,0.6)');
+        barGrad.addColorStop(1, 'rgba(80,255,220,0.95)');
+        ctx.fillStyle = barGrad;
+        ctx.fillRect(left, keyboardTop - 4, keyboardW * p, 3);
       }
     }
 
     if (this.keyboardGameMode === 'hero') {
       const hitLineY = h * 0.72;
+      // Draw hit zone as a subtle band instead of a thin line
+      const hitZoneTop = hitLineY - h * 0.06;
+      const hitZoneBot = hitLineY + h * 0.04;
+      ctx.fillStyle = 'rgba(135,235,255,0.04)';
+      ctx.fillRect(left, hitZoneTop, keyboardW, hitZoneBot - hitZoneTop);
       ctx.strokeStyle = 'rgba(135,235,255,0.38)';
       ctx.lineWidth = 1;
       ctx.setLineDash([5, 5]);
@@ -7668,13 +7861,33 @@ class VoxBallGame {
         const nx = this._midiToX(n.midi, layout, left, keyboardW);
         const ny = Math.min(hitLineY, keyboardTop - 16 + n.y);
         const barH = 34;
+        // Color notes differently as they approach the hit zone
+        const nearHitZone = ny > hitZoneTop - 40;
+        const alpha = nearHitZone ? 0.95 : 0.7;
         const grad = ctx.createLinearGradient(0, ny - barH, 0, ny);
-        grad.addColorStop(0, 'rgba(102,225,255,0.88)');
-        grad.addColorStop(1, 'rgba(102,225,255,0.18)');
+        grad.addColorStop(0, `rgba(102,225,255,${alpha})`);
+        grad.addColorStop(1, `rgba(102,225,255,${alpha * 0.2})`);
         ctx.fillStyle = grad;
         ctx.beginPath();
         ctx.roundRect(nx - whiteW * 0.34, ny - barH, whiteW * 0.68, barH, 6);
         ctx.fill();
+        // Note label inside the bar
+        const nNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+        ctx.font = '700 9px "Space Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = `rgba(255,255,255,${alpha * 0.8})`;
+        ctx.fillText(nNames[((n.midi % 12) + 12) % 12], nx, ny - barH * 0.35);
+      }
+
+      // Grade display
+      if (kb.heroGradeTimer > 0 && kb.heroHitGrade) {
+        const gradeAlpha = Math.min(1, kb.heroGradeTimer * 2);
+        const gradeColors = { perfect: '120,255,180', good: '180,240,120', ok: '240,200,100' };
+        const color = gradeColors[kb.heroHitGrade] || '200,200,200';
+        ctx.font = '800 18px "Space Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = `rgba(${color},${gradeAlpha})`;
+        ctx.fillText(kb.heroHitGrade.toUpperCase(), w * 0.5, hitLineY - h * 0.08);
       }
     }
 
@@ -7701,6 +7914,20 @@ class VoxBallGame {
       ctx.fill();
     }
 
+    // Note name and cents-off indicator above the cursor
+    if (Number.isFinite(currentMidi) && kb.nearestNoteName) {
+      const px = this._midiToX(currentMidi, layout, left, keyboardW);
+      const centsAbs = Math.abs(Math.round(kb.centsOff));
+      const centsSign = kb.centsOff >= 0 ? '+' : '-';
+      ctx.font = '700 14px "Space Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = centsAbs < 10 ? 'rgba(120,255,180,0.95)' : centsAbs < 25 ? 'rgba(255,240,120,0.9)' : 'rgba(255,150,100,0.85)';
+      ctx.fillText(`${kb.nearestNoteName}${kb.nearestNoteOctave}`, px, keyboardTop - 34);
+      ctx.font = '500 10px "Space Mono", monospace';
+      ctx.fillStyle = 'rgba(200,220,255,0.65)';
+      ctx.fillText(`${centsSign}${centsAbs}c`, px, keyboardTop - 22);
+    }
+
     ctx.font = '600 12px "Space Mono", monospace';
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(196,220,255,0.85)';
@@ -7710,6 +7937,14 @@ class VoxBallGame {
       ctx.textAlign = 'right';
       ctx.fillStyle = 'rgba(190,240,255,0.9)';
       ctx.fillText(`Score ${kb.score}`, left + keyboardW, keyboardTop + keyboardH + 20);
+      // Streak and combo info
+      if (kb.streak > 1) {
+        ctx.textAlign = 'right';
+        ctx.font = '500 10px "Space Mono", monospace';
+        ctx.fillStyle = kb.comboMultiplier > 1 ? 'rgba(255,220,100,0.9)' : 'rgba(170,210,255,0.7)';
+        const comboStr = kb.comboMultiplier > 1 ? ` x${kb.comboMultiplier.toFixed(1)}` : '';
+        ctx.fillText(`${kb.streak} streak${comboStr}`, left + keyboardW, keyboardTop + keyboardH + 34);
+      }
     }
 
     ctx.restore();
@@ -10047,6 +10282,9 @@ class VoxBallGame {
     } else if (this.gameMode === 'keyboard') {
       stats.push({ value: `${this.keyboardGameMode.toUpperCase()}`, label: 'Keyboard Mode' });
       stats.push({ value: `${this.voiceKeyboard.score}`, label: 'Score' });
+      if (this.keyboardGameMode !== 'mirror' && this.voiceKeyboard.bestStreak > 0) {
+        stats.push({ value: `${this.voiceKeyboard.bestStreak}`, label: 'Best Streak' });
+      }
     } else if (this.gameMode === 'pilot') {
       stats.push({ value: `${this.pitchPilot.phase.toUpperCase()}`, label: 'Pilot Phase' });
       stats.push({ value: `${this.pitchPilot.score}`, label: 'Score' });
