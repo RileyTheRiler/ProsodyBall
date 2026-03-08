@@ -164,6 +164,27 @@
       scroll-snap-type: x proximity;
     }
 
+    .btn-fill {
+      width: 100%;
+    }
+
+    .btn-upload {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn-canvas-action {
+      padding: 6px 14px;
+      font-weight: 600;
+      border-radius: 8px;
+    }
+
+    .hud-setting[hidden] {
+      display: none !important;
+    }
+
     .hud-secondary::-webkit-scrollbar {
       display: none;
     }
@@ -2133,12 +2154,6 @@
         justify-content: flex-start;
       }
 
-      .teleprompter-overlay {
-        top: 96px;
-        width: calc(100% - 16px);
-        font-size: 0.88rem;
-      }
-
       /* Stack the two-column menu vertically on mobile */
       .menu-split {
         flex-direction: column;
@@ -2956,6 +2971,13 @@
       }
 
       /* Mode cards: compact on tiny screens */
+      /* Mode cards: still tappable on tiny screens */
+      .mode-card {
+        min-width: 68px;
+        min-height: 66px;
+      }
+
+      /* Mode cards even more compact on tiny screens */
       .menu-left {
         grid-template-columns: repeat(2, minmax(0, 1fr));
         max-height: 210px;
@@ -4527,6 +4549,38 @@
       border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     }
 
+    .settings-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 0.86rem;
+      color: var(--text-muted);
+    }
+
+    .settings-status {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .settings-status-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-family: 'Space Mono', monospace;
+      font-size: 0.72rem;
+      color: rgba(232, 230, 240, 0.7);
+    }
+
+    .settings-status-item strong {
+      color: var(--text-primary);
+      font-weight: 700;
+    }
+
     .settings-group:last-child {
       border-bottom: none;
     }
@@ -4674,6 +4728,7 @@
         <label class="btn btn-help" for="audioUploadInput"
           style="cursor: pointer; display: inline-flex; align-items: center; justify-content: center;"
           title="Upload Audio File" aria-label="Upload Audio File" role="button">
+        <label class="btn btn-help btn-upload" for="audioUploadInput" title="Upload Audio File">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round" stroke-linejoin="round" style="pointer-events: none;">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -4694,6 +4749,8 @@
           style="padding: 6px 14px; font-weight: 600; border-radius: 8px;">Pause</button>
         <button class="btn btn-cb canvas-only" id="clearCanvasBtn" title="Clear current canvas drawing" aria-label="Clear current canvas drawing"
           style="padding: 6px 14px; font-weight: 600; border-radius: 8px;">Clear</button>
+        <button class="btn btn-cb canvas-only btn-canvas-action" id="pauseCanvasBtn" title="Pause paint updates">Pause</button>
+        <button class="btn btn-cb canvas-only btn-canvas-action" id="clearCanvasBtn" title="Clear current canvas drawing">Clear</button>
       </div>
       <div class="hud-controls hud-secondary" aria-label="Secondary settings">
         <button class="btn btn-cb" id="settingsBtn" title="Open Settings" aria-label="Open Settings">
@@ -4719,6 +4776,7 @@
           </svg>
         </button>
         <button class="btn btn-vib hud-setting" style="display:none" id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts">
+        <button class="btn btn-vib hud-setting" hidden id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
             <rect x="8" y="4" width="8" height="16" rx="2" />
@@ -4729,6 +4787,7 @@
           </svg>
         </button>
         <button class="btn btn-cb hud-setting" style="display:none" id="cameraBtn" title="Camera Mirror" aria-label="Camera Mirror">
+        <button class="btn btn-cb hud-setting" hidden id="cameraBtn" title="Camera Mirror" aria-label="Camera Mirror">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round" stroke-linejoin="round">
             <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
@@ -4737,6 +4796,8 @@
         </button>
         <button class="btn btn-help hud-setting" style="display:none" id="helpBtn">How to Play</button>
         <button class="btn btn-help hud-setting" style="display:none" id="homeBtn" title="Return to Main Menu" aria-label="Return to Main Menu">
+        <button class="btn btn-help hud-setting" hidden id="helpBtn">How to Play</button>
+        <button class="btn btn-help hud-setting" hidden id="homeBtn" title="Return to Main Menu">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
             <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
@@ -4744,7 +4805,7 @@
           </svg>
           Menu
         </button>
-        <button class="btn btn-help" id="recoverMicBtn" title="Recover microphone session" style="display:none;">Recover Mic</button>
+        <button class="btn btn-help" id="recoverMicBtn" title="Recover microphone session" hidden>Recover Mic</button>
       </div>
     </div>
 
@@ -4754,23 +4815,47 @@
 
       <div class="settings-group">
         <span class="settings-label">Voice Tracking</span>
-        <select id="voiceProfileSelect" class="theme-select" style="width:100%" aria-label="Voice profile preset">
+        <select id="voiceProfileSelect" class="theme-select btn-fill" aria-label="Voice profile preset">
           <option value="auto" selected>Profile: Auto</option>
           <option value="deeper">Profile: Deep / Chest-Focus</option>
           <option value="lighter">Profile: High-Range / Bright</option>
           <option value="expressive">Profile: Expressive Practice</option>
         </select>
+        <div class="settings-status" aria-live="polite">
+          <div class="settings-status-item"><span>Pitch profile</span><strong id="pitchProfileLearned">Learning… 0%</strong></div>
+          <div class="settings-status-item"><span>Tilt profile</span><strong id="tiltProfileLearned">Learning… 0%</strong></div>
+          <div class="settings-status-item"><span>Frame confidence</span><strong id="frameConfidenceLabel">0%</strong></div>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <span class="settings-label">Input Source</span>
+        <select id="micDeviceSelect" class="theme-select btn-fill" aria-label="Microphone device selection">
+          <option value="default">Microphone: System Default</option>
+        </select>
+        <div class="settings-row">
+          <span>Echo cancellation</span>
+          <label class="toggle-switch"><input id="echoCancelToggle" type="checkbox" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <span>Noise suppression</span>
+          <label class="toggle-switch"><input id="noiseSuppressToggle" type="checkbox" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <span>Auto gain control</span>
+          <label class="toggle-switch"><input id="autoGainToggle" type="checkbox" checked><span class="toggle-slider"></span></label>
+        </div>
       </div>
 
       <div class="settings-group">
         <span class="settings-label">Performance</span>
-        <button class="btn btn-help" style="width:100%" id="motionToggle" aria-label="Toggle low motion mode"
+        <button class="btn btn-help btn-fill" id="motionToggle" aria-label="Toggle low motion mode"
           title="Low motion mode">Motion: Auto</button>
       </div>
 
       <div class="settings-group">
         <span class="settings-label">Calibration</span>
-        <button class="btn btn-help" style="width:100%" id="recalibrateBtn"
+        <button class="btn btn-help btn-fill" id="recalibrateBtn"
           title="Run mic calibration again">Recalibrate</button>
       </div>
 

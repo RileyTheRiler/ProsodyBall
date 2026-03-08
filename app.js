@@ -149,7 +149,7 @@ export class VoiceAnalyzer {
     return this._buffers[name];
   }
 
-  async start(audioFile = null) {
+  async start(audioFile = null, inputOptions = {}) {
     try {
       this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
@@ -169,9 +169,15 @@ export class VoiceAnalyzer {
         this.source.connect(this.audioCtx.destination);
       } else {
         // Handle microphone input
-        this.stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-        });
+        const requestedConstraints = {
+          echoCancellation: inputOptions.echoCancellation !== false,
+          noiseSuppression: inputOptions.noiseSuppression !== false,
+          autoGainControl: inputOptions.autoGainControl !== false,
+        };
+        if (inputOptions.deviceId) {
+          requestedConstraints.deviceId = { exact: inputOptions.deviceId };
+        }
+        this.stream = await navigator.mediaDevices.getUserMedia({ audio: requestedConstraints });
         this.source = this.audioCtx.createMediaStreamSource(this.stream);
       }
 
@@ -1799,6 +1805,12 @@ class VoxBallGame {
 
     // ====== ACCESSIBILITY ======
     this.userMotionPreference = localStorage.getItem('vox:motionPreference') || 'auto';
+    this.micInputPreferences = {
+      deviceId: localStorage.getItem('vox:micDeviceId') || 'default',
+      echoCancellation: localStorage.getItem('vox:echoCancellation') !== 'false',
+      noiseSuppression: localStorage.getItem('vox:noiseSuppression') !== 'false',
+      autoGainControl: localStorage.getItem('vox:autoGainControl') !== 'false',
+    };
     this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     this.baseParticleScale = 1;
     this.particleScale = 1;
@@ -2723,6 +2735,13 @@ class VoxBallGame {
 
     const teleprompterModeSelect = document.getElementById('teleprompterModeSelect');
     const voiceProfileSelect = document.getElementById('voiceProfileSelect');
+    const micDeviceSelect = document.getElementById('micDeviceSelect');
+    const echoCancelToggle = document.getElementById('echoCancelToggle');
+    const noiseSuppressToggle = document.getElementById('noiseSuppressToggle');
+    const autoGainToggle = document.getElementById('autoGainToggle');
+    const pitchProfileLearned = document.getElementById('pitchProfileLearned');
+    const tiltProfileLearned = document.getElementById('tiltProfileLearned');
+    const frameConfidenceLabel = document.getElementById('frameConfidenceLabel');
     const motionToggle = document.getElementById('motionToggle');
     const cameraBtn = document.getElementById('cameraBtn');
     const cameraModal = document.getElementById('cameraModal');
@@ -2793,9 +2812,64 @@ class VoxBallGame {
       if (statusLiveRegion) statusLiveRegion.textContent = '';
     };
 
+    const updateAdaptiveProfileStatus = () => {
+      const pitch = this.analyzer.pitchProfile;
+      const tilt = this.analyzer.tiltProfile;
+      const pitchPct = Math.min(100, Math.round((pitch.voicedTime / Math.max(0.1, pitch.learningDuration)) * 100));
+      const tiltPct = Math.min(100, Math.round((tilt.voicedTime / Math.max(0.1, tilt.learningDuration)) * 100));
+      if (pitchProfileLearned) {
+        pitchProfileLearned.textContent = pitch.isLearned
+          ? `${Math.round(pitch.min)}–${Math.round(pitch.max)} Hz learned`
+          : `Learning… ${pitchPct}%`;
+      }
+      if (tiltProfileLearned) {
+        tiltProfileLearned.textContent = tilt.isLearned
+          ? `${tilt.min.toFixed(1)} to ${tilt.max.toFixed(1)} dB learned`
+          : `Learning… ${tiltPct}%`;
+      }
+      if (frameConfidenceLabel) {
+        frameConfidenceLabel.textContent = `${Math.round(this.analyzer.frameConfidence * 100)}%`;
+      }
+    };
+
+    const syncMicSettingsUi = () => {
+      if (echoCancelToggle) echoCancelToggle.checked = this.micInputPreferences.echoCancellation;
+      if (noiseSuppressToggle) noiseSuppressToggle.checked = this.micInputPreferences.noiseSuppression;
+      if (autoGainToggle) autoGainToggle.checked = this.micInputPreferences.autoGainControl;
+      if (micDeviceSelect) micDeviceSelect.value = this.micInputPreferences.deviceId || 'default';
+    };
+
+    const populateMicDevices = async () => {
+      if (!micDeviceSelect || !navigator.mediaDevices?.enumerateDevices) return;
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const mics = devices.filter((d) => d.kind === 'audioinput');
+        micDeviceSelect.innerHTML = '';
+        const defaultOption = document.createElement('option');
+        defaultOption.value = 'default';
+        defaultOption.textContent = 'Microphone: System Default';
+        micDeviceSelect.appendChild(defaultOption);
+        mics.forEach((mic, idx) => {
+          const option = document.createElement('option');
+          option.value = mic.deviceId;
+          option.textContent = `Mic: ${mic.label || `Microphone ${idx + 1}`}`;
+          micDeviceSelect.appendChild(option);
+        });
+        const hasStoredDevice = this.micInputPreferences.deviceId === 'default'
+          || mics.some((mic) => mic.deviceId === this.micInputPreferences.deviceId);
+        if (!hasStoredDevice) {
+          this.micInputPreferences.deviceId = 'default';
+          localStorage.setItem('vox:micDeviceId', 'default');
+        }
+        syncMicSettingsUi();
+      } catch (err) {
+        console.warn('Could not enumerate microphones:', err);
+      }
+    };
+
     const setRecoverMicVisible = (visible) => {
       if (!recoverMicBtn) return;
-      recoverMicBtn.style.display = visible ? '' : 'none';
+      recoverMicBtn.toggleAttribute('hidden', !visible);
       recoverMicBtn.classList.toggle('active', visible);
     };
 
@@ -2980,7 +3054,21 @@ class VoxBallGame {
         return;
       }
 
-      const result = await this.analyzer.start(selectedAudioFile);
+      const buildInputOptions = () => ({
+        deviceId: this.micInputPreferences.deviceId !== 'default' ? this.micInputPreferences.deviceId : undefined,
+        echoCancellation: this.micInputPreferences.echoCancellation,
+        noiseSuppression: this.micInputPreferences.noiseSuppression,
+        autoGainControl: this.micInputPreferences.autoGainControl,
+      });
+
+      let result = await this.analyzer.start(selectedAudioFile, buildInputOptions());
+      // Recover automatically if a previously saved device is no longer available.
+      if (!selectedAudioFile && !result.ok && result.error === 'NotFoundError' && this.micInputPreferences.deviceId !== 'default') {
+        this.micInputPreferences.deviceId = 'default';
+        localStorage.setItem('vox:micDeviceId', 'default');
+        syncMicSettingsUi();
+        result = await this.analyzer.start(selectedAudioFile, buildInputOptions());
+      }
 
       // Clear the selected file after starting so it doesn't persistently start with the file
       // if the user later clicks the normal Start button.
@@ -3035,6 +3123,7 @@ class VoxBallGame {
       if (diagPanel) {
         diagPanel.innerHTML = `Mic permission: <b>${activeDiag.permission}</b> · Audio: <b>${activeDiag.audioState}</b> · API: <b>${activeDiag.mediaDevices ? 'ok' : 'missing'}</b>`;
       }
+      populateMicDevices();
 
       if (!this.hasCompletedCalibration) {
         let calResult = { outcome: 'incomplete', skipped: true, reason: 'timeout-guard' };
@@ -3530,6 +3619,26 @@ class VoxBallGame {
       applyVoiceProfilePreset(e.target.value);
     });
 
+    micDeviceSelect?.addEventListener('change', (e) => {
+      this.micInputPreferences.deviceId = e.target.value || 'default';
+      localStorage.setItem('vox:micDeviceId', this.micInputPreferences.deviceId);
+    });
+
+    echoCancelToggle?.addEventListener('change', (e) => {
+      this.micInputPreferences.echoCancellation = !!e.target.checked;
+      localStorage.setItem('vox:echoCancellation', String(this.micInputPreferences.echoCancellation));
+    });
+
+    noiseSuppressToggle?.addEventListener('change', (e) => {
+      this.micInputPreferences.noiseSuppression = !!e.target.checked;
+      localStorage.setItem('vox:noiseSuppression', String(this.micInputPreferences.noiseSuppression));
+    });
+
+    autoGainToggle?.addEventListener('change', (e) => {
+      this.micInputPreferences.autoGainControl = !!e.target.checked;
+      localStorage.setItem('vox:autoGainControl', String(this.micInputPreferences.autoGainControl));
+    });
+
     canvasModeSelect?.addEventListener('change', (e) => {
       this.canvasMode = e.target.value;
       // Reset pause state when switching canvas sub-modes
@@ -3773,6 +3882,9 @@ class VoxBallGame {
       motionToggle.classList.toggle('active', this.userMotionPreference === 'low');
     };
     syncMotionToggleLabel();
+    syncMicSettingsUi();
+    updateAdaptiveProfileStatus();
+    populateMicDevices();
     motionToggle?.addEventListener('click', () => {
       const order = ['auto', 'low', 'full'];
       const idx = order.indexOf(this.userMotionPreference);
@@ -3808,6 +3920,9 @@ class VoxBallGame {
         settingsPanel.style.display = 'flex';
         settingsPanel.style.opacity = '1';
         settingsPanel.style.pointerEvents = 'auto';
+        syncMicSettingsUi();
+        updateAdaptiveProfileStatus();
+        populateMicDevices();
         helpTooltip.classList.remove('show');
         recordingsDrawer.classList.remove('show');
         vibPanel.classList.remove('show');
@@ -10097,6 +10212,27 @@ class VoxBallGame {
     }
     const mapSplatter = document.getElementById('mapSplatter');
     if (mapSplatter) mapSplatter.classList.toggle('active-ping', this.metricHighlightTimers.articulation > 0);
+
+    const pitchStatus = document.getElementById('pitchProfileLearned');
+    const tiltStatus = document.getElementById('tiltProfileLearned');
+    const confidenceStatus = document.getElementById('frameConfidenceLabel');
+    if (pitchStatus || tiltStatus || confidenceStatus) {
+      const pitch = this.analyzer.pitchProfile;
+      const tilt = this.analyzer.tiltProfile;
+      if (pitchStatus) {
+        const pct = Math.min(100, Math.round((pitch.voicedTime / Math.max(0.1, pitch.learningDuration)) * 100));
+        pitchStatus.textContent = pitch.isLearned
+          ? `${Math.round(pitch.min)}–${Math.round(pitch.max)} Hz learned`
+          : `Learning… ${pct}%`;
+      }
+      if (tiltStatus) {
+        const pct = Math.min(100, Math.round((tilt.voicedTime / Math.max(0.1, tilt.learningDuration)) * 100));
+        tiltStatus.textContent = tilt.isLearned
+          ? `${tilt.min.toFixed(1)} to ${tilt.max.toFixed(1)} dB learned`
+          : `Learning… ${pct}%`;
+      }
+      if (confidenceStatus) confidenceStatus.textContent = `${Math.round(this.analyzer.frameConfidence * 100)}%`;
+    }
   }
 
   _meterLabel(val, low, mid, high) {
