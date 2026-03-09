@@ -2736,9 +2736,13 @@ class VoxBallGame {
     const empty = document.getElementById('recsEmpty');
     const badge = document.getElementById('recBadge');
     const recBtn = document.getElementById('recordingsBtn');
+    const clearAllBtn = document.getElementById('clearAllRecs');
 
     badge.textContent = this.recordings.length;
     recBtn.classList.toggle('visible', this.recordings.length > 0);
+    if (clearAllBtn) {
+      clearAllBtn.disabled = this.recordings.length === 0;
+    }
 
     if (this.recordings.length === 0) {
       list.innerHTML = '';
@@ -4489,7 +4493,9 @@ class VoxBallGame {
 
     clearAllRecs.addEventListener('click', () => {
       if (this.recordings.length === 0) return;
-      this.clearAllRecordings();
+      if (window.confirm('Are you sure you want to delete all recordings? This cannot be undone.')) {
+        this.clearAllRecordings();
+      }
     });
 
     this.canvas.addEventListener('pointerdown', (e) => this._handleKeyboardPointer(e));

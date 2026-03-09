@@ -3516,9 +3516,14 @@
       transition: opacity 0.2s;
     }
 
-    .recordings-header .btn-clear-all:hover {
+    .recordings-header .btn-clear-all:hover:not(:disabled) {
       opacity: 1;
       color: #ff6b6b;
+    }
+
+    .recordings-header .btn-clear-all:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
     }
 
     .recordings-list {
@@ -5531,7 +5536,7 @@
       <div class="recordings-drawer" id="recordingsDrawer">
         <div class="recordings-header">
           <h3>Recordings</h3>
-          <button class="btn-clear-all" id="clearAllRecs">Clear all</button>
+          <button class="btn-clear-all" id="clearAllRecs" aria-label="Clear all recordings">Clear all</button>
         </div>
         <div class="recordings-list" id="recordingsList">
           <div class="recordings-empty" id="recsEmpty">No recordings yet. Hit <b>Rec</b> while playing!</div>
