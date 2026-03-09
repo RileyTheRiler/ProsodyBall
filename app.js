@@ -2107,6 +2107,7 @@ class VoxBallGame {
       const vibToggle = document.getElementById('vibToggle');
       if (vibPanel?.classList.contains('show') && !vibPanel.contains(e.target) && e.target !== vibToggle) {
         vibPanel.classList.remove('show');
+        vibToggle?.setAttribute('aria-expanded', 'false');
         vibToggle?.classList.remove('active');
         vibToggle?.setAttribute('aria-expanded', 'false');
       }
@@ -3008,6 +3009,7 @@ class VoxBallGame {
         cameraVideo.srcObject = null;
       }
       cameraModal?.classList.remove('show');
+      cameraBtn?.setAttribute('aria-expanded', 'false');
       cameraBtn?.classList.remove('active');
     };
 
@@ -3025,6 +3027,7 @@ class VoxBallGame {
           cameraVideo.srcObject = cameraStream;
         }
         cameraModal?.classList.add('show');
+        cameraBtn?.setAttribute('aria-expanded', 'true');
         cameraBtn?.classList.add('active');
       } catch (e) {
         showError('📷 Camera access denied or not available.');
@@ -4034,6 +4037,7 @@ class VoxBallGame {
     const toggleSettings = (show) => {
       const isVisible = show !== undefined ? show : !settingsPanel.classList.contains('show');
       settingsPanel.classList.toggle('show', isVisible);
+      settingsBtn?.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
       modalBackdrop.classList.toggle('show', isVisible);
       settingsBtn?.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
 
@@ -4051,6 +4055,7 @@ class VoxBallGame {
         recordingsDrawer.classList.remove('show');
         document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'false');
         vibPanel.classList.remove('show');
+        document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
         vibBtn?.setAttribute('aria-expanded', 'false');
       } else {
         settingsPanel.style.display = 'none';
@@ -4077,6 +4082,7 @@ class VoxBallGame {
       // Vibration panel
       if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || e.target !== vibBtn)) {
         vibPanel.classList.remove('show');
+        document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
         vibBtn?.setAttribute('aria-expanded', 'false');
       }
     });
@@ -4085,6 +4091,8 @@ class VoxBallGame {
       vibBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (vibPanel) {
+          vibPanel.classList.toggle('show');
+          vibBtn.setAttribute('aria-expanded', vibPanel.classList.contains('show') ? 'true' : 'false');
           const isShown = vibPanel.classList.toggle('show');
           vibBtn.setAttribute('aria-expanded', isShown ? 'true' : 'false');
         }
@@ -4095,6 +4103,9 @@ class VoxBallGame {
         if (recordingsDrawer) {
           recordingsDrawer.classList.remove('show');
           document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'false');
+        }
+        if (settingsPanel && settingsPanel.classList.contains('show')) {
+           toggleSettings(false);
         }
         if (settingsPanel && settingsPanel.classList.contains('show')) toggleSettings(false);
           vibPanel.classList.toggle('show');
@@ -4318,6 +4329,8 @@ class VoxBallGame {
       helpBtn.setAttribute('aria-expanded', helpTooltip.classList.contains('show') ? 'true' : 'false');
       recordingsDrawer.classList.remove('show');
       document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'false');
+      vibPanel.classList.remove('show');
+      document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
 
       vibPanel.classList.remove('show');
       document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
@@ -4346,6 +4359,7 @@ class VoxBallGame {
       }
       if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || !vibBtn.contains(e.target))) {
         vibPanel.classList.remove('show');
+        document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
         vibBtn?.setAttribute('aria-expanded', 'false');
       }
     });
@@ -4396,6 +4410,8 @@ class VoxBallGame {
       recordingsBtn.setAttribute('aria-expanded', recordingsDrawer.classList.contains('show') ? 'true' : 'false');
       helpTooltip.classList.remove('show');
       document.getElementById('helpBtn')?.setAttribute('aria-expanded', 'false');
+      vibPanel.classList.remove('show');
+      document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
 
       vibPanel.classList.remove('show');
       document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
