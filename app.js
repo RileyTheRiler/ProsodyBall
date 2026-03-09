@@ -572,12 +572,12 @@ export class VoiceAnalyzer {
       const startBin = Math.max(0, Math.floor(loHz / fftBinHz));
       const endBin = Math.min(fData.length - 1, Math.ceil(hiHz / fftBinHz));
       if (endBin < startBin) return 0;
-      let sum = 0;
+      let bandSum = 0;
       for (let i = startBin; i <= endBin; i++) {
         const mag = Math.pow(10, fData[i] / 20);
-        sum += mag * mag;
+        bandSum += mag * mag;
       }
-      return sum;
+      return bandSum;
     };
 
     const eLowTilt = sumBandPower(lowStartHz, lowEndHz);
@@ -2015,16 +2015,19 @@ class VoxBallGame {
       if (vibPanel?.classList.contains('show') && !vibPanel.contains(e.target) && e.target !== vibToggle) {
         vibPanel.classList.remove('show');
         vibToggle?.classList.remove('active');
+        if (vibToggle) vibToggle.setAttribute('aria-expanded', 'false');
       }
       const recDrawer = document.getElementById('recordingsDrawer');
       const recBtn = document.getElementById('recordingsBtn');
       if (recDrawer?.classList.contains('show') && !recDrawer.contains(e.target) && e.target !== recBtn && !recBtn?.contains(e.target)) {
         recDrawer.classList.remove('show');
+        if (recBtn) recBtn.setAttribute('aria-expanded', 'false');
       }
       const helpTooltip = document.getElementById('helpTooltip');
       const helpBtn = document.getElementById('helpBtn');
       if (helpTooltip?.classList.contains('show') && !helpTooltip.contains(e.target) && e.target !== helpBtn) {
         helpTooltip.classList.remove('show');
+        if (helpBtn) helpBtn.setAttribute('aria-expanded', 'false');
       }
     };
     document.addEventListener('pointerdown', onMobilePointerDown);
@@ -2913,6 +2916,7 @@ class VoxBallGame {
       }
       cameraModal?.classList.remove('show');
       cameraBtn?.classList.remove('active');
+      if (cameraBtn) cameraBtn.setAttribute('aria-expanded', 'false');
     };
 
     const toggleCamera = async () => {
@@ -2930,6 +2934,7 @@ class VoxBallGame {
         }
         cameraModal?.classList.add('show');
         cameraBtn?.classList.add('active');
+        if (cameraBtn) cameraBtn.setAttribute('aria-expanded', 'true');
       } catch (e) {
         showError('📷 Camera access denied or not available.');
         console.error('Camera error:', e);
@@ -3913,6 +3918,7 @@ class VoxBallGame {
       const isVisible = show !== undefined ? show : !settingsPanel.classList.contains('show');
       settingsPanel.classList.toggle('show', isVisible);
       modalBackdrop.classList.toggle('show', isVisible);
+      if (settingsBtn) settingsBtn.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
 
       // Force DOM visibility (bypass any CSS specificity issues)
       if (isVisible) {
@@ -3951,16 +3957,28 @@ class VoxBallGame {
       // Vibration panel
       if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || e.target !== vibBtn)) {
         vibPanel.classList.remove('show');
+        if (vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
       }
     });
 
     if (vibBtn) {
       vibBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (vibPanel) vibPanel.classList.toggle('show');
-        if (helpTooltip) helpTooltip.classList.remove('show');
-        if (recordingsDrawer) recordingsDrawer.classList.remove('show');
-        if (settingsPanel) settingsPanel.classList.remove('show');
+        if (vibPanel) {
+          const isVisible = vibPanel.classList.toggle('show');
+          vibBtn.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
+        }
+        if (helpTooltip) {
+          helpTooltip.classList.remove('show');
+          const helpBtn = document.getElementById('helpBtn');
+          if (helpBtn) helpBtn.setAttribute('aria-expanded', 'false');
+        }
+        if (recordingsDrawer) {
+          recordingsDrawer.classList.remove('show');
+          const recBtn = document.getElementById('recordingsBtn');
+          if (recBtn) recBtn.setAttribute('aria-expanded', 'false');
+        }
+        if (settingsPanel && settingsPanel.classList.contains('show')) toggleSettings(false);
       });
     }
 
@@ -4169,9 +4187,14 @@ class VoxBallGame {
     helpBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this._updateHelpContent();
-      helpTooltip.classList.toggle('show');
+      const isVisible = helpTooltip.classList.toggle('show');
+      helpBtn.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
       recordingsDrawer.classList.remove('show');
+      const recBtn = document.getElementById('recordingsBtn');
+      if (recBtn) recBtn.setAttribute('aria-expanded', 'false');
       vibPanel.classList.remove('show');
+      const vibToggle = document.getElementById('vibToggle');
+      if (vibToggle) vibToggle.setAttribute('aria-expanded', 'false');
     });
 
     helpTabs.forEach((tab) => {
@@ -4187,12 +4210,16 @@ class VoxBallGame {
     document.addEventListener('click', (e) => {
       if (helpTooltip && !helpTooltip.contains(e.target) && e.target !== helpBtn) {
         helpTooltip.classList.remove('show');
+        if (helpBtn) helpBtn.setAttribute('aria-expanded', 'false');
       }
       if (recordingsDrawer && !recordingsDrawer.contains(e.target) && (!recordingsBtn || !recordingsBtn.contains(e.target))) {
         recordingsDrawer.classList.remove('show');
+        if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', 'false');
       }
       if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || !vibBtn.contains(e.target))) {
         vibPanel.classList.remove('show');
+        const vibToggle = document.getElementById('vibToggle');
+        if (vibToggle) vibToggle.setAttribute('aria-expanded', 'false');
       }
     });
 
@@ -4235,9 +4262,14 @@ class VoxBallGame {
 
     recordingsBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      recordingsDrawer.classList.toggle('show');
+      const isVisible = recordingsDrawer.classList.toggle('show');
+      recordingsBtn.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
       helpTooltip.classList.remove('show');
+      const helpBtnEl = document.getElementById('helpBtn');
+      if (helpBtnEl) helpBtnEl.setAttribute('aria-expanded', 'false');
       vibPanel.classList.remove('show');
+      const vibBtnEl = document.getElementById('vibToggle');
+      if (vibBtnEl) vibBtnEl.setAttribute('aria-expanded', 'false');
     });
 
     clearAllRecs.addEventListener('click', () => {
