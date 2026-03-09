@@ -3739,16 +3739,25 @@ class VoxBallGame {
 
       modeCards.forEach(c => c.classList.toggle('selected', c === card));
       modeDetails?.classList.add('show');
-      ballDetails?.classList.toggle('show', mode === 'ball');
-      creatureDetails?.classList.toggle('show', mode === 'creature');
-      gardenDetails?.classList.toggle('show', mode === 'garden');
-      canvasDetails?.classList.toggle('show', mode === 'canvas');
-      keyboardDetails?.classList.toggle('show', mode === 'keyboard');
-      pilotDetails?.classList.toggle('show', mode === 'pilot');
-      roadDetails?.classList.toggle('show', mode === 'road');
-      ascentDetails?.classList.toggle('show', mode === 'ascent');
-      prismDetails?.classList.toggle('show', mode === 'prism');
-      vowelvalleyDetails?.classList.toggle('show', mode === 'vowelvalley');
+
+      // iPad/Safari reliability: apply both class + inline display so detail panes
+      // always paint when a mode card is selected.
+      const setDetailPanelVisible = (panel, visible) => {
+        if (!panel) return;
+        panel.classList.toggle('show', visible);
+        panel.style.display = visible ? 'flex' : 'none';
+      };
+
+      setDetailPanelVisible(ballDetails, mode === 'ball');
+      setDetailPanelVisible(creatureDetails, mode === 'creature');
+      setDetailPanelVisible(gardenDetails, mode === 'garden');
+      setDetailPanelVisible(canvasDetails, mode === 'canvas');
+      setDetailPanelVisible(keyboardDetails, mode === 'keyboard');
+      setDetailPanelVisible(pilotDetails, mode === 'pilot');
+      setDetailPanelVisible(roadDetails, mode === 'road');
+      setDetailPanelVisible(ascentDetails, mode === 'ascent');
+      setDetailPanelVisible(prismDetails, mode === 'prism');
+      setDetailPanelVisible(vowelvalleyDetails, mode === 'vowelvalley');
 
       const titles = { ball: 'VOX ARCADE', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD', ascent: 'SPECTRAL ASCENT', prism: 'PRISM READER', vowelvalley: 'VOWEL VALLEY' };
       document.querySelector('.hud-title').textContent = titles[mode] || 'VOX ARCADE';
