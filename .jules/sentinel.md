@@ -11,6 +11,11 @@
 **Vulnerability:** Found multiple DOM-based XSS vulnerabilities in `app.js` where `window.location.href` and external error messages (`result.message`) were directly concatenated into HTML strings and passed to `innerHTML` via the `showError` function and embedded `iframeNotice`.
 **Learning:** URL parameters or variables derived from `window.location` (like `href`) must never be trusted. Even if constructed client-side, they can be manipulated to break out of attributes. Relying on string concatenation for DOM updates safely is error-prone.
 **Prevention:** Always use safe DOM APIs like `document.createElement`, `.textContent`, and direct property assignments (e.g., `link.href`) when constructing UI elements dynamically with untrusted data. Helper functions like `showError` should be designed to accept and render DOM `Node` objects safely.
+
+## 2024-05-25 - [DOM-based XSS in Error Banner]
+**Vulnerability:** Found `innerHTML` being used to render string error messages in `showError` and `start` functions in `app.js`. If an error string was concatenated with an untrusted message or URL, it could lead to XSS.
+**Learning:** `innerHTML` is inherently dangerous when rendering error text, as seemingly harmless external error strings might occasionally embed malicious payloads if the error source originates from a URL parameter or user manipulation. Even hardcoded string concatenations create a brittle pattern where a future developer might unknowingly introduce a payload.
+**Prevention:** Use `.textContent` for rendering textual error strings. When formatting tags like `<br>` or links (`<a>`) are needed in an error message, construct them dynamically using `document.createElement()` and `document.createTextNode()`, then append them to a wrapper node and pass the node to the error display function.
 ## 2024-05-28 - [DOM-based XSS via innerHTML eliminated]
 **Vulnerability:** Found multiple DOM-based XSS vectors in `app.js` where `innerHTML` was being assigned dynamic strings, specifically in `showError`, `diagPanel`, and `errNode` functions.
 **Learning:** The codebase had remaining instances of `innerHTML` usage despite previous fixes. Direct assignment to `innerHTML` with dynamic content (even error messages) is unsafe as it allows arbitrary HTML injection.

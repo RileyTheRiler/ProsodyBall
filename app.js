@@ -3253,9 +3253,10 @@ class VoxBallGame {
             link.textContent = 'Open in a new tab for full mic access ↗';
             msg.appendChild(link);
           } else {
-            msg =
-              '🎙 Microphone permission denied.<br>' +
-              'Click the lock/camera icon in your address bar → Allow microphone → then try again.';
+            msg = document.createElement('div');
+            msg.appendChild(document.createTextNode('🎙 Microphone permission denied.'));
+            msg.appendChild(document.createElement('br'));
+            msg.appendChild(document.createTextNode('Click the lock/camera icon in your address bar → Allow microphone → then try again.'));
           }
         } else if (result.error === 'NotFoundError') {
           msg = '🎙 No microphone detected. Please connect a microphone and try again.';
