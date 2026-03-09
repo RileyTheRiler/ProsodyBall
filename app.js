@@ -3270,6 +3270,10 @@ class VoxBallGame {
         if (result.error === 'NotAllowedError') {
           if (isInIframe) {
             msg = document.createElement('div');
+            msg.append(
+              '🎙 Microphone blocked by browser — this usually happens inside iframes.',
+              document.createElement('br')
+            );
             msg.append('🎙 Microphone blocked by browser — this usually happens inside iframes.', document.createElement('br'));
             msg.textContent = '';
             msg.appendChild(document.createTextNode('🎙 Microphone blocked by browser — this usually happens inside iframes.'));
@@ -3281,6 +3285,11 @@ class VoxBallGame {
             msg.appendChild(link);
           } else {
             msg = document.createElement('div');
+            msg.append(
+              '🎙 Microphone permission denied.',
+              document.createElement('br'),
+              'Click the lock/camera icon in your address bar → Allow microphone → then try again.'
+            );
             msg.appendChild(document.createTextNode('🎙 Microphone permission denied.'));
             msg.appendChild(document.createElement('br'));
             msg.appendChild(document.createTextNode('Click the lock/camera icon in your address bar → Allow microphone → then try again.'));

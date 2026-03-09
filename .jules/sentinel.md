@@ -12,6 +12,10 @@
 **Learning:** URL parameters or variables derived from `window.location` (like `href`) must never be trusted. Even if constructed client-side, they can be manipulated to break out of attributes. Relying on string concatenation for DOM updates safely is error-prone.
 **Prevention:** Always use safe DOM APIs like `document.createElement`, `.textContent`, and direct property assignments (e.g., `link.href`) when constructing UI elements dynamically with untrusted data. Helper functions like `showError` should be designed to accept and render DOM `Node` objects safely.
 
+## 2026-03-07 - [DOM-based XSS Risk via Hardcoded Error Messages]
+**Vulnerability:** Found multiple instances where `innerHTML` was used to assign hardcoded error messages containing HTML tags (like `<br>`) in `app.js`. While currently not exploitable, it violates the principle of defense-in-depth and poses a risk if user inputs were ever concatenated into these messages.
+**Learning:** Relying on `innerHTML` even for static HTML content is a poor security practice, especially when safe DOM APIs can accomplish the same result. `msg` or `errNode` was constructed using `innerHTML` and a string, creating an unnecessary attack surface.
+**Prevention:** Use `document.createElement` and `.append()` to safely insert text nodes and HTML elements, ensuring that any future developer who extends these error messages with user inputs will not inadvertently introduce a DOM-based XSS vulnerability.
 ## 2024-05-25 - [DOM-based XSS in Error Banner]
 **Vulnerability:** Found `innerHTML` being used to render string error messages in `showError` and `start` functions in `app.js`. If an error string was concatenated with an untrusted message or URL, it could lead to XSS.
 **Learning:** `innerHTML` is inherently dangerous when rendering error text, as seemingly harmless external error strings might occasionally embed malicious payloads if the error source originates from a URL parameter or user manipulation. Even hardcoded string concatenations create a brittle pattern where a future developer might unknowingly introduce a payload.
