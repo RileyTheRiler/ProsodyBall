@@ -1386,10 +1386,12 @@
       overflow: hidden;
     }
 
-    /* Left-column card list (replaces mode-picker grid) */
+    /* Left-column card list (kept as real container for Safari/iPad reliability) */
     .mode-picker {
-      display: contents;
-      /* children go directly into .menu-left */
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      width: 100%;
     }
 
     .mode-card {
@@ -2165,8 +2167,7 @@
       /* Game card list: compact grid so mode discovery is easier on phones */
       .menu-left {
         width: 100%;
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        display: block;
         overflow-y: auto;
         overflow-x: hidden;
         max-height: 220px;
@@ -2175,6 +2176,12 @@
         gap: 8px;
         scrollbar-width: thin;
         scrollbar-color: rgba(255, 255, 255, 0.24) transparent;
+      }
+
+      .mode-picker {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
       }
 
       .menu-left::-webkit-scrollbar {
@@ -2979,8 +2986,11 @@
 
       /* Mode cards even more compact on tiny screens */
       .menu-left {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
         max-height: 210px;
+      }
+
+      .mode-picker {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
       .mode-card {
@@ -3197,12 +3207,17 @@
       }
 
       .menu-left {
-        flex-direction: column;
         width: 110px;
         overflow-y: auto;
         overflow-x: hidden;
         flex-shrink: 0;
         scrollbar-width: none;
+      }
+
+      .mode-picker {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
       }
 
       .menu-left::-webkit-scrollbar {
