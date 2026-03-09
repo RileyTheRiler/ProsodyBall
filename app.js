@@ -1140,6 +1140,7 @@ export class VoiceAnalyzer {
     // Find roots of A(z) = 1 - a[1]z^-1 - a[2]z^-2 - ...
     // Equivalent polynomial: z^order - a[1]z^(order-1) - ... - a[order] = 0
     // We use Durand-Kerner iterative root finding (works well for moderate orders)
+    const { rootsRe, rootsIm } = this._findLPCRoots(a, order);
     this._findLPCRoots(a, order);
 
     // The roots are stored in this._buffers.rootsRe and this._buffers.rootsIm
@@ -1149,6 +1150,12 @@ export class VoiceAnalyzer {
     // Extract formants from roots: each complex conjugate pair with positive
     // imaginary part gives a formant frequency and bandwidth
     const formants = [];
+    for (let i = 0; i < order; i++) {
+      const rootRe = rootsRe[i];
+      const rootIm = rootsIm[i];
+      if (rootIm <= 0) continue; // only positive-frequency roots
+      const freq = Math.atan2(rootIm, rootRe) * dsRate / (2 * Math.PI);
+      const mag = Math.sqrt(rootRe * rootRe + rootIm * rootIm);
     for (let k = 0; k < order; k++) {
       const im = roots.rootIm[k];
       if (im <= 0) continue; // only positive-frequency roots
@@ -1204,6 +1211,16 @@ export class VoiceAnalyzer {
   // Durand-Kerner root finding for LPC polynomial
   // Finds all roots of z^n - a[1]z^(n-1) - a[2]z^(n-2) - ... - a[n] = 0
   _findLPCRoots(a, order) {
+    const rootsRe = this._getBuffer('lpcRootsRe', Float64Array, order);
+    const rootsIm = this._getBuffer('lpcRootsIm', Float64Array, order);
+
+    // Initial guesses: evenly distributed on unit circle
+    for (let k = 0; k < order; k++) {
+      const angle = 2 * Math.PI * (k + 0.5) / order;
+      const r = 0.9 + 0.05 * Math.random(); // slightly inside unit circle
+      rootsRe[k] = r * Math.cos(angle);
+      rootsIm[k] = r * Math.sin(angle);
+    }
     // Allocate typed arrays once per call to avoid short-lived objects in hot inner loop
     const rootsRe = this._getBuffer('rootsRe', Float64Array, order);
     const rootsIm = this._getBuffer('rootsIm', Float64Array, order);
@@ -1311,6 +1328,7 @@ export class VoiceAnalyzer {
       if (maxDelta < 1e-8) break; // converged
     }
 
+    return { rootsRe, rootsIm };
     return { rootRe, rootIm };
     // Convert to expected array of objects format for caller
     const roots = [];
