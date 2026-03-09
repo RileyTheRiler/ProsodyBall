@@ -308,9 +308,40 @@ export class VoiceAnalyzer {
   // ========================================================
   _percentile(values, p) {
     if (!values.length) return 0;
-    const sorted = [...values].sort((a, b) => a - b);
-    const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * p)));
-    return sorted[idx];
+    // OPTIMIZATION: Use quickselect algorithm to find percentile without fully sorting
+    const k = Math.min(values.length - 1, Math.max(0, Math.floor((values.length - 1) * p)));
+    return this._quickselect([...values], k, 0, values.length - 1);
+  }
+
+  _quickselect(arr, k, left, right) {
+    while (left < right) {
+      const pivotIndex = this._partition(arr, left, right);
+      if (pivotIndex === k) {
+        return arr[k];
+      } else if (k < pivotIndex) {
+        right = pivotIndex - 1;
+      } else {
+        left = pivotIndex + 1;
+      }
+    }
+    return arr[k];
+  }
+
+  _partition(arr, left, right) {
+    const pivot = arr[right];
+    let i = left;
+    for (let j = left; j < right; j++) {
+      if (arr[j] <= pivot) {
+        const temp = arr[i];
+        arr[i] = arr[j];
+        arr[j] = temp;
+        i++;
+      }
+    }
+    const temp = arr[i];
+    arr[i] = arr[right];
+    arr[right] = temp;
+    return i;
   }
 
   detectPitch() {
@@ -754,6 +785,18 @@ export class VoiceAnalyzer {
         varianceSum += (this.pitchHistory[i] - mean) ** 2;
       }
       const variance = varianceSum / this.pitchHistory.length;
+      // PERF: Inlined loop instead of .reduce() avoids function call overhead and GC pressure in hot loop
+      const len = this.pitchHistory.length;
+      let sum = 0;
+      for (let i = 0; i < len; i++) sum += this.pitchHistory[i];
+      const mean = sum / len;
+
+      let sqSum = 0;
+      for (let i = 0; i < len; i++) {
+        const diff = this.pitchHistory[i] - mean;
+        sqSum += diff * diff;
+      }
+      const variance = sqSum / len;
       this.metrics.bounce = Math.min(1, Math.sqrt(variance) / BOUNCE_NORM_DIVISOR);
     } else {
       this.metrics.bounce *= 0.95;
@@ -1120,15 +1163,32 @@ export class VoiceAnalyzer {
     // Find roots of A(z) = 1 - a[1]z^-1 - a[2]z^-2 - ...
     // Equivalent polynomial: z^order - a[1]z^(order-1) - ... - a[order] = 0
     // We use Durand-Kerner iterative root finding (works well for moderate orders)
-    const roots = this._findLPCRoots(a, order);
+    const { rootsRe, rootsIm } = this._findLPCRoots(a, order);
+    this._findLPCRoots(a, order);
+
+    // The roots are stored in this._buffers.rootsRe and this._buffers.rootsIm
+    const rootsRe = this._buffers.rootsRe;
+    const rootsIm = this._buffers.rootsIm;
 
     // Extract formants from roots: each complex conjugate pair with positive
     // imaginary part gives a formant frequency and bandwidth
     const formants = [];
-    for (const root of roots) {
-      if (root.im <= 0) continue; // only positive-frequency roots
-      const freq = Math.atan2(root.im, root.re) * dsRate / (2 * Math.PI);
-      const mag = Math.sqrt(root.re * root.re + root.im * root.im);
+    for (let i = 0; i < order; i++) {
+      const rootRe = rootsRe[i];
+      const rootIm = rootsIm[i];
+      if (rootIm <= 0) continue; // only positive-frequency roots
+      const freq = Math.atan2(rootIm, rootRe) * dsRate / (2 * Math.PI);
+      const mag = Math.sqrt(rootRe * rootRe + rootIm * rootIm);
+    for (let k = 0; k < order; k++) {
+      const im = roots.rootIm[k];
+      if (im <= 0) continue; // only positive-frequency roots
+      const re = roots.rootRe[k];
+      const re = rootsRe[k];
+      const im = rootsIm[k];
+
+      if (im <= 0) continue; // only positive-frequency roots
+      const freq = Math.atan2(im, re) * dsRate / (2 * Math.PI);
+      const mag = Math.sqrt(re * re + im * im);
       const bw = -dsRate * Math.log(mag) / Math.PI; // bandwidth in Hz
 
       // Reject: frequency out of range, bandwidth too wide (> 600 Hz), or too narrow
@@ -1174,27 +1234,55 @@ export class VoiceAnalyzer {
   // Durand-Kerner root finding for LPC polynomial
   // Finds all roots of z^n - a[1]z^(n-1) - a[2]z^(n-2) - ... - a[n] = 0
   _findLPCRoots(a, order) {
+    const rootsRe = this._getBuffer('lpcRootsRe', Float64Array, order);
+    const rootsIm = this._getBuffer('lpcRootsIm', Float64Array, order);
+
     // Initial guesses: evenly distributed on unit circle
-    const roots = [];
     for (let k = 0; k < order; k++) {
       const angle = 2 * Math.PI * (k + 0.5) / order;
       const r = 0.9 + 0.05 * Math.random(); // slightly inside unit circle
-      roots.push({ re: r * Math.cos(angle), im: r * Math.sin(angle) });
+      rootsRe[k] = r * Math.cos(angle);
+      rootsIm[k] = r * Math.sin(angle);
+    }
+    // Allocate typed arrays once per call to avoid short-lived objects in hot inner loop
+    const rootsRe = this._getBuffer('rootsRe', Float64Array, order);
+    const rootsIm = this._getBuffer('rootsIm', Float64Array, order);
+
+    // Initial guesses: evenly distributed on unit circle
+    // OPTIMIZATION: Use parallel typed arrays instead of allocating {re, im} objects
+    // to avoid excessive garbage collection in the per-frame audio loop.
+    const rootRe = this._getBuffer('rootRe', Float64Array, order);
+    const rootIm = this._getBuffer('rootIm', Float64Array, order);
+    // Use parallel pre-allocated typed arrays for performance instead of objects
+    const rootsRe = this._getBuffer('rootsRe', Float64Array, order);
+    const rootsIm = this._getBuffer('rootsIm', Float64Array, order);
+
+    for (let k = 0; k < order; k++) {
+      const angle = 2 * Math.PI * (k + 0.5) / order;
+      const r = 0.9 + 0.05 * Math.random(); // slightly inside unit circle
+      rootRe[k] = r * Math.cos(angle);
+      rootIm[k] = r * Math.sin(angle);
+    }
+      rootsRe[k] = r * Math.cos(angle);
+      rootsIm[k] = r * Math.sin(angle);
     }
 
-    // Evaluate polynomial at point z: z^order - a[1]*z^(order-1) - ... - a[order]
-    const evalPoly = (z) => {
+    const pz = { re: 0, im: 0 }; // reused object
+
+    // Evaluate polynomial at point (zRe, zIm): z^order - a[1]*z^(order-1) - ... - a[order]
+    const evalPoly = (zRe, zIm) => {
       // Horner's method: P(z) = ((..((z - a[1])*z - a[2])*z ... ) - a[order])
       let re = 1, im = 0; // leading coefficient
       for (let j = 1; j <= order; j++) {
         // Multiply by z
-        const newRe = re * z.re - im * z.im;
-        const newIm = re * z.im + im * z.re;
+        const newRe = re * zRe - im * zIm;
+        const newIm = re * zIm + im * zRe;
         // Subtract a[j]
         re = newRe - a[j];
         im = newIm;
       }
-      return { re, im };
+      pz.re = re;
+      pz.im = im;
     };
 
     // Iterate
@@ -1202,15 +1290,44 @@ export class VoiceAnalyzer {
     for (let iter = 0; iter < maxIter; iter++) {
       let maxDelta = 0;
       for (let k = 0; k < order; k++) {
-        const z = roots[k];
-        const pz = evalPoly(z);
+        const zRe = rootRe[k];
+        const zIm = rootIm[k];
+
+        // Evaluate polynomial at point z: z^order - a[1]*z^(order-1) - ... - a[order]
+        // Horner's method: P(z) = ((..((z - a[1])*z - a[2])*z ... ) - a[order])
+        let pRe = 1, pIm = 0; // leading coefficient
+        for (let j = 1; j <= order; j++) {
+          // Multiply by z
+          const newPRe = pRe * zRe - pIm * zIm;
+          const newPIm = pRe * zIm + pIm * zRe;
+          // Subtract a[j]
+          pRe = newPRe - a[j];
+          pIm = newPIm;
+        }
+        const zRe = rootsRe[k];
+        const zIm = rootsIm[k];
+
+        // Evaluate polynomial at point z: z^order - a[1]*z^(order-1) - ... - a[order]
+        // Horner's method: P(z) = ((..((z - a[1])*z - a[2])*z ... ) - a[order])
+        let pzRe = 1, pzIm = 0; // leading coefficient
+        for (let j = 1; j <= order; j++) {
+          // Multiply by z
+          const newRe = pzRe * zRe - pzIm * zIm;
+          const newIm = pzRe * zIm + pzIm * zRe;
+          // Subtract a[j]
+          pzRe = newRe - a[j];
+          pzIm = newIm;
+        }
+        evalPoly(zRe, zIm);
 
         // Product of (z_k - z_j) for j ≠ k
         let prodRe = 1, prodIm = 0;
         for (let j = 0; j < order; j++) {
           if (j === k) continue;
-          const dRe = z.re - roots[j].re;
-          const dIm = z.im - roots[j].im;
+          const dRe = zRe - rootRe[j];
+          const dIm = zIm - rootIm[j];
+          const dRe = zRe - rootsRe[j];
+          const dIm = zIm - rootsIm[j];
           const newProdRe = prodRe * dRe - prodIm * dIm;
           const newProdIm = prodRe * dIm + prodIm * dRe;
           prodRe = newProdRe;
@@ -1219,15 +1336,28 @@ export class VoiceAnalyzer {
 
         // delta = P(z) / product
         const denom = prodRe * prodRe + prodIm * prodIm + 1e-30;
-        const deltaRe = (pz.re * prodRe + pz.im * prodIm) / denom;
-        const deltaIm = (pz.im * prodRe - pz.re * prodIm) / denom;
+        const deltaRe = (pRe * prodRe + pIm * prodIm) / denom;
+        const deltaIm = (pIm * prodRe - pRe * prodIm) / denom;
 
-        roots[k] = { re: z.re - deltaRe, im: z.im - deltaIm };
+        rootRe[k] -= deltaRe;
+        rootIm[k] -= deltaIm;
+        const deltaRe = (pzRe * prodRe + pzIm * prodIm) / denom;
+        const deltaIm = (pzIm * prodRe - pzRe * prodIm) / denom;
+
+        rootsRe[k] = zRe - deltaRe;
+        rootsIm[k] = zIm - deltaIm;
         maxDelta = Math.max(maxDelta, Math.sqrt(deltaRe * deltaRe + deltaIm * deltaIm));
       }
       if (maxDelta < 1e-8) break; // converged
     }
 
+    return { rootsRe, rootsIm };
+    return { rootRe, rootIm };
+    // Convert to expected array of objects format for caller
+    const roots = [];
+    for (let k = 0; k < order; k++) {
+      roots.push({ re: rootsRe[k], im: rootsIm[k] });
+    }
     return roots;
   }
 
@@ -1638,6 +1768,31 @@ class VoxBallGame {
       heroNotes: [],
       successPulse: 0,
       missPulse: 0,
+      // Streak & combo system
+      streak: 0,
+      bestStreak: 0,
+      comboMultiplier: 1,
+      // Target practice improvements
+      targetHitThreshold: 0.7, // semitones tolerance (was 0.22 — too strict)
+      targetHoldDuration: 0.7, // seconds to hold note (was implicit 1.0)
+      targetDifficulty: 1,     // progressive difficulty level
+      targetsHit: 0,           // total targets hit this session
+      // Vocal Hero improvements
+      heroSpeed: 0.24,         // base scroll speed multiplier
+      heroSpawnInterval: 1.2,  // seconds between spawns (was 0.75 — too fast)
+      heroHitGrade: '',        // 'perfect' | 'good' | 'ok' | ''
+      heroGradeTimer: 0,       // display timer for grade
+      heroMissCount: 0,        // track total misses
+      heroHitCount: 0,         // track total hits
+      // Visual feedback
+      centsOff: 0,             // how many cents off from nearest note
+      nearestNoteName: '',     // name of the nearest detected note
+      nearestNoteOctave: 0,    // octave of nearest note
+      proximityGlow: 0,        // 0-1 how close to target (for gradient feedback)
+      // Adaptive pitch range
+      adaptiveMinMidi: 41,
+      adaptiveMaxMidi: 96,
+      useAdaptiveRange: false,
     };
     this.activePointerNotes = new Map(); // pointerId -> { oscillator, gain }
 
@@ -2025,17 +2180,21 @@ class VoxBallGame {
       const vibToggle = document.getElementById('vibToggle');
       if (vibPanel?.classList.contains('show') && !vibPanel.contains(e.target) && e.target !== vibToggle) {
         vibPanel.classList.remove('show');
+        vibToggle?.setAttribute('aria-expanded', 'false');
         vibToggle?.classList.remove('active');
+        vibToggle?.setAttribute('aria-expanded', 'false');
       }
       const recDrawer = document.getElementById('recordingsDrawer');
       const recBtn = document.getElementById('recordingsBtn');
       if (recDrawer?.classList.contains('show') && !recDrawer.contains(e.target) && e.target !== recBtn && !recBtn?.contains(e.target)) {
         recDrawer.classList.remove('show');
+        recBtn?.setAttribute('aria-expanded', 'false');
       }
       const helpTooltip = document.getElementById('helpTooltip');
       const helpBtn = document.getElementById('helpBtn');
       if (helpTooltip?.classList.contains('show') && !helpTooltip.contains(e.target) && e.target !== helpBtn) {
         helpTooltip.classList.remove('show');
+        helpBtn?.setAttribute('aria-expanded', 'false');
       }
     };
     document.addEventListener('pointerdown', onMobilePointerDown);
@@ -2600,9 +2759,13 @@ class VoxBallGame {
     const empty = document.getElementById('recsEmpty');
     const badge = document.getElementById('recBadge');
     const recBtn = document.getElementById('recordingsBtn');
+    const clearAllBtn = document.getElementById('clearAllRecs');
 
     badge.textContent = this.recordings.length;
     recBtn.classList.toggle('visible', this.recordings.length > 0);
+    if (clearAllBtn) {
+      clearAllBtn.disabled = this.recordings.length === 0;
+    }
 
     if (this.recordings.length === 0) {
       list.innerHTML = '';
@@ -2809,11 +2972,11 @@ class VoxBallGame {
 
     const showError = (msg) => {
       if (msg instanceof Node) {
-        errorBanner.innerHTML = '';
+        errorBanner.textContent = '';
         errorBanner.appendChild(msg);
         if (statusLiveRegion) statusLiveRegion.textContent = msg.textContent.trim();
       } else {
-        errorBanner.innerHTML = msg;
+        errorBanner.textContent = msg;
         if (statusLiveRegion) statusLiveRegion.textContent = String(msg).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
       }
       errorBanner.classList.add('show');
@@ -2923,6 +3086,7 @@ class VoxBallGame {
         cameraVideo.srcObject = null;
       }
       cameraModal?.classList.remove('show');
+      cameraBtn?.setAttribute('aria-expanded', 'false');
       cameraBtn?.classList.remove('active');
     };
 
@@ -2940,6 +3104,7 @@ class VoxBallGame {
           cameraVideo.srcObject = cameraStream;
         }
         cameraModal?.classList.add('show');
+        cameraBtn?.setAttribute('aria-expanded', 'true');
         cameraBtn?.classList.add('active');
       } catch (e) {
         showError('📷 Camera access denied or not available.');
@@ -3040,7 +3205,13 @@ class VoxBallGame {
       clearError();
       const initialDiag = await getMicDiagnostics(this.analyzer.audioCtx);
       if (diagPanel) {
-        diagPanel.innerHTML = `Mic permission: <b>${initialDiag.permission}</b> · Audio: <b>${initialDiag.audioState}</b> · Secure: <b>${initialDiag.secureContext ? 'yes' : 'no'}</b>${initialDiag.inIframe ? ' · Embedded iframe: yes' : ''}`;
+        diagPanel.textContent = '';
+        diagPanel.append(
+          'Mic permission: ', Object.assign(document.createElement('b'), { textContent: initialDiag.permission }),
+          ' · Audio: ', Object.assign(document.createElement('b'), { textContent: initialDiag.audioState }),
+          ' · Secure: ', Object.assign(document.createElement('b'), { textContent: initialDiag.secureContext ? 'yes' : 'no' }),
+          initialDiag.inIframe ? ' · Embedded iframe: yes' : ''
+        );
       }
       if (this.idleAnimId) {
         cancelAnimationFrame(this.idleAnimId);
@@ -3050,7 +3221,15 @@ class VoxBallGame {
       // Check if we have an audio file OR microphone
       if (!selectedAudioFile && (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)) {
         const errNode = document.createElement('div');
-        errNode.innerHTML = '🎙 Microphone API not available and no audio file selected.<br>This requires HTTPS and a modern browser. ';
+        errNode.append(
+          '🎙 Microphone API not available and no audio file selected.',
+          document.createElement('br'),
+          'This requires HTTPS and a modern browser. '
+        );
+        errNode.textContent = '';
+        errNode.appendChild(document.createTextNode('🎙 Microphone API not available and no audio file selected.'));
+        errNode.appendChild(document.createElement('br'));
+        errNode.appendChild(document.createTextNode('This requires HTTPS and a modern browser. '));
         if (isInIframe) {
           const link = document.createElement('a');
           link.href = window.location.href;
@@ -3091,16 +3270,20 @@ class VoxBallGame {
         if (result.error === 'NotAllowedError') {
           if (isInIframe) {
             msg = document.createElement('div');
-            msg.innerHTML = '🎙 Microphone blocked by browser — this usually happens inside iframes.<br>';
+            msg.append('🎙 Microphone blocked by browser — this usually happens inside iframes.', document.createElement('br'));
+            msg.textContent = '';
+            msg.appendChild(document.createTextNode('🎙 Microphone blocked by browser — this usually happens inside iframes.'));
+            msg.appendChild(document.createElement('br'));
             const link = document.createElement('a');
             link.href = window.location.href;
             link.target = '_blank';
             link.textContent = 'Open in a new tab for full mic access ↗';
             msg.appendChild(link);
           } else {
-            msg =
-              '🎙 Microphone permission denied.<br>' +
-              'Click the lock/camera icon in your address bar → Allow microphone → then try again.';
+            msg = document.createElement('div');
+            msg.appendChild(document.createTextNode('🎙 Microphone permission denied.'));
+            msg.appendChild(document.createElement('br'));
+            msg.appendChild(document.createTextNode('Click the lock/camera icon in your address bar → Allow microphone → then try again.'));
           }
         } else if (result.error === 'NotFoundError') {
           msg = '🎙 No microphone detected. Please connect a microphone and try again.';
@@ -3132,7 +3315,12 @@ class VoxBallGame {
 
       const activeDiag = await getMicDiagnostics(this.analyzer.audioCtx);
       if (diagPanel) {
-        diagPanel.innerHTML = `Mic permission: <b>${activeDiag.permission}</b> · Audio: <b>${activeDiag.audioState}</b> · API: <b>${activeDiag.mediaDevices ? 'ok' : 'missing'}</b>`;
+        diagPanel.textContent = '';
+        diagPanel.append(
+          'Mic permission: ', Object.assign(document.createElement('b'), { textContent: activeDiag.permission }),
+          ' · Audio: ', Object.assign(document.createElement('b'), { textContent: activeDiag.audioState }),
+          ' · API: ', Object.assign(document.createElement('b'), { textContent: activeDiag.mediaDevices ? 'ok' : 'missing' })
+        );
       }
       populateMicDevices();
 
@@ -3151,6 +3339,16 @@ class VoxBallGame {
         }
         this.hasCompletedCalibration = true;
         showCalibrationOutcome(calResult);
+      }
+
+      // If the wizard was skipped/timed out, don't leave the analyzer in the
+      // pre-calibration state where update() early-returns forever.
+      if (!this.analyzer.isCalibrated) {
+        const fallbackFloor = Math.max(0.008, this.analyzer.noiseFloor || 0.01);
+        this.analyzer.noiseFloor = fallbackFloor;
+        this.analyzer.syllableThreshold = Math.max(this.analyzer.syllableThreshold || 0, fallbackFloor * 1.2);
+        this.analyzer.sustainedThreshold = Math.max(this.analyzer.sustainedThreshold || 0, fallbackFloor * 1.5);
+        this.analyzer.isCalibrated = true;
       }
 
       this.scrollX = 0;
@@ -3389,6 +3587,17 @@ class VoxBallGame {
       document.getElementById('app').classList.remove('playing');
       setHudSettingsVisible(false);
       document.getElementById('summaryOverlay').classList.remove('show');
+
+      // Close all panels and reset aria-expanded
+      document.getElementById('settingsPanel')?.classList.remove('show');
+      document.getElementById('settingsBtn')?.setAttribute('aria-expanded', 'false');
+      document.getElementById('vibPanel')?.classList.remove('show');
+      document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
+      document.getElementById('helpTooltip')?.classList.remove('show');
+      document.getElementById('helpBtn')?.setAttribute('aria-expanded', 'false');
+      document.getElementById('recordingsDrawer')?.classList.remove('show');
+      document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'false');
+
       this.drawIdleScene();
     });
 
@@ -3923,7 +4132,9 @@ class VoxBallGame {
     const toggleSettings = (show) => {
       const isVisible = show !== undefined ? show : !settingsPanel.classList.contains('show');
       settingsPanel.classList.toggle('show', isVisible);
+      settingsBtn?.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
       modalBackdrop.classList.toggle('show', isVisible);
+      settingsBtn?.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
 
       // Force DOM visibility (bypass any CSS specificity issues)
       if (isVisible) {
@@ -3935,8 +4146,12 @@ class VoxBallGame {
         updateAdaptiveProfileStatus();
         populateMicDevices();
         helpTooltip.classList.remove('show');
+        document.getElementById('helpBtn')?.setAttribute('aria-expanded', 'false');
         recordingsDrawer.classList.remove('show');
+        document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'false');
         vibPanel.classList.remove('show');
+        document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
+        vibBtn?.setAttribute('aria-expanded', 'false');
       } else {
         settingsPanel.style.display = 'none';
         settingsPanel.style.opacity = '0';
@@ -3962,13 +4177,35 @@ class VoxBallGame {
       // Vibration panel
       if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || e.target !== vibBtn)) {
         vibPanel.classList.remove('show');
+        document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
+        vibBtn?.setAttribute('aria-expanded', 'false');
       }
     });
 
     if (vibBtn) {
       vibBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (vibPanel) vibPanel.classList.toggle('show');
+        if (vibPanel) {
+          vibPanel.classList.toggle('show');
+          vibBtn.setAttribute('aria-expanded', vibPanel.classList.contains('show') ? 'true' : 'false');
+          const isShown = vibPanel.classList.toggle('show');
+          vibBtn.setAttribute('aria-expanded', isShown ? 'true' : 'false');
+        }
+        if (helpTooltip) {
+          helpTooltip.classList.remove('show');
+          document.getElementById('helpBtn')?.setAttribute('aria-expanded', 'false');
+        }
+        if (recordingsDrawer) {
+          recordingsDrawer.classList.remove('show');
+          document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'false');
+        }
+        if (settingsPanel && settingsPanel.classList.contains('show')) {
+           toggleSettings(false);
+        }
+        if (settingsPanel && settingsPanel.classList.contains('show')) toggleSettings(false);
+          vibPanel.classList.toggle('show');
+          vibBtn.setAttribute('aria-expanded', vibPanel.classList.contains('show') ? 'true' : 'false');
+        }
         if (helpTooltip) helpTooltip.classList.remove('show');
         if (recordingsDrawer) recordingsDrawer.classList.remove('show');
         if (settingsPanel) settingsPanel.classList.remove('show');
@@ -4180,9 +4417,20 @@ class VoxBallGame {
     helpBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this._updateHelpContent();
+      const isShown = helpTooltip.classList.toggle('show');
+      helpBtn.setAttribute('aria-expanded', isShown ? 'true' : 'false');
+
       helpTooltip.classList.toggle('show');
+      helpBtn.setAttribute('aria-expanded', helpTooltip.classList.contains('show') ? 'true' : 'false');
       recordingsDrawer.classList.remove('show');
+      document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'false');
       vibPanel.classList.remove('show');
+      document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
+
+      vibPanel.classList.remove('show');
+      document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
+
+      if (settingsPanel && settingsPanel.classList.contains('show')) toggleSettings(false);
     });
 
     helpTabs.forEach((tab) => {
@@ -4198,12 +4446,16 @@ class VoxBallGame {
     document.addEventListener('click', (e) => {
       if (helpTooltip && !helpTooltip.contains(e.target) && e.target !== helpBtn) {
         helpTooltip.classList.remove('show');
+        helpBtn?.setAttribute('aria-expanded', 'false');
       }
       if (recordingsDrawer && !recordingsDrawer.contains(e.target) && (!recordingsBtn || !recordingsBtn.contains(e.target))) {
         recordingsDrawer.classList.remove('show');
+        recordingsBtn?.setAttribute('aria-expanded', 'false');
       }
       if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || !vibBtn.contains(e.target))) {
         vibPanel.classList.remove('show');
+        document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
+        vibBtn?.setAttribute('aria-expanded', 'false');
       }
     });
 
@@ -4246,14 +4498,27 @@ class VoxBallGame {
 
     recordingsBtn.addEventListener('click', (e) => {
       e.stopPropagation();
+      const isShown = recordingsDrawer.classList.toggle('show');
+      recordingsBtn.setAttribute('aria-expanded', isShown ? 'true' : 'false');
+
       recordingsDrawer.classList.toggle('show');
+      recordingsBtn.setAttribute('aria-expanded', recordingsDrawer.classList.contains('show') ? 'true' : 'false');
       helpTooltip.classList.remove('show');
+      document.getElementById('helpBtn')?.setAttribute('aria-expanded', 'false');
       vibPanel.classList.remove('show');
+      document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
+
+      vibPanel.classList.remove('show');
+      document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
+
+      if (settingsPanel && settingsPanel.classList.contains('show')) toggleSettings(false);
     });
 
     clearAllRecs.addEventListener('click', () => {
       if (this.recordings.length === 0) return;
-      this.clearAllRecordings();
+      if (window.confirm('Are you sure you want to delete all recordings? This cannot be undone.')) {
+        this.clearAllRecordings();
+      }
     });
 
     this.canvas.addEventListener('pointerdown', (e) => this._handleKeyboardPointer(e));
@@ -7399,12 +7664,44 @@ class VoxBallGame {
     const m = this.analyzer.metrics;
     const hz = this.analyzer.smoothPitchHz;
     const conf = this.analyzer.pitchConfidence;
+    // Use confidence-gated voicing: require higher confidence for scoring
     const isVoiced = this.isRunning && m.energy > 0.04 && conf > 0.18 && hz > 50;
+    const isConfidentVoice = isVoiced && conf > 0.35; // stricter gate for scoring
     const midi = isVoiced ? 69 + 12 * Math.log2(hz / 440) : NaN;
 
     kb.glowStrength = Math.max(0, kb.glowStrength - dt * 2.2);
     kb.successPulse = Math.max(0, kb.successPulse - dt * 2.8);
     kb.missPulse = Math.max(0, kb.missPulse - dt * 2.5);
+    kb.heroGradeTimer = Math.max(0, kb.heroGradeTimer - dt);
+
+    // Update nearest note info and cents-off for visual feedback
+    if (isVoiced && Number.isFinite(midi)) {
+      const roundedMidi = Math.round(midi);
+      kb.centsOff = (midi - roundedMidi) * 100; // cents deviation
+      const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      kb.nearestNoteName = noteNames[((roundedMidi % 12) + 12) % 12];
+      kb.nearestNoteOctave = Math.floor(roundedMidi / 12) - 1;
+    }
+
+    // Adaptive pitch range learning: narrow keyboard to user's actual range
+    if (isVoiced && Number.isFinite(midi) && !kb.useAdaptiveRange) {
+      const profile = this.analyzer.pitchProfile;
+      if (profile.isLearned) {
+        // Map from learned Hz range to MIDI
+        const learnedMinMidi = Math.max(36, Math.floor(69 + 12 * Math.log2(profile.min / 440)) - 3);
+        const learnedMaxMidi = Math.min(96, Math.ceil(69 + 12 * Math.log2(profile.max / 440)) + 3);
+        // Only adapt if the range is reasonable (at least one octave)
+        if (learnedMaxMidi - learnedMinMidi >= 12) {
+          kb.adaptiveMinMidi = learnedMinMidi;
+          kb.adaptiveMaxMidi = learnedMaxMidi;
+          kb.useAdaptiveRange = true;
+        }
+      }
+    }
+
+    // Use adaptive range for gameplay if learned
+    const effectiveMin = kb.useAdaptiveRange ? kb.adaptiveMinMidi : kb.minMidi;
+    const effectiveMax = kb.useAdaptiveRange ? kb.adaptiveMaxMidi : kb.maxMidi;
 
     if (isVoiced && Number.isFinite(midi)) {
       const clamped = Math.max(kb.minMidi, Math.min(kb.maxMidi, midi));
@@ -7421,42 +7718,130 @@ class VoxBallGame {
     if (!this.isRunning || this.canvasMode !== 'keyboard') return;
 
     if (this.keyboardGameMode === 'target') {
-      if (isVoiced && Number.isFinite(midi) && Math.abs(midi - kb.targetMidi) < 0.22) {
-        kb.targetHold += dt;
-        if (kb.targetHold >= 1) {
-          kb.score += 1;
+      // Ensure target is within effective range
+      if (kb.targetMidi < effectiveMin || kb.targetMidi > effectiveMax) {
+        kb.targetMidi = effectiveMin + Math.floor(Math.random() * (effectiveMax - effectiveMin + 1));
+      }
+
+      const dist = isConfidentVoice && Number.isFinite(midi) ? Math.abs(midi - kb.targetMidi) : Infinity;
+      // Tolerance narrows with difficulty: starts at 0.7 semitones, tightens to 0.35
+      const tolerance = Math.max(0.35, kb.targetHitThreshold - (kb.targetDifficulty - 1) * 0.05);
+      // Visual proximity feedback (0=far, 1=on target)
+      kb.proximityGlow = dist < 3 ? Math.max(0, 1 - dist / 3) : 0;
+
+      if (dist < tolerance) {
+        // Confidence-weighted hold: higher confidence = faster fill
+        const confWeight = 0.5 + conf * 0.5;
+        kb.targetHold += dt * confWeight;
+        const holdRequired = kb.targetHoldDuration;
+        if (kb.targetHold >= holdRequired) {
+          // Score with combo multiplier
+          const basePoints = Math.ceil(1 * kb.comboMultiplier);
+          kb.score += basePoints;
+          kb.streak += 1;
+          kb.targetsHit += 1;
+          kb.bestStreak = Math.max(kb.bestStreak, kb.streak);
+          // Increase combo every 3 consecutive hits
+          if (kb.streak % 3 === 0) {
+            kb.comboMultiplier = Math.min(4, kb.comboMultiplier + 0.5);
+          }
+          // Progressive difficulty: every 5 hits, tighten tolerance slightly
+          if (kb.targetsHit % 5 === 0 && kb.targetDifficulty < 8) {
+            kb.targetDifficulty += 1;
+          }
           kb.targetHold = 0;
-          kb.targetMidi = kb.minMidi + Math.floor(Math.random() * (kb.maxMidi - kb.minMidi + 1));
+          // Pick next target within effective range, avoid repeating same note
+          let nextTarget;
+          do {
+            nextTarget = effectiveMin + Math.floor(Math.random() * (effectiveMax - effectiveMin + 1));
+          } while (nextTarget === kb.targetMidi && effectiveMax - effectiveMin > 2);
+          kb.targetMidi = nextTarget;
           kb.successPulse = 1;
           this._playKeyboardSuccessChime();
         }
       } else {
-        kb.targetHold = Math.max(0, kb.targetHold - dt * 1.6);
+        kb.targetHold = Math.max(0, kb.targetHold - dt * 1.2);
+        // Break streak if player is far off while voiced
+        if (isConfidentVoice && dist > 3) {
+          if (kb.streak > 0) {
+            kb.streak = 0;
+            kb.comboMultiplier = 1;
+          }
+        }
       }
     }
 
     if (this.keyboardGameMode === 'hero') {
       kb.heroTime += dt;
       kb.heroSpawn += dt;
-      if (kb.heroSpawn >= 0.75) {
+
+      // Adaptive spawn interval: gets slightly faster as score increases
+      const spawnRate = Math.max(0.6, kb.heroSpawnInterval - kb.heroTime * 0.005);
+      if (kb.heroSpawn >= spawnRate) {
         kb.heroSpawn = 0;
-        const midiTarget = kb.minMidi + Math.floor(Math.random() * (kb.maxMidi - kb.minMidi + 1));
+        // Spawn within effective range for better playability
+        const midiTarget = effectiveMin + Math.floor(Math.random() * (effectiveMax - effectiveMin + 1));
         kb.heroNotes.push({ midi: midiTarget, y: 0, hit: false });
       }
-      const speed = this.height * 0.24;
+
+      // Scroll speed increases gradually
+      const baseSpeed = this.height * kb.heroSpeed;
+      const speedScale = 1 + Math.min(0.6, kb.heroTime * 0.008);
+      const speed = baseSpeed * speedScale;
+
+      const hitLineY = this.height * 0.72;
+      // Wider hit zone for better playability
+      const hitZoneTop = hitLineY - this.height * 0.06;
+      const hitZoneBot = hitLineY + this.height * 0.04;
+
       for (let i = kb.heroNotes.length - 1; i >= 0; i--) {
         const n = kb.heroNotes[i];
         n.y += speed * dt;
-        if (!n.hit && n.y > this.height * 0.7 + 20) {
+
+        // Miss: note passed beyond hit zone
+        if (!n.hit && n.y > hitZoneBot + 20) {
           kb.missPulse = 1;
+          kb.heroMissCount += 1;
+          kb.streak = 0;
+          kb.comboMultiplier = 1;
           kb.heroNotes.splice(i, 1);
           continue;
         }
-        if (isVoiced && Number.isFinite(midi) && !n.hit && Math.abs(midi - n.midi) < 0.3 && n.y >= this.height * 0.68 && n.y <= this.height * 0.74) {
-          kb.score += 10;
-          kb.successPulse = 1;
-          this._playKeyboardSuccessChime();
-          kb.heroNotes.splice(i, 1);
+
+        // Hit detection with grading
+        if (isConfidentVoice && Number.isFinite(midi) && !n.hit) {
+          const pitchDist = Math.abs(midi - n.midi);
+          const inHitZone = n.y >= hitZoneTop && n.y <= hitZoneBot;
+
+          if (inHitZone && pitchDist < 1.0) {
+            // Grade based on pitch accuracy
+            let grade, pointMult;
+            if (pitchDist < 0.25) {
+              grade = 'perfect';
+              pointMult = 1.5;
+            } else if (pitchDist < 0.5) {
+              grade = 'good';
+              pointMult = 1.0;
+            } else {
+              grade = 'ok';
+              pointMult = 0.6;
+            }
+
+            const baseScore = Math.ceil(10 * pointMult * kb.comboMultiplier);
+            kb.score += baseScore;
+            kb.streak += 1;
+            kb.heroHitCount += 1;
+            kb.bestStreak = Math.max(kb.bestStreak, kb.streak);
+            // Build combo every 5 consecutive hits
+            if (kb.streak % 5 === 0) {
+              kb.comboMultiplier = Math.min(4, kb.comboMultiplier + 0.5);
+            }
+            kb.heroHitGrade = grade;
+            kb.heroGradeTimer = 0.6;
+            kb.successPulse = 1;
+            this._playKeyboardSuccessChime();
+            kb.heroNotes.splice(i, 1);
+          }
         }
       }
     }
@@ -7475,6 +7860,24 @@ class VoxBallGame {
     kb.glowKey = -1;
     kb.glowStrength = 0;
     kb.targetMidi = 57;
+    // Reset streak/combo
+    kb.streak = 0;
+    kb.bestStreak = 0;
+    kb.comboMultiplier = 1;
+    kb.targetDifficulty = 1;
+    kb.targetsHit = 0;
+    // Reset hero stats
+    kb.heroSpeed = 0.24;
+    kb.heroSpawnInterval = 1.2;
+    kb.heroHitGrade = '';
+    kb.heroGradeTimer = 0;
+    kb.heroMissCount = 0;
+    kb.heroHitCount = 0;
+    // Reset visual feedback
+    kb.centsOff = 0;
+    kb.nearestNoteName = '';
+    kb.nearestNoteOctave = 0;
+    kb.proximityGlow = 0;
   }
 
   _getKeyboardLayout(left, keyboardTop, keyboardW, keyboardH) {
@@ -7652,20 +8055,50 @@ class VoxBallGame {
 
     if (this.keyboardGameMode === 'target') {
       const x = this._midiToX(kb.targetMidi, layout, left, keyboardW);
-      ctx.strokeStyle = 'rgba(255,75,75,0.9)';
-      ctx.lineWidth = 2.2;
+      // Proximity-based target glow: green when close, red when far
+      const prox = kb.proximityGlow;
+      const targetR = Math.round(255 - prox * 180);
+      const targetG = Math.round(75 + prox * 180);
+      const targetB = Math.round(75 + prox * 85);
+      ctx.strokeStyle = `rgba(${targetR},${targetG},${targetB},0.9)`;
+      ctx.lineWidth = 2.2 + prox * 1.5;
       ctx.beginPath();
       ctx.roundRect(x - whiteW * 0.45, keyboardTop + keyboardH - whiteH + 2, whiteW * 0.9, whiteH - 6, 8);
       ctx.stroke();
+      // Proximity glow behind target key
+      if (prox > 0.1) {
+        ctx.fillStyle = `rgba(${targetR},${targetG},${targetB},${0.08 * prox})`;
+        ctx.beginPath();
+        ctx.roundRect(x - whiteW * 0.45, keyboardTop + keyboardH - whiteH + 2, whiteW * 0.9, whiteH - 6, 8);
+        ctx.fill();
+      }
+      // Target note name label
+      const tNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      const tNoteName = tNames[((kb.targetMidi % 12) + 12) % 12];
+      const tOctave = Math.floor(kb.targetMidi / 12) - 1;
+      ctx.font = '700 11px "Space Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = `rgba(255,120,120,0.9)`;
+      ctx.fillText(`${tNoteName}${tOctave}`, x, keyboardTop + keyboardH - whiteH - 8);
+
       if (kb.targetHold > 0) {
-        const p = Math.min(1, kb.targetHold);
-        ctx.fillStyle = 'rgba(120,255,160,0.85)';
-        ctx.fillRect(left, keyboardTop - 3, keyboardW * p, 2);
+        const p = Math.min(1, kb.targetHold / kb.targetHoldDuration);
+        // Progress bar with gradient
+        const barGrad = ctx.createLinearGradient(left, 0, left + keyboardW * p, 0);
+        barGrad.addColorStop(0, 'rgba(120,255,160,0.6)');
+        barGrad.addColorStop(1, 'rgba(80,255,220,0.95)');
+        ctx.fillStyle = barGrad;
+        ctx.fillRect(left, keyboardTop - 4, keyboardW * p, 3);
       }
     }
 
     if (this.keyboardGameMode === 'hero') {
       const hitLineY = h * 0.72;
+      // Draw hit zone as a subtle band instead of a thin line
+      const hitZoneTop = hitLineY - h * 0.06;
+      const hitZoneBot = hitLineY + h * 0.04;
+      ctx.fillStyle = 'rgba(135,235,255,0.04)';
+      ctx.fillRect(left, hitZoneTop, keyboardW, hitZoneBot - hitZoneTop);
       ctx.strokeStyle = 'rgba(135,235,255,0.38)';
       ctx.lineWidth = 1;
       ctx.setLineDash([5, 5]);
@@ -7679,13 +8112,33 @@ class VoxBallGame {
         const nx = this._midiToX(n.midi, layout, left, keyboardW);
         const ny = Math.min(hitLineY, keyboardTop - 16 + n.y);
         const barH = 34;
+        // Color notes differently as they approach the hit zone
+        const nearHitZone = ny > hitZoneTop - 40;
+        const alpha = nearHitZone ? 0.95 : 0.7;
         const grad = ctx.createLinearGradient(0, ny - barH, 0, ny);
-        grad.addColorStop(0, 'rgba(102,225,255,0.88)');
-        grad.addColorStop(1, 'rgba(102,225,255,0.18)');
+        grad.addColorStop(0, `rgba(102,225,255,${alpha})`);
+        grad.addColorStop(1, `rgba(102,225,255,${alpha * 0.2})`);
         ctx.fillStyle = grad;
         ctx.beginPath();
         ctx.roundRect(nx - whiteW * 0.34, ny - barH, whiteW * 0.68, barH, 6);
         ctx.fill();
+        // Note label inside the bar
+        const nNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+        ctx.font = '700 9px "Space Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = `rgba(255,255,255,${alpha * 0.8})`;
+        ctx.fillText(nNames[((n.midi % 12) + 12) % 12], nx, ny - barH * 0.35);
+      }
+
+      // Grade display
+      if (kb.heroGradeTimer > 0 && kb.heroHitGrade) {
+        const gradeAlpha = Math.min(1, kb.heroGradeTimer * 2);
+        const gradeColors = { perfect: '120,255,180', good: '180,240,120', ok: '240,200,100' };
+        const color = gradeColors[kb.heroHitGrade] || '200,200,200';
+        ctx.font = '800 18px "Space Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = `rgba(${color},${gradeAlpha})`;
+        ctx.fillText(kb.heroHitGrade.toUpperCase(), w * 0.5, hitLineY - h * 0.08);
       }
     }
 
@@ -7712,6 +8165,20 @@ class VoxBallGame {
       ctx.fill();
     }
 
+    // Note name and cents-off indicator above the cursor
+    if (Number.isFinite(currentMidi) && kb.nearestNoteName) {
+      const px = this._midiToX(currentMidi, layout, left, keyboardW);
+      const centsAbs = Math.abs(Math.round(kb.centsOff));
+      const centsSign = kb.centsOff >= 0 ? '+' : '-';
+      ctx.font = '700 14px "Space Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = centsAbs < 10 ? 'rgba(120,255,180,0.95)' : centsAbs < 25 ? 'rgba(255,240,120,0.9)' : 'rgba(255,150,100,0.85)';
+      ctx.fillText(`${kb.nearestNoteName}${kb.nearestNoteOctave}`, px, keyboardTop - 34);
+      ctx.font = '500 10px "Space Mono", monospace';
+      ctx.fillStyle = 'rgba(200,220,255,0.65)';
+      ctx.fillText(`${centsSign}${centsAbs}c`, px, keyboardTop - 22);
+    }
+
     ctx.font = '600 12px "Space Mono", monospace';
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(196,220,255,0.85)';
@@ -7721,6 +8188,14 @@ class VoxBallGame {
       ctx.textAlign = 'right';
       ctx.fillStyle = 'rgba(190,240,255,0.9)';
       ctx.fillText(`Score ${kb.score}`, left + keyboardW, keyboardTop + keyboardH + 20);
+      // Streak and combo info
+      if (kb.streak > 1) {
+        ctx.textAlign = 'right';
+        ctx.font = '500 10px "Space Mono", monospace';
+        ctx.fillStyle = kb.comboMultiplier > 1 ? 'rgba(255,220,100,0.9)' : 'rgba(170,210,255,0.7)';
+        const comboStr = kb.comboMultiplier > 1 ? ` x${kb.comboMultiplier.toFixed(1)}` : '';
+        ctx.fillText(`${kb.streak} streak${comboStr}`, left + keyboardW, keyboardTop + keyboardH + 34);
+      }
     }
 
     ctx.restore();
@@ -8269,7 +8744,9 @@ class VoxBallGame {
     const deadZone = 0.12;
     const outsideDeadZone = Math.max(0, Math.abs(diff) - deadZone);
     const normalizedDrift = outsideDeadZone / Math.max(0.0001, 1 - deadZone);
-    const drift = Math.sign(diff) * Math.min(1, normalizedDrift * 2.1);
+    const driftMagnitude = Math.min(1, normalizedDrift * 2.1);
+    const drift = Math.sign(diff) * driftMagnitude;
+
     rr.driftStrength = drift;
 
     const speaking = m.energy > 0.028;
@@ -8279,8 +8756,15 @@ class VoxBallGame {
     const steerPower = 260;
     rr.centerX += drift * steerPower * dt;
 
+    // Strong re-centering only when near target; weaken it when off-target so drift is visible.
+    const centerAssist = Math.max(0, 1 - driftMagnitude);
+    // Gentle re-centering to keep the motorcycle on the lane when tone is on target.
+    const centerPull = 0.25 + centerAssist * 3.95;
+
     // Gentle re-centering to keep the motorcycle on the lane when tone is on target.
     const centerPull = 4.2;
+    const centerAssist = Math.max(0, 1 - Math.abs(drift));
+    const centerPull = 0.25 + centerAssist * 3.95;
     rr.centerX += (this.width * 0.5 - rr.centerX) * Math.min(1, dt * centerPull);
     const pad = rr.roadHalfWidth * 0.5;
     rr.centerX = Math.max(pad, Math.min(this.width - pad, rr.centerX));
@@ -8656,10 +9140,72 @@ class VoxBallGame {
   // PRISM READER
   // ============================================================
 
+  // Exception dictionary for common irregular syllabifications
+  // Key = lowercase word, Value = array of syllable break indices (in the cleaned string)
+  static _syllableExceptions = {
+    every: 2, every: [2, 3],     // ev-er-y (not ev-ry)
+    different: [3, 5],           // dif-fer-ent
+    beautiful: [3, 5],           // beau-ti-ful
+    comfortable: [3, 6, 8],     // com-fort-a-ble
+    interesting: [2, 5, 8],     // in-ter-est-ing
+    experience: [2, 5, 7],      // ex-pe-ri-ence
+    everything: [2, 4],         // ev-ery-thing
+    amusement: [1, 5],          // a-muse-ment
+    memorable: [3, 5, 7],       // mem-or-a-ble
+    tremendous: [3, 6],         // tre-men-dous
+    undulating: [2, 4, 7],      // un-du-lat-ing
+    exhilarating: [2, 5, 8, 10],// ex-hil-a-rat-ing
+    terrifying: [3, 5, 7],      // ter-ri-fy-ing
+    sensations: [3, 5, 7],      // sen-sa-tions
+    apparently: [2, 5, 7],      // ap-par-ent-ly
+    division: [2, 4],           // di-vi-sion
+    according: [2, 5],          // ac-cord-ing
+    pronounced: [3, 7],         // pro-nounced (2 syl)
+    observe: [2],               // ob-serve
+    skillfully: [5],            // skill-ful-ly ... handled by rules
+    language: [3],              // lan-guage
+    several: [3, 5],            // sev-er-al
+    usually: [2, 4],            // u-su-al-ly
+    cigarette: [3, 5],          // cig-a-rette
+    people: [3],                // peo-ple
+    little: [3],                // lit-tle
+    simple: [3],                // sim-ple
+    purple: [3],                // pur-ple
+    whistle: [4],               // whis-tle
+    castle: [3],                // cas-tle
+    muscle: [3],                // mus-cle
+    article: [2, 4],            // ar-ti-cle
+    vehicle: [2, 4],            // ve-hi-cle
+    miracle: [3, 5],            // mir-a-cle
+    obstacle: [2, 5],           // ob-sta-cle
+  };
+
   _syllabify(word) {
     const clean = word.replace(/[^a-zA-Z]/g, '').toLowerCase();
     if (clean.length === 0) return [word];
     if (clean.length <= 2) return [word];
+
+    // Check exception dictionary first
+    const exc = VoxArcade._syllableExceptions[clean];
+    if (exc) {
+      const breaks = Array.isArray(exc) ? exc : [exc];
+      const result = [];
+      let prev = 0;
+      for (const b of breaks) {
+        if (b > prev && b < word.length) {
+          // Map clean index to original word index
+          let cleanIdx = 0, origIdx = 0;
+          while (origIdx < word.length && cleanIdx < b) {
+            if (/[a-zA-Z]/.test(word[origIdx])) cleanIdx++;
+            origIdx++;
+          }
+          result.push(word.slice(prev, origIdx));
+          prev = origIdx;
+        }
+      }
+      if (prev < word.length) result.push(word.slice(prev));
+      return result.filter(s => s.length > 0);
+    }
 
     const vowels = 'aeiouy';
     const isVowel = (ch) => vowels.includes(ch);
@@ -8680,13 +9226,30 @@ class VoxBallGame {
     if (nuclei.length > 1) {
       const last = nuclei[nuclei.length - 1];
       if (last.end === clean.length && clean.slice(last.start, last.end) === 'e') {
-        // Keep the 'e' nucleus for "-le" endings (e.g., "ta-ble", "peo-ple")
         const beforeE = clean[last.start - 1];
-        if (beforeE !== 'l') {
+        // Keep the 'e' for "-le", "-re", "-ne" endings (e.g., "ta-ble", "cen-tre", "ma-chine")
+        const keepEndings = ['l', 'r', 'n'];
+        if (!keepEndings.includes(beforeE)) {
           nuclei.pop();
         }
       }
     }
+
+    // Handle "-ed" endings: past tense "-ed" is only syllabic after t/d
+    if (nuclei.length > 1 && clean.endsWith('ed')) {
+      const last = nuclei[nuclei.length - 1];
+      const edStart = clean.length - 2;
+      if (last.start === edStart && last.end === edStart + 1) {
+        const beforeEd = clean[edStart - 1];
+        // "-ed" is silent (non-syllabic) unless preceded by t or d
+        if (beforeEd !== 't' && beforeEd !== 'd') {
+          nuclei.pop();
+        }
+      }
+    }
+
+    // Handle "-tion"/"-sion" as single syllable nuclei
+    // These diphthongs are already handled since 'io' merges into one nucleus
 
     if (nuclei.length <= 1) return [word];
 
@@ -8702,9 +9265,11 @@ class VoxBallGame {
     cleanToOrig[clean.length] = word.length;
 
     // Common consonant digraphs that shouldn't be split
-    const digraphs = ['th', 'ch', 'sh', 'ph', 'wh', 'ck', 'ng', 'gh'];
+    const digraphs = ['th', 'ch', 'sh', 'ph', 'wh', 'ck', 'ng', 'gh', 'gn', 'kn', 'wr'];
     // Common onset clusters that prefer to stay together
-    const onsetClusters = ['bl', 'br', 'cl', 'cr', 'dr', 'fl', 'fr', 'gl', 'gr', 'pl', 'pr', 'sc', 'sk', 'sl', 'sm', 'sn', 'sp', 'st', 'sw', 'tr', 'tw', 'str', 'spr', 'scr', 'spl'];
+    const onsetClusters = ['bl', 'br', 'cl', 'cr', 'dr', 'fl', 'fr', 'gl', 'gr', 'pl', 'pr', 'sc', 'sk', 'sl', 'sm', 'sn', 'sp', 'st', 'sw', 'tr', 'tw', 'str', 'spr', 'scr', 'spl', 'shr', 'thr', 'qu'];
+    // Consonant pairs that should stay together as codas (not split)
+    const codaClusters = ['ld', 'lf', 'lk', 'lm', 'lp', 'lt', 'mp', 'nd', 'nk', 'nt', 'pt', 'ft', 'ct', 'sk', 'sp', 'st'];
 
     const syllables = [];
     let prevEnd = 0;
@@ -8723,9 +9288,12 @@ class VoxBallGame {
         // Single consonant goes with following vowel (open syllable preference)
         splitClean = gapStart;
       } else if (gapLen === 2) {
-        // Two consonants: check if they form a valid onset cluster
+        // Two consonants: check if they form a valid onset cluster or digraph
         if (onsetClusters.includes(consonants) || digraphs.includes(consonants)) {
           splitClean = gapStart; // keep together with next syllable
+        } else if (codaClusters.includes(consonants)) {
+          // Coda cluster stays with previous syllable
+          splitClean = gapEnd;
         } else {
           splitClean = gapStart + 1; // split between them
         }
@@ -8737,6 +9305,11 @@ class VoxBallGame {
           if (onsetClusters.includes(candidate)) {
             bestOnset = len;
           }
+        }
+        // Also check if the remaining coda forms a valid cluster
+        const codaPart = consonants.slice(0, gapLen - bestOnset);
+        if (codaPart.length >= 2 && codaClusters.includes(codaPart.slice(-2))) {
+          // Valid coda+onset split, keep bestOnset
         }
         splitClean = gapEnd - bestOnset;
       }
@@ -8810,6 +9383,9 @@ class VoxBallGame {
     pr.firstOnsetTime = 0;
     pr.wordsCompleted = 0;
     pr.freestyleInterimTranscript = '';
+    // Reset adaptive onset tracking
+    pr._onsetBaseline = 0.3;
+    pr._onsetPeak = 1.0;
 
     // Clear any existing recordings if not explicitly retained
     if (pr.isPlayingBack) this._stopPrismPlayback();
@@ -8931,33 +9507,54 @@ class VoxBallGame {
     return { type: 'none', strokeWidth: 0, blur: 0 };
   }
 
-  // ---- Vowel classification from F2 ----
+  // ---- Vowel classification from F2 with pitch-adaptive normalization ----
   _classifyPrismVowel(avgF0, avgF2) {
     if (avgF2 <= 0) return null;
-    const normFactor = avgF0 > 200 ? 0.85 : 1.0;
+    // Pitch-adaptive normalization: higher voices have higher formants
+    // Apply a continuous scaling factor instead of a binary threshold
+    const normFactor = avgF0 > 0 ? Math.max(0.75, Math.min(1.0, 1.0 - (avgF0 - 150) * 0.001)) : 1.0;
     const f2n = avgF2 * normFactor;
-    if (f2n >= 2200) return 'IY';
-    if (f2n >= 1800) return 'IH';
-    if (f2n >= 1500) return 'EH';
-    if (f2n >= 1100) return 'AH';
-    if (f2n >= 750) return 'UW';
-    return 'AH';
+
+    // Use overlapping ranges with a closest-centroid approach for better accuracy
+    const vowelCentroids = [
+      { type: 'IY', f2: 2400 },  // "ee" as in "see"
+      { type: 'IH', f2: 2000 },  // "ih" as in "sit"
+      { type: 'EH', f2: 1700 },  // "eh" as in "set"
+      { type: 'AE', f2: 1600 },  // "ae" as in "sat"
+      { type: 'AH', f2: 1200 },  // "ah" as in "father"
+      { type: 'UH', f2: 1000 },  // "uh" as in "put"
+      { type: 'UW', f2: 800 },   // "oo" as in "boot"
+    ];
+
+    let bestType = 'AH';
+    let bestDist = Infinity;
+    for (const v of vowelCentroids) {
+      const dist = Math.abs(f2n - v.f2);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestType = v.type;
+      }
+    }
+    return bestType;
   }
 
   // ---- Vowel-specific F2 target scoring (Gaussian) ----
   _scorePrismVowelF2(vowelType, measuredF2) {
     if (!vowelType || measuredF2 <= 0) return 0.5;
     const targets = {
-      'IY': { center: 2600, halfWidth: 400 },
-      'IH': { center: 2000, halfWidth: 200 },
-      'EH': { center: 1750, halfWidth: 150 },
-      'AH': { center: 1400, halfWidth: 200 },
-      'UW': { center: 950, halfWidth: 200 },
+      'IY': { center: 2400, halfWidth: 350 },
+      'IH': { center: 2000, halfWidth: 250 },
+      'EH': { center: 1700, halfWidth: 200 },
+      'AE': { center: 1600, halfWidth: 200 },
+      'AH': { center: 1200, halfWidth: 250 },
+      'UH': { center: 1000, halfWidth: 200 },
+      'UW': { center: 800, halfWidth: 200 },
     };
     const t = targets[vowelType];
     if (!t) return 0.5;
     const distance = Math.abs(measuredF2 - t.center);
     const normalized = distance / t.halfWidth;
+    // Gaussian scoring: perfect at center, drops off with distance
     return Math.max(0, Math.min(1, Math.exp(-0.5 * normalized * normalized)));
   }
 
@@ -8995,10 +9592,29 @@ class VoxBallGame {
     const avgVowelLike = avg(syl.vowelLikelihoodSamples);
     syl.strainFlag = (syl.avgWeight < 0.25 && avgEnergy > 0.06);
 
+    // Enhanced confidence scoring with pitch stability
     const pitchConf = syl.pitchSamples.length > 2 ? 1 : syl.pitchSamples.length / 2;
     const durationConf = Math.min(1, syl.durationMs / 300);
     const vowelConf = avgVowelLike;
-    syl.confidence = Math.min(1, pitchConf * 0.3 + durationConf * 0.3 + vowelConf * 0.4);
+    // Pitch stability: low variance in pitch samples = higher confidence
+    let pitchStability = 1;
+    if (syl.pitchSamples.length >= 2) {
+      const pitchMean = avg(syl.pitchSamples);
+      const pitchVar = syl.pitchSamples.reduce((sum, p) => sum + (p - pitchMean) ** 2, 0) / syl.pitchSamples.length;
+      const pitchStdDev = Math.sqrt(pitchVar);
+      // Coefficient of variation — normalized stability measure
+      const cv = pitchMean > 0 ? pitchStdDev / pitchMean : 0;
+      pitchStability = Math.max(0, 1 - cv * 5); // cv of 0.2 = 0 stability
+    }
+    // Energy consistency: stable energy during the syllable boosts confidence
+    let energyConsistency = 1;
+    if (syl.energySamples.length >= 2) {
+      const eMean = avg(syl.energySamples);
+      const eVar = syl.energySamples.reduce((sum, e) => sum + (e - eMean) ** 2, 0) / syl.energySamples.length;
+      const eCV = eMean > 0 ? Math.sqrt(eVar) / eMean : 0;
+      energyConsistency = Math.max(0, 1 - eCV * 3);
+    }
+    syl.confidence = Math.min(1, pitchConf * 0.2 + durationConf * 0.2 + vowelConf * 0.25 + pitchStability * 0.2 + energyConsistency * 0.15);
 
     this._applyPrismVisuals(index);
     syl.state = 'crystallized';
@@ -9349,10 +9965,25 @@ class VoxBallGame {
     // Manual mode: onset stepping is disabled, spacebar advances instead
     if (pr.manualMode) return;
 
-    // Detect syllable onset
-    const onsetDetected = a.syllableImpulse > 0.85;
+    // Adaptive onset detection: track rolling baseline of syllable impulse
+    // and use a dynamic threshold that adapts to the speaker's style
+    if (!pr._onsetBaseline) pr._onsetBaseline = 0.3;
+    if (!pr._onsetPeak) pr._onsetPeak = 1.0;
+    const impulse = a.syllableImpulse;
+    // Slowly adapt baseline toward current impulse level
+    pr._onsetBaseline += (Math.min(impulse, pr._onsetBaseline + 0.1) - pr._onsetBaseline) * 0.02;
+    // Track peak impulse values (decays slowly)
+    if (impulse > pr._onsetPeak) pr._onsetPeak = impulse;
+    else pr._onsetPeak *= 0.998;
+    // Dynamic threshold: midpoint between baseline and peak, clamped to reasonable range
+    const dynamicThreshold = Math.max(0.5, Math.min(0.92,
+      pr._onsetBaseline + (pr._onsetPeak - pr._onsetBaseline) * 0.55));
+    const onsetDetected = impulse > dynamicThreshold;
     const timeSinceLastOnset = now - pr.lastOnsetTime;
-    const debounceOk = timeSinceLastOnset > 0.12;
+    // Adaptive debounce: faster readers get shorter debounce (min 80ms, max 180ms)
+    const avgSylDuration = pr.currentIndex > 0 ? (now - pr.firstOnsetTime / 1000) / pr.currentIndex : 0.3;
+    const debounceTime = Math.max(0.08, Math.min(0.18, avgSylDuration * 0.25));
+    const debounceOk = timeSinceLastOnset > debounceTime;
 
     if (onsetDetected && debounceOk) {
       pr.lastOnsetTime = now;
@@ -9628,6 +10259,39 @@ class VoxBallGame {
       crystallized.reduce((a, s) => a + s.confidence, 0) / crystallized.length * 100
     );
 
+    // Pitch variability (intonation) — semitone standard deviation
+    let intonationScore = 0;
+    let intonationLabel = 'Monotone';
+    if (pitches.length >= 3) {
+      // Convert to semitones relative to mean for perceptual accuracy
+      const semitonePitches = pitches.map(p => 12 * Math.log2(p / avgPitch));
+      const stMean = semitonePitches.reduce((a, b) => a + b, 0) / semitonePitches.length;
+      const stVar = semitonePitches.reduce((sum, st) => sum + (st - stMean) ** 2, 0) / semitonePitches.length;
+      const stStdDev = Math.sqrt(stVar);
+      // Score: 0-2 semitones = monotone, 2-4 = moderate, 4+ = expressive
+      intonationScore = Math.round(Math.min(100, stStdDev * 25));
+      if (stStdDev < 1.5) intonationLabel = 'Monotone';
+      else if (stStdDev < 3) intonationLabel = 'Moderate';
+      else if (stStdDev < 5) intonationLabel = 'Expressive';
+      else intonationLabel = 'Very expressive';
+    }
+
+    // Pace consistency — coefficient of variation of per-syllable durations
+    const durations = crystallized.filter(s => s.durationMs > 0).map(s => s.durationMs);
+    let paceConsistency = 0;
+    let paceLabel = '';
+    if (durations.length >= 3) {
+      const durMean = durations.reduce((a, b) => a + b, 0) / durations.length;
+      const durVar = durations.reduce((sum, d) => sum + (d - durMean) ** 2, 0) / durations.length;
+      const durCV = durMean > 0 ? Math.sqrt(durVar) / durMean : 0;
+      // Lower CV = more consistent pacing. Score inversely
+      paceConsistency = Math.round(Math.max(0, Math.min(100, (1 - durCV) * 100)));
+      if (paceConsistency >= 80) paceLabel = 'Very steady';
+      else if (paceConsistency >= 60) paceLabel = 'Steady';
+      else if (paceConsistency >= 40) paceLabel = 'Variable';
+      else paceLabel = 'Erratic';
+    }
+
     const minutes = Math.floor(elapsed / 60);
     const seconds = Math.floor(elapsed % 60);
 
@@ -9645,6 +10309,11 @@ class VoxBallGame {
           <div class="prism-comp-sub">Range: ${pitchRange} Hz (${minPitch}–${maxPitch})</div>
         </div>
         <div class="prism-comp-card">
+          <div class="prism-comp-label">Intonation</div>
+          <div class="prism-comp-value">${intonationScore}%</div>
+          <div class="prism-comp-sub">${intonationLabel}</div>
+        </div>
+        <div class="prism-comp-card">
           <div class="prism-comp-label">Vowel Accuracy</div>
           <div class="prism-comp-value">${avgVowelScore}%</div>
           <div class="prism-comp-sub">${vowelScores.length} vowels scored</div>
@@ -9654,6 +10323,12 @@ class VoxBallGame {
           <div class="prism-comp-value">${avgResonance}%</div>
           <div class="prism-comp-sub">Forward brightness</div>
         </div>
+        ${durations.length >= 3 ? `
+        <div class="prism-comp-card">
+          <div class="prism-comp-label">Pace Consistency</div>
+          <div class="prism-comp-value">${paceConsistency}%</div>
+          <div class="prism-comp-sub">${paceLabel}</div>
+        </div>` : ''}
         <div class="prism-comp-card">
           <div class="prism-comp-label">Syllables</div>
           <div class="prism-comp-value">${crystallized.length} / ${pr.syllables.length}</div>
@@ -9831,7 +10506,7 @@ class VoxBallGame {
       }
       progressFill.style.width = `${Math.min(100, pct)}%`;
 
-      // Dynamic gradient from crystallized syllable hues
+      // Dynamic gradient from crystallized syllable hues — modulated by confidence & vowel score
       const crystallized = pr.syllables.filter(s => s.state === 'crystallized');
       if (crystallized.length >= 2) {
         const stops = [];
@@ -9839,11 +10514,16 @@ class VoxBallGame {
         for (let i = 0; i < crystallized.length; i += step) {
           const s = crystallized[i];
           const pos = Math.round((i / (crystallized.length - 1)) * 100);
-          stops.push(`hsl(${Math.round(s.hue)}, 65%, 60%) ${pos}%`);
+          // Saturation reflects vowel accuracy, lightness reflects confidence
+          const sat = Math.round(40 + s.vowelScore * 35);
+          const light = Math.round(45 + s.confidence * 20);
+          stops.push(`hsl(${Math.round(s.hue)}, ${sat}%, ${light}%) ${pos}%`);
         }
         // Always include the last one
         const last = crystallized[crystallized.length - 1];
-        stops.push(`hsl(${Math.round(last.hue)}, 65%, 60%) 100%`);
+        const lastSat = Math.round(40 + last.vowelScore * 35);
+        const lastLight = Math.round(45 + last.confidence * 20);
+        stops.push(`hsl(${Math.round(last.hue)}, ${lastSat}%, ${lastLight}%) 100%`);
         progressFill.style.background = `linear-gradient(90deg, ${stops.join(', ')})`;
       }
     }
@@ -10058,6 +10738,9 @@ class VoxBallGame {
     } else if (this.gameMode === 'keyboard') {
       stats.push({ value: `${this.keyboardGameMode.toUpperCase()}`, label: 'Keyboard Mode' });
       stats.push({ value: `${this.voiceKeyboard.score}`, label: 'Score' });
+      if (this.keyboardGameMode !== 'mirror' && this.voiceKeyboard.bestStreak > 0) {
+        stats.push({ value: `${this.voiceKeyboard.bestStreak}`, label: 'Best Streak' });
+      }
     } else if (this.gameMode === 'pilot') {
       stats.push({ value: `${this.pitchPilot.phase.toUpperCase()}`, label: 'Pilot Phase' });
       stats.push({ value: `${this.pitchPilot.score}`, label: 'Score' });
