@@ -772,6 +772,19 @@ export class VoiceAnalyzer {
 
     // 1. BOUNCE — pitch variation
     if (this.pitchHistory.length > 3) {
+      // ⚡ Bolt: Replace .reduce() with standard for-loop to eliminate function allocation
+      // and minimize garbage collection in this per-frame hot path.
+      let sum = 0;
+      for (let i = 0; i < this.pitchHistory.length; i++) {
+        sum += this.pitchHistory[i];
+      }
+      const mean = sum / this.pitchHistory.length;
+
+      let varianceSum = 0;
+      for (let i = 0; i < this.pitchHistory.length; i++) {
+        varianceSum += (this.pitchHistory[i] - mean) ** 2;
+      }
+      const variance = varianceSum / this.pitchHistory.length;
       // PERF: Inlined loop instead of .reduce() avoids function call overhead and GC pressure in hot loop
       const len = this.pitchHistory.length;
       let sum = 0;
