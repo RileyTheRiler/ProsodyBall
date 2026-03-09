@@ -19,5 +19,8 @@
     "serve": "^14.2.0",
     "puppeteer": "^24.37.5"
   },
-  "dependencies": {}
+  "dependencies": {},
+  "pnpm": {
+    "ignoredBuiltDependencies": ["puppeteer"]
+  }
 }
