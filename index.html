@@ -37,6 +37,21 @@
       --accent-syllable: #c084fc;
       --text-primary: #eceaf4;
       --text-muted: #908da5;
+      /* Z-index scale */
+      --z-hud: 10;
+      --z-hud-mobile: 15;
+      --z-overlay: 20;
+      --z-context: 24;
+      --z-summary: 25;
+      --z-prism-stats: 25;
+      --z-perf: 26;
+      --z-calibration: 28;
+      --z-tooltip: 30;
+      --z-dropdown: 35;
+      --z-settings: 40;
+      --z-camera: 50;
+      --z-popup: 100;
+      --z-info-popup: 200;
     }
 
     /* Okabe-Ito colorblind-safe palette overrides */
@@ -58,11 +73,14 @@
       background: var(--bg-deep);
       color: var(--text-primary);
       font-family: 'Outfit', sans-serif;
+      line-height: 1.5;
       overflow: hidden;
       height: 100vh;
       min-height: 100vh;
       height: 100dvh;
       width: 100vw;
+      overflow-wrap: break-word;
+      word-break: break-word;
     }
 
     #app {
@@ -82,7 +100,7 @@
       padding: 10px 14px;
       background: linear-gradient(180deg, rgba(18, 18, 31, 0.95) 0%, rgba(18, 18, 31, 0.7) 100%);
       backdrop-filter: blur(12px);
-      z-index: 10;
+      z-index: var(--z-hud);
       border-bottom: 1px solid rgba(255, 255, 255, 0.05);
       flex-shrink: 0;
     }
@@ -143,6 +161,7 @@
       border: 1px solid rgba(255, 255, 255, 0.06);
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
       flex-shrink: 1;
+      scroll-snap-type: x proximity;
     }
 
     .btn-fill {
@@ -168,6 +187,10 @@
 
     .hud-secondary::-webkit-scrollbar {
       display: none;
+    }
+
+    .hud-secondary > * {
+      scroll-snap-align: start;
     }
 
     /* Hide secondary HUD controls on the main menu; only show gear icon */
@@ -205,7 +228,9 @@
       font-size: 0.95rem;
       color: rgba(255, 255, 255, 0.8);
       line-height: 1.45;
-      z-index: 20;
+      overflow-wrap: break-word;
+      word-break: break-word;
+      z-index: var(--z-overlay);
       pointer-events: none;
       opacity: 0;
       transition: opacity 0.2s ease, transform 0.2s ease;
@@ -241,6 +266,11 @@
       font-weight: 600;
     }
 
+    .theme-select:focus-visible {
+      border-color: rgba(77, 150, 255, 0.6);
+      box-shadow: 0 0 0 3px rgba(77, 150, 255, 0.15);
+    }
+
     .theme-select option {
       background: #1a1a2e;
       color: #e8e6f0;
@@ -249,9 +279,22 @@
 
     button:focus-visible,
     select:focus-visible,
-    .mode-card:focus-visible {
+    input:focus-visible,
+    textarea:focus-visible,
+    .mode-card:focus-visible,
+    .style-pill:focus-visible,
+    .toggle-switch input:focus-visible + .toggle-slider,
+    .help-tab:focus-visible {
       outline: 3px solid rgba(77, 150, 255, 0.9);
       outline-offset: 2px;
+    }
+
+    :root.colorblind button:focus-visible,
+    :root.colorblind select:focus-visible,
+    :root.colorblind input:focus-visible,
+    :root.colorblind textarea:focus-visible,
+    :root.colorblind .mode-card:focus-visible {
+      outline-color: rgba(86, 180, 233, 0.9);
     }
 
     .btn {
@@ -263,7 +306,7 @@
       border: none;
       border-radius: 8px;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: background 0.2s, color 0.2s, border-color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s;
       letter-spacing: 0.02em;
     }
 
@@ -293,7 +336,7 @@
       border: 1px solid rgba(255, 107, 107, 0.3);
       opacity: 0;
       transform: scale(0.95);
-      transition: all 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+      transition: opacity 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28), transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
     }
 
     .btn-rec.show {
@@ -353,6 +396,7 @@
     .btn-help:hover {
       background: rgba(255, 255, 255, 0.1);
       color: var(--text-primary);
+      transform: translateY(-1px);
     }
 
     .btn-cb {
@@ -368,6 +412,7 @@
     .btn-cb:hover {
       background: rgba(255, 255, 255, 0.1);
       color: var(--text-primary);
+      transform: translateY(-1px);
     }
 
     .btn-cb.active {
@@ -389,6 +434,7 @@
     .btn-vib:hover {
       background: rgba(255, 255, 255, 0.1);
       color: var(--text-primary);
+      transform: translateY(-1px);
     }
 
     .btn-vib.active {
@@ -408,7 +454,7 @@
       padding: 16px 18px;
       max-width: 340px;
       width: 92vw;
-      z-index: 35;
+      z-index: var(--z-dropdown);
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
       font-size: 1rem;
       line-height: 1.5;
@@ -508,7 +554,7 @@
     }
 
     .vib-rule input[type="number"] {
-      width: 58px;
+      width: 68px;
       text-align: center;
     }
 
@@ -546,7 +592,7 @@
       color: var(--text-muted);
       cursor: pointer;
       width: 100%;
-      transition: all 0.2s;
+      transition: background 0.2s, border-color 0.2s, color 0.2s;
     }
 
     .vib-add-btn:hover {
@@ -632,7 +678,7 @@
       animation: vibShake 0.15s ease-in-out;
     }
 
-    /* Reduced motion: disable shake, tone down transitions */
+    /* Reduced motion: disable animations, minimize transitions */
     @media (prefers-reduced-motion: reduce) {
       .game-area.vib-shake {
         animation: none !important;
@@ -650,8 +696,32 @@
         transition: none !important;
       }
 
-      * {
+      .mode-card:hover .mode-icon {
+        animation: none !important;
+        transform: scale(1.15);
+      }
+
+      .prism-syl.active {
+        animation: none !important;
+      }
+
+      .loading-spinner,
+      .btn.loading::after {
+        animation: none !important;
+        opacity: 0.5;
+      }
+
+      .rec-dot {
+        animation: none !important;
+      }
+
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
       }
     }
 
@@ -673,7 +743,7 @@
     .summary-overlay {
       position: absolute;
       inset: 0;
-      z-index: 25;
+      z-index: var(--z-summary);
       display: none;
       flex-direction: column;
       align-items: center;
@@ -829,7 +899,7 @@
       background: linear-gradient(0deg, rgba(12, 12, 22, 0.98) 0%, rgba(18, 18, 31, 0.85) 100%);
       backdrop-filter: blur(12px);
       border-top: 1px solid rgba(255, 255, 255, 0.08);
-      z-index: 10;
+      z-index: var(--z-hud);
       flex-shrink: 0;
     }
 
@@ -945,11 +1015,11 @@
 
     .meter-pitch .meter-bar-fill {
       position: absolute;
-      width: 4px !important;
+      width: 6px !important;
       height: 100%;
       background: #fff;
       box-shadow: 0 0 8px rgba(255, 255, 255, 0.9), 0 0 16px rgba(255, 255, 255, 0.3);
-      border-radius: 2px;
+      border-radius: 3px;
       left: 0%;
       transition: left 0.12s ease-out, width 0s;
     }
@@ -962,13 +1032,13 @@
 
     .meter-resonance .meter-bar-fill {
       position: absolute;
-      width: 4px !important;
+      width: 6px !important;
       height: 100%;
       background: #fff;
       box-shadow: 0 0 8px rgba(255, 255, 255, 0.9), 0 0 16px rgba(255, 255, 255, 0.3);
-      border-radius: 2px;
+      border-radius: 3px;
       left: 50%;
-      transition: left 0.15s ease-out, width 0s;
+      transition: left 0.12s ease-out, width 0s;
     }
 
     .meter-resonance {
@@ -1027,7 +1097,7 @@
       align-items: center;
       justify-content: center;
       font-size: 0.65rem;
-      z-index: 11;
+      z-index: calc(var(--z-hud) + 1);
       transition: color 0.2s, background 0.2s;
       padding: 0;
     }
@@ -1152,7 +1222,7 @@
       background: rgba(0, 0, 0, 0.6);
       backdrop-filter: blur(6px);
       -webkit-backdrop-filter: blur(6px);
-      z-index: 100;
+      z-index: var(--z-popup);
       display: none;
       opacity: 0;
       transition: opacity 0.25s ease;
@@ -1247,7 +1317,7 @@
       flex-direction: column;
       align-items: center;
       justify-content: flex-start;
-      z-index: 20;
+      z-index: var(--z-overlay);
       background: rgba(10, 10, 18, 0.88);
       backdrop-filter: blur(20px);
       transition: opacity 0.4s;
@@ -1331,7 +1401,7 @@
       background: rgba(255, 255, 255, 0.03);
       border: 2px solid rgba(255, 255, 255, 0.06);
       cursor: pointer;
-      transition: all 0.2s;
+      transition: background 0.2s, border-color 0.2s, box-shadow 0.2s, transform 0.2s;
       flex-shrink: 0;
     }
 
@@ -1466,14 +1536,7 @@
     }
 
     .mode-card[data-mode="creature"]:hover .mode-icon {
-      animation: iconGlitch 0.4s ease-in-out;
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      .mode-card:hover .mode-icon {
-        animation: none;
-        transform: scale(1.15);
-      }
+      animation: iconGlitch 0.5s ease-in-out;
     }
 
     .mode-detail-panel.show {
@@ -1514,6 +1577,7 @@
       font-size: 0.88rem;
       color: rgba(200, 200, 220, 0.7);
       line-height: 1.5;
+      overflow-wrap: break-word;
     }
 
     .rule-bounce .rule-name {
@@ -1547,7 +1611,7 @@
       background: linear-gradient(135deg, #ff6b6b, #ff8e53);
       color: #fff;
       box-shadow: 0 4px 24px rgba(255, 107, 107, 0.4), 0 0 40px rgba(255, 107, 107, 0.15);
-      transition: all 0.25s cubic-bezier(0.18, 0.89, 0.32, 1.15);
+      transition: transform 0.25s cubic-bezier(0.18, 0.89, 0.32, 1.15), box-shadow 0.25s ease;
       flex-shrink: 0;
       margin-top: 16px;
       width: 100%;
@@ -1601,7 +1665,7 @@
       border-radius: 12px;
       padding: 16px 20px;
       max-width: 320px;
-      z-index: 30;
+      z-index: var(--z-tooltip);
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
       font-size: 0.9rem;
       line-height: 1.6;
@@ -1636,7 +1700,7 @@
       background: rgba(255, 255, 255, 0.04);
       color: var(--text-muted);
       cursor: pointer;
-      transition: all 0.2s;
+      transition: background 0.2s, color 0.2s, border-color 0.2s;
     }
 
     .help-tab.active {
@@ -1669,7 +1733,7 @@
     .calibration-overlay {
       position: absolute;
       inset: 0;
-      z-index: 28;
+      z-index: var(--z-calibration);
       display: none;
       align-items: center;
       justify-content: center;
@@ -1732,7 +1796,7 @@
       background: linear-gradient(135deg, #4d96ff, #c084fc);
       color: #fff;
       box-shadow: 0 3px 16px rgba(77, 150, 255, 0.3);
-      transition: all 0.2s;
+      transition: transform 0.2s, box-shadow 0.2s;
     }
 
     .cal-btn-primary:hover {
@@ -1750,7 +1814,7 @@
       cursor: pointer;
       background: rgba(255, 255, 255, 0.06);
       color: var(--text-muted);
-      transition: all 0.2s;
+      transition: background 0.2s, color 0.2s;
     }
 
     .cal-btn-secondary:hover {
@@ -1762,7 +1826,7 @@
       position: absolute;
       left: 10px;
       bottom: 76px;
-      z-index: 26;
+      z-index: var(--z-perf);
       display: none;
       background: rgba(8, 8, 12, 0.86);
       border: 1px solid rgba(255, 255, 255, 0.14);
@@ -2194,8 +2258,6 @@
         font-size: 0.76rem;
         white-space: normal;
         text-align: center;
-        line-height: 1.25;
-        max-width: 72px;
         line-height: 1.2;
         max-width: 100%;
       }
@@ -2339,6 +2401,8 @@
         justify-content: flex-start;
         -webkit-overflow-scrolling: touch;
         position: relative;
+      }
+
       /* --- EXPANDED METRICS: 2-col on mobile --- */
       .meters-panel.expanded .meters-expanded {
         grid-template-columns: repeat(2, 1fr);
@@ -2407,10 +2471,8 @@
 
       .context-bar .theme-select {
         display: inline-block;
-        min-height: 44px;
-        font-size: 16px;
         min-height: 38px;
-        font-size: 0.8rem;
+        font-size: 16px;
         flex-shrink: 0;
         border-radius: 10px;
         padding: 8px 12px;
@@ -2908,6 +2970,7 @@
         font-size: 1.1rem;
       }
 
+      /* Mode cards: compact on tiny screens */
       /* Mode cards: still tappable on tiny screens */
       .mode-card {
         min-width: 68px;
@@ -3014,7 +3077,7 @@
 
       /* HUD: ultra-compact single row */
       .hud {
-        padding: 3px 12px;
+        padding: 4px 12px;
         padding-left: max(12px, env(safe-area-inset-left, 0px));
         padding-right: max(12px, env(safe-area-inset-right, 0px));
         gap: 6px;
@@ -3073,17 +3136,17 @@
       }
 
       .meter {
-        min-width: 55px;
+        min-width: 60px;
         flex-shrink: 0;
-        gap: 1px;
+        gap: 2px;
       }
 
       .meter-label {
-        font-size: 0.55rem;
+        font-size: 0.6rem;
       }
 
       .meter-value {
-        font-size: 0.58rem;
+        font-size: 0.62rem;
       }
 
       .meter-bar-bg {
@@ -3400,7 +3463,6 @@
       border-radius: 10px;
       padding: 1px 6px;
       min-width: 16px;
-      margin-left: 0;
       margin-left: 2px;
       text-align: center;
       font-weight: 700;
@@ -3417,7 +3479,7 @@
       max-width: 360px;
       width: 90vw;
       max-height: 60vh;
-      z-index: 35;
+      z-index: var(--z-dropdown);
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
       display: none;
       overflow: hidden;
@@ -3454,9 +3516,14 @@
       transition: opacity 0.2s;
     }
 
-    .recordings-header .btn-clear-all:hover {
+    .recordings-header .btn-clear-all:hover:not(:disabled) {
       opacity: 1;
       color: #ff6b6b;
+    }
+
+    .recordings-header .btn-clear-all:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
     }
 
     .recordings-list {
@@ -3527,7 +3594,7 @@
       align-items: center;
       justify-content: center;
       font-size: 0.85rem;
-      transition: all 0.15s;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
       padding: 0;
     }
 
@@ -3585,7 +3652,7 @@
       background: rgba(255, 255, 255, 0.04);
       color: var(--text-muted);
       cursor: pointer;
-      transition: all 0.2s ease;
+      transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
       white-space: nowrap;
     }
 
@@ -4218,7 +4285,7 @@
       font-weight: 700;
       cursor: help;
       border: 1px solid rgba(255, 255, 255, 0.2);
-      transition: all 0.2s ease;
+      transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
       line-height: 1;
     }
 
@@ -4251,11 +4318,13 @@
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7), 0 0 16px rgba(192, 132, 252, 0.12);
       opacity: 0;
       visibility: hidden;
-      transition: all 0.2s cubic-bezier(0.18, 0.89, 0.32, 1.28);
-      z-index: 200;
+      transition: opacity 0.2s cubic-bezier(0.18, 0.89, 0.32, 1.28), visibility 0.2s, transform 0.2s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+      z-index: var(--z-info-popup);
       pointer-events: none;
       text-align: left;
       white-space: normal;
+      overflow-wrap: break-word;
+      word-break: break-word;
     }
 
     /* Little triangle arrow pointing down */
@@ -4333,6 +4402,82 @@
   
 
 
+    /* Colorblind: prism legend swatch overrides */
+    :root.colorblind .prism-legend-swatch {
+      filter: none;
+    }
+
+    :root.colorblind .btn-big {
+      background: linear-gradient(135deg, #D55E00, #E69F00);
+      box-shadow: 0 4px 24px rgba(213, 94, 0, 0.4), 0 0 40px rgba(213, 94, 0, 0.15);
+    }
+
+    :root.colorblind .btn-big:hover {
+      box-shadow: 0 8px 32px rgba(213, 94, 0, 0.55), 0 0 50px rgba(213, 94, 0, 0.2);
+    }
+
+    :root.colorblind .btn-start:hover {
+      box-shadow: 0 4px 20px rgba(213, 94, 0, 0.4);
+    }
+
+    :root.colorblind .mode-card:hover {
+      border-color: rgba(204, 121, 167, 0.3);
+    }
+
+    :root.colorblind .style-pill.selected {
+      background: rgba(0, 158, 115, 0.2);
+      border-color: rgba(0, 158, 115, 0.5);
+      color: #009E73;
+      box-shadow: 0 0 12px rgba(0, 158, 115, 0.15);
+    }
+
+    :root.colorblind .rec-btn.playing {
+      background: rgba(86, 180, 233, 0.2);
+      border-color: rgba(86, 180, 233, 0.4);
+      color: #56B4E9;
+    }
+
+    :root.colorblind .toggle-switch input:checked+.toggle-slider {
+      background: rgba(230, 159, 0, 0.35);
+    }
+
+    :root.colorblind .toggle-switch input:checked+.toggle-slider::before {
+      background: #E69F00;
+    }
+
+    /* Loading spinner for async operations */
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .loading-spinner {
+      width: 20px;
+      height: 20px;
+      border: 2px solid rgba(255, 255, 255, 0.1);
+      border-top-color: var(--accent-artic);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      display: inline-block;
+    }
+
+    .btn.loading {
+      pointer-events: none;
+      opacity: 0.7;
+    }
+
+    .btn.loading::after {
+      content: '';
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      display: inline-block;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+
     body.low-motion * {
       animation: none !important;
       transition: none !important;
@@ -4350,7 +4495,7 @@
       background: rgba(0, 0, 0, 0.4);
       backdrop-filter: blur(4px);
       -webkit-backdrop-filter: blur(4px);
-      z-index: 35;
+      z-index: var(--z-dropdown);
       display: none;
       opacity: 0;
       transition: opacity 0.3s ease;
@@ -4375,13 +4520,13 @@
       padding: 24px;
       max-width: 360px;
       width: 92vw;
-      z-index: 40;
+      z-index: var(--z-settings);
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
       display: none;
       flex-direction: column;
       gap: 18px;
       opacity: 0;
-      transition: all 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+      transition: opacity 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28), transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
       pointer-events: none;
     }
 
@@ -4462,7 +4607,7 @@
       padding: 10px;
       border-radius: 10px;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: background 0.2s, transform 0.2s;
     }
 
     .btn-close-settings:hover {
@@ -4481,7 +4626,7 @@
       border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: 12px;
       box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
-      z-index: 50;
+      z-index: var(--z-camera);
       display: none;
       flex-direction: column;
       overflow: hidden;
@@ -4585,6 +4730,9 @@
       </div>
       <div class="hud-controls hud-primary" aria-label="Primary session controls">
         <button class="btn btn-start" id="startBtn">🎙 Start</button>
+        <label class="btn btn-help" for="audioUploadInput"
+          style="cursor: pointer; display: inline-flex; align-items: center; justify-content: center;"
+          title="Upload Audio File" aria-label="Upload Audio File" role="button">
         <label class="btn btn-help btn-upload" for="audioUploadInput" title="Upload Audio File">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round" stroke-linejoin="round" style="pointer-events: none;">
@@ -4596,16 +4744,22 @@
         </label>
         <button class="btn btn-rec" id="recBtn"><span class="rec-dot"></span><span class="rec-label">Rec</span></button>
         <button class="btn btn-help" id="prismClearRecBtn"
-          style="display: none; opacity: 0; transform: scale(0.95); transition: all 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);">Clear</button>
+          style="display: none; opacity: 0; transform: scale(0.95); transition: opacity 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28), transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);">Clear</button>
         <button class="btn btn-help" id="prismSaveRecBtn"
-          style="display: none; opacity: 0; transform: scale(0.95); transition: all 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);">Save
+          style="display: none; opacity: 0; transform: scale(0.95); transition: opacity 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28), transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);">Save
           Clip</button>
+        <button class="btn btn-recordings" id="recordingsBtn" aria-controls="recordingsDrawer" aria-expanded="false"><span>Clips&nbsp;</span><span class="badge"
         <button class="btn btn-recordings" id="recordingsBtn" aria-expanded="false" aria-controls="recordingsDrawer"><span>Clips&nbsp;</span><span class="badge"
             id="recBadge">0</span></button>
+        <button class="btn btn-cb canvas-only" id="pauseCanvasBtn" title="Pause paint updates" aria-label="Pause paint updates"
+          style="padding: 6px 14px; font-weight: 600; border-radius: 8px;">Pause</button>
+        <button class="btn btn-cb canvas-only" id="clearCanvasBtn" title="Clear current canvas drawing" aria-label="Clear current canvas drawing"
+          style="padding: 6px 14px; font-weight: 600; border-radius: 8px;">Clear</button>
         <button class="btn btn-cb canvas-only btn-canvas-action" id="pauseCanvasBtn" title="Pause paint updates">Pause</button>
         <button class="btn btn-cb canvas-only btn-canvas-action" id="clearCanvasBtn" title="Clear current canvas drawing">Clear</button>
       </div>
       <div class="hud-controls hud-secondary" aria-label="Secondary settings">
+        <button class="btn btn-cb" id="settingsBtn" title="Open Settings" aria-label="Open Settings" aria-controls="settingsPanel" aria-expanded="false">
         <button class="btn btn-cb" id="settingsBtn" title="Open Settings" aria-label="Open Settings" aria-expanded="false" aria-controls="settingsPanel">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
@@ -4629,6 +4783,11 @@
           </svg>
         </button>
         <button class="btn btn-vib hud-setting" hidden id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts" aria-expanded="false" aria-controls="vibPanel">
+        <button class="btn btn-vib hud-setting" hidden style="display:none" id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts" aria-expanded="false" aria-controls="vibPanel">
+        <button class="btn btn-vib hud-setting" hidden style="display:none" id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts" aria-controls="vibPanel" aria-expanded="false">
+        <button class="btn btn-vib hud-setting" hidden style="display:none" id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts" aria-expanded="false" aria-controls="vibPanel">
+        <button class="btn btn-vib hud-setting" style="display:none" id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts">
+        <button class="btn btn-vib hud-setting" hidden id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
             <rect x="8" y="4" width="8" height="16" rx="2" />
@@ -4639,6 +4798,9 @@
           </svg>
         </button>
         <button class="btn btn-cb hud-setting" hidden id="cameraBtn" title="Camera Mirror" aria-label="Camera Mirror" aria-expanded="false" aria-controls="cameraModal">
+        <button class="btn btn-cb hud-setting" hidden style="display:none" id="cameraBtn" title="Camera Mirror" aria-label="Camera Mirror" aria-expanded="false" aria-controls="cameraModal">
+        <button class="btn btn-cb hud-setting" style="display:none" id="cameraBtn" title="Camera Mirror" aria-label="Camera Mirror">
+        <button class="btn btn-cb hud-setting" hidden id="cameraBtn" title="Camera Mirror" aria-label="Camera Mirror">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round" stroke-linejoin="round">
             <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
@@ -4646,6 +4808,12 @@
           </svg>
         </button>
         <button class="btn btn-help hud-setting" hidden id="helpBtn" aria-expanded="false" aria-controls="helpTooltip">How to Play</button>
+        <button class="btn btn-help hud-setting" hidden style="display:none" id="helpBtn" aria-controls="helpTooltip" aria-expanded="false">How to Play</button>
+        <button class="btn btn-help hud-setting" hidden style="display:none" id="helpBtn" aria-expanded="false" aria-controls="helpTooltip">How to Play</button>
+        <button class="btn btn-help hud-setting" hidden style="display:none" id="homeBtn" title="Return to Main Menu">
+        <button class="btn btn-help hud-setting" style="display:none" id="helpBtn">How to Play</button>
+        <button class="btn btn-help hud-setting" style="display:none" id="homeBtn" title="Return to Main Menu" aria-label="Return to Main Menu">
+        <button class="btn btn-help hud-setting" hidden id="helpBtn">How to Play</button>
         <button class="btn btn-help hud-setting" hidden id="homeBtn" title="Return to Main Menu">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
@@ -4659,7 +4827,7 @@
     </div>
 
     <div id="modalBackdrop" class="modal-backdrop"></div>
-    <div id="settingsPanel" class="settings-panel" hidden style="display:none">
+    <div id="settingsPanel" class="settings-panel">
       <h3>Session Settings</h3>
 
       <div class="settings-group">
@@ -4821,7 +4989,10 @@
           <!-- Right: detail panel + play button -->
           <div class="menu-right">
             <div class="mode-details" id="modeDetails">
-              <div class="mode-details-empty">👈 Pick a mode to see details</div>
+              <div class="mode-details-empty">
+                <span style="font-size:1.5rem">🎮</span>
+                <span>Select a game mode to see how it works</span>
+              </div>
 
               <div class="mode-detail-panel" id="ballDetails">
                 <div class="detail-header">
@@ -5071,7 +5242,7 @@
                   <label>Target Tone
                     <div class="info-wrapper">
                       <button class="info-trigger" aria-label="More Info">?</button>
-                      <div class="info-popup" hidden style="display:none">Pick Bright or Dark posture. The road color palette flips to match your
+                      <div class="info-popup" style="display:none">Pick Bright or Dark posture. The road color palette flips to match your
                         training goal.</div>
                     </div>
                     <select id="roadTargetSelect" class="theme-select" aria-label="Resonance Road target tone">
@@ -5172,7 +5343,7 @@
                         <span class="prism-label-icon">🎙️</span>Mode
                         <div class="info-wrapper">
                           <button class="info-trigger" aria-label="More Info">?</button>
-                          <div class="info-popup" hidden style="display:none">'Real-Time' animates as you speak. 'Record & Process' analyzes a whole
+                          <div class="info-popup" style="display:none">'Real-Time' animates as you speak. 'Record & Process' analyzes a whole
                             clip for higher accuracy playback.</div>
                         </div>
                       </label>
@@ -5187,7 +5358,7 @@
                         <span class="prism-label-icon">⏱</span>Pacing Mode
                         <div class="info-wrapper">
                           <button class="info-trigger" aria-label="More Info">?</button>
-                          <div class="info-popup" hidden style="display:none">Choose how text advances. 'Auto' detects your speech rhythm. 'Manual'
+                          <div class="info-popup" style="display:none">Choose how text advances. 'Auto' detects your speech rhythm. 'Manual'
                             lets you control the pace with Spacebar or Taps.</div>
                         </div>
                       </label>
@@ -5368,7 +5539,7 @@
       <div class="recordings-drawer" id="recordingsDrawer">
         <div class="recordings-header">
           <h3>Recordings</h3>
-          <button class="btn-clear-all" id="clearAllRecs">Clear all</button>
+          <button class="btn-clear-all" id="clearAllRecs" aria-label="Clear all recordings">Clear all</button>
         </div>
         <div class="recordings-list" id="recordingsList">
           <div class="recordings-empty" id="recsEmpty">No recordings yet. Hit <b>Rec</b> while playing!</div>
