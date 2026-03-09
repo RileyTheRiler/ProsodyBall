@@ -3167,6 +3167,16 @@ class VoxBallGame {
         showCalibrationOutcome(calResult);
       }
 
+      // If the wizard was skipped/timed out, don't leave the analyzer in the
+      // pre-calibration state where update() early-returns forever.
+      if (!this.analyzer.isCalibrated) {
+        const fallbackFloor = Math.max(0.008, this.analyzer.noiseFloor || 0.01);
+        this.analyzer.noiseFloor = fallbackFloor;
+        this.analyzer.syllableThreshold = Math.max(this.analyzer.syllableThreshold || 0, fallbackFloor * 1.2);
+        this.analyzer.sustainedThreshold = Math.max(this.analyzer.sustainedThreshold || 0, fallbackFloor * 1.5);
+        this.analyzer.isCalibrated = true;
+      }
+
       this.scrollX = 0;
       this.cameraY = 0;
       this.targetCameraY = 0;
