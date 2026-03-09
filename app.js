@@ -3212,6 +3212,7 @@ class VoxBallGame {
       clearError();
       const initialDiag = await getMicDiagnostics(this.analyzer.audioCtx);
       if (diagPanel) {
+        diagPanel.innerHTML = '';
         diagPanel.textContent = '';
         diagPanel.append(
           'Mic permission: ', Object.assign(document.createElement('b'), { textContent: initialDiag.permission }),
@@ -3331,6 +3332,7 @@ class VoxBallGame {
 
       const activeDiag = await getMicDiagnostics(this.analyzer.audioCtx);
       if (diagPanel) {
+        diagPanel.innerHTML = '';
         diagPanel.textContent = '';
         diagPanel.append(
           'Mic permission: ', Object.assign(document.createElement('b'), { textContent: activeDiag.permission }),
