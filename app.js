@@ -2182,18 +2182,21 @@ class VoxBallGame {
         vibPanel.classList.remove('show');
         vibToggle?.setAttribute('aria-expanded', 'false');
         vibToggle?.classList.remove('active');
+        if (vibToggle) vibToggle.setAttribute('aria-expanded', 'false');
         vibToggle?.setAttribute('aria-expanded', 'false');
       }
       const recDrawer = document.getElementById('recordingsDrawer');
       const recBtn = document.getElementById('recordingsBtn');
       if (recDrawer?.classList.contains('show') && !recDrawer.contains(e.target) && e.target !== recBtn && !recBtn?.contains(e.target)) {
         recDrawer.classList.remove('show');
+        if (recBtn) recBtn.setAttribute('aria-expanded', 'false');
         recBtn?.setAttribute('aria-expanded', 'false');
       }
       const helpTooltip = document.getElementById('helpTooltip');
       const helpBtn = document.getElementById('helpBtn');
       if (helpTooltip?.classList.contains('show') && !helpTooltip.contains(e.target) && e.target !== helpBtn) {
         helpTooltip.classList.remove('show');
+        if (helpBtn) helpBtn.setAttribute('aria-expanded', 'false');
         helpBtn?.setAttribute('aria-expanded', 'false');
       }
     };
@@ -3088,6 +3091,7 @@ class VoxBallGame {
       cameraModal?.classList.remove('show');
       cameraBtn?.setAttribute('aria-expanded', 'false');
       cameraBtn?.classList.remove('active');
+      if (cameraBtn) cameraBtn.setAttribute('aria-expanded', 'false');
       cameraBtn?.setAttribute('aria-expanded', 'false');
     };
 
@@ -3107,6 +3111,7 @@ class VoxBallGame {
         cameraModal?.classList.add('show');
         cameraBtn?.setAttribute('aria-expanded', 'true');
         cameraBtn?.classList.add('active');
+        if (cameraBtn) cameraBtn.setAttribute('aria-expanded', 'true');
         cameraBtn?.setAttribute('aria-expanded', 'true');
       } catch (e) {
         showError('📷 Camera access denied or not available.');
@@ -4145,6 +4150,7 @@ class VoxBallGame {
       settingsPanel.classList.toggle('show', isVisible);
       settingsBtn?.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
       modalBackdrop.classList.toggle('show', isVisible);
+      if (settingsBtn) settingsBtn.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
       settingsBtn?.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
 
       if (settingsBtn) {
@@ -4201,6 +4207,7 @@ class VoxBallGame {
           if (vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
         }
         vibPanel.classList.remove('show');
+        if (vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
         document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
         vibBtn?.setAttribute('aria-expanded', 'false');
       }
@@ -4211,6 +4218,19 @@ class VoxBallGame {
         e.stopPropagation();
         if (vibPanel) {
           const isVisible = vibPanel.classList.toggle('show');
+          vibBtn.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
+        }
+        if (helpTooltip) {
+          helpTooltip.classList.remove('show');
+          const helpBtn = document.getElementById('helpBtn');
+          if (helpBtn) helpBtn.setAttribute('aria-expanded', 'false');
+        }
+        if (recordingsDrawer) {
+          recordingsDrawer.classList.remove('show');
+          const recBtn = document.getElementById('recordingsBtn');
+          if (recBtn) recBtn.setAttribute('aria-expanded', 'false');
+        }
+        if (settingsPanel && settingsPanel.classList.contains('show')) toggleSettings(false);
           vibBtn.setAttribute('aria-expanded', isVisible);
         }
         if (helpTooltip) {
@@ -4457,6 +4477,13 @@ class VoxBallGame {
       e.stopPropagation();
       this._updateHelpContent();
       const isVisible = helpTooltip.classList.toggle('show');
+      helpBtn.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
+      recordingsDrawer.classList.remove('show');
+      const recBtn = document.getElementById('recordingsBtn');
+      if (recBtn) recBtn.setAttribute('aria-expanded', 'false');
+      vibPanel.classList.remove('show');
+      const vibToggle = document.getElementById('vibToggle');
+      if (vibToggle) vibToggle.setAttribute('aria-expanded', 'false');
       if (helpBtn) helpBtn.setAttribute('aria-expanded', isVisible);
       if (recordingsDrawer) {
         recordingsDrawer.classList.remove('show');
@@ -4511,6 +4538,16 @@ class VoxBallGame {
           if (typeof vibBtn !== 'undefined' && vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
         }
         helpTooltip.classList.remove('show');
+        if (helpBtn) helpBtn.setAttribute('aria-expanded', 'false');
+      }
+      if (recordingsDrawer && !recordingsDrawer.contains(e.target) && (!recordingsBtn || !recordingsBtn.contains(e.target))) {
+        recordingsDrawer.classList.remove('show');
+        if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', 'false');
+      }
+      if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || !vibBtn.contains(e.target))) {
+        vibPanel.classList.remove('show');
+        const vibToggle = document.getElementById('vibToggle');
+        if (vibToggle) vibToggle.setAttribute('aria-expanded', 'false');
         helpBtn?.setAttribute('aria-expanded', 'false');
       }
       if (recordingsDrawer && !recordingsDrawer.contains(e.target) && (!recordingsBtn || !recordingsBtn.contains(e.target))) {
@@ -4564,6 +4601,13 @@ class VoxBallGame {
     recordingsBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const isVisible = recordingsDrawer.classList.toggle('show');
+      recordingsBtn.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
+      helpTooltip.classList.remove('show');
+      const helpBtnEl = document.getElementById('helpBtn');
+      if (helpBtnEl) helpBtnEl.setAttribute('aria-expanded', 'false');
+      vibPanel.classList.remove('show');
+      const vibBtnEl = document.getElementById('vibToggle');
+      if (vibBtnEl) vibBtnEl.setAttribute('aria-expanded', 'false');
       if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', isVisible);
       if (helpTooltip) {
         helpTooltip.classList.remove('show');
