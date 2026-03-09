@@ -1,4 +1,4 @@
-import { computeProsodyScore, pitchHzToPosition } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition } from './dsp-utils.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { getMicDiagnostics, ensureAudioContextRunning } from './reliability.js';
@@ -13,6 +13,25 @@ function escapeHtml(text) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
+
+// ============================================================
+// DSP TUNING CONSTANTS
+// Centralised so they're easy to find, tweak, and document.
+// ============================================================
+const YIN_THRESHOLD = 0.15;               // CMND threshold for pitch detection (lower = stricter)
+const PITCH_CONFIDENCE_FACTOR = 3.3;      // Maps CMND → confidence: conf = 1 - cmnd * factor
+const BOUNCE_NORM_DIVISOR = 70;           // Hz std-dev mapped to [0,1] bounce
+const TEMPO_TRANSITION_DIVISOR = 12;      // Energy crossings → [0,1] tempo
+const VOWEL_ONSET_SECS = 0.15;           // Seconds of sustain before vowel metric starts rising
+const VOWEL_SATURATION_SECS = 0.6;       // Additional seconds to reach vowel = 1.0
+const VOWEL_SUSTAIN_MULT = 0.4;          // Energy percentile multiplier for vowel detection threshold
+const ARTIC_SENSITIVITY_GAIN = 1.2;      // Gain applied to articulation normalisation
+const SYLLABLE_DEBOUNCE_SECS = 0.08;     // Minimum seconds between syllable onsets
+const SYLLABLE_ON_MULT = 0.6;            // Energy range multiplier for syllable-on threshold
+const SYLLABLE_OFF_MULT = 0.15;          // Energy range multiplier for syllable-off threshold
+const SYLLABLE_IMPULSE_DECAY = 0.88;     // Per-frame decay of syllable impulse
+const MAX_SPARKLES = 100;                // Maximum sparkle particles in ball mode
+const MAX_NEBULA_FLARES = 10;            // Maximum flare particles for nebula creature
 
 // ============================================================
 // VOICE ANALYZER
@@ -99,6 +118,11 @@ export class VoiceAnalyzer {
       learningDuration: 5.0
     };
 
+    // Adaptive HF energy tracking (for articulation normalisation)
+    this.hfEnergyWindow = [];
+    this.hfEnergyWindowMax = 60;
+    this.hfPercentiles = { p50: 0, p90: 0.02 };
+
     // Noise floor calibration
     this.noiseFloor = 0.015; // default, will be calibrated
     this.hfNoiseFloor = 0; // HF baseline for fans/AC
@@ -114,6 +138,7 @@ export class VoiceAnalyzer {
       articulation: 0, syllable: 0,
       pitch: 0, energy: 0, resonance: 0
     };
+    this.frameConfidence = 0; // overall frame confidence for game-level gating
   }
 
   // Helper to reuse typed arrays to prevent garbage collection spikes in hot loops
@@ -124,7 +149,7 @@ export class VoiceAnalyzer {
     return this._buffers[name];
   }
 
-  async start(audioFile = null) {
+  async start(audioFile = null, inputOptions = {}) {
     try {
       this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
@@ -144,9 +169,15 @@ export class VoiceAnalyzer {
         this.source.connect(this.audioCtx.destination);
       } else {
         // Handle microphone input
-        this.stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-        });
+        const requestedConstraints = {
+          echoCancellation: inputOptions.echoCancellation !== false,
+          noiseSuppression: inputOptions.noiseSuppression !== false,
+          autoGainControl: inputOptions.autoGainControl !== false,
+        };
+        if (inputOptions.deviceId) {
+          requestedConstraints.deviceId = { exact: inputOptions.deviceId };
+        }
+        this.stream = await navigator.mediaDevices.getUserMedia({ audio: requestedConstraints });
         this.source = this.audioCtx.createMediaStreamSource(this.stream);
       }
 
@@ -260,6 +291,14 @@ export class VoiceAnalyzer {
     for (const k in this.metrics) this.metrics[k] = 0;
   }
 
+  /** Reset calibration state so a fresh calibration can run cleanly */
+  resetCalibration() {
+    this.noiseCalibrationSamples = [];
+    this.hfCalibrationSamples = [];
+    this.noiseCalibrationTimer = 0;
+    this.isCalibrated = false;
+  }
+
   // ========================================================
   // YIN pitch detector — research-grade monophonic f0 estimation
   // Based on de Cheveigné & Kawahara (2002)
@@ -336,7 +375,7 @@ export class VoiceAnalyzer {
 
     // Step 3: Absolute threshold — find first dip below threshold
     // This is the key to YIN's octave-error resistance
-    const yinThreshold = 0.15; // Stricter = more accurate, less sensitive
+    const yinThreshold = YIN_THRESHOLD; // Stricter = more accurate, less sensitive
     let bestTau = -1;
 
     for (let tau = minPeriod; tau <= maxPeriod; tau++) {
@@ -381,7 +420,7 @@ export class VoiceAnalyzer {
 
     // Pitch confidence: CMND < 0.05 = very confident, > 0.3 = unreliable
     // Map inversely: low CMND → high confidence
-    this.pitchConfidence = Math.max(0, Math.min(1, 1 - cmndAtBest * 3.3));
+    this.pitchConfidence = Math.max(0, Math.min(1, 1 - cmndAtBest * PITCH_CONFIDENCE_FACTOR));
 
     // Step 5: Median filter — suppresses octave jumps
     // Keep a small buffer of recent raw detections
@@ -487,7 +526,6 @@ export class VoiceAnalyzer {
             this.pitchProfile.min = Math.max(50, p05 * 0.85);
             this.pitchProfile.max = Math.min(800, p95 * 1.25);
             this.pitchProfile.isLearned = true;
-            console.log(`[VoxBall] Learned User Pitch Range: ${this.pitchProfile.min.toFixed(0)}Hz - ${this.pitchProfile.max.toFixed(0)}Hz`);
             console.log(`[ProsodyBall] Learned User Pitch Range: ${this.pitchProfile.min.toFixed(0)}Hz - ${this.pitchProfile.max.toFixed(0)}Hz`);
           }
         }
@@ -505,6 +543,16 @@ export class VoiceAnalyzer {
     hfEnergy = Math.max(0, hfEnergy - this.hfNoiseFloor);
     // Only gate if WELL below speech level — consonants can be brief and quiet
     if (rms < this.noiseFloor * 1.3) hfEnergy = 0;
+
+    // Track HF energy percentiles for adaptive articulation normalisation
+    if (hfEnergy > 0) {
+      this.hfEnergyWindow.push(hfEnergy);
+      if (this.hfEnergyWindow.length > this.hfEnergyWindowMax) this.hfEnergyWindow.shift();
+      if (this.hfEnergyWindow.length >= 8) {
+        this.hfPercentiles.p50 = this._percentile(this.hfEnergyWindow, 0.5);
+        this.hfPercentiles.p90 = this._percentile(this.hfEnergyWindow, 0.9);
+      }
+    }
 
     this.analyser.getFloatFrequencyData(this.frequencyData);
     const fData = this.frequencyData;
@@ -534,7 +582,9 @@ export class VoiceAnalyzer {
 
     const eLowTilt = sumBandPower(lowStartHz, lowEndHz);
     const eHighTilt = sumBandPower(highStartHz, highEndHz);
-    const rawTiltDb = 10 * Math.log10((eHighTilt + eps) / (eLowTilt + eps));
+    let rawTiltDb = 10 * Math.log10((eHighTilt + eps) / (eLowTilt + eps));
+    // Guard against -Infinity/NaN when both bands are near-zero
+    if (!isFinite(rawTiltDb)) rawTiltDb = this.spectralTiltSmoothedDb;
     this.spectralTiltRawDb = rawTiltDb;
 
     // EMA smoothing to reduce frame jitter while preserving control latency.
@@ -559,7 +609,6 @@ export class VoiceAnalyzer {
           this.tiltProfile.min = median - spread * 0.55;
           this.tiltProfile.max = median + spread * 0.45;
           this.tiltProfile.isLearned = true;
-          console.log(`[VoxBall] Learned User Tilt Range: ${this.tiltProfile.min.toFixed(1)}dB to ${this.tiltProfile.max.toFixed(1)}dB`);
           console.log(`[ProsodyBall] Learned User Tilt Range: ${this.tiltProfile.min.toFixed(1)}dB to ${this.tiltProfile.max.toFixed(1)}dB`);
         }
       }
@@ -569,7 +618,7 @@ export class VoiceAnalyzer {
     const heavyAnchorDb = this.tiltProfile.isLearned ? this.tiltProfile.min : -34;
     const lightAnchorDb = this.tiltProfile.isLearned ? this.tiltProfile.max : -4;
     const normalized = normalizeAgainstRange(this.spectralTiltSmoothedDb, heavyAnchorDb, lightAnchorDb);
-    const tiltConfidenceGate = rms > this.noiseFloor * 1.35 ? 1 : Math.max(0, (rms - this.noiseFloor) / Math.max(1e-6, this.noiseFloor * 0.5));
+    const tiltConfidenceGate = rms > this.noiseFloor * 1.35 ? 1 : Math.max(0, (rms - this.noiseFloor) / Math.max(1e-6, this.noiseFloor * 0.5 || 1e-6));
     this.spectralWeight += (normalized - this.spectralWeight) * (0.12 + tiltConfidenceGate * 0.2);
     this.spectralTiltConfidence += (tiltConfidenceGate - this.spectralTiltConfidence) * 0.2;
 
@@ -694,7 +743,7 @@ export class VoiceAnalyzer {
     if (this.pitchHistory.length > 3) {
       const mean = this.pitchHistory.reduce((a, b) => a + b, 0) / this.pitchHistory.length;
       const variance = this.pitchHistory.reduce((a, p) => a + (p - mean) ** 2, 0) / this.pitchHistory.length;
-      this.metrics.bounce = Math.min(1, Math.sqrt(variance) / 70);
+      this.metrics.bounce = Math.min(1, Math.sqrt(variance) / BOUNCE_NORM_DIVISOR);
     } else {
       this.metrics.bounce *= 0.95;
     }
@@ -709,31 +758,34 @@ export class VoiceAnalyzer {
       for (let i = 1; i < this.energyHistory.length; i++) {
         if ((this.energyHistory[i - 1] > thresh) !== (this.energyHistory[i] > thresh)) transitions++;
       }
-      this.metrics.tempo = Math.min(1, transitions / 12);
+      this.metrics.tempo = Math.min(1, transitions / TEMPO_TRANSITION_DIVISOR);
     }
 
     // 3. VOWEL ELONGATION — sustained voicing WITH vowel-like formants
     //    Uses vowelLikelihood to distinguish real vowels from "sss" or "mmm"
-    const dynamicSustainThreshold = this.energyPercentiles.p50 + baseEnergyRange * 0.4;
+    const dynamicSustainThreshold = this.energyPercentiles.p50 + baseEnergyRange * VOWEL_SUSTAIN_MULT;
     const isVowelSound = gatedRms > dynamicSustainThreshold && pitch > 0 && this.vowelLikelihood > 0.3;
     if (isVowelSound) {
       this.sustainedDuration += dt * (0.5 + this.vowelLikelihood * 0.5); // stronger vowels accumulate faster
     } else {
       this.sustainedDuration *= 0.85;
     }
-    this.metrics.vowel = Math.min(1, Math.max(0, this.sustainedDuration - 0.15) / 0.6);
+    this.metrics.vowel = Math.min(1, Math.max(0, this.sustainedDuration - VOWEL_ONSET_SECS) / VOWEL_SATURATION_SECS);
 
-    // 4. ARTICULATION — HF bursts (boosted sensitivity for consonant detection)
-    const articTarget = normalizeAgainstPercentiles(hfEnergy, this.hfNoiseFloor, Math.max(this.hfNoiseFloor + 0.02, this.hfNoiseFloor * 3.5), 1.2);
+    // 4. ARTICULATION — HF bursts (adaptive ceiling from running HF percentiles)
+    const hfCeiling = this.hfEnergyWindow.length >= 8
+      ? Math.max(this.hfPercentiles.p90, this.hfNoiseFloor + 0.02)
+      : Math.max(this.hfNoiseFloor + 0.02, this.hfNoiseFloor * 3.5);
+    const articTarget = normalizeAgainstPercentiles(hfEnergy, this.hfNoiseFloor, hfCeiling, ARTIC_SENSITIVITY_GAIN);
     this.metrics.articulation += (articTarget - this.metrics.articulation) * 0.3;
 
     // 5. SYLLABLE SEPARATION — energy onset detection (uses gated energy)
-    const dynamicSyllableOn = this.energyPercentiles.p50 + baseEnergyRange * 0.6;
-    const dynamicSyllableOff = this.energyPercentiles.p50 + baseEnergyRange * 0.15;
+    const dynamicSyllableOn = this.energyPercentiles.p50 + baseEnergyRange * SYLLABLE_ON_MULT;
+    const dynamicSyllableOff = this.energyPercentiles.p50 + baseEnergyRange * SYLLABLE_OFF_MULT;
     const syllableOnThreshold = Math.max(0.005, dynamicSyllableOn);
     const syllableOffThreshold = Math.max(0.002, dynamicSyllableOff);
     if (gatedRms > syllableOnThreshold && this.syllableState === 'silent') {
-      if (now - this.lastSyllableTime > 0.08) {
+      if (now - this.lastSyllableTime > SYLLABLE_DEBOUNCE_SECS) {
         this.lastSyllableTime = now;
         this.syllableImpulse = 1.0;
       }
@@ -741,7 +793,7 @@ export class VoiceAnalyzer {
     } else if (gatedRms < syllableOffThreshold) {
       this.syllableState = 'silent';
     }
-    this.syllableImpulse *= 0.88;
+    this.syllableImpulse *= SYLLABLE_IMPULSE_DECAY;
     this.metrics.syllable = this.syllableImpulse;
 
     const voicedStrength = normalizeAgainstPercentiles(gatedRms, this.energyPercentiles.p50, this.energyPercentiles.p90, 1);
@@ -770,6 +822,9 @@ export class VoiceAnalyzer {
     this.metrics.pitch = pitch > 0 ? Math.max(0, Math.min(1, (pitch - this.pitchProfile.min) / pitchRange)) : this.metrics.pitch * 0.95;
     this.metrics.energy = normalizeAgainstPercentiles(gatedRms, this.energyPercentiles.p50, this.energyPercentiles.p90, 1.1);
     this.metrics.resonance = this.smoothResonance;
+
+    // Expose overall frame confidence so the game loop can gate the prosody score
+    this.frameConfidence = reliableFrame ? confidenceGate : 0.15;
   }
 
   // ============================================
@@ -889,7 +944,7 @@ export class VoiceAnalyzer {
 
     // Peak-pick with parabolic interpolation
     const minF1Hz = 200, maxF1Hz = 1100;
-    const minF2Hz = 800, maxF2Hz = 3500;
+    const minF2Hz = 600, maxF2Hz = 3500;
     const minF3Hz = 2200, maxF3Hz = 4200;
     const minSepHz = 300;
 
@@ -938,8 +993,15 @@ export class VoiceAnalyzer {
 
     // Confidence
     const specSlice = smoothed.subarray(f1Start, f3End + 1);
-    const specMin = Math.min(...specSlice);
-    const specRange = Math.max(...specSlice) - specMin;
+    let specMin = 0, specRange = 0;
+    if (specSlice.length > 0) {
+      specMin = specSlice[0]; let specMax = specSlice[0];
+      for (let i = 1; i < specSlice.length; i++) {
+        if (specSlice[i] < specMin) specMin = specSlice[i];
+        if (specSlice[i] > specMax) specMax = specSlice[i];
+      }
+      specRange = specMax - specMin;
+    }
     let conf = 0;
     if (specRange > 1) {
       const f1P = f1 > 0 ? Math.min(1, (f1Amp - specMin) / specRange) : 0.1;
@@ -1215,7 +1277,7 @@ export class VoiceAnalyzer {
   // Finds F1, F2, F3 with constraints, fallbacks, and confidence scoring
   _peakPickFormants(env, f0, numHarmonics) {
     const minF1Hz = 200, maxF1Hz = 1100;
-    const minF2Hz = 800, maxF2Hz = 3500;
+    const minF2Hz = 600, maxF2Hz = 3500;
     const minF3Hz = 2200, maxF3Hz = 4200;
     const minSepHz = 300;
 
@@ -1292,8 +1354,15 @@ export class VoiceAnalyzer {
       f2 = wS > 0 ? w / wS : 1500;
     }
 
-    const envMin = Math.min(...env);
-    const envRange = Math.max(...env) - envMin;
+    let envMin = 0, envRange = 0;
+    if (env.length > 0) {
+      envMin = env[0]; let envMax = env[0];
+      for (let i = 1; i < env.length; i++) {
+        if (env[i] < envMin) envMin = env[i];
+        if (env[i] > envMax) envMax = env[i];
+      }
+      envRange = envMax - envMin;
+    }
     let prominence = 0;
     if (envRange > 0) {
       const f1P = usedF1Fallback ? 0.2 : Math.min(1, (f1Amp - envMin) / envRange);
@@ -1341,8 +1410,11 @@ class VoxBallGame {
     this.ctx = this.canvas.getContext('2d');
     this.analyzer = new VoiceAnalyzer();
     this.isRunning = false;
+    this._isStarting = false; // guard for startGame/stopGame race
     this.lastTime = 0;
     this.idleAnimId = null;
+    this._disposables = []; // cleanup callbacks for listeners/observers
+    this._pendingTimeouts = []; // track setTimeout IDs for cleanup
 
     // FIX: Store ball color as HSL components for proper HSLA compositing
     this.ballHue = 275;
@@ -1369,8 +1441,7 @@ class VoxBallGame {
     this.sparkles = [];
     this.themeMode = 'highcontrast';
     this.colorblindMode = false;
-    this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road'
-    this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road' | 'ascent' | 'prism'
+    this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road' | 'ascent' | 'prism' | 'vowelvalley'
 
     // ====== CREATURE STATE ======
     this.creature = {
@@ -1556,6 +1627,31 @@ class VoxBallGame {
       heroNotes: [],
       successPulse: 0,
       missPulse: 0,
+      // Streak & combo system
+      streak: 0,
+      bestStreak: 0,
+      comboMultiplier: 1,
+      // Target practice improvements
+      targetHitThreshold: 0.7, // semitones tolerance (was 0.22 — too strict)
+      targetHoldDuration: 0.7, // seconds to hold note (was implicit 1.0)
+      targetDifficulty: 1,     // progressive difficulty level
+      targetsHit: 0,           // total targets hit this session
+      // Vocal Hero improvements
+      heroSpeed: 0.24,         // base scroll speed multiplier
+      heroSpawnInterval: 1.2,  // seconds between spawns (was 0.75 — too fast)
+      heroHitGrade: '',        // 'perfect' | 'good' | 'ok' | ''
+      heroGradeTimer: 0,       // display timer for grade
+      heroMissCount: 0,        // track total misses
+      heroHitCount: 0,         // track total hits
+      // Visual feedback
+      centsOff: 0,             // how many cents off from nearest note
+      nearestNoteName: '',     // name of the nearest detected note
+      nearestNoteOctave: 0,    // octave of nearest note
+      proximityGlow: 0,        // 0-1 how close to target (for gradient feedback)
+      // Adaptive pitch range
+      adaptiveMinMidi: 41,
+      adaptiveMaxMidi: 96,
+      useAdaptiveRange: false,
     };
     this.activePointerNotes = new Map(); // pointerId -> { oscillator, gain }
 
@@ -1734,15 +1830,24 @@ class VoxBallGame {
 
     // ====== ACCESSIBILITY ======
     this.userMotionPreference = localStorage.getItem('vox:motionPreference') || 'auto';
+    this.micInputPreferences = {
+      deviceId: localStorage.getItem('vox:micDeviceId') || 'default',
+      echoCancellation: localStorage.getItem('vox:echoCancellation') !== 'false',
+      noiseSuppression: localStorage.getItem('vox:noiseSuppression') !== 'false',
+      autoGainControl: localStorage.getItem('vox:autoGainControl') !== 'false',
+    };
     this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     this.baseParticleScale = 1;
     this.particleScale = 1;
     this.dynamicQualityScale = 1;
     this._applyMotionPreferences();
-    window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', (e) => {
+    const motionMql = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onMotionChange = (e) => {
       this.reducedMotion = e.matches;
       this._applyMotionPreferences();
-    });
+    };
+    motionMql.addEventListener('change', onMotionChange);
+    this._disposables.push(() => motionMql.removeEventListener('change', onMotionChange));
 
     // ====== RUNTIME TOOLS ======
     this.perfMonitor = new PerformanceMonitor({ panelId: 'perfPanel' });
@@ -1836,7 +1941,9 @@ class VoxBallGame {
     this._vowelPlotMax = 80;
 
     this.resize();
-    window.addEventListener('resize', () => this.resize());
+    const onResize = () => this.resize();
+    window.addEventListener('resize', onResize);
+    this._disposables.push(() => window.removeEventListener('resize', onResize));
     this.setupUI();
     this._updateHelpContent();
     this._setupMobile();
@@ -1922,10 +2029,11 @@ class VoxBallGame {
         if (selected) scrollCardIntoView(selected);
       });
       observer.observe(menuLeft, { subtree: true, attributes: true, attributeFilter: ['class'] });
+      this._disposables.push(() => observer.disconnect());
     }
 
     // 2. Close drawers/panels when tapping outside on mobile
-    document.addEventListener('pointerdown', (e) => {
+    const onMobilePointerDown = (e) => {
       if (!mobileQuery.matches) return;
       const vibPanel = document.getElementById('vibPanel');
       const vibToggle = document.getElementById('vibToggle');
@@ -1946,7 +2054,9 @@ class VoxBallGame {
         helpTooltip.classList.remove('show');
         helpBtn?.setAttribute('aria-expanded', 'false');
       }
-    });
+    };
+    document.addEventListener('pointerdown', onMobilePointerDown);
+    this._disposables.push(() => document.removeEventListener('pointerdown', onMobilePointerDown));
 
     // 3. Prevent rubber-band bounce on iOS when scrolling at boundaries
     const appEl = document.getElementById('app');
@@ -1954,12 +2064,24 @@ class VoxBallGame {
       appEl.style.overscrollBehavior = 'contain';
     }
 
-    // 4. Add active state feedback for mobile tap (no hover on touch)
-    document.querySelectorAll('.btn, .btn-big, .mode-card, .style-pill, .range-btn, .rec-btn, .help-tab').forEach(el => {
-      el.addEventListener('touchstart', () => el.classList.add('mobile-active'), { passive: true });
-      el.addEventListener('touchend', () => el.classList.remove('mobile-active'), { passive: true });
-      el.addEventListener('touchcancel', () => el.classList.remove('mobile-active'), { passive: true });
-    });
+    // 4. Add active state feedback for mobile tap via event delegation
+    const mobileActiveSelector = '.btn, .btn-big, .mode-card, .style-pill, .range-btn, .rec-btn, .help-tab';
+    const onTouchStart = (e) => {
+      const el = e.target.closest(mobileActiveSelector);
+      if (el) el.classList.add('mobile-active');
+    };
+    const onTouchEnd = (e) => {
+      const el = e.target.closest(mobileActiveSelector);
+      if (el) el.classList.remove('mobile-active');
+    };
+    document.addEventListener('touchstart', onTouchStart, { passive: true });
+    document.addEventListener('touchend', onTouchEnd, { passive: true });
+    document.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    this._disposables.push(
+      () => document.removeEventListener('touchstart', onTouchStart),
+      () => document.removeEventListener('touchend', onTouchEnd),
+      () => document.removeEventListener('touchcancel', onTouchEnd)
+    );
 
     // 5. Inject mobile active state CSS (visual feedback on tap)
     const mobileStyle = document.createElement('style');
@@ -2010,6 +2132,7 @@ class VoxBallGame {
       // Re-check when children change (e.g. mode cards appearing)
       const resizeObs = new ResizeObserver(() => updateFade(el));
       resizeObs.observe(el);
+      this._disposables.push(() => resizeObs.disconnect());
     });
   }
 
@@ -2337,7 +2460,8 @@ class VoxBallGame {
         reader.onerror = () => { resolve(); };
         reader.readAsDataURL(wavBlob);
       } catch (e) {
-        console.error('Recording save error:', e);
+        const msg = e && e.message ? e.message : String(e);
+        console.error(`Recording save error (${e && e.name || 'Error'}): ${msg}`, e);
         resolve();
       }
     });
@@ -2413,7 +2537,8 @@ class VoxBallGame {
     });
 
     audio.addEventListener('error', (e) => {
-      console.error('Audio playback error:', audio.error?.message || e);
+      const detail = audio.error ? `${audio.error.code}: ${audio.error.message}` : String(e);
+      console.error(`Audio playback error: ${detail}`);
       this.updateRecItemState(index, false);
       this.currentPlayback = null;
     });
@@ -2434,8 +2559,10 @@ class VoxBallGame {
 
   stopPlayback() {
     if (this.currentPlayback) {
-      this.currentPlayback.audio.pause();
-      this.currentPlayback.audio.currentTime = 0;
+      const audio = this.currentPlayback.audio;
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load(); // release media resources
       this.updateRecItemState(this.currentPlayback.index, false);
       const el = document.getElementById(`rec-progress-${this.currentPlayback.index}`);
       if (el) el.style.width = '0%';
@@ -2461,7 +2588,8 @@ class VoxBallGame {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    // Revoke immediately — the download has already been initiated by click()
+    URL.revokeObjectURL(url);
   }
 
   deleteRecording(index) {
@@ -2524,7 +2652,7 @@ class VoxBallGame {
       const btn = e.target.closest('[data-action]');
       if (!btn) return;
       const action = btn.dataset.action;
-      const idx = parseInt(btn.dataset.index);
+      const idx = parseInt(btn.dataset.index, 10);
       if (action === 'play') {
         if (this.currentPlayback && this.currentPlayback.index === idx) {
           this.stopPlayback();
@@ -2635,6 +2763,13 @@ class VoxBallGame {
 
     const teleprompterModeSelect = document.getElementById('teleprompterModeSelect');
     const voiceProfileSelect = document.getElementById('voiceProfileSelect');
+    const micDeviceSelect = document.getElementById('micDeviceSelect');
+    const echoCancelToggle = document.getElementById('echoCancelToggle');
+    const noiseSuppressToggle = document.getElementById('noiseSuppressToggle');
+    const autoGainToggle = document.getElementById('autoGainToggle');
+    const pitchProfileLearned = document.getElementById('pitchProfileLearned');
+    const tiltProfileLearned = document.getElementById('tiltProfileLearned');
+    const frameConfidenceLabel = document.getElementById('frameConfidenceLabel');
     const motionToggle = document.getElementById('motionToggle');
     const cameraBtn = document.getElementById('cameraBtn');
     const cameraModal = document.getElementById('cameraModal');
@@ -2705,9 +2840,64 @@ class VoxBallGame {
       if (statusLiveRegion) statusLiveRegion.textContent = '';
     };
 
+    const updateAdaptiveProfileStatus = () => {
+      const pitch = this.analyzer.pitchProfile;
+      const tilt = this.analyzer.tiltProfile;
+      const pitchPct = Math.min(100, Math.round((pitch.voicedTime / Math.max(0.1, pitch.learningDuration)) * 100));
+      const tiltPct = Math.min(100, Math.round((tilt.voicedTime / Math.max(0.1, tilt.learningDuration)) * 100));
+      if (pitchProfileLearned) {
+        pitchProfileLearned.textContent = pitch.isLearned
+          ? `${Math.round(pitch.min)}–${Math.round(pitch.max)} Hz learned`
+          : `Learning… ${pitchPct}%`;
+      }
+      if (tiltProfileLearned) {
+        tiltProfileLearned.textContent = tilt.isLearned
+          ? `${tilt.min.toFixed(1)} to ${tilt.max.toFixed(1)} dB learned`
+          : `Learning… ${tiltPct}%`;
+      }
+      if (frameConfidenceLabel) {
+        frameConfidenceLabel.textContent = `${Math.round(this.analyzer.frameConfidence * 100)}%`;
+      }
+    };
+
+    const syncMicSettingsUi = () => {
+      if (echoCancelToggle) echoCancelToggle.checked = this.micInputPreferences.echoCancellation;
+      if (noiseSuppressToggle) noiseSuppressToggle.checked = this.micInputPreferences.noiseSuppression;
+      if (autoGainToggle) autoGainToggle.checked = this.micInputPreferences.autoGainControl;
+      if (micDeviceSelect) micDeviceSelect.value = this.micInputPreferences.deviceId || 'default';
+    };
+
+    const populateMicDevices = async () => {
+      if (!micDeviceSelect || !navigator.mediaDevices?.enumerateDevices) return;
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const mics = devices.filter((d) => d.kind === 'audioinput');
+        micDeviceSelect.innerHTML = '';
+        const defaultOption = document.createElement('option');
+        defaultOption.value = 'default';
+        defaultOption.textContent = 'Microphone: System Default';
+        micDeviceSelect.appendChild(defaultOption);
+        mics.forEach((mic, idx) => {
+          const option = document.createElement('option');
+          option.value = mic.deviceId;
+          option.textContent = `Mic: ${mic.label || `Microphone ${idx + 1}`}`;
+          micDeviceSelect.appendChild(option);
+        });
+        const hasStoredDevice = this.micInputPreferences.deviceId === 'default'
+          || mics.some((mic) => mic.deviceId === this.micInputPreferences.deviceId);
+        if (!hasStoredDevice) {
+          this.micInputPreferences.deviceId = 'default';
+          localStorage.setItem('vox:micDeviceId', 'default');
+        }
+        syncMicSettingsUi();
+      } catch (err) {
+        console.warn('Could not enumerate microphones:', err);
+      }
+    };
+
     const setRecoverMicVisible = (visible) => {
       if (!recoverMicBtn) return;
-      recoverMicBtn.style.display = visible ? '' : 'none';
+      recoverMicBtn.toggleAttribute('hidden', !visible);
       recoverMicBtn.classList.toggle('active', visible);
     };
 
@@ -2855,6 +3045,9 @@ class VoxBallGame {
     };
 
     const startGame = async () => {
+      if (this._isStarting) return; // prevent concurrent start/stop race
+      this._isStarting = true;
+      try {
       this._resetKeyboardModeState();
       if (this.gameMode === 'keyboard') {
         this.canvasMode = 'keyboard';
@@ -2889,7 +3082,21 @@ class VoxBallGame {
         return;
       }
 
-      const result = await this.analyzer.start(selectedAudioFile);
+      const buildInputOptions = () => ({
+        deviceId: this.micInputPreferences.deviceId !== 'default' ? this.micInputPreferences.deviceId : undefined,
+        echoCancellation: this.micInputPreferences.echoCancellation,
+        noiseSuppression: this.micInputPreferences.noiseSuppression,
+        autoGainControl: this.micInputPreferences.autoGainControl,
+      });
+
+      let result = await this.analyzer.start(selectedAudioFile, buildInputOptions());
+      // Recover automatically if a previously saved device is no longer available.
+      if (!selectedAudioFile && !result.ok && result.error === 'NotFoundError' && this.micInputPreferences.deviceId !== 'default') {
+        this.micInputPreferences.deviceId = 'default';
+        localStorage.setItem('vox:micDeviceId', 'default');
+        syncMicSettingsUi();
+        result = await this.analyzer.start(selectedAudioFile, buildInputOptions());
+      }
 
       // Clear the selected file after starting so it doesn't persistently start with the file
       // if the user later clicks the normal Start button.
@@ -2944,6 +3151,7 @@ class VoxBallGame {
       if (diagPanel) {
         diagPanel.innerHTML = `Mic permission: <b>${activeDiag.permission}</b> · Audio: <b>${activeDiag.audioState}</b> · API: <b>${activeDiag.mediaDevices ? 'ok' : 'missing'}</b>`;
       }
+      populateMicDevices();
 
       if (!this.hasCompletedCalibration) {
         let calResult = { outcome: 'incomplete', skipped: true, reason: 'timeout-guard' };
@@ -2960,6 +3168,16 @@ class VoxBallGame {
         }
         this.hasCompletedCalibration = true;
         showCalibrationOutcome(calResult);
+      }
+
+      // If the wizard was skipped/timed out, don't leave the analyzer in the
+      // pre-calibration state where update() early-returns forever.
+      if (!this.analyzer.isCalibrated) {
+        const fallbackFloor = Math.max(0.008, this.analyzer.noiseFloor || 0.01);
+        this.analyzer.noiseFloor = fallbackFloor;
+        this.analyzer.syllableThreshold = Math.max(this.analyzer.syllableThreshold || 0, fallbackFloor * 1.2);
+        this.analyzer.sustainedThreshold = Math.max(this.analyzer.sustainedThreshold || 0, fallbackFloor * 1.5);
+        this.analyzer.isCalibrated = true;
       }
 
       this.scrollX = 0;
@@ -3108,9 +3326,15 @@ class VoxBallGame {
       this.isRunning = true;
       this.lastTime = performance.now();
       this.loop();
+      } finally {
+        this._isStarting = false;
+      }
     };
 
     const stopGame = async () => {
+      // Clear any pending timeouts from the game session
+      for (const id of this._pendingTimeouts) clearTimeout(id);
+      this._pendingTimeouts = [];
       // Auto-stop recording if active — must await so recorder can
       // flush its final chunk before we kill the mic stream
       if (this.isRecording) {
@@ -3204,7 +3428,7 @@ class VoxBallGame {
       // Reset mode selection so user can pick fresh
       modeDetails.classList.remove('show');
       modeCards.forEach(c => c.classList.remove('selected'));
-      [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails, roadDetails, ascentDetails, prismDetails]
+      [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails, roadDetails, ascentDetails, prismDetails, vowelvalleyDetails]
         .forEach(p => p && p.classList.remove('show'));
       this.drawIdleScene();
     });
@@ -3338,7 +3562,7 @@ class VoxBallGame {
       return;
     }
 
-    const activateFromEvent = (event, preventDefault = false) => {
+    const activateFromEvent = (event, preventDefault = false, autoStart = false) => {
       const target = event.target instanceof Element
         ? event.target
         : event.target && event.target.parentElement;
@@ -3347,10 +3571,13 @@ class VoxBallGame {
       if (!card || !modePicker.contains(card)) return;
       if (preventDefault) event.preventDefault();
       selectMode(card.dataset.mode, card);
+      if (autoStart && !this.isRunning) {
+        startGame();
+      }
     };
 
-    modePicker?.addEventListener('click', (event) => activateFromEvent(event, false));
-    modePicker?.addEventListener('touchend', (event) => activateFromEvent(event, true), { passive: false });
+    modePicker?.addEventListener('click', (event) => activateFromEvent(event, false, false));
+    modePicker?.addEventListener('touchend', (event) => activateFromEvent(event, true, false), { passive: false });
 
     contextToggleBtn?.addEventListener('click', () => {
       if (!canvasContextBar) return;
@@ -3365,9 +3592,13 @@ class VoxBallGame {
     modeCards.forEach((card) => {
       card.setAttribute('role', 'button');
       card.setAttribute('tabindex', '0');
-      card.addEventListener('click', () => selectMode(card.dataset.mode, card));
+      card.addEventListener('click', (event) => {
+        event.stopPropagation();
+        selectMode(card.dataset.mode, card);
+      });
       card.addEventListener('touchend', (event) => {
         event.preventDefault();
+        event.stopPropagation();
         selectMode(card.dataset.mode, card);
       }, { passive: false });
       card.addEventListener('keydown', (event) => {
@@ -3426,8 +3657,34 @@ class VoxBallGame {
       applyVoiceProfilePreset(e.target.value);
     });
 
+    micDeviceSelect?.addEventListener('change', (e) => {
+      this.micInputPreferences.deviceId = e.target.value || 'default';
+      localStorage.setItem('vox:micDeviceId', this.micInputPreferences.deviceId);
+    });
+
+    echoCancelToggle?.addEventListener('change', (e) => {
+      this.micInputPreferences.echoCancellation = !!e.target.checked;
+      localStorage.setItem('vox:echoCancellation', String(this.micInputPreferences.echoCancellation));
+    });
+
+    noiseSuppressToggle?.addEventListener('change', (e) => {
+      this.micInputPreferences.noiseSuppression = !!e.target.checked;
+      localStorage.setItem('vox:noiseSuppression', String(this.micInputPreferences.noiseSuppression));
+    });
+
+    autoGainToggle?.addEventListener('change', (e) => {
+      this.micInputPreferences.autoGainControl = !!e.target.checked;
+      localStorage.setItem('vox:autoGainControl', String(this.micInputPreferences.autoGainControl));
+    });
+
     canvasModeSelect?.addEventListener('change', (e) => {
       this.canvasMode = e.target.value;
+      // Reset pause state when switching canvas sub-modes
+      this.voiceCanvasPaused = false;
+      if (pauseCanvasBtn) {
+        pauseCanvasBtn.textContent = 'Pause';
+        pauseCanvasBtn.classList.remove('active');
+      }
       if (canvasModeSelect) canvasModeSelect.style.display = this.gameMode === 'canvas' ? '' : 'none';
       if (keyboardGameSelect) keyboardGameSelect.style.display = this.canvasMode === 'keyboard' ? '' : 'none';
       if (!this.isRunning) this.drawIdleScene();
@@ -3663,6 +3920,9 @@ class VoxBallGame {
       motionToggle.classList.toggle('active', this.userMotionPreference === 'low');
     };
     syncMotionToggleLabel();
+    syncMicSettingsUi();
+    updateAdaptiveProfileStatus();
+    populateMicDevices();
     motionToggle?.addEventListener('click', () => {
       const order = ['auto', 'low', 'full'];
       const idx = order.indexOf(this.userMotionPreference);
@@ -3699,6 +3959,9 @@ class VoxBallGame {
         settingsPanel.style.display = 'flex';
         settingsPanel.style.opacity = '1';
         settingsPanel.style.pointerEvents = 'auto';
+        syncMicSettingsUi();
+        updateAdaptiveProfileStatus();
+        populateMicDevices();
         helpTooltip.classList.remove('show');
         recordingsDrawer.classList.remove('show');
         vibPanel.classList.remove('show');
@@ -3721,7 +3984,7 @@ class VoxBallGame {
     // Global click-to-close for all overlays
     document.addEventListener('click', (e) => {
       // Settings panel (if clicking outside and not the gear)
-      if (settingsPanel && !settingsPanel.contains(e.target) && e.target !== settingsBtn && !settingsBtn.contains(e.target)) {
+      if (settingsPanel && !settingsPanel.contains(e.target) && e.target !== settingsBtn && (!settingsBtn || !settingsBtn.contains(e.target))) {
         if (settingsPanel.classList.contains('show')) toggleSettings(false);
       }
       // Vibration panel
@@ -3919,6 +4182,8 @@ class VoxBallGame {
         showError('ℹ Start a session first, then tap Recalibrate.');
         return;
       }
+      // Clear stale calibration data so fresh samples are collected
+      this.analyzer.resetCalibration();
       const calResult = await this.calibrationWizard.run(this.analyzer);
       this.hasCompletedCalibration = true;
       this.guidedStartTs = performance.now();
@@ -3995,6 +4260,12 @@ class VoxBallGame {
 
     document.addEventListener('visibilitychange', async () => {
       if (document.visibilityState !== 'visible' || !this.isRunning) return;
+      // Resume AudioContext if it was suspended while tab was hidden
+      try {
+        if (this.analyzer.audioCtx && this.analyzer.audioCtx.state === 'suspended') {
+          await this.analyzer.audioCtx.resume();
+        }
+      } catch (_) { /* non-blocking */ }
       try {
         if (navigator.permissions?.query) {
           const mic = await navigator.permissions.query({ name: 'microphone' });
@@ -4151,6 +4422,9 @@ class VoxBallGame {
         this.drawSpectralAscentScene();
       } else if (this.gameMode === 'prism') {
         this.drawPrismReaderScene();
+      } else if (this.gameMode === 'vowelvalley') {
+        this.updateVowelValley(0.016);
+        this.drawVowelValleyScene(0);
       } else {
         idleScroll.x += 0.5;
         this.scrollX = idleScroll.x;
@@ -4179,6 +4453,14 @@ class VoxBallGame {
     this.lastTime = now;
 
     this.analyzer.update(dt);
+
+    // Skip rendering when the tab is hidden to save CPU/GPU.
+    // Audio analysis above still runs so calibration state stays warm.
+    if (document.hidden) {
+      requestAnimationFrame(() => this.loop());
+      return;
+    }
+
     this.perfMonitor.sample(dt);
 
     const targetQualityScale = this.perfMonitor.fps > 0 && this.perfMonitor.fps < 30 ? 0.55 : this.perfMonitor.fps > 0 && this.perfMonitor.fps < 42 ? 0.75 : 1;
@@ -4410,8 +4692,11 @@ class VoxBallGame {
     // PROSODY SCORE — the core pedagogical signal
     // Monotone speech ≈ 0. Expressive prosody → 1.
     // Weighted toward variation metrics, NOT raw energy/volume.
+    // During low-confidence frames, slow the smoothing factor so
+    // unreliable data doesn't jerk the score around.
     // ==========================================================
-    this.prosodyScore = computeProsodyScore(this.prosodyScore, m, 0.12);
+    const scoreSmoothing = 0.12 * Math.max(0.2, this.analyzer.frameConfidence);
+    this.prosodyScore = computeProsodyScore(this.prosodyScore, m, scoreSmoothing);
     const ps = this.prosodyScore;
 
     // ==========================================================
@@ -4572,7 +4857,7 @@ class VoxBallGame {
       this.sparkles[i].life -= dt;
       if (this.sparkles[i].life <= 0) this.sparkles.splice(i, 1);
     }
-    if (this.sparkles.length > 100) this.sparkles.splice(0, this.sparkles.length - 100);
+    if (this.sparkles.length > MAX_SPARKLES) this.sparkles.splice(0, this.sparkles.length - MAX_SPARKLES);
 
     for (let i = this.particles.length - 1; i >= 0; i--) {
       this.particles[i].update(dt);
@@ -4915,9 +5200,7 @@ class VoxBallGame {
   // ============================================================
   updateCreature(dt) {
     const m = this.analyzer.metrics;
-    const bounceW = 0.30, tempoW = 0.20, vowelW = 0.20, articW = 0.15, sylW = 0.15;
-    const rawPS = m.bounce * bounceW + m.tempo * tempoW + m.vowel * vowelW +
-      m.articulation * articW + m.syllable * sylW;
+    const rawPS = computeRawProsody(m);
     this.prosodyScore += (rawPS - this.prosodyScore) * 2.0 * dt;
     const ps = this.prosodyScore;
 
@@ -5152,7 +5435,7 @@ class VoxBallGame {
     for (let i = n.flares.length - 1; i >= 0; i--) {
       n.flares[i].life -= dt; if (n.flares[i].life <= 0) n.flares.splice(i, 1);
     }
-    if (n.flares.length > 10) n.flares.splice(0, n.flares.length - 10);
+    if (n.flares.length > MAX_NEBULA_FLARES) n.flares.splice(0, n.flares.length - MAX_NEBULA_FLARES);
   }
 
   // ---------- SPIRIT update ----------
@@ -5927,8 +6210,7 @@ class VoxBallGame {
     g.time += dt;
 
     // Prosody score
-    const rawPS = m.bounce * 0.30 + m.tempo * 0.20 + m.vowel * 0.20 +
-      m.articulation * 0.15 + m.syllable * 0.15;
+    const rawPS = computeRawProsody(m);
     this.prosodyScore += (rawPS - this.prosodyScore) * 2.0 * dt;
 
     // Vowel → global growth multiplier (sunlight) - exaggerated 1.5x
@@ -6079,6 +6361,7 @@ class VoxBallGame {
       p.life -= dt / p.maxLife;
       if (p.life <= 0) g.pollen.splice(i, 1);
     }
+    if (g.pollen.length > 200) g.pollen.splice(0, g.pollen.length - 200);
 
     // Update fireflies
     for (let i = g.fireflies.length - 1; i >= 0; i--) {
@@ -6622,8 +6905,7 @@ class VoxBallGame {
     vc.time += dt;
 
     // Prosody score
-    const rawPS = m.bounce * 0.30 + m.tempo * 0.20 + m.vowel * 0.20 +
-      m.articulation * 0.15 + m.syllable * 0.15;
+    const rawPS = computeRawProsody(m);
     this.prosodyScore += (rawPS - this.prosodyScore) * 2.0 * dt;
     const ps = this.prosodyScore;
 
@@ -7153,12 +7435,44 @@ class VoxBallGame {
     const m = this.analyzer.metrics;
     const hz = this.analyzer.smoothPitchHz;
     const conf = this.analyzer.pitchConfidence;
+    // Use confidence-gated voicing: require higher confidence for scoring
     const isVoiced = this.isRunning && m.energy > 0.04 && conf > 0.18 && hz > 50;
+    const isConfidentVoice = isVoiced && conf > 0.35; // stricter gate for scoring
     const midi = isVoiced ? 69 + 12 * Math.log2(hz / 440) : NaN;
 
     kb.glowStrength = Math.max(0, kb.glowStrength - dt * 2.2);
     kb.successPulse = Math.max(0, kb.successPulse - dt * 2.8);
     kb.missPulse = Math.max(0, kb.missPulse - dt * 2.5);
+    kb.heroGradeTimer = Math.max(0, kb.heroGradeTimer - dt);
+
+    // Update nearest note info and cents-off for visual feedback
+    if (isVoiced && Number.isFinite(midi)) {
+      const roundedMidi = Math.round(midi);
+      kb.centsOff = (midi - roundedMidi) * 100; // cents deviation
+      const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      kb.nearestNoteName = noteNames[((roundedMidi % 12) + 12) % 12];
+      kb.nearestNoteOctave = Math.floor(roundedMidi / 12) - 1;
+    }
+
+    // Adaptive pitch range learning: narrow keyboard to user's actual range
+    if (isVoiced && Number.isFinite(midi) && !kb.useAdaptiveRange) {
+      const profile = this.analyzer.pitchProfile;
+      if (profile.isLearned) {
+        // Map from learned Hz range to MIDI
+        const learnedMinMidi = Math.max(36, Math.floor(69 + 12 * Math.log2(profile.min / 440)) - 3);
+        const learnedMaxMidi = Math.min(96, Math.ceil(69 + 12 * Math.log2(profile.max / 440)) + 3);
+        // Only adapt if the range is reasonable (at least one octave)
+        if (learnedMaxMidi - learnedMinMidi >= 12) {
+          kb.adaptiveMinMidi = learnedMinMidi;
+          kb.adaptiveMaxMidi = learnedMaxMidi;
+          kb.useAdaptiveRange = true;
+        }
+      }
+    }
+
+    // Use adaptive range for gameplay if learned
+    const effectiveMin = kb.useAdaptiveRange ? kb.adaptiveMinMidi : kb.minMidi;
+    const effectiveMax = kb.useAdaptiveRange ? kb.adaptiveMaxMidi : kb.maxMidi;
 
     if (isVoiced && Number.isFinite(midi)) {
       const clamped = Math.max(kb.minMidi, Math.min(kb.maxMidi, midi));
@@ -7175,42 +7489,130 @@ class VoxBallGame {
     if (!this.isRunning || this.canvasMode !== 'keyboard') return;
 
     if (this.keyboardGameMode === 'target') {
-      if (isVoiced && Number.isFinite(midi) && Math.abs(midi - kb.targetMidi) < 0.22) {
-        kb.targetHold += dt;
-        if (kb.targetHold >= 1) {
-          kb.score += 1;
+      // Ensure target is within effective range
+      if (kb.targetMidi < effectiveMin || kb.targetMidi > effectiveMax) {
+        kb.targetMidi = effectiveMin + Math.floor(Math.random() * (effectiveMax - effectiveMin + 1));
+      }
+
+      const dist = isConfidentVoice && Number.isFinite(midi) ? Math.abs(midi - kb.targetMidi) : Infinity;
+      // Tolerance narrows with difficulty: starts at 0.7 semitones, tightens to 0.35
+      const tolerance = Math.max(0.35, kb.targetHitThreshold - (kb.targetDifficulty - 1) * 0.05);
+      // Visual proximity feedback (0=far, 1=on target)
+      kb.proximityGlow = dist < 3 ? Math.max(0, 1 - dist / 3) : 0;
+
+      if (dist < tolerance) {
+        // Confidence-weighted hold: higher confidence = faster fill
+        const confWeight = 0.5 + conf * 0.5;
+        kb.targetHold += dt * confWeight;
+        const holdRequired = kb.targetHoldDuration;
+        if (kb.targetHold >= holdRequired) {
+          // Score with combo multiplier
+          const basePoints = Math.ceil(1 * kb.comboMultiplier);
+          kb.score += basePoints;
+          kb.streak += 1;
+          kb.targetsHit += 1;
+          kb.bestStreak = Math.max(kb.bestStreak, kb.streak);
+          // Increase combo every 3 consecutive hits
+          if (kb.streak % 3 === 0) {
+            kb.comboMultiplier = Math.min(4, kb.comboMultiplier + 0.5);
+          }
+          // Progressive difficulty: every 5 hits, tighten tolerance slightly
+          if (kb.targetsHit % 5 === 0 && kb.targetDifficulty < 8) {
+            kb.targetDifficulty += 1;
+          }
           kb.targetHold = 0;
-          kb.targetMidi = kb.minMidi + Math.floor(Math.random() * (kb.maxMidi - kb.minMidi + 1));
+          // Pick next target within effective range, avoid repeating same note
+          let nextTarget;
+          do {
+            nextTarget = effectiveMin + Math.floor(Math.random() * (effectiveMax - effectiveMin + 1));
+          } while (nextTarget === kb.targetMidi && effectiveMax - effectiveMin > 2);
+          kb.targetMidi = nextTarget;
           kb.successPulse = 1;
           this._playKeyboardSuccessChime();
         }
       } else {
-        kb.targetHold = Math.max(0, kb.targetHold - dt * 1.6);
+        kb.targetHold = Math.max(0, kb.targetHold - dt * 1.2);
+        // Break streak if player is far off while voiced
+        if (isConfidentVoice && dist > 3) {
+          if (kb.streak > 0) {
+            kb.streak = 0;
+            kb.comboMultiplier = 1;
+          }
+        }
       }
     }
 
     if (this.keyboardGameMode === 'hero') {
       kb.heroTime += dt;
       kb.heroSpawn += dt;
-      if (kb.heroSpawn >= 0.75) {
+
+      // Adaptive spawn interval: gets slightly faster as score increases
+      const spawnRate = Math.max(0.6, kb.heroSpawnInterval - kb.heroTime * 0.005);
+      if (kb.heroSpawn >= spawnRate) {
         kb.heroSpawn = 0;
-        const midiTarget = kb.minMidi + Math.floor(Math.random() * (kb.maxMidi - kb.minMidi + 1));
+        // Spawn within effective range for better playability
+        const midiTarget = effectiveMin + Math.floor(Math.random() * (effectiveMax - effectiveMin + 1));
         kb.heroNotes.push({ midi: midiTarget, y: 0, hit: false });
       }
-      const speed = this.height * 0.24;
+
+      // Scroll speed increases gradually
+      const baseSpeed = this.height * kb.heroSpeed;
+      const speedScale = 1 + Math.min(0.6, kb.heroTime * 0.008);
+      const speed = baseSpeed * speedScale;
+
+      const hitLineY = this.height * 0.72;
+      // Wider hit zone for better playability
+      const hitZoneTop = hitLineY - this.height * 0.06;
+      const hitZoneBot = hitLineY + this.height * 0.04;
+
       for (let i = kb.heroNotes.length - 1; i >= 0; i--) {
         const n = kb.heroNotes[i];
         n.y += speed * dt;
-        if (!n.hit && n.y > this.height * 0.7 + 20) {
+
+        // Miss: note passed beyond hit zone
+        if (!n.hit && n.y > hitZoneBot + 20) {
           kb.missPulse = 1;
+          kb.heroMissCount += 1;
+          kb.streak = 0;
+          kb.comboMultiplier = 1;
           kb.heroNotes.splice(i, 1);
           continue;
         }
-        if (isVoiced && Number.isFinite(midi) && !n.hit && Math.abs(midi - n.midi) < 0.3 && n.y >= this.height * 0.68 && n.y <= this.height * 0.74) {
-          kb.score += 10;
-          kb.successPulse = 1;
-          this._playKeyboardSuccessChime();
-          kb.heroNotes.splice(i, 1);
+
+        // Hit detection with grading
+        if (isConfidentVoice && Number.isFinite(midi) && !n.hit) {
+          const pitchDist = Math.abs(midi - n.midi);
+          const inHitZone = n.y >= hitZoneTop && n.y <= hitZoneBot;
+
+          if (inHitZone && pitchDist < 1.0) {
+            // Grade based on pitch accuracy
+            let grade, pointMult;
+            if (pitchDist < 0.25) {
+              grade = 'perfect';
+              pointMult = 1.5;
+            } else if (pitchDist < 0.5) {
+              grade = 'good';
+              pointMult = 1.0;
+            } else {
+              grade = 'ok';
+              pointMult = 0.6;
+            }
+
+            const baseScore = Math.ceil(10 * pointMult * kb.comboMultiplier);
+            kb.score += baseScore;
+            kb.streak += 1;
+            kb.heroHitCount += 1;
+            kb.bestStreak = Math.max(kb.bestStreak, kb.streak);
+            // Build combo every 5 consecutive hits
+            if (kb.streak % 5 === 0) {
+              kb.comboMultiplier = Math.min(4, kb.comboMultiplier + 0.5);
+            }
+            kb.heroHitGrade = grade;
+            kb.heroGradeTimer = 0.6;
+            kb.successPulse = 1;
+            this._playKeyboardSuccessChime();
+            kb.heroNotes.splice(i, 1);
+          }
         }
       }
     }
@@ -7225,6 +7627,28 @@ class VoxBallGame {
     kb.heroNotes = [];
     kb.successPulse = 0;
     kb.missPulse = 0;
+    kb.plasmaTrail = [];
+    kb.glowKey = -1;
+    kb.glowStrength = 0;
+    kb.targetMidi = 57;
+    // Reset streak/combo
+    kb.streak = 0;
+    kb.bestStreak = 0;
+    kb.comboMultiplier = 1;
+    kb.targetDifficulty = 1;
+    kb.targetsHit = 0;
+    // Reset hero stats
+    kb.heroSpeed = 0.24;
+    kb.heroSpawnInterval = 1.2;
+    kb.heroHitGrade = '';
+    kb.heroGradeTimer = 0;
+    kb.heroMissCount = 0;
+    kb.heroHitCount = 0;
+    // Reset visual feedback
+    kb.centsOff = 0;
+    kb.nearestNoteName = '';
+    kb.nearestNoteOctave = 0;
+    kb.proximityGlow = 0;
   }
 
   _getKeyboardLayout(left, keyboardTop, keyboardW, keyboardH) {
@@ -7402,20 +7826,50 @@ class VoxBallGame {
 
     if (this.keyboardGameMode === 'target') {
       const x = this._midiToX(kb.targetMidi, layout, left, keyboardW);
-      ctx.strokeStyle = 'rgba(255,75,75,0.9)';
-      ctx.lineWidth = 2.2;
+      // Proximity-based target glow: green when close, red when far
+      const prox = kb.proximityGlow;
+      const targetR = Math.round(255 - prox * 180);
+      const targetG = Math.round(75 + prox * 180);
+      const targetB = Math.round(75 + prox * 85);
+      ctx.strokeStyle = `rgba(${targetR},${targetG},${targetB},0.9)`;
+      ctx.lineWidth = 2.2 + prox * 1.5;
       ctx.beginPath();
       ctx.roundRect(x - whiteW * 0.45, keyboardTop + keyboardH - whiteH + 2, whiteW * 0.9, whiteH - 6, 8);
       ctx.stroke();
+      // Proximity glow behind target key
+      if (prox > 0.1) {
+        ctx.fillStyle = `rgba(${targetR},${targetG},${targetB},${0.08 * prox})`;
+        ctx.beginPath();
+        ctx.roundRect(x - whiteW * 0.45, keyboardTop + keyboardH - whiteH + 2, whiteW * 0.9, whiteH - 6, 8);
+        ctx.fill();
+      }
+      // Target note name label
+      const tNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      const tNoteName = tNames[((kb.targetMidi % 12) + 12) % 12];
+      const tOctave = Math.floor(kb.targetMidi / 12) - 1;
+      ctx.font = '700 11px "Space Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = `rgba(255,120,120,0.9)`;
+      ctx.fillText(`${tNoteName}${tOctave}`, x, keyboardTop + keyboardH - whiteH - 8);
+
       if (kb.targetHold > 0) {
-        const p = Math.min(1, kb.targetHold);
-        ctx.fillStyle = 'rgba(120,255,160,0.85)';
-        ctx.fillRect(left, keyboardTop - 3, keyboardW * p, 2);
+        const p = Math.min(1, kb.targetHold / kb.targetHoldDuration);
+        // Progress bar with gradient
+        const barGrad = ctx.createLinearGradient(left, 0, left + keyboardW * p, 0);
+        barGrad.addColorStop(0, 'rgba(120,255,160,0.6)');
+        barGrad.addColorStop(1, 'rgba(80,255,220,0.95)');
+        ctx.fillStyle = barGrad;
+        ctx.fillRect(left, keyboardTop - 4, keyboardW * p, 3);
       }
     }
 
     if (this.keyboardGameMode === 'hero') {
       const hitLineY = h * 0.72;
+      // Draw hit zone as a subtle band instead of a thin line
+      const hitZoneTop = hitLineY - h * 0.06;
+      const hitZoneBot = hitLineY + h * 0.04;
+      ctx.fillStyle = 'rgba(135,235,255,0.04)';
+      ctx.fillRect(left, hitZoneTop, keyboardW, hitZoneBot - hitZoneTop);
       ctx.strokeStyle = 'rgba(135,235,255,0.38)';
       ctx.lineWidth = 1;
       ctx.setLineDash([5, 5]);
@@ -7429,13 +7883,33 @@ class VoxBallGame {
         const nx = this._midiToX(n.midi, layout, left, keyboardW);
         const ny = Math.min(hitLineY, keyboardTop - 16 + n.y);
         const barH = 34;
+        // Color notes differently as they approach the hit zone
+        const nearHitZone = ny > hitZoneTop - 40;
+        const alpha = nearHitZone ? 0.95 : 0.7;
         const grad = ctx.createLinearGradient(0, ny - barH, 0, ny);
-        grad.addColorStop(0, 'rgba(102,225,255,0.88)');
-        grad.addColorStop(1, 'rgba(102,225,255,0.18)');
+        grad.addColorStop(0, `rgba(102,225,255,${alpha})`);
+        grad.addColorStop(1, `rgba(102,225,255,${alpha * 0.2})`);
         ctx.fillStyle = grad;
         ctx.beginPath();
         ctx.roundRect(nx - whiteW * 0.34, ny - barH, whiteW * 0.68, barH, 6);
         ctx.fill();
+        // Note label inside the bar
+        const nNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+        ctx.font = '700 9px "Space Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = `rgba(255,255,255,${alpha * 0.8})`;
+        ctx.fillText(nNames[((n.midi % 12) + 12) % 12], nx, ny - barH * 0.35);
+      }
+
+      // Grade display
+      if (kb.heroGradeTimer > 0 && kb.heroHitGrade) {
+        const gradeAlpha = Math.min(1, kb.heroGradeTimer * 2);
+        const gradeColors = { perfect: '120,255,180', good: '180,240,120', ok: '240,200,100' };
+        const color = gradeColors[kb.heroHitGrade] || '200,200,200';
+        ctx.font = '800 18px "Space Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = `rgba(${color},${gradeAlpha})`;
+        ctx.fillText(kb.heroHitGrade.toUpperCase(), w * 0.5, hitLineY - h * 0.08);
       }
     }
 
@@ -7462,6 +7936,20 @@ class VoxBallGame {
       ctx.fill();
     }
 
+    // Note name and cents-off indicator above the cursor
+    if (Number.isFinite(currentMidi) && kb.nearestNoteName) {
+      const px = this._midiToX(currentMidi, layout, left, keyboardW);
+      const centsAbs = Math.abs(Math.round(kb.centsOff));
+      const centsSign = kb.centsOff >= 0 ? '+' : '-';
+      ctx.font = '700 14px "Space Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = centsAbs < 10 ? 'rgba(120,255,180,0.95)' : centsAbs < 25 ? 'rgba(255,240,120,0.9)' : 'rgba(255,150,100,0.85)';
+      ctx.fillText(`${kb.nearestNoteName}${kb.nearestNoteOctave}`, px, keyboardTop - 34);
+      ctx.font = '500 10px "Space Mono", monospace';
+      ctx.fillStyle = 'rgba(200,220,255,0.65)';
+      ctx.fillText(`${centsSign}${centsAbs}c`, px, keyboardTop - 22);
+    }
+
     ctx.font = '600 12px "Space Mono", monospace';
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(196,220,255,0.85)';
@@ -7471,6 +7959,14 @@ class VoxBallGame {
       ctx.textAlign = 'right';
       ctx.fillStyle = 'rgba(190,240,255,0.9)';
       ctx.fillText(`Score ${kb.score}`, left + keyboardW, keyboardTop + keyboardH + 20);
+      // Streak and combo info
+      if (kb.streak > 1) {
+        ctx.textAlign = 'right';
+        ctx.font = '500 10px "Space Mono", monospace';
+        ctx.fillStyle = kb.comboMultiplier > 1 ? 'rgba(255,220,100,0.9)' : 'rgba(170,210,255,0.7)';
+        const comboStr = kb.comboMultiplier > 1 ? ` x${kb.comboMultiplier.toFixed(1)}` : '';
+        ctx.fillText(`${kb.streak} streak${comboStr}`, left + keyboardW, keyboardTop + keyboardH + 34);
+      }
     }
 
     ctx.restore();
@@ -7729,8 +8225,8 @@ class VoxBallGame {
           resolve({
             type: 'preset',
             label: btn.textContent.split('(')[0].trim().replace('✨ ', ''),
-            lowHz: parseFloat(btn.dataset.low),
-            highHz: parseFloat(btn.dataset.high)
+            lowHz: parseFloat(btn.dataset.low) || 80,
+            highHz: parseFloat(btn.dataset.high) || 380
           });
         }
       };
@@ -7745,7 +8241,7 @@ class VoxBallGame {
     pp.awaitingRestartChoice = true;
     const previousRange = { lowHz: pp.lowHz, highHz: pp.highHz, label: pp.selectedRangeLabel };
 
-    setTimeout(async () => {
+    const tid = setTimeout(async () => {
       if (!this.isRunning || this.gameMode !== 'pilot') {
         pp.awaitingRestartChoice = false;
         return;
@@ -7754,6 +8250,7 @@ class VoxBallGame {
       this._resetPitchPilotState();
       this._applyPitchPilotRangeChoice(choice, previousRange);
     }, 20);
+    this._pendingTimeouts.push(tid);
   }
 
   updatePitchPilot(dt) {
@@ -7773,6 +8270,7 @@ class VoxBallGame {
       pp.sparkTargetY = this.height * (0.5 + Math.sin(performance.now() * 0.0018) * 0.12);
       pp.sparkY += (pp.sparkTargetY - pp.sparkY) * Math.min(1, dt * 4);
       pp.trail.push({ x: pp.sparkX, y: pp.sparkY, life: 0.6 });
+      if (pp.trail.length > 120) pp.trail.splice(0, pp.trail.length - 120);
       for (let i = pp.trail.length - 1; i >= 0; i--) {
         pp.trail[i].life -= dt;
         if (pp.trail[i].life <= 0) pp.trail.splice(i, 1);
@@ -7850,6 +8348,7 @@ class VoxBallGame {
     else if (pp.score >= 7) pp.phase = 'steps';
 
     pp.trail.push({ x: pp.sparkX, y: pp.sparkY, life: 0.75 });
+    if (pp.trail.length > 120) pp.trail.splice(0, pp.trail.length - 120);
     for (let i = pp.trail.length - 1; i >= 0; i--) {
       pp.trail[i].life -= dt;
       if (pp.trail[i].life <= 0) pp.trail.splice(i, 1);
@@ -8018,6 +8517,10 @@ class VoxBallGame {
     const normalizedDrift = outsideDeadZone / Math.max(0.0001, 1 - deadZone);
     const driftMagnitude = Math.min(1, normalizedDrift * 2.6);
     const drift = Math.sign(diff) * driftMagnitude;
+    const deadZone = 0.12;
+    const outsideDeadZone = Math.max(0, Math.abs(diff) - deadZone);
+    const normalizedDrift = outsideDeadZone / Math.max(0.0001, 1 - deadZone);
+    const drift = Math.sign(diff) * Math.min(1, normalizedDrift * 2.1);
     rr.driftStrength = drift;
 
     const speaking = m.energy > 0.028;
@@ -8030,6 +8533,8 @@ class VoxBallGame {
     // Strong re-centering only when near target; weaken it when off-target so drift is visible.
     const centerAssist = Math.max(0, 1 - driftMagnitude);
     const centerPull = 0.25 + centerAssist * 3.95;
+    // Gentle re-centering to keep the motorcycle on the lane when tone is on target.
+    const centerPull = 4.2;
     rr.centerX += (this.width * 0.5 - rr.centerX) * Math.min(1, dt * centerPull);
     const pad = rr.roadHalfWidth * 0.5;
     rr.centerX = Math.max(pad, Math.min(this.width - pad, rr.centerX));
@@ -8405,10 +8910,72 @@ class VoxBallGame {
   // PRISM READER
   // ============================================================
 
+  // Exception dictionary for common irregular syllabifications
+  // Key = lowercase word, Value = array of syllable break indices (in the cleaned string)
+  static _syllableExceptions = {
+    every: 2, every: [2, 3],     // ev-er-y (not ev-ry)
+    different: [3, 5],           // dif-fer-ent
+    beautiful: [3, 5],           // beau-ti-ful
+    comfortable: [3, 6, 8],     // com-fort-a-ble
+    interesting: [2, 5, 8],     // in-ter-est-ing
+    experience: [2, 5, 7],      // ex-pe-ri-ence
+    everything: [2, 4],         // ev-ery-thing
+    amusement: [1, 5],          // a-muse-ment
+    memorable: [3, 5, 7],       // mem-or-a-ble
+    tremendous: [3, 6],         // tre-men-dous
+    undulating: [2, 4, 7],      // un-du-lat-ing
+    exhilarating: [2, 5, 8, 10],// ex-hil-a-rat-ing
+    terrifying: [3, 5, 7],      // ter-ri-fy-ing
+    sensations: [3, 5, 7],      // sen-sa-tions
+    apparently: [2, 5, 7],      // ap-par-ent-ly
+    division: [2, 4],           // di-vi-sion
+    according: [2, 5],          // ac-cord-ing
+    pronounced: [3, 7],         // pro-nounced (2 syl)
+    observe: [2],               // ob-serve
+    skillfully: [5],            // skill-ful-ly ... handled by rules
+    language: [3],              // lan-guage
+    several: [3, 5],            // sev-er-al
+    usually: [2, 4],            // u-su-al-ly
+    cigarette: [3, 5],          // cig-a-rette
+    people: [3],                // peo-ple
+    little: [3],                // lit-tle
+    simple: [3],                // sim-ple
+    purple: [3],                // pur-ple
+    whistle: [4],               // whis-tle
+    castle: [3],                // cas-tle
+    muscle: [3],                // mus-cle
+    article: [2, 4],            // ar-ti-cle
+    vehicle: [2, 4],            // ve-hi-cle
+    miracle: [3, 5],            // mir-a-cle
+    obstacle: [2, 5],           // ob-sta-cle
+  };
+
   _syllabify(word) {
     const clean = word.replace(/[^a-zA-Z]/g, '').toLowerCase();
     if (clean.length === 0) return [word];
     if (clean.length <= 2) return [word];
+
+    // Check exception dictionary first
+    const exc = VoxArcade._syllableExceptions[clean];
+    if (exc) {
+      const breaks = Array.isArray(exc) ? exc : [exc];
+      const result = [];
+      let prev = 0;
+      for (const b of breaks) {
+        if (b > prev && b < word.length) {
+          // Map clean index to original word index
+          let cleanIdx = 0, origIdx = 0;
+          while (origIdx < word.length && cleanIdx < b) {
+            if (/[a-zA-Z]/.test(word[origIdx])) cleanIdx++;
+            origIdx++;
+          }
+          result.push(word.slice(prev, origIdx));
+          prev = origIdx;
+        }
+      }
+      if (prev < word.length) result.push(word.slice(prev));
+      return result.filter(s => s.length > 0);
+    }
 
     const vowels = 'aeiouy';
     const isVowel = (ch) => vowels.includes(ch);
@@ -8429,13 +8996,30 @@ class VoxBallGame {
     if (nuclei.length > 1) {
       const last = nuclei[nuclei.length - 1];
       if (last.end === clean.length && clean.slice(last.start, last.end) === 'e') {
-        // Keep the 'e' nucleus for "-le" endings (e.g., "ta-ble", "peo-ple")
         const beforeE = clean[last.start - 1];
-        if (beforeE !== 'l') {
+        // Keep the 'e' for "-le", "-re", "-ne" endings (e.g., "ta-ble", "cen-tre", "ma-chine")
+        const keepEndings = ['l', 'r', 'n'];
+        if (!keepEndings.includes(beforeE)) {
           nuclei.pop();
         }
       }
     }
+
+    // Handle "-ed" endings: past tense "-ed" is only syllabic after t/d
+    if (nuclei.length > 1 && clean.endsWith('ed')) {
+      const last = nuclei[nuclei.length - 1];
+      const edStart = clean.length - 2;
+      if (last.start === edStart && last.end === edStart + 1) {
+        const beforeEd = clean[edStart - 1];
+        // "-ed" is silent (non-syllabic) unless preceded by t or d
+        if (beforeEd !== 't' && beforeEd !== 'd') {
+          nuclei.pop();
+        }
+      }
+    }
+
+    // Handle "-tion"/"-sion" as single syllable nuclei
+    // These diphthongs are already handled since 'io' merges into one nucleus
 
     if (nuclei.length <= 1) return [word];
 
@@ -8451,9 +9035,11 @@ class VoxBallGame {
     cleanToOrig[clean.length] = word.length;
 
     // Common consonant digraphs that shouldn't be split
-    const digraphs = ['th', 'ch', 'sh', 'ph', 'wh', 'ck', 'ng', 'gh'];
+    const digraphs = ['th', 'ch', 'sh', 'ph', 'wh', 'ck', 'ng', 'gh', 'gn', 'kn', 'wr'];
     // Common onset clusters that prefer to stay together
-    const onsetClusters = ['bl', 'br', 'cl', 'cr', 'dr', 'fl', 'fr', 'gl', 'gr', 'pl', 'pr', 'sc', 'sk', 'sl', 'sm', 'sn', 'sp', 'st', 'sw', 'tr', 'tw', 'str', 'spr', 'scr', 'spl'];
+    const onsetClusters = ['bl', 'br', 'cl', 'cr', 'dr', 'fl', 'fr', 'gl', 'gr', 'pl', 'pr', 'sc', 'sk', 'sl', 'sm', 'sn', 'sp', 'st', 'sw', 'tr', 'tw', 'str', 'spr', 'scr', 'spl', 'shr', 'thr', 'qu'];
+    // Consonant pairs that should stay together as codas (not split)
+    const codaClusters = ['ld', 'lf', 'lk', 'lm', 'lp', 'lt', 'mp', 'nd', 'nk', 'nt', 'pt', 'ft', 'ct', 'sk', 'sp', 'st'];
 
     const syllables = [];
     let prevEnd = 0;
@@ -8472,9 +9058,12 @@ class VoxBallGame {
         // Single consonant goes with following vowel (open syllable preference)
         splitClean = gapStart;
       } else if (gapLen === 2) {
-        // Two consonants: check if they form a valid onset cluster
+        // Two consonants: check if they form a valid onset cluster or digraph
         if (onsetClusters.includes(consonants) || digraphs.includes(consonants)) {
           splitClean = gapStart; // keep together with next syllable
+        } else if (codaClusters.includes(consonants)) {
+          // Coda cluster stays with previous syllable
+          splitClean = gapEnd;
         } else {
           splitClean = gapStart + 1; // split between them
         }
@@ -8486,6 +9075,11 @@ class VoxBallGame {
           if (onsetClusters.includes(candidate)) {
             bestOnset = len;
           }
+        }
+        // Also check if the remaining coda forms a valid cluster
+        const codaPart = consonants.slice(0, gapLen - bestOnset);
+        if (codaPart.length >= 2 && codaClusters.includes(codaPart.slice(-2))) {
+          // Valid coda+onset split, keep bestOnset
         }
         splitClean = gapEnd - bestOnset;
       }
@@ -8559,6 +9153,9 @@ class VoxBallGame {
     pr.firstOnsetTime = 0;
     pr.wordsCompleted = 0;
     pr.freestyleInterimTranscript = '';
+    // Reset adaptive onset tracking
+    pr._onsetBaseline = 0.3;
+    pr._onsetPeak = 1.0;
 
     // Clear any existing recordings if not explicitly retained
     if (pr.isPlayingBack) this._stopPrismPlayback();
@@ -8680,33 +9277,54 @@ class VoxBallGame {
     return { type: 'none', strokeWidth: 0, blur: 0 };
   }
 
-  // ---- Vowel classification from F2 ----
+  // ---- Vowel classification from F2 with pitch-adaptive normalization ----
   _classifyPrismVowel(avgF0, avgF2) {
     if (avgF2 <= 0) return null;
-    const normFactor = avgF0 > 200 ? 0.85 : 1.0;
+    // Pitch-adaptive normalization: higher voices have higher formants
+    // Apply a continuous scaling factor instead of a binary threshold
+    const normFactor = avgF0 > 0 ? Math.max(0.75, Math.min(1.0, 1.0 - (avgF0 - 150) * 0.001)) : 1.0;
     const f2n = avgF2 * normFactor;
-    if (f2n >= 2200) return 'IY';
-    if (f2n >= 1800) return 'IH';
-    if (f2n >= 1500) return 'EH';
-    if (f2n >= 1100) return 'AH';
-    if (f2n >= 750) return 'UW';
-    return 'AH';
+
+    // Use overlapping ranges with a closest-centroid approach for better accuracy
+    const vowelCentroids = [
+      { type: 'IY', f2: 2400 },  // "ee" as in "see"
+      { type: 'IH', f2: 2000 },  // "ih" as in "sit"
+      { type: 'EH', f2: 1700 },  // "eh" as in "set"
+      { type: 'AE', f2: 1600 },  // "ae" as in "sat"
+      { type: 'AH', f2: 1200 },  // "ah" as in "father"
+      { type: 'UH', f2: 1000 },  // "uh" as in "put"
+      { type: 'UW', f2: 800 },   // "oo" as in "boot"
+    ];
+
+    let bestType = 'AH';
+    let bestDist = Infinity;
+    for (const v of vowelCentroids) {
+      const dist = Math.abs(f2n - v.f2);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestType = v.type;
+      }
+    }
+    return bestType;
   }
 
   // ---- Vowel-specific F2 target scoring (Gaussian) ----
   _scorePrismVowelF2(vowelType, measuredF2) {
     if (!vowelType || measuredF2 <= 0) return 0.5;
     const targets = {
-      'IY': { center: 2600, halfWidth: 400 },
-      'IH': { center: 2000, halfWidth: 200 },
-      'EH': { center: 1750, halfWidth: 150 },
-      'AH': { center: 1400, halfWidth: 200 },
-      'UW': { center: 950, halfWidth: 200 },
+      'IY': { center: 2400, halfWidth: 350 },
+      'IH': { center: 2000, halfWidth: 250 },
+      'EH': { center: 1700, halfWidth: 200 },
+      'AE': { center: 1600, halfWidth: 200 },
+      'AH': { center: 1200, halfWidth: 250 },
+      'UH': { center: 1000, halfWidth: 200 },
+      'UW': { center: 800, halfWidth: 200 },
     };
     const t = targets[vowelType];
     if (!t) return 0.5;
     const distance = Math.abs(measuredF2 - t.center);
     const normalized = distance / t.halfWidth;
+    // Gaussian scoring: perfect at center, drops off with distance
     return Math.max(0, Math.min(1, Math.exp(-0.5 * normalized * normalized)));
   }
 
@@ -8744,10 +9362,29 @@ class VoxBallGame {
     const avgVowelLike = avg(syl.vowelLikelihoodSamples);
     syl.strainFlag = (syl.avgWeight < 0.25 && avgEnergy > 0.06);
 
+    // Enhanced confidence scoring with pitch stability
     const pitchConf = syl.pitchSamples.length > 2 ? 1 : syl.pitchSamples.length / 2;
     const durationConf = Math.min(1, syl.durationMs / 300);
     const vowelConf = avgVowelLike;
-    syl.confidence = Math.min(1, pitchConf * 0.3 + durationConf * 0.3 + vowelConf * 0.4);
+    // Pitch stability: low variance in pitch samples = higher confidence
+    let pitchStability = 1;
+    if (syl.pitchSamples.length >= 2) {
+      const pitchMean = avg(syl.pitchSamples);
+      const pitchVar = syl.pitchSamples.reduce((sum, p) => sum + (p - pitchMean) ** 2, 0) / syl.pitchSamples.length;
+      const pitchStdDev = Math.sqrt(pitchVar);
+      // Coefficient of variation — normalized stability measure
+      const cv = pitchMean > 0 ? pitchStdDev / pitchMean : 0;
+      pitchStability = Math.max(0, 1 - cv * 5); // cv of 0.2 = 0 stability
+    }
+    // Energy consistency: stable energy during the syllable boosts confidence
+    let energyConsistency = 1;
+    if (syl.energySamples.length >= 2) {
+      const eMean = avg(syl.energySamples);
+      const eVar = syl.energySamples.reduce((sum, e) => sum + (e - eMean) ** 2, 0) / syl.energySamples.length;
+      const eCV = eMean > 0 ? Math.sqrt(eVar) / eMean : 0;
+      energyConsistency = Math.max(0, 1 - eCV * 3);
+    }
+    syl.confidence = Math.min(1, pitchConf * 0.2 + durationConf * 0.2 + vowelConf * 0.25 + pitchStability * 0.2 + energyConsistency * 0.15);
 
     this._applyPrismVisuals(index);
     syl.state = 'crystallized';
@@ -8843,6 +9480,10 @@ class VoxBallGame {
       };
       pr.mediaRecorder.onstop = () => {
         pr.audioBlob = new Blob(pr.audioChunks, { type: 'audio/webm' });
+        // Revoke previous blob URL to prevent memory leak
+        if (pr.audioPlayer.src && pr.audioPlayer.src.startsWith('blob:')) {
+          URL.revokeObjectURL(pr.audioPlayer.src);
+        }
         pr.audioPlayer.src = URL.createObjectURL(pr.audioBlob);
         this._updatePrismRecBtnVisibility();
       };
@@ -9094,10 +9735,25 @@ class VoxBallGame {
     // Manual mode: onset stepping is disabled, spacebar advances instead
     if (pr.manualMode) return;
 
-    // Detect syllable onset
-    const onsetDetected = a.syllableImpulse > 0.85;
+    // Adaptive onset detection: track rolling baseline of syllable impulse
+    // and use a dynamic threshold that adapts to the speaker's style
+    if (!pr._onsetBaseline) pr._onsetBaseline = 0.3;
+    if (!pr._onsetPeak) pr._onsetPeak = 1.0;
+    const impulse = a.syllableImpulse;
+    // Slowly adapt baseline toward current impulse level
+    pr._onsetBaseline += (Math.min(impulse, pr._onsetBaseline + 0.1) - pr._onsetBaseline) * 0.02;
+    // Track peak impulse values (decays slowly)
+    if (impulse > pr._onsetPeak) pr._onsetPeak = impulse;
+    else pr._onsetPeak *= 0.998;
+    // Dynamic threshold: midpoint between baseline and peak, clamped to reasonable range
+    const dynamicThreshold = Math.max(0.5, Math.min(0.92,
+      pr._onsetBaseline + (pr._onsetPeak - pr._onsetBaseline) * 0.55));
+    const onsetDetected = impulse > dynamicThreshold;
     const timeSinceLastOnset = now - pr.lastOnsetTime;
-    const debounceOk = timeSinceLastOnset > 0.12;
+    // Adaptive debounce: faster readers get shorter debounce (min 80ms, max 180ms)
+    const avgSylDuration = pr.currentIndex > 0 ? (now - pr.firstOnsetTime / 1000) / pr.currentIndex : 0.3;
+    const debounceTime = Math.max(0.08, Math.min(0.18, avgSylDuration * 0.25));
+    const debounceOk = timeSinceLastOnset > debounceTime;
 
     if (onsetDetected && debounceOk) {
       pr.lastOnsetTime = now;
@@ -9222,8 +9878,11 @@ class VoxBallGame {
     ctx.scale(dpr, dpr);
 
     const pitches = crystallized.map(s => s.avgF0);
-    const minP = Math.min(...pitches);
-    const maxP = Math.max(...pitches);
+    let minP = pitches[0] || 0, maxP = pitches[0] || 0;
+    for (let i = 1; i < pitches.length; i++) {
+      if (pitches[i] < minP) minP = pitches[i];
+      if (pitches[i] > maxP) maxP = pitches[i];
+    }
     const range = Math.max(1, maxP - minP);
 
     const padX = 4;
@@ -9338,8 +9997,16 @@ class VoxBallGame {
     // Aggregate pitch stats
     const pitches = crystallized.filter(s => s.avgF0 > 0).map(s => s.avgF0);
     const avgPitch = pitches.length > 0 ? Math.round(pitches.reduce((a, b) => a + b, 0) / pitches.length) : 0;
-    const minPitch = pitches.length > 0 ? Math.round(Math.min(...pitches)) : 0;
-    const maxPitch = pitches.length > 0 ? Math.round(Math.max(...pitches)) : 0;
+    let minPitch = 0, maxPitch = 0;
+    if (pitches.length > 0) {
+      minPitch = pitches[0]; maxPitch = pitches[0];
+      for (let i = 1; i < pitches.length; i++) {
+        if (pitches[i] < minPitch) minPitch = pitches[i];
+        if (pitches[i] > maxPitch) maxPitch = pitches[i];
+      }
+      minPitch = Math.round(minPitch);
+      maxPitch = Math.round(maxPitch);
+    }
     const pitchRange = maxPitch - minPitch;
 
     // Vowel score average
@@ -9362,6 +10029,39 @@ class VoxBallGame {
       crystallized.reduce((a, s) => a + s.confidence, 0) / crystallized.length * 100
     );
 
+    // Pitch variability (intonation) — semitone standard deviation
+    let intonationScore = 0;
+    let intonationLabel = 'Monotone';
+    if (pitches.length >= 3) {
+      // Convert to semitones relative to mean for perceptual accuracy
+      const semitonePitches = pitches.map(p => 12 * Math.log2(p / avgPitch));
+      const stMean = semitonePitches.reduce((a, b) => a + b, 0) / semitonePitches.length;
+      const stVar = semitonePitches.reduce((sum, st) => sum + (st - stMean) ** 2, 0) / semitonePitches.length;
+      const stStdDev = Math.sqrt(stVar);
+      // Score: 0-2 semitones = monotone, 2-4 = moderate, 4+ = expressive
+      intonationScore = Math.round(Math.min(100, stStdDev * 25));
+      if (stStdDev < 1.5) intonationLabel = 'Monotone';
+      else if (stStdDev < 3) intonationLabel = 'Moderate';
+      else if (stStdDev < 5) intonationLabel = 'Expressive';
+      else intonationLabel = 'Very expressive';
+    }
+
+    // Pace consistency — coefficient of variation of per-syllable durations
+    const durations = crystallized.filter(s => s.durationMs > 0).map(s => s.durationMs);
+    let paceConsistency = 0;
+    let paceLabel = '';
+    if (durations.length >= 3) {
+      const durMean = durations.reduce((a, b) => a + b, 0) / durations.length;
+      const durVar = durations.reduce((sum, d) => sum + (d - durMean) ** 2, 0) / durations.length;
+      const durCV = durMean > 0 ? Math.sqrt(durVar) / durMean : 0;
+      // Lower CV = more consistent pacing. Score inversely
+      paceConsistency = Math.round(Math.max(0, Math.min(100, (1 - durCV) * 100)));
+      if (paceConsistency >= 80) paceLabel = 'Very steady';
+      else if (paceConsistency >= 60) paceLabel = 'Steady';
+      else if (paceConsistency >= 40) paceLabel = 'Variable';
+      else paceLabel = 'Erratic';
+    }
+
     const minutes = Math.floor(elapsed / 60);
     const seconds = Math.floor(elapsed % 60);
 
@@ -9379,6 +10079,11 @@ class VoxBallGame {
           <div class="prism-comp-sub">Range: ${pitchRange} Hz (${minPitch}–${maxPitch})</div>
         </div>
         <div class="prism-comp-card">
+          <div class="prism-comp-label">Intonation</div>
+          <div class="prism-comp-value">${intonationScore}%</div>
+          <div class="prism-comp-sub">${intonationLabel}</div>
+        </div>
+        <div class="prism-comp-card">
           <div class="prism-comp-label">Vowel Accuracy</div>
           <div class="prism-comp-value">${avgVowelScore}%</div>
           <div class="prism-comp-sub">${vowelScores.length} vowels scored</div>
@@ -9388,6 +10093,12 @@ class VoxBallGame {
           <div class="prism-comp-value">${avgResonance}%</div>
           <div class="prism-comp-sub">Forward brightness</div>
         </div>
+        ${durations.length >= 3 ? `
+        <div class="prism-comp-card">
+          <div class="prism-comp-label">Pace Consistency</div>
+          <div class="prism-comp-value">${paceConsistency}%</div>
+          <div class="prism-comp-sub">${paceLabel}</div>
+        </div>` : ''}
         <div class="prism-comp-card">
           <div class="prism-comp-label">Syllables</div>
           <div class="prism-comp-value">${crystallized.length} / ${pr.syllables.length}</div>
@@ -9565,7 +10276,7 @@ class VoxBallGame {
       }
       progressFill.style.width = `${Math.min(100, pct)}%`;
 
-      // Dynamic gradient from crystallized syllable hues
+      // Dynamic gradient from crystallized syllable hues — modulated by confidence & vowel score
       const crystallized = pr.syllables.filter(s => s.state === 'crystallized');
       if (crystallized.length >= 2) {
         const stops = [];
@@ -9573,11 +10284,16 @@ class VoxBallGame {
         for (let i = 0; i < crystallized.length; i += step) {
           const s = crystallized[i];
           const pos = Math.round((i / (crystallized.length - 1)) * 100);
-          stops.push(`hsl(${Math.round(s.hue)}, 65%, 60%) ${pos}%`);
+          // Saturation reflects vowel accuracy, lightness reflects confidence
+          const sat = Math.round(40 + s.vowelScore * 35);
+          const light = Math.round(45 + s.confidence * 20);
+          stops.push(`hsl(${Math.round(s.hue)}, ${sat}%, ${light}%) ${pos}%`);
         }
         // Always include the last one
         const last = crystallized[crystallized.length - 1];
-        stops.push(`hsl(${Math.round(last.hue)}, 65%, 60%) 100%`);
+        const lastSat = Math.round(40 + last.vowelScore * 35);
+        const lastLight = Math.round(45 + last.confidence * 20);
+        stops.push(`hsl(${Math.round(last.hue)}, ${lastSat}%, ${lastLight}%) 100%`);
         progressFill.style.background = `linear-gradient(90deg, ${stops.join(', ')})`;
       }
     }
@@ -9792,6 +10508,9 @@ class VoxBallGame {
     } else if (this.gameMode === 'keyboard') {
       stats.push({ value: `${this.keyboardGameMode.toUpperCase()}`, label: 'Keyboard Mode' });
       stats.push({ value: `${this.voiceKeyboard.score}`, label: 'Score' });
+      if (this.keyboardGameMode !== 'mirror' && this.voiceKeyboard.bestStreak > 0) {
+        stats.push({ value: `${this.voiceKeyboard.bestStreak}`, label: 'Best Streak' });
+      }
     } else if (this.gameMode === 'pilot') {
       stats.push({ value: `${this.pitchPilot.phase.toUpperCase()}`, label: 'Pilot Phase' });
       stats.push({ value: `${this.pitchPilot.score}`, label: 'Score' });
@@ -9957,6 +10676,27 @@ class VoxBallGame {
     }
     const mapSplatter = document.getElementById('mapSplatter');
     if (mapSplatter) mapSplatter.classList.toggle('active-ping', this.metricHighlightTimers.articulation > 0);
+
+    const pitchStatus = document.getElementById('pitchProfileLearned');
+    const tiltStatus = document.getElementById('tiltProfileLearned');
+    const confidenceStatus = document.getElementById('frameConfidenceLabel');
+    if (pitchStatus || tiltStatus || confidenceStatus) {
+      const pitch = this.analyzer.pitchProfile;
+      const tilt = this.analyzer.tiltProfile;
+      if (pitchStatus) {
+        const pct = Math.min(100, Math.round((pitch.voicedTime / Math.max(0.1, pitch.learningDuration)) * 100));
+        pitchStatus.textContent = pitch.isLearned
+          ? `${Math.round(pitch.min)}–${Math.round(pitch.max)} Hz learned`
+          : `Learning… ${pct}%`;
+      }
+      if (tiltStatus) {
+        const pct = Math.min(100, Math.round((tilt.voicedTime / Math.max(0.1, tilt.learningDuration)) * 100));
+        tiltStatus.textContent = tilt.isLearned
+          ? `${tilt.min.toFixed(1)} to ${tilt.max.toFixed(1)} dB learned`
+          : `Learning… ${pct}%`;
+      }
+      if (confidenceStatus) confidenceStatus.textContent = `${Math.round(this.analyzer.frameConfidence * 100)}%`;
+    }
   }
 
   _meterLabel(val, low, mid, high) {
@@ -10529,12 +11269,14 @@ class VoxBallGame {
         flow: s.flowMultiplier
       });
     }
+    if (s.trail.length > 120) s.trail.splice(0, s.trail.length - 120);
     for (let i = s.trail.length - 1; i >= 0; i--) {
       s.trail[i].life -= dt * 1.2;
       if (s.trail[i].life <= 0) s.trail.splice(i, 1);
     }
 
     // 5. Update Popups
+    if (s.popups.length > 20) s.popups.splice(0, s.popups.length - 20);
     for (let i = s.popups.length - 1; i >= 0; i--) {
       const p = s.popups[i];
       p.y -= dt * 40;
@@ -10543,6 +11285,7 @@ class VoxBallGame {
     }
 
     // 6. Update particles
+    if (s.particles.length > 60) s.particles.splice(0, s.particles.length - 60);
     for (let i = s.particles.length - 1; i >= 0; i--) {
       const p = s.particles[i];
       p.x += p.vx * dt;
