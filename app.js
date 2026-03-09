@@ -8633,6 +8633,7 @@ class VoxBallGame {
     const normalizedDrift = outsideDeadZone / Math.max(0.0001, 1 - deadZone);
     const driftMagnitude = Math.min(1, normalizedDrift * 2.1);
     const drift = Math.sign(diff) * driftMagnitude;
+
     rr.driftStrength = drift;
 
     const speaking = m.energy > 0.028;
@@ -8643,6 +8644,10 @@ class VoxBallGame {
     rr.centerX += drift * steerPower * dt;
 
     // Strong re-centering only when near target; weaken it when off-target so drift is visible.
+    const centerAssist = Math.max(0, 1 - driftMagnitude);
+    // Gentle re-centering to keep the motorcycle on the lane when tone is on target.
+    const centerPull = 0.25 + centerAssist * 3.95;
+
     // Gentle re-centering to keep the motorcycle on the lane when tone is on target.
     const centerPull = 4.2;
     const centerAssist = Math.max(0, 1 - Math.abs(drift));
