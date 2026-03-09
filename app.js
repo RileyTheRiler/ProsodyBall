@@ -772,20 +772,6 @@ export class VoiceAnalyzer {
 
     // 1. BOUNCE — pitch variation
     if (this.pitchHistory.length > 3) {
-      // ⚡ Bolt: Replace .reduce() with standard for-loop to eliminate function allocation
-      // and minimize garbage collection in this per-frame hot path.
-      let sum = 0;
-      for (let i = 0; i < this.pitchHistory.length; i++) {
-        sum += this.pitchHistory[i];
-      }
-      const mean = sum / this.pitchHistory.length;
-
-      let varianceSum = 0;
-      for (let i = 0; i < this.pitchHistory.length; i++) {
-        varianceSum += (this.pitchHistory[i] - mean) ** 2;
-      }
-      const variance = varianceSum / this.pitchHistory.length;
-      // PERF: Inlined loop instead of .reduce() avoids function call overhead and GC pressure in hot loop
       const len = this.pitchHistory.length;
       let sum = 0;
       for (let i = 0; i < len; i++) sum += this.pitchHistory[i];
@@ -1162,67 +1148,43 @@ export class VoiceAnalyzer {
     // --- Root-solving via companion matrix eigenvalues ---
     // Find roots of A(z) = 1 - a[1]z^-1 - a[2]z^-2 - ...
     // Equivalent polynomial: z^order - a[1]z^(order-1) - ... - a[order] = 0
-    // We use Durand-Kerner iterative root finding (works well for moderate orders)
     const { rootsRe, rootsIm } = this._findLPCRoots(a, order);
-    this._findLPCRoots(a, order);
-
-    // The roots are stored in this._buffers.rootsRe and this._buffers.rootsIm
-    const rootsRe = this._buffers.rootsRe;
-    const rootsIm = this._buffers.rootsIm;
 
     // Extract formants from roots: each complex conjugate pair with positive
     // imaginary part gives a formant frequency and bandwidth
     const formants = [];
     for (let i = 0; i < order; i++) {
-      const rootRe = rootsRe[i];
-      const rootIm = rootsIm[i];
-      if (rootIm <= 0) continue; // only positive-frequency roots
-      const freq = Math.atan2(rootIm, rootRe) * dsRate / (2 * Math.PI);
-      const mag = Math.sqrt(rootRe * rootRe + rootIm * rootIm);
-    for (let k = 0; k < order; k++) {
-      const im = roots.rootIm[k];
-      if (im <= 0) continue; // only positive-frequency roots
-      const re = roots.rootRe[k];
-      const re = rootsRe[k];
-      const im = rootsIm[k];
-
-      if (im <= 0) continue; // only positive-frequency roots
+      const re = rootsRe[i];
+      const im = rootsIm[i];
+      if (im <= 0) continue;
       const freq = Math.atan2(im, re) * dsRate / (2 * Math.PI);
       const mag = Math.sqrt(re * re + im * im);
-      const bw = -dsRate * Math.log(mag) / Math.PI; // bandwidth in Hz
-
-      // Reject: frequency out of range, bandwidth too wide (> 600 Hz), or too narrow
+      const bw = -dsRate * Math.log(Math.max(mag, 1e-12)) / Math.PI;
       if (freq >= 90 && freq <= 5000 && bw > 30 && bw < 600) {
         formants.push({ freq, bw });
       }
     }
 
-    // Sort by frequency
-    formants.sort((a, b) => a.freq - b.freq);
+    formants.sort((lhs, rhs) => lhs.freq - rhs.freq);
 
-    // Assign formants with constraints, tracking bandwidths
-    let f1 = 0, f2 = 0, f3 = 0;
-    let f1Bw = 999, f2Bw = 999, f3Bw = 999;
-    const minSep = 200; // minimum Hz between formants
-
+    let f1 = 0; let f2 = 0; let f3 = 0;
+    let f1Bw = 999; let f2Bw = 999;
+    const minSep = 200;
     for (const fm of formants) {
       if (f1 === 0 && fm.freq >= 150 && fm.freq <= 1200) {
         f1 = fm.freq; f1Bw = fm.bw;
-      } else if (f2 === 0 && fm.freq >= 600 && fm.freq <= 3500 && fm.freq > (f1 || 0) + minSep) {
+      } else if (f2 === 0 && fm.freq >= 600 && fm.freq <= 3500 && fm.freq > f1 + minSep) {
         f2 = fm.freq; f2Bw = fm.bw;
-      } else if (f3 === 0 && fm.freq >= 2000 && fm.freq <= 4500 && fm.freq > (f2 || 0) + minSep) {
-        f3 = fm.freq; f3Bw = fm.bw;
+      } else if (f3 === 0 && fm.freq >= 2000 && fm.freq <= 4500 && fm.freq > f2 + minSep) {
+        f3 = fm.freq;
       }
     }
 
-    // Confidence: nFound × voicing × bandwidth sharpness
-    // Narrower bandwidths = sharper formants = more reliable estimate
-    // Typical speech formant bandwidths: F1~60-100 Hz, F2~80-120 Hz, F3~100-200 Hz
     const nFound = (f1 > 0 ? 1 : 0) + (f2 > 0 ? 1 : 0) + (f3 > 0 ? 1 : 0);
     let bwScore = 0;
-    if (f1 > 0) bwScore += Math.max(0, 1 - f1Bw / 400); // 0 at 400+ Hz, 1 at 0 Hz
+    if (f1 > 0) bwScore += Math.max(0, 1 - f1Bw / 400);
     if (f2 > 0) bwScore += Math.max(0, 1 - f2Bw / 400);
-    bwScore = nFound > 0 ? bwScore / Math.min(2, nFound) : 0; // avg of found F1/F2 bw scores
+    bwScore = nFound > 0 ? bwScore / Math.min(2, nFound) : 0;
     const conf = Math.min(1, (nFound / 3) * bwScore * this.pitchConfidence * (this.vowelLikelihood + 0.3) * 2.5);
 
     if (f1 === 0) f1 = 500;
@@ -1237,128 +1199,51 @@ export class VoiceAnalyzer {
     const rootsRe = this._getBuffer('lpcRootsRe', Float64Array, order);
     const rootsIm = this._getBuffer('lpcRootsIm', Float64Array, order);
 
-    // Initial guesses: evenly distributed on unit circle
     for (let k = 0; k < order; k++) {
       const angle = 2 * Math.PI * (k + 0.5) / order;
-      const r = 0.9 + 0.05 * Math.random(); // slightly inside unit circle
-      rootsRe[k] = r * Math.cos(angle);
-      rootsIm[k] = r * Math.sin(angle);
-    }
-    // Allocate typed arrays once per call to avoid short-lived objects in hot inner loop
-    const rootsRe = this._getBuffer('rootsRe', Float64Array, order);
-    const rootsIm = this._getBuffer('rootsIm', Float64Array, order);
-
-    // Initial guesses: evenly distributed on unit circle
-    // OPTIMIZATION: Use parallel typed arrays instead of allocating {re, im} objects
-    // to avoid excessive garbage collection in the per-frame audio loop.
-    const rootRe = this._getBuffer('rootRe', Float64Array, order);
-    const rootIm = this._getBuffer('rootIm', Float64Array, order);
-    // Use parallel pre-allocated typed arrays for performance instead of objects
-    const rootsRe = this._getBuffer('rootsRe', Float64Array, order);
-    const rootsIm = this._getBuffer('rootsIm', Float64Array, order);
-
-    for (let k = 0; k < order; k++) {
-      const angle = 2 * Math.PI * (k + 0.5) / order;
-      const r = 0.9 + 0.05 * Math.random(); // slightly inside unit circle
-      rootRe[k] = r * Math.cos(angle);
-      rootIm[k] = r * Math.sin(angle);
-    }
-      rootsRe[k] = r * Math.cos(angle);
-      rootsIm[k] = r * Math.sin(angle);
+      const radius = 0.9 + 0.05 * Math.random();
+      rootsRe[k] = radius * Math.cos(angle);
+      rootsIm[k] = radius * Math.sin(angle);
     }
 
-    const pz = { re: 0, im: 0 }; // reused object
-
-    // Evaluate polynomial at point (zRe, zIm): z^order - a[1]*z^(order-1) - ... - a[order]
-    const evalPoly = (zRe, zIm) => {
-      // Horner's method: P(z) = ((..((z - a[1])*z - a[2])*z ... ) - a[order])
-      let re = 1, im = 0; // leading coefficient
-      for (let j = 1; j <= order; j++) {
-        // Multiply by z
-        const newRe = re * zRe - im * zIm;
-        const newIm = re * zIm + im * zRe;
-        // Subtract a[j]
-        re = newRe - a[j];
-        im = newIm;
-      }
-      pz.re = re;
-      pz.im = im;
-    };
-
-    // Iterate
-    const maxIter = 50;
-    for (let iter = 0; iter < maxIter; iter++) {
+    for (let iter = 0; iter < 50; iter++) {
       let maxDelta = 0;
       for (let k = 0; k < order; k++) {
-        const zRe = rootRe[k];
-        const zIm = rootIm[k];
-
-        // Evaluate polynomial at point z: z^order - a[1]*z^(order-1) - ... - a[order]
-        // Horner's method: P(z) = ((..((z - a[1])*z - a[2])*z ... ) - a[order])
-        let pRe = 1, pIm = 0; // leading coefficient
-        for (let j = 1; j <= order; j++) {
-          // Multiply by z
-          const newPRe = pRe * zRe - pIm * zIm;
-          const newPIm = pRe * zIm + pIm * zRe;
-          // Subtract a[j]
-          pRe = newPRe - a[j];
-          pIm = newPIm;
-        }
         const zRe = rootsRe[k];
         const zIm = rootsIm[k];
 
-        // Evaluate polynomial at point z: z^order - a[1]*z^(order-1) - ... - a[order]
-        // Horner's method: P(z) = ((..((z - a[1])*z - a[2])*z ... ) - a[order])
-        let pzRe = 1, pzIm = 0; // leading coefficient
+        let pRe = 1;
+        let pIm = 0;
         for (let j = 1; j <= order; j++) {
-          // Multiply by z
-          const newRe = pzRe * zRe - pzIm * zIm;
-          const newIm = pzRe * zIm + pzIm * zRe;
-          // Subtract a[j]
-          pzRe = newRe - a[j];
-          pzIm = newIm;
+          const nextRe = pRe * zRe - pIm * zIm;
+          const nextIm = pRe * zIm + pIm * zRe;
+          pRe = nextRe - a[j];
+          pIm = nextIm;
         }
-        evalPoly(zRe, zIm);
 
-        // Product of (z_k - z_j) for j ≠ k
-        let prodRe = 1, prodIm = 0;
+        let prodRe = 1;
+        let prodIm = 0;
         for (let j = 0; j < order; j++) {
           if (j === k) continue;
-          const dRe = zRe - rootRe[j];
-          const dIm = zIm - rootIm[j];
           const dRe = zRe - rootsRe[j];
           const dIm = zIm - rootsIm[j];
-          const newProdRe = prodRe * dRe - prodIm * dIm;
-          const newProdIm = prodRe * dIm + prodIm * dRe;
-          prodRe = newProdRe;
-          prodIm = newProdIm;
+          const nextProdRe = prodRe * dRe - prodIm * dIm;
+          const nextProdIm = prodRe * dIm + prodIm * dRe;
+          prodRe = nextProdRe;
+          prodIm = nextProdIm;
         }
 
-        // delta = P(z) / product
         const denom = prodRe * prodRe + prodIm * prodIm + 1e-30;
         const deltaRe = (pRe * prodRe + pIm * prodIm) / denom;
         const deltaIm = (pIm * prodRe - pRe * prodIm) / denom;
-
-        rootRe[k] -= deltaRe;
-        rootIm[k] -= deltaIm;
-        const deltaRe = (pzRe * prodRe + pzIm * prodIm) / denom;
-        const deltaIm = (pzIm * prodRe - pzRe * prodIm) / denom;
-
         rootsRe[k] = zRe - deltaRe;
         rootsIm[k] = zIm - deltaIm;
-        maxDelta = Math.max(maxDelta, Math.sqrt(deltaRe * deltaRe + deltaIm * deltaIm));
+        maxDelta = Math.max(maxDelta, Math.hypot(deltaRe, deltaIm));
       }
-      if (maxDelta < 1e-8) break; // converged
+      if (maxDelta < 1e-8) break;
     }
 
     return { rootsRe, rootsIm };
-    return { rootRe, rootIm };
-    // Convert to expected array of objects format for caller
-    const roots = [];
-    for (let k = 0; k < order; k++) {
-      roots.push({ re: rootsRe[k], im: rootsIm[k] });
-    }
-    return roots;
   }
 
   // ============================================
@@ -4240,58 +4125,25 @@ class VoxBallGame {
     if (vibBtn) {
       vibBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+
         if (vibPanel) {
           const isVisible = vibPanel.classList.toggle('show');
           vibBtn.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
         }
-        if (helpTooltip) {
-          helpTooltip.classList.remove('show');
-          const helpBtn = document.getElementById('helpBtn');
-          if (helpBtn) helpBtn.setAttribute('aria-expanded', 'false');
-        }
-        if (recordingsDrawer) {
-          recordingsDrawer.classList.remove('show');
-          const recBtn = document.getElementById('recordingsBtn');
-          if (recBtn) recBtn.setAttribute('aria-expanded', 'false');
-        }
-        if (settingsPanel && settingsPanel.classList.contains('show')) toggleSettings(false);
-          vibBtn.setAttribute('aria-expanded', isVisible);
-        }
-        if (helpTooltip) {
-           helpTooltip.classList.remove('show');
-           if (helpBtn) helpBtn.setAttribute('aria-expanded', 'false');
-        }
-        if (recordingsDrawer) {
-           recordingsDrawer.classList.remove('show');
-           if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', 'false');
-        }
-        if (settingsPanel) {
-           settingsPanel.classList.remove('show');
-           if (settingsBtn) settingsBtn.setAttribute('aria-expanded', 'false');
-        }
-          vibPanel.classList.toggle('show');
-          vibBtn.setAttribute('aria-expanded', vibPanel.classList.contains('show') ? 'true' : 'false');
-          const isShown = vibPanel.classList.toggle('show');
-          vibBtn.setAttribute('aria-expanded', isShown ? 'true' : 'false');
-        }
+
         if (helpTooltip) {
           helpTooltip.classList.remove('show');
           document.getElementById('helpBtn')?.setAttribute('aria-expanded', 'false');
         }
+
         if (recordingsDrawer) {
           recordingsDrawer.classList.remove('show');
           document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'false');
         }
+
         if (settingsPanel && settingsPanel.classList.contains('show')) {
-           toggleSettings(false);
+          toggleSettings(false);
         }
-        if (settingsPanel && settingsPanel.classList.contains('show')) toggleSettings(false);
-          vibPanel.classList.toggle('show');
-          vibBtn.setAttribute('aria-expanded', vibPanel.classList.contains('show') ? 'true' : 'false');
-        }
-        if (helpTooltip) helpTooltip.classList.remove('show');
-        if (recordingsDrawer) recordingsDrawer.classList.remove('show');
-        if (settingsPanel) settingsPanel.classList.remove('show');
       });
     }
 
@@ -8904,10 +8756,6 @@ class VoxBallGame {
     // Gentle re-centering to keep the motorcycle on the lane when tone is on target.
     const centerPull = 0.25 + centerAssist * 3.95;
 
-    // Gentle re-centering to keep the motorcycle on the lane when tone is on target.
-    const centerPull = 4.2;
-    const centerAssist = Math.max(0, 1 - Math.abs(drift));
-    const centerPull = 0.25 + centerAssist * 3.95;
     rr.centerX += (this.width * 0.5 - rr.centerX) * Math.min(1, dt * centerPull);
     const pad = rr.roadHalfWidth * 0.5;
     rr.centerX = Math.max(pad, Math.min(this.width - pad, rr.centerX));
@@ -9329,7 +9177,7 @@ class VoxBallGame {
     if (clean.length <= 2) return [word];
 
     // Check exception dictionary first
-    const exc = VoxArcade._syllableExceptions[clean];
+    const exc = VoxBallGame._syllableExceptions[clean];
     if (exc) {
       const breaks = Array.isArray(exc) ? exc : [exc];
       const result = [];
