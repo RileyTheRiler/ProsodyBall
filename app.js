@@ -1140,15 +1140,22 @@ export class VoiceAnalyzer {
     // Find roots of A(z) = 1 - a[1]z^-1 - a[2]z^-2 - ...
     // Equivalent polynomial: z^order - a[1]z^(order-1) - ... - a[order] = 0
     // We use Durand-Kerner iterative root finding (works well for moderate orders)
-    const roots = this._findLPCRoots(a, order);
+    this._findLPCRoots(a, order);
+
+    // The roots are stored in this._buffers.rootsRe and this._buffers.rootsIm
+    const rootsRe = this._buffers.rootsRe;
+    const rootsIm = this._buffers.rootsIm;
 
     // Extract formants from roots: each complex conjugate pair with positive
     // imaginary part gives a formant frequency and bandwidth
     const formants = [];
-    for (const root of roots) {
-      if (root.im <= 0) continue; // only positive-frequency roots
-      const freq = Math.atan2(root.im, root.re) * dsRate / (2 * Math.PI);
-      const mag = Math.sqrt(root.re * root.re + root.im * root.im);
+    for (let k = 0; k < order; k++) {
+      const re = rootsRe[k];
+      const im = rootsIm[k];
+
+      if (im <= 0) continue; // only positive-frequency roots
+      const freq = Math.atan2(im, re) * dsRate / (2 * Math.PI);
+      const mag = Math.sqrt(re * re + im * im);
       const bw = -dsRate * Math.log(mag) / Math.PI; // bandwidth in Hz
 
       // Reject: frequency out of range, bandwidth too wide (> 600 Hz), or too narrow
@@ -1199,6 +1206,10 @@ export class VoiceAnalyzer {
     const rootsIm = this._getBuffer('rootsIm', Float64Array, order);
 
     // Initial guesses: evenly distributed on unit circle
+    // Use parallel pre-allocated typed arrays for performance instead of objects
+    const rootsRe = this._getBuffer('rootsRe', Float64Array, order);
+    const rootsIm = this._getBuffer('rootsIm', Float64Array, order);
+
     for (let k = 0; k < order; k++) {
       const angle = 2 * Math.PI * (k + 0.5) / order;
       const r = 0.9 + 0.05 * Math.random(); // slightly inside unit circle
@@ -1231,6 +1242,18 @@ export class VoiceAnalyzer {
       for (let k = 0; k < order; k++) {
         const zRe = rootsRe[k];
         const zIm = rootsIm[k];
+
+        // Evaluate polynomial at point z: z^order - a[1]*z^(order-1) - ... - a[order]
+        // Horner's method: P(z) = ((..((z - a[1])*z - a[2])*z ... ) - a[order])
+        let pzRe = 1, pzIm = 0; // leading coefficient
+        for (let j = 1; j <= order; j++) {
+          // Multiply by z
+          const newRe = pzRe * zRe - pzIm * zIm;
+          const newIm = pzRe * zIm + pzIm * zRe;
+          // Subtract a[j]
+          pzRe = newRe - a[j];
+          pzIm = newIm;
+        }
         evalPoly(zRe, zIm);
 
         // Product of (z_k - z_j) for j ≠ k
@@ -1247,8 +1270,8 @@ export class VoiceAnalyzer {
 
         // delta = P(z) / product
         const denom = prodRe * prodRe + prodIm * prodIm + 1e-30;
-        const deltaRe = (pz.re * prodRe + pz.im * prodIm) / denom;
-        const deltaIm = (pz.im * prodRe - pz.re * prodIm) / denom;
+        const deltaRe = (pzRe * prodRe + pzIm * prodIm) / denom;
+        const deltaIm = (pzIm * prodRe - pzRe * prodIm) / denom;
 
         rootsRe[k] = zRe - deltaRe;
         rootsIm[k] = zIm - deltaIm;
@@ -8620,6 +8643,8 @@ class VoxBallGame {
     rr.centerX += drift * steerPower * dt;
 
     // Strong re-centering only when near target; weaken it when off-target so drift is visible.
+    // Gentle re-centering to keep the motorcycle on the lane when tone is on target.
+    const centerPull = 4.2;
     const centerAssist = Math.max(0, 1 - Math.abs(drift));
     const centerPull = 0.25 + centerAssist * 3.95;
     rr.centerX += (this.width * 0.5 - rr.centerX) * Math.min(1, dt * centerPull);
