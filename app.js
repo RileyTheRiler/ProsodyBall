@@ -1150,6 +1150,9 @@ export class VoiceAnalyzer {
     // imaginary part gives a formant frequency and bandwidth
     const formants = [];
     for (let k = 0; k < order; k++) {
+      const im = roots.rootIm[k];
+      if (im <= 0) continue; // only positive-frequency roots
+      const re = roots.rootRe[k];
       const re = rootsRe[k];
       const im = rootsIm[k];
 
@@ -1206,6 +1209,10 @@ export class VoiceAnalyzer {
     const rootsIm = this._getBuffer('rootsIm', Float64Array, order);
 
     // Initial guesses: evenly distributed on unit circle
+    // OPTIMIZATION: Use parallel typed arrays instead of allocating {re, im} objects
+    // to avoid excessive garbage collection in the per-frame audio loop.
+    const rootRe = this._getBuffer('rootRe', Float64Array, order);
+    const rootIm = this._getBuffer('rootIm', Float64Array, order);
     // Use parallel pre-allocated typed arrays for performance instead of objects
     const rootsRe = this._getBuffer('rootsRe', Float64Array, order);
     const rootsIm = this._getBuffer('rootsIm', Float64Array, order);
@@ -1213,6 +1220,9 @@ export class VoiceAnalyzer {
     for (let k = 0; k < order; k++) {
       const angle = 2 * Math.PI * (k + 0.5) / order;
       const r = 0.9 + 0.05 * Math.random(); // slightly inside unit circle
+      rootRe[k] = r * Math.cos(angle);
+      rootIm[k] = r * Math.sin(angle);
+    }
       rootsRe[k] = r * Math.cos(angle);
       rootsIm[k] = r * Math.sin(angle);
     }
@@ -1240,6 +1250,20 @@ export class VoiceAnalyzer {
     for (let iter = 0; iter < maxIter; iter++) {
       let maxDelta = 0;
       for (let k = 0; k < order; k++) {
+        const zRe = rootRe[k];
+        const zIm = rootIm[k];
+
+        // Evaluate polynomial at point z: z^order - a[1]*z^(order-1) - ... - a[order]
+        // Horner's method: P(z) = ((..((z - a[1])*z - a[2])*z ... ) - a[order])
+        let pRe = 1, pIm = 0; // leading coefficient
+        for (let j = 1; j <= order; j++) {
+          // Multiply by z
+          const newPRe = pRe * zRe - pIm * zIm;
+          const newPIm = pRe * zIm + pIm * zRe;
+          // Subtract a[j]
+          pRe = newPRe - a[j];
+          pIm = newPIm;
+        }
         const zRe = rootsRe[k];
         const zIm = rootsIm[k];
 
@@ -1260,6 +1284,8 @@ export class VoiceAnalyzer {
         let prodRe = 1, prodIm = 0;
         for (let j = 0; j < order; j++) {
           if (j === k) continue;
+          const dRe = zRe - rootRe[j];
+          const dIm = zIm - rootIm[j];
           const dRe = zRe - rootsRe[j];
           const dIm = zIm - rootsIm[j];
           const newProdRe = prodRe * dRe - prodIm * dIm;
@@ -1270,6 +1296,11 @@ export class VoiceAnalyzer {
 
         // delta = P(z) / product
         const denom = prodRe * prodRe + prodIm * prodIm + 1e-30;
+        const deltaRe = (pRe * prodRe + pIm * prodIm) / denom;
+        const deltaIm = (pIm * prodRe - pRe * prodIm) / denom;
+
+        rootRe[k] -= deltaRe;
+        rootIm[k] -= deltaIm;
         const deltaRe = (pzRe * prodRe + pzIm * prodIm) / denom;
         const deltaIm = (pzIm * prodRe - pzRe * prodIm) / denom;
 
@@ -1280,6 +1311,7 @@ export class VoiceAnalyzer {
       if (maxDelta < 1e-8) break; // converged
     }
 
+    return { rootRe, rootIm };
     // Convert to expected array of objects format for caller
     const roots = [];
     for (let k = 0; k < order; k++) {
