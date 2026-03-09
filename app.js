@@ -3555,6 +3555,19 @@ class VoxBallGame {
       if (this._renderVibRules) this._renderVibRules();
       if (this._gameArea) this._gameArea.classList.remove('vib-shake');
 
+      // Close any open panels so they don't block the menu or summary overlay
+      // (panels have higher z-index than the welcome overlay, so they must be
+      // explicitly closed here — setHudSettingsVisible only hides .hud-setting
+      // buttons, not the panel contents themselves).
+      document.getElementById('settingsPanel')?.classList.remove('show');
+      document.getElementById('settingsBtn')?.setAttribute('aria-expanded', 'false');
+      document.getElementById('vibPanel')?.classList.remove('show');
+      document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
+      document.getElementById('helpTooltip')?.classList.remove('show');
+      document.getElementById('helpBtn')?.setAttribute('aria-expanded', 'false');
+      document.getElementById('recordingsDrawer')?.classList.remove('show');
+      document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'false');
+
       // Show session summary if session was meaningful (> 3 seconds)
       if (this.session.duration > 3) {
         this._showSessionSummary();
@@ -3625,6 +3638,15 @@ class VoxBallGame {
       welcomeOverlay.classList.remove('hidden');
       document.getElementById('app').classList.remove('playing');
       setHudSettingsVisible(false);
+      // Close any open panels before showing the menu
+      document.getElementById('settingsPanel')?.classList.remove('show');
+      document.getElementById('settingsBtn')?.setAttribute('aria-expanded', 'false');
+      document.getElementById('vibPanel')?.classList.remove('show');
+      document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
+      document.getElementById('helpTooltip')?.classList.remove('show');
+      document.getElementById('helpBtn')?.setAttribute('aria-expanded', 'false');
+      document.getElementById('recordingsDrawer')?.classList.remove('show');
+      document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'false');
       // Reset mode selection so user can pick fresh
       modeDetails.classList.remove('show');
       modeCards.forEach(c => c.classList.remove('selected'));
