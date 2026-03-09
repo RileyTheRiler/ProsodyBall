@@ -2294,7 +2294,7 @@
         max-height: 38vh;
       }
 
-      .mode-detail-panel .btn-big {
+      .mode-details .btn-big {
         margin-top: 0;
         position: sticky;
         bottom: 0;
@@ -3062,6 +3062,22 @@
         width: 40px;
         height: 40px;
         min-width: 40px;
+      }
+    }
+
+    /* ====== TABLET PORTRAIT (601px–900px) ====== */
+    @media (min-width: 601px) and (max-width: 900px) {
+      .overlay {
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .menu-right {
+        overflow-y: auto;
+      }
+
+      .mode-detail-panel.show {
+        min-height: 120px;
       }
     }
 
