@@ -16,6 +16,16 @@ class MockEl {
     this.style = {};
     this.classList = new MockClassList();
     this.listeners = new Map();
+    this.nodeType = 1;
+    this.children = [];
+  }
+  appendChild(child) {
+    this.children.push(child);
+  }
+  append(...nodes) {
+    for (const node of nodes) {
+      this.children.push(node);
+    }
   }
   addEventListener(type, cb) {
     if (!this.listeners.has(type)) this.listeners.set(type, []);
@@ -40,7 +50,9 @@ function buildWizard() {
     calSkipBtn: new MockEl()
   };
   global.document = {
-    getElementById: (id) => els[id] || null
+    getElementById: (id) => els[id] || null,
+    createElement: (tag) => new MockEl(),
+    createDocumentFragment: () => new MockEl()
   };
   return { wizard: new CalibrationWizard(), els };
 }

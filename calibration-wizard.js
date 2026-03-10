@@ -13,7 +13,18 @@ export class CalibrationWizard {
 
   _setStep(title, desc, progress) {
     if (this.titleEl) this.titleEl.textContent = title;
-    if (this.descEl) this.descEl.innerHTML = desc;
+    if (this.descEl) {
+      this.descEl.textContent = '';
+      if (typeof desc === 'object' && desc !== null && (desc.nodeType !== undefined || Array.isArray(desc))) {
+        if (Array.isArray(desc)) {
+          this.descEl.append(...desc);
+        } else {
+          this.descEl.appendChild(desc);
+        }
+      } else {
+        this.descEl.textContent = desc;
+      }
+    }
     if (this.progressEl) this.progressEl.style.width = `${progress}%`;
   }
 
@@ -109,9 +120,14 @@ export class CalibrationWizard {
       return { outcome: 'incomplete', skipped: true, reason: 'timeout', step: 1 };
     }
 
+    const roomDoneDesc = document.createDocumentFragment();
+    roomDoneDesc.append('✅ Room calibrated!');
+    roomDoneDesc.append(document.createElement('br'), document.createElement('br'));
+    roomDoneDesc.append('Next up: you\'ll be asked to hold a vowel sound (like "ahhh") for about 2 seconds. This helps us tune to your voice.');
+
     this._setStep(
       'Step 1 of 2 · Room Check ✓',
-      '✅ Room calibrated!<br><br>Next up: you\'ll be asked to hold a vowel sound (like "ahhh") for about 2 seconds. This helps us tune to your voice.',
+      roomDoneDesc,
       40
     );
     this._showBtn(this.nextBtn, 'Next');
@@ -126,7 +142,12 @@ export class CalibrationWizard {
 
     this._hideBtn(this.nextBtn);
     this._hideBtn(this.skipBtn);
-    this._setStep('Step 2 of 2 · Hold a Vowel', 'Say <strong>"ahhh"</strong> steadily now…', 50);
+    const holdVowelDesc = document.createDocumentFragment();
+    holdVowelDesc.append('Say ');
+    holdVowelDesc.append(Object.assign(document.createElement('strong'), { textContent: '"ahhh"' }));
+    holdVowelDesc.append(' steadily now…');
+
+    this._setStep('Step 2 of 2 · Hold a Vowel', holdVowelDesc, 50);
 
     const vowelStart = performance.now();
     let vowelStable = 0;
@@ -154,22 +175,31 @@ export class CalibrationWizard {
 
       if (elapsed >= minVowelTime) {
         if (this.nextBtn && this.nextBtn.style.display === 'none') {
-          this._setStep(
-            'Step 2 of 2 · Hold a Vowel',
-            vowelPassed
-              ? '✅ Got it! Click <strong>Next</strong> when you\'re ready.'
-              : 'Click <strong>Next</strong> when you\'re done, or keep going.',
-            90
-          );
+          const nextWaitDesc = document.createDocumentFragment();
+          if (vowelPassed) {
+            nextWaitDesc.append('✅ Got it! Click ');
+            nextWaitDesc.append(Object.assign(document.createElement('strong'), { textContent: 'Next' }));
+            nextWaitDesc.append(' when you\'re ready.');
+          } else {
+            nextWaitDesc.append('Click ');
+            nextWaitDesc.append(Object.assign(document.createElement('strong'), { textContent: 'Next' }));
+            nextWaitDesc.append(' when you\'re done, or keep going.');
+          }
+          this._setStep('Step 2 of 2 · Hold a Vowel', nextWaitDesc, 90);
           this._showBtn(this.nextBtn, 'Next');
           this._showBtn(this.skipBtn, 'Skip');
         }
       }
 
       if (vowelPassed && elapsed >= minVowelTime) {
+        const vowelGreatDesc = document.createDocumentFragment();
+        vowelGreatDesc.append('✅ Great vowel sustain detected! Click ');
+        vowelGreatDesc.append(Object.assign(document.createElement('strong'), { textContent: 'Next' }));
+        vowelGreatDesc.append(' to continue.');
+
         this._setStep(
           'Step 2 of 2 · Hold a Vowel ✓',
-          '✅ Great vowel sustain detected! Click <strong>Next</strong> to continue.',
+          vowelGreatDesc,
           95
         );
         this._showBtn(this.nextBtn, 'Next');
