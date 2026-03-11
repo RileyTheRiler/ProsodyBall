@@ -10859,8 +10859,6 @@ class VoxBallGame {
     set('meterTempo', m.tempo);
     set('meterVowel', m.vowel);
     set('meterArtic', m.articulation);
-    set('meterSyllable', m.syllable);
-
     // Pitch meter — position-based indicator (not fill width)
     // Map 80-300 Hz to 0-100% position on the gradient bar
     const hz = this.analyzer.smoothPitchHz;
@@ -10891,14 +10889,11 @@ class VoxBallGame {
     document.getElementById('valTempo').textContent = this._meterLabel(m.tempo, 'Steady', 'Varied', 'Dynamic');
     document.getElementById('valVowel').textContent = this._meterLabel(m.vowel, 'Short', 'Held', 'Sustained');
     document.getElementById('valArtic').textContent = this._meterLabel(m.articulation, 'Soft', 'Clear', 'Crisp');
-    document.getElementById('valSyllable').textContent = this._meterLabel(m.syllable, 'Quiet', 'Active', 'Rapid');
-
     const highlightMap = {
       bounce: document.querySelector('.meter-bounce .meter-label'),
       tempo: document.querySelector('.meter-tempo .meter-label'),
       vowel: document.querySelector('.meter-vowel .meter-label'),
       articulation: document.querySelector('.meter-artic .meter-label'),
-      syllable: document.querySelector('.meter-syllable .meter-label'),
     };
     for (const [k, el] of Object.entries(highlightMap)) {
       this.metricHighlightTimers[k] = Math.max(0, this.metricHighlightTimers[k] - 1 / 60);

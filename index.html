@@ -975,11 +975,6 @@
       box-shadow: 0 0 10px rgba(77, 150, 255, 0.5), inset 0 1px 0 rgba(255,255,255,0.15);
     }
 
-    .meter-syllable .meter-bar-fill {
-      background: linear-gradient(90deg, var(--accent-syllable), rgba(192, 132, 252, 0.7));
-      box-shadow: 0 0 10px rgba(192, 132, 252, 0.5), inset 0 1px 0 rgba(255,255,255,0.15);
-    }
-
     /* Colorblind: fix hardcoded box-shadow colors to match Okabe-Ito palette */
     :root.colorblind .meter-bounce .meter-bar-fill {
       box-shadow: 0 0 10px rgba(213, 94, 0, 0.5);
@@ -995,10 +990,6 @@
 
     :root.colorblind .meter-artic .meter-bar-fill {
       box-shadow: 0 0 10px rgba(86, 180, 233, 0.5);
-    }
-
-    :root.colorblind .meter-syllable .meter-bar-fill {
-      box-shadow: 0 0 10px rgba(204, 121, 167, 0.5);
     }
 
     /* Colorblind: pitch gradient → blue-cyan-yellow (luminance-safe) */
@@ -5698,13 +5689,6 @@
           <div class="meter-bar-fill" id="meterArtic"></div>
         </div>
         <div class="meter-value" id="valArtic">0</div>
-      </div>
-      <div class="meter meter-syllable">
-        <div class="meter-label">Syllables</div>
-        <div class="meter-bar-bg">
-          <div class="meter-bar-fill" id="meterSyllable"></div>
-        </div>
-        <div class="meter-value" id="valSyllable">0</div>
       </div>
       </div>
       <!-- Expanded metric cards -->
