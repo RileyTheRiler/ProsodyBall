@@ -9572,7 +9572,17 @@ class VoxBallGame {
     const syl = this.prismReader.syllables[index];
     if (!syl || syl.state === 'crystallized') return;
 
-    const avg = (arr) => arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+    // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce()
+    // to minimize closure allocation and GC overhead during high-frequency processing paths.
+    const avg = (arr) => {
+      if (arr.length === 0) return 0;
+      let sum = 0;
+      for (let i = 0; i < arr.length; i++) {
+        sum += arr[i];
+      }
+      return sum / arr.length;
+    };
+
     const median = (arr) => {
       if (arr.length === 0) return 0;
       const s = [...arr].sort((a, b) => a - b);
@@ -9600,7 +9610,11 @@ class VoxBallGame {
     let pitchStability = 1;
     if (syl.pitchSamples.length >= 2) {
       const pitchMean = avg(syl.pitchSamples);
-      const pitchVar = syl.pitchSamples.reduce((sum, p) => sum + (p - pitchMean) ** 2, 0) / syl.pitchSamples.length;
+      let pitchSqSum = 0;
+      for (let i = 0; i < syl.pitchSamples.length; i++) {
+        pitchSqSum += (syl.pitchSamples[i] - pitchMean) ** 2;
+      }
+      const pitchVar = pitchSqSum / syl.pitchSamples.length;
       const pitchStdDev = Math.sqrt(pitchVar);
       // Coefficient of variation — normalized stability measure
       const cv = pitchMean > 0 ? pitchStdDev / pitchMean : 0;
@@ -9610,7 +9624,11 @@ class VoxBallGame {
     let energyConsistency = 1;
     if (syl.energySamples.length >= 2) {
       const eMean = avg(syl.energySamples);
-      const eVar = syl.energySamples.reduce((sum, e) => sum + (e - eMean) ** 2, 0) / syl.energySamples.length;
+      let eSqSum = 0;
+      for (let i = 0; i < syl.energySamples.length; i++) {
+        eSqSum += (syl.energySamples[i] - eMean) ** 2;
+      }
+      const eVar = eSqSum / syl.energySamples.length;
       const eCV = eMean > 0 ? Math.sqrt(eVar) / eMean : 0;
       energyConsistency = Math.max(0, 1 - eCV * 3);
     }
