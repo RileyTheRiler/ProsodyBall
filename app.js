@@ -4726,7 +4726,7 @@ class VoxBallGame {
       this.drawSpectralAscentScene();
     } else if (this.gameMode === 'prism') {
       this.updatePrismReader(dt);
-      this.drawPrismReaderScene();
+      this.drawPrismReaderScene(dt);
     } else if (this.gameMode === 'vowelvalley') {
       this.updateVowelValley(dt);
       this.drawVowelValleyScene(this.prosodyScore);
@@ -6440,6 +6440,8 @@ class VoxBallGame {
     const m = this.analyzer.metrics;
     const ps = this.prosodyScore;
     const g = this.garden;
+    const w = this.width;
+    const h = this.height;
     g.time += dt;
 
     // Prosody score
@@ -7708,7 +7710,7 @@ class VoxBallGame {
     const effectiveMax = kb.useAdaptiveRange ? kb.adaptiveMaxMidi : kb.maxMidi;
 
     if (isVoiced && Number.isFinite(midi)) {
-      const clamped = Math.max(kb.minMidi, Math.min(kb.maxMidi, midi));
+      const clamped = Math.max(effectiveMin, Math.min(effectiveMax, midi));
       kb.plasmaTrail.push({ midi: clamped, life: 1 });
       kb.glowKey = Math.round(clamped);
       kb.glowStrength = Math.min(1, kb.glowStrength + dt * 5 + conf * 0.03);
@@ -8942,10 +8944,9 @@ class VoxBallGame {
     const confidence = this.analyzer.spectralTiltConfidence;
     const centerY = sa.centerY || this.height * 0.52;
 
-    const riseForce = -640;
-    const sinkForce = 640;
-    const control = (weight - 0.5) * 2;
-    const controlForce = control >= 0 ? control * (-riseForce) * -1 : -control * sinkForce;
+    const force = 640;
+    const control = (weight - 0.5) * 2; // -1 (light) to +1 (heavy)
+    const controlForce = -control * force; // heavy → up (negative), light → down (positive)
     const gravityToCenter = (centerY - sa.balloonY) * 2.2;
     sa.balloonVy += (controlForce + gravityToCenter * 0.5) * dt;
     sa.balloonVy *= (0.98 - confidence * 0.01);
@@ -10363,7 +10364,7 @@ class VoxBallGame {
     if (legend) legend.classList.remove('show');
   }
 
-  drawPrismReaderScene() {
+  drawPrismReaderScene(dt = 0.016) {
     const ctx = this.ctx;
     const w = this.width;
     const h = this.height;
@@ -10434,10 +10435,10 @@ class VoxBallGame {
         ctx.save();
         for (let i = this._prismParticles.length - 1; i >= 0; i--) {
           const p = this._prismParticles[i];
-          p.x += p.vx * 0.016;
-          p.y += p.vy * 0.016;
-          p.vy += 5 * 0.016; // gentle gravity
-          p.life -= p.decay * 0.016;
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          p.vy += 5 * dt; // gentle gravity
+          p.life -= p.decay * dt;
           if (p.life <= 0) {
             this._prismParticles.splice(i, 1);
             continue;
