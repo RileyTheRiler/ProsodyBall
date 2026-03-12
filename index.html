@@ -5589,8 +5589,8 @@
     </div>
 
     <div class="context-bar canvas-only" id="canvasContextBar">
-      <button class="context-toggle" id="contextToggleBtn" type="button" aria-expanded="false">Canvas Controls</button>
-      <div class="context-controls">
+      <button class="context-toggle" id="contextToggleBtn" type="button" aria-expanded="false" aria-controls="contextControls">Canvas Controls</button>
+      <div class="context-controls" id="contextControls">
       <select id="visualStyleSelect" class="theme-select canvas-only" aria-label="Visual style mode">
         <option value="artistic">🖌️ Artistic</option>
         <option value="analysis">📈 Analysis</option>
@@ -5613,7 +5613,7 @@
       </div>
     </div>
     <div class="meters-panel" id="metersPanel">
-      <button class="meters-expand-toggle" id="metersExpandToggle" aria-label="Expand metrics" aria-expanded="false">
+      <button class="meters-expand-toggle" id="metersExpandToggle" aria-label="Expand metrics" aria-expanded="false" aria-controls="metersExpanded">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="18 15 12 9 6 15"></polyline>
         </svg>
