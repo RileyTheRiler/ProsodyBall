@@ -24,3 +24,8 @@
 **Vulnerability:** Found multiple DOM-based XSS vectors in `app.js` where `innerHTML` was being assigned dynamic strings, specifically in `showError`, `diagPanel`, and `errNode` functions.
 **Learning:** The codebase had remaining instances of `innerHTML` usage despite previous fixes. Direct assignment to `innerHTML` with dynamic content (even error messages) is unsafe as it allows arbitrary HTML injection.
 **Prevention:** Safely build DOM elements using `document.createElement` and set text using `textContent`. For inline building, `Node.append()` with `Object.assign(document.createElement('b'), { textContent: ... })` provides a clean and safe alternative to template literals with `innerHTML`.
+
+## 2026-03-13 - [DOM-based XSS Risk via innerHTML in UI components]
+**Vulnerability:** Unsafe assignments to `innerHTML` in `calibration-wizard.js` (`_setStep`) and `app.js` (`updateRecordingsUI`) allowed potential injection if dynamic data or input is later manipulated.
+**Learning:** Reconstructing UI elements using `document.createDocumentFragment()` or explicitly creating elements with `document.createElement()` and `Object.assign()` provides absolute protection against DOM-based XSS, even when the UI components are complex. Mocks for tests using `innerHTML` also require precise implementations for instances of `Node`.
+**Prevention:** Eliminate `innerHTML` from DOM update loops by consistently appending safely created nodes (`Node.append`) or using text updates (`textContent`).
