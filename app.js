@@ -9573,7 +9573,16 @@ class VoxBallGame {
     const syl = this.prismReader.syllables[index];
     if (!syl || syl.state === 'crystallized') return;
 
-    const avg = (arr) => arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+    // ⚡ Bolt: Use traditional for loop instead of .reduce to prevent
+    // GC spikes and function call overhead in this hot path
+    const avg = (arr) => {
+      const len = arr.length;
+      if (len === 0) return 0;
+      let sum = 0;
+      for (let i = 0; i < len; i++) sum += arr[i];
+      return sum / len;
+    };
+
     const median = (arr) => {
       if (arr.length === 0) return 0;
       const s = [...arr].sort((a, b) => a - b);
@@ -9599,9 +9608,15 @@ class VoxBallGame {
     const vowelConf = avgVowelLike;
     // Pitch stability: low variance in pitch samples = higher confidence
     let pitchStability = 1;
-    if (syl.pitchSamples.length >= 2) {
+    const pLen = syl.pitchSamples.length;
+    if (pLen >= 2) {
       const pitchMean = avg(syl.pitchSamples);
-      const pitchVar = syl.pitchSamples.reduce((sum, p) => sum + (p - pitchMean) ** 2, 0) / syl.pitchSamples.length;
+      // ⚡ Bolt: Traditional loop for variance calculation (avoids array reduction GC)
+      let sumSq = 0;
+      for (let i = 0; i < pLen; i++) {
+        sumSq += (syl.pitchSamples[i] - pitchMean) ** 2;
+      }
+      const pitchVar = sumSq / pLen;
       const pitchStdDev = Math.sqrt(pitchVar);
       // Coefficient of variation — normalized stability measure
       const cv = pitchMean > 0 ? pitchStdDev / pitchMean : 0;
@@ -9609,9 +9624,15 @@ class VoxBallGame {
     }
     // Energy consistency: stable energy during the syllable boosts confidence
     let energyConsistency = 1;
-    if (syl.energySamples.length >= 2) {
+    const eLen = syl.energySamples.length;
+    if (eLen >= 2) {
       const eMean = avg(syl.energySamples);
-      const eVar = syl.energySamples.reduce((sum, e) => sum + (e - eMean) ** 2, 0) / syl.energySamples.length;
+      // ⚡ Bolt: Traditional loop for variance calculation
+      let sumSq = 0;
+      for (let i = 0; i < eLen; i++) {
+        sumSq += (syl.energySamples[i] - eMean) ** 2;
+      }
+      const eVar = sumSq / eLen;
       const eCV = eMean > 0 ? Math.sqrt(eVar) / eMean : 0;
       energyConsistency = Math.max(0, 1 - eCV * 3);
     }
