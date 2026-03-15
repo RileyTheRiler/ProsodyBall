@@ -9573,7 +9573,16 @@ class VoxBallGame {
     const syl = this.prismReader.syllables[index];
     if (!syl || syl.state === 'crystallized') return;
 
-    const avg = (arr) => arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+    // ⚡ Bolt: Use traditional for-loop instead of reduce to avoid function call
+    // overhead and garbage collection in this per-frame hot loop.
+    const avg = (arr) => {
+      const len = arr.length;
+      if (len === 0) return 0;
+      let sum = 0;
+      for (let i = 0; i < len; i++) sum += arr[i];
+      return sum / len;
+    };
+
     const median = (arr) => {
       if (arr.length === 0) return 0;
       const s = [...arr].sort((a, b) => a - b);
@@ -9601,7 +9610,14 @@ class VoxBallGame {
     let pitchStability = 1;
     if (syl.pitchSamples.length >= 2) {
       const pitchMean = avg(syl.pitchSamples);
-      const pitchVar = syl.pitchSamples.reduce((sum, p) => sum + (p - pitchMean) ** 2, 0) / syl.pitchSamples.length;
+      // ⚡ Bolt: Replace reduce with traditional loop for performance
+      let sumSq = 0;
+      const len = syl.pitchSamples.length;
+      for (let i = 0; i < len; i++) {
+        const diff = syl.pitchSamples[i] - pitchMean;
+        sumSq += diff * diff;
+      }
+      const pitchVar = sumSq / len;
       const pitchStdDev = Math.sqrt(pitchVar);
       // Coefficient of variation — normalized stability measure
       const cv = pitchMean > 0 ? pitchStdDev / pitchMean : 0;
@@ -9611,7 +9627,14 @@ class VoxBallGame {
     let energyConsistency = 1;
     if (syl.energySamples.length >= 2) {
       const eMean = avg(syl.energySamples);
-      const eVar = syl.energySamples.reduce((sum, e) => sum + (e - eMean) ** 2, 0) / syl.energySamples.length;
+      // ⚡ Bolt: Replace reduce with traditional loop for performance
+      let sumSq = 0;
+      const len = syl.energySamples.length;
+      for (let i = 0; i < len; i++) {
+        const diff = syl.energySamples[i] - eMean;
+        sumSq += diff * diff;
+      }
+      const eVar = sumSq / len;
       const eCV = eMean > 0 ? Math.sqrt(eVar) / eMean : 0;
       energyConsistency = Math.max(0, 1 - eCV * 3);
     }
