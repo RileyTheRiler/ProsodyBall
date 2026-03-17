@@ -9600,6 +9600,13 @@ class VoxBallGame {
     const syl = this.prismReader.syllables[index];
     if (!syl || syl.state === 'crystallized') return;
 
+    // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce() to prevent GC spikes in hot loops
+    const avg = (arr) => {
+      if (arr.length === 0) return 0;
+      let sum = 0;
+      for (let i = 0; i < arr.length; i++) sum += arr[i];
+      return sum / arr.length;
+    };
     // ⚡ Bolt: Use traditional for loop instead of .reduce to prevent
     // GC spikes and function call overhead in this hot path
     const avg = (arr) => {
@@ -9643,6 +9650,7 @@ class VoxBallGame {
     const pitchConf = syl.pitchSamples.length > 2 ? 1 : syl.pitchSamples.length / 2;
     const durationConf = Math.min(1, syl.durationMs / 300);
     const vowelConf = avgVowelLike;
+
     // Pitch stability: low variance in pitch samples = higher confidence
     let pitchStability = 1;
     const pLen = syl.pitchSamples.length;
@@ -9664,6 +9672,7 @@ class VoxBallGame {
       const cv = pitchMean > 0 ? pitchStdDev / pitchMean : 0;
       pitchStability = Math.max(0, 1 - cv * 5); // cv of 0.2 = 0 stability
     }
+
     // Energy consistency: stable energy during the syllable boosts confidence
     let energyConsistency = 1;
     const eLen = syl.energySamples.length;
