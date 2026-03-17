@@ -38,13 +38,29 @@ export class PerformanceMonitor {
   render(extra = '') {
     if (!this.enabled || !this.panel) return;
     const quality = this.fps >= 55 ? 'Excellent' : this.fps >= 40 ? 'Good' : this.fps >= 25 ? 'Degraded' : 'Poor';
-    this.panel.innerHTML = `
-      <div><b>FPS:</b> ${this.fps}</div>
-      <div><b>Frame:</b> ${this.frameTimeMs.toFixed(1)}ms</div>
-      <div><b>Worst:</b> ${this._worstFrameMs.toFixed(1)}ms</div>
-      <div><b>Quality:</b> ${quality}</div>
-      ${extra ? `<div class="perf-extra">${extra}</div>` : ''}
-    `;
+
+    this.panel.textContent = '';
+
+    const createRow = (label, value) => {
+      const div = document.createElement('div');
+      div.append(Object.assign(document.createElement('b'), { textContent: label }), ` ${value}`);
+      return div;
+    };
+
+    this.panel.append(
+      createRow('FPS:', this.fps),
+      createRow('Frame:', `${this.frameTimeMs.toFixed(1)}ms`),
+      createRow('Worst:', `${this._worstFrameMs.toFixed(1)}ms`),
+      createRow('Quality:', quality)
+    );
+
+    if (extra) {
+      this.panel.append(Object.assign(document.createElement('div'), {
+        className: 'perf-extra',
+        textContent: extra
+      }));
+    }
+
     this._worstFrameMs = 0;
   }
 }
