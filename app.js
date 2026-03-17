@@ -10130,7 +10130,7 @@ class VoxBallGame {
     const text = (this.prismPassages && this.prismPassages[mode]) || '';
 
     if (!text || mode === 'custom' || mode === 'freestyle') {
-      metaEl.innerHTML = '';
+      metaEl.textContent = '';
       return;
     }
 
@@ -10144,11 +10144,23 @@ class VoxBallGame {
       ? `~${Math.round(estMinutes * 60)}s`
       : `~${estMinutes.toFixed(1)}min`;
 
-    metaEl.innerHTML = `
-      <span class="prism-passage-meta-item">${wordCount} words</span>
-      <span class="prism-passage-meta-item">${sylCount} syllables</span>
-      <span class="prism-passage-meta-item">${estStr} est.</span>
-    `;
+    metaEl.textContent = '';
+    const frag = document.createDocumentFragment();
+    frag.append(
+      Object.assign(document.createElement('span'), {
+        className: 'prism-passage-meta-item',
+        textContent: `${wordCount} words`,
+      }),
+      Object.assign(document.createElement('span'), {
+        className: 'prism-passage-meta-item',
+        textContent: `${sylCount} syllables`,
+      }),
+      Object.assign(document.createElement('span'), {
+        className: 'prism-passage-meta-item',
+        textContent: `${estStr} est.`,
+      })
+    );
+    metaEl.append(frag);
   }
 
   _drawPrismPitchSparkline(canvasEl) {

@@ -24,6 +24,10 @@
 **Vulnerability:** Found multiple DOM-based XSS vectors in `app.js` where `innerHTML` was being assigned dynamic strings, specifically in `showError`, `diagPanel`, and `errNode` functions.
 **Learning:** The codebase had remaining instances of `innerHTML` usage despite previous fixes. Direct assignment to `innerHTML` with dynamic content (even error messages) is unsafe as it allows arbitrary HTML injection.
 **Prevention:** Safely build DOM elements using `document.createElement` and set text using `textContent`. For inline building, `Node.append()` with `Object.assign(document.createElement('b'), { textContent: ... })` provides a clean and safe alternative to template literals with `innerHTML`.
+## 2024-05-29 - [DOM-based XSS Risk via innerHTML in App Logic]
+**Vulnerability:** Found `innerHTML` being used in `_updatePrismPassageMeta` in `app.js` to render dynamically generated HTML strings (`<span class="...">...</span>`) with statistics like word count and syllable count. While the data sources (counts) are currently integers, using template literals with `innerHTML` is a risky pattern that could be easily exploited if a string variable were introduced later.
+**Learning:** Using `innerHTML` with template literals to build a collection of elements (like multiple spans) is tempting for conciseness but breaks the "defense in depth" principle. It introduces a systemic vulnerability pattern that is easy to copy-paste into more dangerous contexts.
+**Prevention:** For inline DOM construction of multiple elements without `innerHTML`, create a `DocumentFragment` and use `Node.append()` combined with `Object.assign(document.createElement('tag'), { textContent: '...', className: '...' })`. This provides a safe, readable alternative to HTML strings.
 
 ## 2024-05-29 - [DOM-based XSS Risk via Performance Monitor Rendering]
 **Vulnerability:** Found `innerHTML` being used in `performance-monitor.js` (`render` method) where an `extra` string parameter was directly concatenated and rendered into the DOM. This allowed for an XSS vector if any untrusted or unescaped content were passed in.
