@@ -9588,6 +9588,14 @@ class VoxBallGame {
     const syl = this.prismReader.syllables[index];
     if (!syl || syl.state === 'crystallized') return;
 
+    // ⚡ Bolt: Use traditional for loop instead of .reduce to prevent
+    // GC spikes and function call overhead in this hot path
+    const avg = (arr) => {
+      const len = arr.length;
+      if (len === 0) return 0;
+      let sum = 0;
+      for (let i = 0; i < len; i++) sum += arr[i];
+      return sum / len;
     // ⚡ Bolt Optimization: Replacing array.reduce with standard for loops in a hot path
     // _crystallizePrismSyllable is called frequently in per-frame logic when auto-crystallizing
     // or processing timeouts. Avoiding higher-order array methods reduces GC pressure.
@@ -9625,8 +9633,15 @@ class VoxBallGame {
     const vowelConf = avgVowelLike;
     // Pitch stability: low variance in pitch samples = higher confidence
     let pitchStability = 1;
-    if (syl.pitchSamples.length >= 2) {
+    const pLen = syl.pitchSamples.length;
+    if (pLen >= 2) {
       const pitchMean = avg(syl.pitchSamples);
+      // ⚡ Bolt: Traditional loop for variance calculation (avoids array reduction GC)
+      let sumSq = 0;
+      for (let i = 0; i < pLen; i++) {
+        sumSq += (syl.pitchSamples[i] - pitchMean) ** 2;
+      }
+      const pitchVar = sumSq / pLen;
       let pitchVarSum = 0;
       for (let i = 0; i < syl.pitchSamples.length; i++) {
         pitchVarSum += (syl.pitchSamples[i] - pitchMean) ** 2;
@@ -9639,8 +9654,15 @@ class VoxBallGame {
     }
     // Energy consistency: stable energy during the syllable boosts confidence
     let energyConsistency = 1;
-    if (syl.energySamples.length >= 2) {
+    const eLen = syl.energySamples.length;
+    if (eLen >= 2) {
       const eMean = avg(syl.energySamples);
+      // ⚡ Bolt: Traditional loop for variance calculation
+      let sumSq = 0;
+      for (let i = 0; i < eLen; i++) {
+        sumSq += (syl.energySamples[i] - eMean) ** 2;
+      }
+      const eVar = sumSq / eLen;
       let eVarSum = 0;
       for (let i = 0; i < syl.energySamples.length; i++) {
         eVarSum += (syl.energySamples[i] - eMean) ** 2;
