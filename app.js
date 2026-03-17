@@ -2281,7 +2281,20 @@ class VoxBallGame {
       },
     };
     const data = helpData[this.gameMode] || helpData.ball;
-    el.innerHTML = `<h3>${data.title}</h3><p>${data.items.join('<br><br>')}</p>`;
+    el.innerHTML = '';
+    const h3 = document.createElement('h3');
+    h3.textContent = data.title;
+    const p = document.createElement('p');
+    const fragment = document.createDocumentFragment();
+    data.items.forEach((item, index) => {
+      if (index > 0) {
+        fragment.appendChild(document.createElement('br'));
+        fragment.appendChild(document.createElement('br'));
+      }
+      fragment.append(item);
+    });
+    p.appendChild(fragment);
+    el.append(h3, p);
   }
 
   resize() {
