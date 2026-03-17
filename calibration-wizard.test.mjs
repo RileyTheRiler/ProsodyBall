@@ -16,6 +16,20 @@ class MockEl {
     this.style = {};
     this.classList = new MockClassList();
     this.listeners = new Map();
+    this.childNodes = [];
+  }
+  append(...nodes) {
+    for (const n of nodes) {
+      if (typeof n === 'string') {
+        this.textContent += n;
+      } else {
+        this.childNodes.push(n);
+        this.textContent += n.textContent || '';
+      }
+    }
+  }
+  appendChild(node) {
+    this.append(node);
   }
   addEventListener(type, cb) {
     if (!this.listeners.has(type)) this.listeners.set(type, []);
@@ -39,9 +53,29 @@ function buildWizard() {
     calNextBtn: new MockEl(),
     calSkipBtn: new MockEl()
   };
+  global.Node = class MockNode {};
   global.document = {
-    getElementById: (id) => els[id] || null
+    getElementById: (id) => els[id] || null,
+    createElement: (tag) => new MockEl(),
+    createDocumentFragment: () => {
+      const frag = new MockEl();
+      Object.setPrototypeOf(frag, new Proxy(MockEl.prototype, {
+        getPrototypeOf() { return global.Node.prototype; }
+      }));
+      return frag;
+    },
+    createTextNode: (text) => {
+      const node = new MockEl();
+      node.textContent = text;
+      Object.setPrototypeOf(node, new Proxy(MockEl.prototype, {
+        getPrototypeOf() { return global.Node.prototype; }
+      }));
+      return node;
+    }
   };
+  Object.setPrototypeOf(els.calStepDesc, new Proxy(MockEl.prototype, {
+        getPrototypeOf() { return global.Node.prototype; }
+  }));
   return { wizard: new CalibrationWizard(), els };
 }
 
