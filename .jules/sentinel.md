@@ -24,3 +24,8 @@
 **Vulnerability:** Found multiple DOM-based XSS vectors in `app.js` where `innerHTML` was being assigned dynamic strings, specifically in `showError`, `diagPanel`, and `errNode` functions.
 **Learning:** The codebase had remaining instances of `innerHTML` usage despite previous fixes. Direct assignment to `innerHTML` with dynamic content (even error messages) is unsafe as it allows arbitrary HTML injection.
 **Prevention:** Safely build DOM elements using `document.createElement` and set text using `textContent`. For inline building, `Node.append()` with `Object.assign(document.createElement('b'), { textContent: ... })` provides a clean and safe alternative to template literals with `innerHTML`.
+
+## 2024-05-29 - [DOM-based XSS Risk via Performance Monitor Rendering]
+**Vulnerability:** Found `innerHTML` being used in `performance-monitor.js` (`render` method) where an `extra` string parameter was directly concatenated and rendered into the DOM. This allowed for an XSS vector if any untrusted or unescaped content were passed in.
+**Learning:** Any dynamic parameter passed to an internal utility function that outputs HTML is a potential attack vector. Relying on string concatenation and `innerHTML` for component rendering is a weak security posture. Safe DOM APIs must be standard even for internal developer tools or performance panels to adhere to defense-in-depth principles.
+**Prevention:** Eliminate `innerHTML` by creating DOM nodes dynamically. The `render` method was refactored to use `document.createElement`, `Object.assign` (with `textContent`), and `append()` to ensure all content, including dynamic parameters, is treated strictly as text and properly encoded by the browser.
