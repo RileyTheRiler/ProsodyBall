@@ -4892,16 +4892,25 @@
           <option value="default">Microphone: System Default</option>
         </select>
         <div class="settings-row">
-          <span>Echo cancellation</span>
-          <label class="toggle-switch"><input id="echoCancelToggle" type="checkbox" checked><span class="toggle-slider"></span></label>
+          <label for="echoCancelToggle">Echo cancellation</label>
+          <label class="toggle-switch"><input id="echoCancelToggle" type="checkbox" aria-label="Toggle echo cancellation" checked><span class="toggle-slider"></span></label>
         </div>
         <div class="settings-row">
-          <span>Noise suppression</span>
-          <label class="toggle-switch"><input id="noiseSuppressToggle" type="checkbox" checked><span class="toggle-slider"></span></label>
+          <label for="noiseSuppressToggle">Noise suppression</label>
+          <label class="toggle-switch"><input id="noiseSuppressToggle" type="checkbox" aria-label="Toggle noise suppression" checked><span class="toggle-slider"></span></label>
         </div>
         <div class="settings-row">
-          <span>Auto gain control</span>
-          <label class="toggle-switch"><input id="autoGainToggle" type="checkbox" checked><span class="toggle-slider"></span></label>
+          <label for="autoGainToggle">Auto gain control</label>
+          <label class="toggle-switch"><input id="autoGainToggle" type="checkbox" aria-label="Toggle auto gain control" checked><span class="toggle-slider"></span></label>
+          <label class="toggle-switch"><input id="echoCancelToggle" type="checkbox" checked aria-label="Echo cancellation"><span class="toggle-slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <label for="noiseSuppressToggle">Noise suppression</label>
+          <label class="toggle-switch"><input id="noiseSuppressToggle" type="checkbox" checked aria-label="Noise suppression"><span class="toggle-slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <label for="autoGainToggle">Auto gain control</label>
+          <label class="toggle-switch"><input id="autoGainToggle" type="checkbox" checked aria-label="Auto gain control"><span class="toggle-slider"></span></label>
         </div>
       </div>
 
@@ -5555,9 +5564,10 @@
         </div>
 
         <div class="vib-master">
-          <label>Vibration alerts</label>
+          <label for="vibMasterToggle">Vibration alerts</label>
           <div class="toggle-switch">
-            <input type="checkbox" id="vibMasterToggle">
+            <input type="checkbox" id="vibMasterToggle" aria-label="Toggle vibration alerts">
+            <input type="checkbox" id="vibMasterToggle" aria-label="Vibration alerts">
             <span class="toggle-slider"></span>
           </div>
         </div>
@@ -5589,7 +5599,7 @@
     </div>
 
     <div class="context-bar canvas-only" id="canvasContextBar">
-      <button class="context-toggle" id="contextToggleBtn" type="button" aria-expanded="false">Canvas Controls</button>
+      <button class="context-toggle" id="contextToggleBtn" type="button" aria-expanded="false" aria-controls="canvasContextBar">Canvas Controls</button>
       <div class="context-controls">
       <select id="visualStyleSelect" class="theme-select canvas-only" aria-label="Visual style mode">
         <option value="artistic">🖌️ Artistic</option>
@@ -5613,7 +5623,7 @@
       </div>
     </div>
     <div class="meters-panel" id="metersPanel">
-      <button class="meters-expand-toggle" id="metersExpandToggle" aria-label="Expand metrics" aria-expanded="false">
+      <button class="meters-expand-toggle" id="metersExpandToggle" aria-label="Expand metrics" aria-expanded="false" aria-controls="metersExpanded">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="18 15 12 9 6 15"></polyline>
         </svg>
