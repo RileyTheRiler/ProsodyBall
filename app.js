@@ -4226,12 +4226,12 @@ class VoxBallGame {
               <span class="vib-rule-unit">${info.unit}</span>
               <span class="vib-live-val" data-rule-id="${rule.id}" style="font-size:0.62rem;color:rgba(255,255,255,0.35);margin-left:4px;min-width:32px;text-align:right">—</span>
               <label class="toggle-switch" style="margin-left:4px">
-                <input type="checkbox" class="vib-rule-toggle" ${rule.enabled ? 'checked' : ''}>
+                <input type="checkbox" class="vib-rule-toggle" aria-label="Enable alert rule" ${rule.enabled ? 'checked' : ''}>
                 <span class="toggle-slider"></span>
               </label>
             </div>
           </div>
-          <button class="vib-rule-del" title="Delete rule">✕</button>
+          <button class="vib-rule-del" title="Delete rule" aria-label="Delete rule">✕</button>
         `;
 
         // Wire events
