@@ -61,6 +61,28 @@ export class PerformanceMonitor {
       extraDiv.textContent = extra;
       this.panel.appendChild(extraDiv);
     }
+    this.panel.textContent = '';
+
+    const createRow = (label, value) => {
+      const div = document.createElement('div');
+      div.append(Object.assign(document.createElement('b'), { textContent: label }), ` ${value}`);
+      return div;
+    };
+
+    this.panel.append(
+      createRow('FPS:', this.fps),
+      createRow('Frame:', `${this.frameTimeMs.toFixed(1)}ms`),
+      createRow('Worst:', `${this._worstFrameMs.toFixed(1)}ms`),
+      createRow('Quality:', quality)
+    );
+
+    if (extra) {
+      this.panel.append(Object.assign(document.createElement('div'), {
+        className: 'perf-extra',
+        textContent: extra
+      }));
+    }
+
     this._worstFrameMs = 0;
   }
 }
