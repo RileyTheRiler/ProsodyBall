@@ -2281,7 +2281,20 @@ class VoxBallGame {
       },
     };
     const data = helpData[this.gameMode] || helpData.ball;
-    el.innerHTML = `<h3>${data.title}</h3><p>${data.items.join('<br><br>')}</p>`;
+    el.innerHTML = '';
+    const h3 = document.createElement('h3');
+    h3.textContent = data.title;
+    const p = document.createElement('p');
+    const fragment = document.createDocumentFragment();
+    data.items.forEach((item, index) => {
+      if (index > 0) {
+        fragment.appendChild(document.createElement('br'));
+        fragment.appendChild(document.createElement('br'));
+      }
+      fragment.append(item);
+    });
+    p.appendChild(fragment);
+    el.append(h3, p);
   }
 
   resize() {
@@ -2656,29 +2669,41 @@ class VoxBallGame {
     }
 
     if (this.recordings.length === 0) {
-      list.innerHTML = '';
+      list.textContent = '';
       list.appendChild(empty);
       empty.style.display = '';
       return;
     }
 
-    list.innerHTML = '';
+    list.textContent = '';
     for (let i = this.recordings.length - 1; i >= 0; i--) {
       const rec = this.recordings[i];
       const item = document.createElement('div');
       item.className = 'rec-item';
-      item.innerHTML = `
-        <div class="rec-item-info">
-          <div class="rec-item-name">Recording ${i + 1}</div>
-          <div class="rec-item-meta">${rec.timestamp} · ${this.formatDuration(rec.duration)}</div>
-          <div class="rec-progress"><div class="rec-progress-fill" id="rec-progress-${i}"></div></div>
-        </div>
-        <div class="rec-item-actions">
-          <button class="rec-btn" id="rec-play-${i}" title="Play" aria-label="Play Recording" data-action="play" data-index="${i}">▶</button>
-          <button class="rec-btn" title="Download" aria-label="Download Recording" data-action="download" data-index="${i}">⬇</button>
-          <button class="rec-btn delete" title="Delete" aria-label="Delete Recording" data-action="delete" data-index="${i}">✕</button>
-        </div>
-      `;
+
+      const info = Object.assign(document.createElement('div'), { className: 'rec-item-info' });
+      info.append(
+        Object.assign(document.createElement('div'), { className: 'rec-item-name', textContent: `Recording ${i + 1}` }),
+        Object.assign(document.createElement('div'), { className: 'rec-item-meta', textContent: `${rec.timestamp} · ${this.formatDuration(rec.duration)}` })
+      );
+
+      const progress = Object.assign(document.createElement('div'), { className: 'rec-progress' });
+      progress.appendChild(Object.assign(document.createElement('div'), { className: 'rec-progress-fill', id: `rec-progress-${i}` }));
+      info.appendChild(progress);
+
+      const actions = Object.assign(document.createElement('div'), { className: 'rec-item-actions' });
+      actions.append(
+        Object.assign(document.createElement('button'), { className: 'rec-btn', id: `rec-play-${i}`, title: 'Play', ariaLabel: 'Play Recording', textContent: '▶' }),
+        Object.assign(document.createElement('button'), { className: 'rec-btn', title: 'Download', ariaLabel: 'Download Recording', textContent: '⬇' }),
+        Object.assign(document.createElement('button'), { className: 'rec-btn delete', title: 'Delete', ariaLabel: 'Delete Recording', textContent: '✕' })
+      );
+
+      // Set data attributes
+      actions.children[0].dataset.action = 'play'; actions.children[0].dataset.index = i;
+      actions.children[1].dataset.action = 'download'; actions.children[1].dataset.index = i;
+      actions.children[2].dataset.action = 'delete'; actions.children[2].dataset.index = i;
+
+      item.append(info, actions);
       list.appendChild(item);
     }
 
@@ -5096,6 +5121,7 @@ class VoxBallGame {
       this.particles[i].update(dt);
       if (this.particles[i].life <= 0) this.particles.splice(i, 1);
     }
+    if (this.particles.length > 80) this.particles.splice(0, this.particles.length - 80);
 
     // ==========================================================
     // BALL COLOR — pitch drives hue (blue→purple→pink),
@@ -8796,7 +8822,7 @@ class VoxBallGame {
       rr.trail[i].y -= rr.speed * dt * 0.36;
       if (rr.trail[i].life <= 0 || rr.trail[i].y < -40) rr.trail.splice(i, 1);
     }
-    if (rr.trail.length > 900) rr.trail.splice(0, rr.trail.length - 900);
+    if (rr.trail.length > 300) rr.trail.splice(0, rr.trail.length - 300);
   }
 
   drawResonanceRoadScene() {
@@ -8972,7 +8998,7 @@ class VoxBallGame {
         this._spawnSpectralGate(0.5 + (Math.random() - 0.5) * 0.06);
       } else {
         const step = [0.22, 0.78, 0.3, 0.7, 0.4, 0.6];
-        this._spawnSpectralGate(step[Math.floor(performance.now() / 350) % step.length]);
+        this._spawnSpectralGate(step[Math.floor(sa.worldX / 350) % step.length]);
       }
     }
 
@@ -8982,9 +9008,10 @@ class VoxBallGame {
       const gy = this.height * g.y;
       if (!g.passed && Math.abs(g.x - sa.balloonX) < 26) {
         const miss = Math.abs(gy - sa.balloonY);
-        const hit = miss < 46;
+        const hitThreshold = this.height * 0.06;
+        const hit = miss < hitThreshold;
         g.passed = true;
-        if (hit) sa.score += 10 + Math.max(0, Math.round((46 - miss) * 0.2));
+        if (hit) sa.score += 10 + Math.max(0, Math.round((hitThreshold - miss) * 0.2));
       }
       if (g.x < -90) sa.gates.splice(i, 1);
     }
@@ -9573,7 +9600,26 @@ class VoxBallGame {
     const syl = this.prismReader.syllables[index];
     if (!syl || syl.state === 'crystallized') return;
 
-    const avg = (arr) => arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+    // ⚡ Bolt: Use traditional for loop instead of .reduce to prevent
+    // GC spikes and function call overhead in this hot path
+    const avg = (arr) => {
+      const len = arr.length;
+      if (len === 0) return 0;
+      let sum = 0;
+      for (let i = 0; i < len; i++) sum += arr[i];
+      return sum / len;
+    // ⚡ Bolt Optimization: Replacing array.reduce with standard for loops in a hot path
+    // _crystallizePrismSyllable is called frequently in per-frame logic when auto-crystallizing
+    // or processing timeouts. Avoiding higher-order array methods reduces GC pressure.
+    const avg = (arr) => {
+      if (arr.length === 0) return 0;
+      let sum = 0;
+      for (let i = 0; i < arr.length; i++) {
+        sum += arr[i];
+      }
+      return sum / arr.length;
+    };
+
     const median = (arr) => {
       if (arr.length === 0) return 0;
       const s = [...arr].sort((a, b) => a - b);
@@ -9599,9 +9645,20 @@ class VoxBallGame {
     const vowelConf = avgVowelLike;
     // Pitch stability: low variance in pitch samples = higher confidence
     let pitchStability = 1;
-    if (syl.pitchSamples.length >= 2) {
+    const pLen = syl.pitchSamples.length;
+    if (pLen >= 2) {
       const pitchMean = avg(syl.pitchSamples);
-      const pitchVar = syl.pitchSamples.reduce((sum, p) => sum + (p - pitchMean) ** 2, 0) / syl.pitchSamples.length;
+      // ⚡ Bolt: Traditional loop for variance calculation (avoids array reduction GC)
+      let sumSq = 0;
+      for (let i = 0; i < pLen; i++) {
+        sumSq += (syl.pitchSamples[i] - pitchMean) ** 2;
+      }
+      const pitchVar = sumSq / pLen;
+      let pitchVarSum = 0;
+      for (let i = 0; i < syl.pitchSamples.length; i++) {
+        pitchVarSum += (syl.pitchSamples[i] - pitchMean) ** 2;
+      }
+      const pitchVar = pitchVarSum / syl.pitchSamples.length;
       const pitchStdDev = Math.sqrt(pitchVar);
       // Coefficient of variation — normalized stability measure
       const cv = pitchMean > 0 ? pitchStdDev / pitchMean : 0;
@@ -9609,9 +9666,20 @@ class VoxBallGame {
     }
     // Energy consistency: stable energy during the syllable boosts confidence
     let energyConsistency = 1;
-    if (syl.energySamples.length >= 2) {
+    const eLen = syl.energySamples.length;
+    if (eLen >= 2) {
       const eMean = avg(syl.energySamples);
-      const eVar = syl.energySamples.reduce((sum, e) => sum + (e - eMean) ** 2, 0) / syl.energySamples.length;
+      // ⚡ Bolt: Traditional loop for variance calculation
+      let sumSq = 0;
+      for (let i = 0; i < eLen; i++) {
+        sumSq += (syl.energySamples[i] - eMean) ** 2;
+      }
+      const eVar = sumSq / eLen;
+      let eVarSum = 0;
+      for (let i = 0; i < syl.energySamples.length; i++) {
+        eVarSum += (syl.energySamples[i] - eMean) ** 2;
+      }
+      const eVar = eVarSum / syl.energySamples.length;
       const eCV = eMean > 0 ? Math.sqrt(eVar) / eMean : 0;
       energyConsistency = Math.max(0, 1 - eCV * 3);
     }
@@ -10074,7 +10142,7 @@ class VoxBallGame {
     const text = (this.prismPassages && this.prismPassages[mode]) || '';
 
     if (!text || mode === 'custom' || mode === 'freestyle') {
-      metaEl.innerHTML = '';
+      metaEl.textContent = '';
       return;
     }
 
@@ -10088,11 +10156,23 @@ class VoxBallGame {
       ? `~${Math.round(estMinutes * 60)}s`
       : `~${estMinutes.toFixed(1)}min`;
 
-    metaEl.innerHTML = `
-      <span class="prism-passage-meta-item">${wordCount} words</span>
-      <span class="prism-passage-meta-item">${sylCount} syllables</span>
-      <span class="prism-passage-meta-item">${estStr} est.</span>
-    `;
+    metaEl.textContent = '';
+    const frag = document.createDocumentFragment();
+    frag.append(
+      Object.assign(document.createElement('span'), {
+        className: 'prism-passage-meta-item',
+        textContent: `${wordCount} words`,
+      }),
+      Object.assign(document.createElement('span'), {
+        className: 'prism-passage-meta-item',
+        textContent: `${sylCount} syllables`,
+      }),
+      Object.assign(document.createElement('span'), {
+        className: 'prism-passage-meta-item',
+        textContent: `${estStr} est.`,
+      })
+    );
+    metaEl.append(frag);
   }
 
   _drawPrismPitchSparkline(canvasEl) {
@@ -11444,8 +11524,8 @@ class VoxBallGame {
     let inAnyZone = false;
     for (const t of s.targets) {
       // Map target F1/F2 to normalized space
-      const tx = (t.f2 - s.f2Range[0]) / (s.f2Range[1] - s.f2Range[0]);
-      const ty = 1 - (t.f1 - s.f1Range[0]) / (s.f1Range[1] - s.f1Range[0]);
+      const tx = Math.max(0, Math.min(1, (t.f2 - s.f2Range[0]) / (s.f2Range[1] - s.f2Range[0])));
+      const ty = Math.max(0, Math.min(1, 1 - (t.f1 - s.f1Range[0]) / (s.f1Range[1] - s.f1Range[0])));
 
       const dx = s.x - tx;
       const dy = s.y - ty;

@@ -24,3 +24,17 @@
 **Vulnerability:** Found multiple DOM-based XSS vectors in `app.js` where `innerHTML` was being assigned dynamic strings, specifically in `showError`, `diagPanel`, and `errNode` functions.
 **Learning:** The codebase had remaining instances of `innerHTML` usage despite previous fixes. Direct assignment to `innerHTML` with dynamic content (even error messages) is unsafe as it allows arbitrary HTML injection.
 **Prevention:** Safely build DOM elements using `document.createElement` and set text using `textContent`. For inline building, `Node.append()` with `Object.assign(document.createElement('b'), { textContent: ... })` provides a clean and safe alternative to template literals with `innerHTML`.
+
+## 2026-03-13 - [DOM-based XSS Risk via innerHTML in UI components]
+**Vulnerability:** Unsafe assignments to `innerHTML` in `calibration-wizard.js` (`_setStep`) and `app.js` (`updateRecordingsUI`) allowed potential injection if dynamic data or input is later manipulated.
+**Learning:** Reconstructing UI elements using `document.createDocumentFragment()` or explicitly creating elements with `document.createElement()` and `Object.assign()` provides absolute protection against DOM-based XSS, even when the UI components are complex. Mocks for tests using `innerHTML` also require precise implementations for instances of `Node`.
+**Prevention:** Eliminate `innerHTML` from DOM update loops by consistently appending safely created nodes (`Node.append`) or using text updates (`textContent`).
+## 2024-05-29 - [DOM-based XSS Risk via innerHTML in App Logic]
+**Vulnerability:** Found `innerHTML` being used in `_updatePrismPassageMeta` in `app.js` to render dynamically generated HTML strings (`<span class="...">...</span>`) with statistics like word count and syllable count. While the data sources (counts) are currently integers, using template literals with `innerHTML` is a risky pattern that could be easily exploited if a string variable were introduced later.
+**Learning:** Using `innerHTML` with template literals to build a collection of elements (like multiple spans) is tempting for conciseness but breaks the "defense in depth" principle. It introduces a systemic vulnerability pattern that is easy to copy-paste into more dangerous contexts.
+**Prevention:** For inline DOM construction of multiple elements without `innerHTML`, create a `DocumentFragment` and use `Node.append()` combined with `Object.assign(document.createElement('tag'), { textContent: '...', className: '...' })`. This provides a safe, readable alternative to HTML strings.
+
+## 2024-05-29 - [DOM-based XSS Risk via Performance Monitor Rendering]
+**Vulnerability:** Found `innerHTML` being used in `performance-monitor.js` (`render` method) where an `extra` string parameter was directly concatenated and rendered into the DOM. This allowed for an XSS vector if any untrusted or unescaped content were passed in.
+**Learning:** Any dynamic parameter passed to an internal utility function that outputs HTML is a potential attack vector. Relying on string concatenation and `innerHTML` for component rendering is a weak security posture. Safe DOM APIs must be standard even for internal developer tools or performance panels to adhere to defense-in-depth principles.
+**Prevention:** Eliminate `innerHTML` by creating DOM nodes dynamically. The `render` method was refactored to use `document.createElement`, `Object.assign` (with `textContent`), and `append()` to ensure all content, including dynamic parameters, is treated strictly as text and properly encoded by the browser.
