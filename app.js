@@ -2669,29 +2669,41 @@ class VoxBallGame {
     }
 
     if (this.recordings.length === 0) {
-      list.innerHTML = '';
+      list.textContent = '';
       list.appendChild(empty);
       empty.style.display = '';
       return;
     }
 
-    list.innerHTML = '';
+    list.textContent = '';
     for (let i = this.recordings.length - 1; i >= 0; i--) {
       const rec = this.recordings[i];
       const item = document.createElement('div');
       item.className = 'rec-item';
-      item.innerHTML = `
-        <div class="rec-item-info">
-          <div class="rec-item-name">Recording ${i + 1}</div>
-          <div class="rec-item-meta">${rec.timestamp} · ${this.formatDuration(rec.duration)}</div>
-          <div class="rec-progress"><div class="rec-progress-fill" id="rec-progress-${i}"></div></div>
-        </div>
-        <div class="rec-item-actions">
-          <button class="rec-btn" id="rec-play-${i}" title="Play" aria-label="Play Recording" data-action="play" data-index="${i}">▶</button>
-          <button class="rec-btn" title="Download" aria-label="Download Recording" data-action="download" data-index="${i}">⬇</button>
-          <button class="rec-btn delete" title="Delete" aria-label="Delete Recording" data-action="delete" data-index="${i}">✕</button>
-        </div>
-      `;
+
+      const info = Object.assign(document.createElement('div'), { className: 'rec-item-info' });
+      info.append(
+        Object.assign(document.createElement('div'), { className: 'rec-item-name', textContent: `Recording ${i + 1}` }),
+        Object.assign(document.createElement('div'), { className: 'rec-item-meta', textContent: `${rec.timestamp} · ${this.formatDuration(rec.duration)}` })
+      );
+
+      const progress = Object.assign(document.createElement('div'), { className: 'rec-progress' });
+      progress.appendChild(Object.assign(document.createElement('div'), { className: 'rec-progress-fill', id: `rec-progress-${i}` }));
+      info.appendChild(progress);
+
+      const actions = Object.assign(document.createElement('div'), { className: 'rec-item-actions' });
+      actions.append(
+        Object.assign(document.createElement('button'), { className: 'rec-btn', id: `rec-play-${i}`, title: 'Play', ariaLabel: 'Play Recording', textContent: '▶' }),
+        Object.assign(document.createElement('button'), { className: 'rec-btn', title: 'Download', ariaLabel: 'Download Recording', textContent: '⬇' }),
+        Object.assign(document.createElement('button'), { className: 'rec-btn delete', title: 'Delete', ariaLabel: 'Delete Recording', textContent: '✕' })
+      );
+
+      // Set data attributes
+      actions.children[0].dataset.action = 'play'; actions.children[0].dataset.index = i;
+      actions.children[1].dataset.action = 'download'; actions.children[1].dataset.index = i;
+      actions.children[2].dataset.action = 'delete'; actions.children[2].dataset.index = i;
+
+      item.append(info, actions);
       list.appendChild(item);
     }
 
