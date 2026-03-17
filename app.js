@@ -5096,6 +5096,7 @@ class VoxBallGame {
       this.particles[i].update(dt);
       if (this.particles[i].life <= 0) this.particles.splice(i, 1);
     }
+    if (this.particles.length > 80) this.particles.splice(0, this.particles.length - 80);
 
     // ==========================================================
     // BALL COLOR — pitch drives hue (blue→purple→pink),
@@ -8796,7 +8797,7 @@ class VoxBallGame {
       rr.trail[i].y -= rr.speed * dt * 0.36;
       if (rr.trail[i].life <= 0 || rr.trail[i].y < -40) rr.trail.splice(i, 1);
     }
-    if (rr.trail.length > 900) rr.trail.splice(0, rr.trail.length - 900);
+    if (rr.trail.length > 300) rr.trail.splice(0, rr.trail.length - 300);
   }
 
   drawResonanceRoadScene() {
@@ -8972,7 +8973,7 @@ class VoxBallGame {
         this._spawnSpectralGate(0.5 + (Math.random() - 0.5) * 0.06);
       } else {
         const step = [0.22, 0.78, 0.3, 0.7, 0.4, 0.6];
-        this._spawnSpectralGate(step[Math.floor(performance.now() / 350) % step.length]);
+        this._spawnSpectralGate(step[Math.floor(sa.worldX / 350) % step.length]);
       }
     }
 
@@ -8982,9 +8983,10 @@ class VoxBallGame {
       const gy = this.height * g.y;
       if (!g.passed && Math.abs(g.x - sa.balloonX) < 26) {
         const miss = Math.abs(gy - sa.balloonY);
-        const hit = miss < 46;
+        const hitThreshold = this.height * 0.06;
+        const hit = miss < hitThreshold;
         g.passed = true;
-        if (hit) sa.score += 10 + Math.max(0, Math.round((46 - miss) * 0.2));
+        if (hit) sa.score += 10 + Math.max(0, Math.round((hitThreshold - miss) * 0.2));
       }
       if (g.x < -90) sa.gates.splice(i, 1);
     }
@@ -11444,8 +11446,8 @@ class VoxBallGame {
     let inAnyZone = false;
     for (const t of s.targets) {
       // Map target F1/F2 to normalized space
-      const tx = (t.f2 - s.f2Range[0]) / (s.f2Range[1] - s.f2Range[0]);
-      const ty = 1 - (t.f1 - s.f1Range[0]) / (s.f1Range[1] - s.f1Range[0]);
+      const tx = Math.max(0, Math.min(1, (t.f2 - s.f2Range[0]) / (s.f2Range[1] - s.f2Range[0])));
+      const ty = Math.max(0, Math.min(1, 1 - (t.f1 - s.f1Range[0]) / (s.f1Range[1] - s.f1Range[0])));
 
       const dx = s.x - tx;
       const dy = s.y - ty;
