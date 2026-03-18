@@ -5531,7 +5531,12 @@ class VoxBallGame {
       t.phase += dt * (1.5 + ps);
     }
     if (m.syllable > 0.5 && ps > 0.1) {
-      const bS = Math.max(...c.points.map(p => p.r)) * 0.8;
+      // ⚡ Bolt: Prevent GC spikes by avoiding array.map and spread operator in hot per-frame path
+      let maxR = 0;
+      for (let i = 0; i < c.points.length; i++) {
+        if (c.points[i].r > maxR) maxR = c.points[i].r;
+      }
+      const bS = maxR * 0.8;
       c.pulseRings.push({ r: bS, maxR: bS * 3, life: 1 });
     }
     for (let i = c.pulseRings.length - 1; i >= 0; i--) {
@@ -5983,7 +5988,11 @@ class VoxBallGame {
       ctx.bezierCurveTo(x1 + (x2 - x0) * T, y1 + (y2 - y0) * T, x2 - (x3 - x1) * T, y2 - (y3 - y1) * T, x2, y2);
     }
     ctx.closePath();
-    const bR = Math.max(...pts.map(p => p.r));
+    // ⚡ Bolt: Prevent GC spikes by avoiding array.map and spread operator in hot per-frame path
+    let bR = 0;
+    for (let i = 0; i < n; i++) {
+      if (pts[i].r > bR) bR = pts[i].r;
+    }
     const bG = ctx.createRadialGradient(0, 0, 0, 0, 0, bR);
     bG.addColorStop(0, `hsla(${hue},${sat}%,${Math.min(95, lit + 25)}%,${0.6 + c.glow * 0.35})`);
     bG.addColorStop(0.4, `hsla(${hue},${sat}%,${lit}%,${0.4 + c.glow * 0.3})`);
@@ -9600,23 +9609,6 @@ class VoxBallGame {
     const syl = this.prismReader.syllables[index];
     if (!syl || syl.state === 'crystallized') return;
 
-    // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce()
-    // to minimize closure allocation and GC overhead during high-frequency processing paths.
-    // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce() to prevent GC spikes in hot loops
-    const avg = (arr) => {
-      if (arr.length === 0) return 0;
-      let sum = 0;
-      for (let i = 0; i < arr.length; i++) sum += arr[i];
-      return sum / arr.length;
-    };
-    // ⚡ Bolt: Use traditional for loop instead of .reduce to prevent
-    // GC spikes and function call overhead in this hot path
-    const avg = (arr) => {
-      const len = arr.length;
-      if (len === 0) return 0;
-      let sum = 0;
-      for (let i = 0; i < len; i++) sum += arr[i];
-      return sum / len;
     // ⚡ Bolt Optimization: Replacing array.reduce with standard for loops in a hot path
     // _crystallizePrismSyllable is called frequently in per-frame logic when auto-crystallizing
     // or processing timeouts. Avoiding higher-order array methods reduces GC pressure.
@@ -9658,22 +9650,12 @@ class VoxBallGame {
     const pLen = syl.pitchSamples.length;
     if (pLen >= 2) {
       const pitchMean = avg(syl.pitchSamples);
-      let pitchSqSum = 0;
-      for (let i = 0; i < syl.pitchSamples.length; i++) {
-        pitchSqSum += (syl.pitchSamples[i] - pitchMean) ** 2;
-      }
-      const pitchVar = pitchSqSum / syl.pitchSamples.length;
       // ⚡ Bolt: Traditional loop for variance calculation (avoids array reduction GC)
       let sumSq = 0;
       for (let i = 0; i < pLen; i++) {
         sumSq += (syl.pitchSamples[i] - pitchMean) ** 2;
       }
       const pitchVar = sumSq / pLen;
-      let pitchVarSum = 0;
-      for (let i = 0; i < syl.pitchSamples.length; i++) {
-        pitchVarSum += (syl.pitchSamples[i] - pitchMean) ** 2;
-      }
-      const pitchVar = pitchVarSum / syl.pitchSamples.length;
       const pitchStdDev = Math.sqrt(pitchVar);
       // Coefficient of variation — normalized stability measure
       const cv = pitchMean > 0 ? pitchStdDev / pitchMean : 0;
@@ -9685,22 +9667,12 @@ class VoxBallGame {
     const eLen = syl.energySamples.length;
     if (eLen >= 2) {
       const eMean = avg(syl.energySamples);
-      let eSqSum = 0;
-      for (let i = 0; i < syl.energySamples.length; i++) {
-        eSqSum += (syl.energySamples[i] - eMean) ** 2;
-      }
-      const eVar = eSqSum / syl.energySamples.length;
       // ⚡ Bolt: Traditional loop for variance calculation
       let sumSq = 0;
       for (let i = 0; i < eLen; i++) {
         sumSq += (syl.energySamples[i] - eMean) ** 2;
       }
       const eVar = sumSq / eLen;
-      let eVarSum = 0;
-      for (let i = 0; i < syl.energySamples.length; i++) {
-        eVarSum += (syl.energySamples[i] - eMean) ** 2;
-      }
-      const eVar = eVarSum / syl.energySamples.length;
       const eCV = eMean > 0 ? Math.sqrt(eVar) / eMean : 0;
       energyConsistency = Math.max(0, 1 - eCV * 3);
     }
