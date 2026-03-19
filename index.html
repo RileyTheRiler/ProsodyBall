@@ -1322,7 +1322,8 @@
       backdrop-filter: blur(20px);
       transition: opacity 0.4s;
       padding: 16px 20px 12px;
-      overflow: hidden;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
     }
 
     .overlay.hidden {
@@ -1383,7 +1384,7 @@
       border: 1px solid rgba(255, 255, 255, 0.07);
       border-radius: 16px;
       padding: 20px;
-      overflow: hidden;
+      overflow-y: auto;
     }
 
     /* Left-column card list (replaces mode-picker grid) */

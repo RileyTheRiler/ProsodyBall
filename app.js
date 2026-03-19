@@ -3651,7 +3651,7 @@ class VoxBallGame {
       modeDetails.classList.remove('show');
       modeCards.forEach(c => c.classList.remove('selected'));
       [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails, roadDetails, ascentDetails, prismDetails, vowelvalleyDetails]
-        .forEach(p => p && p.classList.remove('show'));
+        .forEach(p => { if (p) { p.classList.remove('show'); p.style.display = ''; } });
       this.drawIdleScene();
     });
     document.getElementById('summaryAgainBtn')?.addEventListener('click', () => {
@@ -3739,16 +3739,21 @@ class VoxBallGame {
 
       modeCards.forEach(c => c.classList.toggle('selected', c === card));
       modeDetails?.classList.add('show');
-      ballDetails?.classList.toggle('show', mode === 'ball');
-      creatureDetails?.classList.toggle('show', mode === 'creature');
-      gardenDetails?.classList.toggle('show', mode === 'garden');
-      canvasDetails?.classList.toggle('show', mode === 'canvas');
-      keyboardDetails?.classList.toggle('show', mode === 'keyboard');
-      pilotDetails?.classList.toggle('show', mode === 'pilot');
-      roadDetails?.classList.toggle('show', mode === 'road');
-      ascentDetails?.classList.toggle('show', mode === 'ascent');
-      prismDetails?.classList.toggle('show', mode === 'prism');
-      vowelvalleyDetails?.classList.toggle('show', mode === 'vowelvalley');
+
+      const allPanels = [ballDetails, creatureDetails, gardenDetails, canvasDetails, keyboardDetails, pilotDetails, roadDetails, ascentDetails, prismDetails, vowelvalleyDetails];
+      const panelModes = ['ball', 'creature', 'garden', 'canvas', 'keyboard', 'pilot', 'road', 'ascent', 'prism', 'vowelvalley'];
+      allPanels.forEach((panel, i) => {
+        if (!panel) return;
+        const active = panelModes[i] === mode;
+        panel.classList.toggle('show', active);
+        // Belt-and-suspenders: explicitly set display in case CSS class toggle
+        // is ineffective (e.g. specificity override or stale cached stylesheet).
+        panel.style.display = active ? 'flex' : 'none';
+      });
+
+      // Ensure the play button and its container are visible
+      if (modeDetails) modeDetails.style.display = 'flex';
+      if (playBtn) playBtn.style.display = '';
 
       const titles = { ball: 'VOX ARCADE', creature: 'VOICE CREATURE', garden: 'VOICE GARDEN', canvas: 'VOICE CANVAS', keyboard: 'VOCAL KEYBOARD', pilot: 'PITCH PILOT', road: 'RESONANCE ROAD', ascent: 'SPECTRAL ASCENT', prism: 'PRISM READER', vowelvalley: 'VOWEL VALLEY' };
       document.querySelector('.hud-title').textContent = titles[mode] || 'VOX ARCADE';
