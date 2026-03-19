@@ -4805,9 +4805,9 @@
           <input type="file" id="audioUploadInput" accept="audio/*" style="display: none;">
         </label>
         <button class="btn btn-rec" id="recBtn"><span class="rec-dot"></span><span class="rec-label">Rec</span></button>
-        <button class="btn btn-help" id="prismClearRecBtn"
+        <button class="btn btn-help" id="prismClearRecBtn" aria-label="Clear Prism Recording"
           style="display: none; opacity: 0; transform: scale(0.95); transition: opacity 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28), transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);">Clear</button>
-        <button class="btn btn-help" id="prismSaveRecBtn"
+        <button class="btn btn-help" id="prismSaveRecBtn" aria-label="Save Prism Recording"
           style="display: none; opacity: 0; transform: scale(0.95); transition: opacity 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28), transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);">Save
           Clip</button>
         <button class="btn btn-recordings" id="recordingsBtn" aria-expanded="false" aria-controls="recordingsDrawer"><span>Clips&nbsp;</span><span class="badge" id="recBadge">0</span></button>
@@ -4828,7 +4828,7 @@
           <option value="rainbow">Teleprompter: Rainbow Passage</option>
           <option value="custom">Teleprompter: Custom Text</option>
         </select>
-        <button class="btn btn-help" id="teleprompterCustomBtn" title="Edit custom teleprompter text">Edit Text</button>
+        <button class="btn btn-help" id="teleprompterCustomBtn" aria-label="Edit custom teleprompter text" title="Edit custom teleprompter text">Edit Text</button>
 
         <button class="btn btn-cb" id="cbToggle" aria-label="Toggle colorblind mode" title="Colorblind mode">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
@@ -4863,7 +4863,7 @@
           </svg>
           Menu
         </button>
-        <button class="btn btn-help" id="recoverMicBtn" title="Recover microphone session" hidden>Recover Mic</button>
+        <button class="btn btn-help" id="recoverMicBtn" aria-label="Recover microphone session" title="Recover microphone session" hidden>Recover Mic</button>
       </div>
     </div>
 
@@ -4922,7 +4922,7 @@
 
       <div class="settings-group">
         <span class="settings-label">Calibration</span>
-        <button class="btn btn-help btn-fill" id="recalibrateBtn"
+        <button class="btn btn-help btn-fill" id="recalibrateBtn" aria-label="Run microphone calibration again"
           title="Run mic calibration again">Recalibrate</button>
       </div>
 
