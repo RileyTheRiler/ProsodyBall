@@ -1792,7 +1792,9 @@ class VoxBallGame {
       playbackIndex: 0,
       freestyleTranscript: '',
       freestyleInterimTranscript: '',
-      speechRecognition: null
+      speechRecognition: null,
+      _hintTimer: 0,
+      _hintText: '',
     };
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -9411,6 +9413,8 @@ class VoxBallGame {
     pr.firstOnsetTime = 0;
     pr.wordsCompleted = 0;
     pr.freestyleInterimTranscript = '';
+    pr._hintTimer = 0;
+    pr._hintText = '';
     // Reset adaptive onset tracking
     pr._onsetBaseline = 0.3;
     pr._onsetPeak = 1.0;
@@ -9468,6 +9472,10 @@ class VoxBallGame {
 
     const keepReading = document.getElementById('prismKeepReading');
     if (keepReading) keepReading.classList.remove('show');
+
+    const liveHint = document.getElementById('prismLiveHint');
+    if (liveHint) { liveHint.classList.remove('show'); liveHint.textContent = ''; }
+    if (pr._hintHideTimer) { clearTimeout(pr._hintHideTimer); pr._hintHideTimer = null; }
 
     // Reset live stats, legend, and keyboard hints
     const liveStats = document.getElementById('prismLiveStats');
@@ -9600,26 +9608,6 @@ class VoxBallGame {
     const syl = this.prismReader.syllables[index];
     if (!syl || syl.state === 'crystallized') return;
 
-    // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce()
-    // to minimize closure allocation and GC overhead during high-frequency processing paths.
-    // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce() to prevent GC spikes in hot loops
-    const avg = (arr) => {
-      if (arr.length === 0) return 0;
-      let sum = 0;
-      for (let i = 0; i < arr.length; i++) sum += arr[i];
-      return sum / arr.length;
-    };
-    // ⚡ Bolt: Use traditional for loop instead of .reduce to prevent
-    // GC spikes and function call overhead in this hot path
-    const avg = (arr) => {
-      const len = arr.length;
-      if (len === 0) return 0;
-      let sum = 0;
-      for (let i = 0; i < len; i++) sum += arr[i];
-      return sum / len;
-    // ⚡ Bolt Optimization: Replacing array.reduce with standard for loops in a hot path
-    // _crystallizePrismSyllable is called frequently in per-frame logic when auto-crystallizing
-    // or processing timeouts. Avoiding higher-order array methods reduces GC pressure.
     const avg = (arr) => {
       if (arr.length === 0) return 0;
       let sum = 0;
@@ -9658,22 +9646,11 @@ class VoxBallGame {
     const pLen = syl.pitchSamples.length;
     if (pLen >= 2) {
       const pitchMean = avg(syl.pitchSamples);
-      let pitchSqSum = 0;
-      for (let i = 0; i < syl.pitchSamples.length; i++) {
-        pitchSqSum += (syl.pitchSamples[i] - pitchMean) ** 2;
-      }
-      const pitchVar = pitchSqSum / syl.pitchSamples.length;
-      // ⚡ Bolt: Traditional loop for variance calculation (avoids array reduction GC)
-      let sumSq = 0;
-      for (let i = 0; i < pLen; i++) {
-        sumSq += (syl.pitchSamples[i] - pitchMean) ** 2;
-      }
-      const pitchVar = sumSq / pLen;
       let pitchVarSum = 0;
-      for (let i = 0; i < syl.pitchSamples.length; i++) {
+      for (let i = 0; i < pLen; i++) {
         pitchVarSum += (syl.pitchSamples[i] - pitchMean) ** 2;
       }
-      const pitchVar = pitchVarSum / syl.pitchSamples.length;
+      const pitchVar = pitchVarSum / pLen;
       const pitchStdDev = Math.sqrt(pitchVar);
       // Coefficient of variation — normalized stability measure
       const cv = pitchMean > 0 ? pitchStdDev / pitchMean : 0;
@@ -9685,22 +9662,11 @@ class VoxBallGame {
     const eLen = syl.energySamples.length;
     if (eLen >= 2) {
       const eMean = avg(syl.energySamples);
-      let eSqSum = 0;
-      for (let i = 0; i < syl.energySamples.length; i++) {
-        eSqSum += (syl.energySamples[i] - eMean) ** 2;
-      }
-      const eVar = eSqSum / syl.energySamples.length;
-      // ⚡ Bolt: Traditional loop for variance calculation
-      let sumSq = 0;
-      for (let i = 0; i < eLen; i++) {
-        sumSq += (syl.energySamples[i] - eMean) ** 2;
-      }
-      const eVar = sumSq / eLen;
       let eVarSum = 0;
-      for (let i = 0; i < syl.energySamples.length; i++) {
+      for (let i = 0; i < eLen; i++) {
         eVarSum += (syl.energySamples[i] - eMean) ** 2;
       }
-      const eVar = eVarSum / syl.energySamples.length;
+      const eVar = eVarSum / eLen;
       const eCV = eMean > 0 ? Math.sqrt(eVar) / eMean : 0;
       energyConsistency = Math.max(0, 1 - eCV * 3);
     }
@@ -10052,6 +10018,15 @@ class VoxBallGame {
     // Update live stats HUD
     this._updatePrismLiveStats();
 
+    // Update live coaching hint (rate-limited to ~every 3s once we have data)
+    if (pr.currentIndex >= 5) {
+      pr._hintTimer = (pr._hintTimer || 0) + dt;
+      if (pr._hintTimer >= 3.0) {
+        pr._hintTimer = 0;
+        this._updatePrismCoachingHint();
+      }
+    }
+
     // Manual mode: onset stepping is disabled, spacebar advances instead
     if (pr.manualMode) return;
 
@@ -10153,6 +10128,73 @@ class VoxBallGame {
       const crystallized = pr.syllables.filter(s => s.state === 'crystallized').length;
       sylCountEl.textContent = `${crystallized} / ${pr.syllables.length}`;
     }
+  }
+
+  _updatePrismCoachingHint() {
+    const pr = this.prismReader;
+    const hintEl = document.getElementById('prismLiveHint');
+    if (!hintEl) return;
+
+    // Analyze the last 12 crystallized syllables for real-time feedback
+    const recent = pr.syllables
+      .slice(0, pr.currentIndex)
+      .filter(s => s.state === 'crystallized')
+      .slice(-12);
+    if (recent.length < 4) return;
+
+    const a = this.analyzer;
+    const hints = [];
+
+    // Pitch flatness: check semitone std dev of recent syllables
+    const recentPitches = recent.filter(s => s.avgF0 > 0).map(s => s.avgF0);
+    if (recentPitches.length >= 4) {
+      const pMean = recentPitches.reduce((s, v) => s + v, 0) / recentPitches.length;
+      let pVar = 0;
+      for (let i = 0; i < recentPitches.length; i++) pVar += (recentPitches[i] - pMean) ** 2;
+      const stStdDev = pMean > 0 ? Math.sqrt(pVar / recentPitches.length) / pMean * 12 / Math.log(2) : 0;
+      if (stStdDev < 1.0) hints.push('Vary your pitch more — stress key words');
+    }
+
+    // Strain check
+    const strainRate = recent.filter(s => s.strainFlag).length / recent.length;
+    if (strainRate > 0.3) hints.push('Relax your voice — let it flow on breath');
+
+    // Speed check
+    const elapsed = pr.firstOnsetTime > 0 ? (performance.now() - pr.firstOnsetTime) / 1000 : 0;
+    if (elapsed > 5 && pr.wordsCompleted > 0) {
+      const liveWpm = Math.round(pr.wordsCompleted / (elapsed / 60));
+      if (liveWpm > 210) hints.push('Slow down — you\'re speaking very fast');
+      else if (liveWpm < 70) hints.push('Pick up the pace for a natural delivery');
+    }
+
+    // Resonance check (current analyzer value)
+    if (a && a.smoothResonance < 0.15 && a.metrics.energy > 0.04) {
+      hints.push('Project forward — aim your voice at the far wall');
+    }
+
+    // Vowel accuracy
+    const recentVowelScores = recent.filter(s => s.vowelScore > 0).map(s => s.vowelScore);
+    if (recentVowelScores.length >= 3) {
+      const avgV = recentVowelScores.reduce((s, v) => s + v, 0) / recentVowelScores.length;
+      if (avgV < 0.4) hints.push('Open your mouth wider for clearer vowels');
+    }
+
+    if (hints.length === 0) return; // No hint needed — all good
+
+    // Pick a different hint than last time if possible
+    const text = hints[Math.floor(performance.now() / 3000) % hints.length];
+    if (text === pr._hintText) return;
+    pr._hintText = text;
+
+    hintEl.textContent = text;
+    hintEl.classList.add('show', 'flash');
+    setTimeout(() => hintEl.classList.remove('flash'), 400);
+    // Auto-hide after 5s
+    clearTimeout(pr._hintHideTimer);
+    pr._hintHideTimer = setTimeout(() => {
+      hintEl.classList.remove('show');
+      pr._hintText = '';
+    }, 5000);
   }
 
   _updatePrismPassageMeta() {
@@ -10397,18 +10439,69 @@ class VoxBallGame {
     const minutes = Math.floor(elapsed / 60);
     const seconds = Math.floor(elapsed % 60);
 
+    // Reading speed label
+    let wpmLabel = '';
+    if (wpm > 0) {
+      if (wpm < 80) wpmLabel = 'Very slow';
+      else if (wpm < 120) wpmLabel = 'Slow';
+      else if (wpm <= 170) wpmLabel = 'Natural pace';
+      else if (wpm <= 220) wpmLabel = 'Fast';
+      else wpmLabel = 'Very fast';
+    }
+
+    // Overall session score (0–100)
+    let sessionScore = 0;
+    let scoreParts = 0;
+    // WPM contribution: full points for 110–170, drops off outside
+    if (wpm > 0) {
+      const wpmNorm = wpm < 110 ? Math.max(0, wpm / 110) : wpm <= 170 ? 1 : Math.max(0, 1 - (wpm - 170) / 100);
+      sessionScore += wpmNorm * 20;
+      scoreParts++;
+    }
+    if (intonationScore > 0) { sessionScore += (intonationScore / 100) * 25; scoreParts++; }
+    if (avgVowelScore > 0) { sessionScore += (avgVowelScore / 100) * 20; scoreParts++; }
+    if (avgResonance > 0) { sessionScore += (avgResonance / 100) * 20; scoreParts++; }
+    if (paceConsistency > 0) { sessionScore += (paceConsistency / 100) * 10; scoreParts++; }
+    // Strain penalty: -4 per strain syllable (capped at -20)
+    const strainPenalty = Math.min(20, strainCount * 4);
+    sessionScore = Math.max(0, Math.round(sessionScore - strainPenalty));
+    if (scoreParts > 0) sessionScore = Math.min(100, Math.round(sessionScore));
+
+    const scoreGrade = sessionScore >= 90 ? 'A+' : sessionScore >= 80 ? 'A' :
+      sessionScore >= 70 ? 'B' : sessionScore >= 60 ? 'C' :
+      sessionScore >= 50 ? 'D' : 'F';
+    const scoreColor = sessionScore >= 70 ? 'rgba(120,255,160,0.9)' : sessionScore >= 50 ? 'rgba(255,210,80,0.9)' : 'rgba(255,120,100,0.9)';
+
+    // Coaching tips: identify the weakest area and give actionable advice
+    const tips = [];
+    if (wpm > 200) tips.push('You spoke quite fast—slow down slightly to let each word land clearly.');
+    else if (wpm > 0 && wpm < 90) tips.push('Maintain a steadier pace around 130–160 wpm for a natural delivery.');
+    if (intonationScore < 35 && pitches.length >= 3) tips.push('Your pitch was fairly flat. Try raising your voice on key words to add expression.');
+    if (avgVowelScore < 50 && vowelScores.length > 2) tips.push('Open your mouth wider on vowel sounds to improve clarity and projection.');
+    if (avgResonance < 30 && centroids.length > 2) tips.push('Project your voice forward—imagine speaking to the back of the room to boost resonance.');
+    if (strainCount > 2) tips.push('Several syllables showed vocal strain. Support your voice from the breath and stay relaxed.');
+    if (paceConsistency < 40 && durations.length >= 3) tips.push('Your pacing was quite variable. Try keeping a steady internal rhythm as you read.');
+    if (tips.length === 0 && sessionScore >= 70) tips.push('Great session! Keep practicing to build consistency across all metrics.');
+
+    const tipsHtml = tips.length > 0 ? `
+      <div class="prism-coaching-tips">
+        <div class="prism-coaching-title">Coaching Tips</div>
+        ${tips.map(t => `<div class="prism-coaching-tip">${t}</div>`).join('')}
+      </div>` : '';
+
     const grid = document.getElementById('prismCompletionGrid');
     if (grid) {
       grid.innerHTML = `
+        ${scoreParts >= 2 ? `
+        <div class="prism-comp-card prism-score-card">
+          <div class="prism-comp-label">Session Score</div>
+          <div class="prism-comp-value" style="color: ${scoreColor}; font-size: 2em;">${scoreGrade}</div>
+          <div class="prism-comp-sub">${sessionScore}/100</div>
+        </div>` : ''}
         <div class="prism-comp-card">
           <div class="prism-comp-label">Reading Speed</div>
           <div class="prism-comp-value">${wpm} wpm</div>
-          <div class="prism-comp-sub">${minutes}:${String(seconds).padStart(2, '0')} total</div>
-        </div>
-        <div class="prism-comp-card">
-          <div class="prism-comp-label">Avg Pitch</div>
-          <div class="prism-comp-value">${avgPitch} Hz</div>
-          <div class="prism-comp-sub">Range: ${pitchRange} Hz (${minPitch}–${maxPitch})</div>
+          <div class="prism-comp-sub">${wpmLabel} · ${minutes}:${String(seconds).padStart(2, '0')}</div>
         </div>
         <div class="prism-comp-card">
           <div class="prism-comp-label">Intonation</div>
@@ -10432,9 +10525,9 @@ class VoxBallGame {
           <div class="prism-comp-sub">${paceLabel}</div>
         </div>` : ''}
         <div class="prism-comp-card">
-          <div class="prism-comp-label">Syllables</div>
-          <div class="prism-comp-value">${crystallized.length} / ${pr.syllables.length}</div>
-          <div class="prism-comp-sub">Confidence: ${avgConfidence}%</div>
+          <div class="prism-comp-label">Avg Pitch</div>
+          <div class="prism-comp-value">${avgPitch} Hz</div>
+          <div class="prism-comp-sub">Range: ${pitchRange} Hz (${minPitch}–${maxPitch})</div>
         </div>
         <div class="prism-comp-card">
           <div class="prism-comp-label">Strain Alerts</div>
@@ -10446,6 +10539,7 @@ class VoxBallGame {
           <div class="prism-comp-label">Pitch Contour</div>
           <canvas class="prism-sparkline-canvas" id="prismSparkline"></canvas>
         </div>` : ''}
+        ${tipsHtml}
       `;
     }
 

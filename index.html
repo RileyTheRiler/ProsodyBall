@@ -4255,6 +4255,76 @@
       border-radius: 6px;
     }
 
+    /* ====== PRISM LIVE COACHING HINT ====== */
+    .prism-live-hint {
+      position: absolute;
+      bottom: 52px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 26;
+      padding: 7px 18px;
+      background: rgba(20, 18, 45, 0.88);
+      border: 1px solid rgba(160, 140, 255, 0.25);
+      border-radius: 20px;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      font-size: 0.8rem;
+      color: rgba(200, 190, 255, 0.9);
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.4s ease;
+    }
+    .prism-live-hint.show {
+      opacity: 1;
+    }
+    @keyframes prism-hint-flash {
+      0% { border-color: rgba(160, 140, 255, 0.7); }
+      100% { border-color: rgba(160, 140, 255, 0.25); }
+    }
+    .prism-live-hint.flash {
+      animation: prism-hint-flash 0.4s ease forwards;
+    }
+
+    /* ====== PRISM COACHING TIPS (completion) ====== */
+    .prism-coaching-tips {
+      grid-column: 1 / -1;
+      background: rgba(100, 80, 200, 0.08);
+      border: 1px solid rgba(160, 140, 255, 0.2);
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+    .prism-coaching-title {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: rgba(160, 140, 255, 0.7);
+      margin-bottom: 8px;
+    }
+    .prism-coaching-tip {
+      font-size: 0.82rem;
+      color: rgba(210, 205, 255, 0.85);
+      line-height: 1.5;
+      padding: 3px 0;
+    }
+    .prism-coaching-tip + .prism-coaching-tip {
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      margin-top: 4px;
+      padding-top: 7px;
+    }
+    .prism-coaching-tip::before {
+      content: '→ ';
+      color: rgba(160, 140, 255, 0.6);
+    }
+
+    /* ====== PRISM SCORE CARD ====== */
+    .prism-score-card {
+      border-color: rgba(160, 140, 255, 0.25);
+      background: rgba(100, 80, 200, 0.1);
+    }
+
     /* ====== PRISM SENTENCE MARKERS ====== */
     .prism-sentence-break {
       display: block;
@@ -4961,6 +5031,7 @@
         <div class="prism-scroll-container" id="prismScrollContainer"></div>
         <div class="prism-idle-prompt" id="prismIdlePrompt">Click Rec to start reading</div>
         <div class="prism-keep-reading" id="prismKeepReading">Keep reading...</div>
+        <div class="prism-live-hint" id="prismLiveHint" aria-live="polite" aria-atomic="true"></div>
         <div class="prism-progress" id="prismProgress">
           <div class="prism-progress-fill" id="prismProgressFill"></div>
         </div>
