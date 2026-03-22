@@ -10980,12 +10980,18 @@ class VoxBallGame {
     const active = Math.floor(this.teleprompterIndex);
     const start = Math.max(0, active - 8);
     const end = Math.min(words.length, active + 14);
+    const fragment = document.createDocumentFragment();
     overlay.textContent = '';
     const frag = document.createDocumentFragment();
     for (let i = start; i < end; i++) {
       const span = document.createElement('span');
       if (i === active) span.className = 'active-word';
       span.textContent = words[i];
+      fragment.appendChild(span);
+      fragment.appendChild(document.createTextNode(' '));
+    }
+    overlay.innerHTML = '';
+    overlay.appendChild(fragment);
       frag.append(span);
       if (i < end - 1) frag.append(' ');
     }
