@@ -9659,6 +9659,13 @@ class VoxBallGame {
     const syl = this.prismReader.syllables[index];
     if (!syl || syl.state === 'crystallized') return;
 
+    // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce()
+    // to minimize closure allocation and GC overhead during high-frequency processing paths.
+    const avg = (arr) => {
+      if (arr.length === 0) return 0;
+      let sum = 0;
+      for (let i = 0; i < arr.length; i++) sum += arr[i];
+      return sum / arr.length;
     // ⚡ Bolt Optimization: Replacing array.reduce with standard for loops in a hot path
     // _crystallizePrismSyllable is called frequently in per-frame logic when auto-crystallizing
     // or processing timeouts. Avoiding higher-order array methods reduces GC pressure.
@@ -10358,7 +10365,12 @@ class VoxBallGame {
 
     // Aggregate pitch stats
     const pitches = crystallized.filter(s => s.avgF0 > 0).map(s => s.avgF0);
-    const avgPitch = pitches.length > 0 ? Math.round(pitches.reduce((a, b) => a + b, 0) / pitches.length) : 0;
+    let avgPitch = 0;
+    if (pitches.length > 0) {
+      let sum = 0;
+      for (let i = 0; i < pitches.length; i++) sum += pitches[i];
+      avgPitch = Math.round(sum / pitches.length);
+    }
     let minPitch = 0, maxPitch = 0;
     if (pitches.length > 0) {
       minPitch = pitches[0]; maxPitch = pitches[0];
@@ -10373,23 +10385,32 @@ class VoxBallGame {
 
     // Vowel score average
     const vowelScores = crystallized.filter(s => s.vowelScore > 0).map(s => s.vowelScore);
-    const avgVowelScore = vowelScores.length > 0
-      ? Math.round(vowelScores.reduce((a, b) => a + b, 0) / vowelScores.length * 100)
-      : 0;
+    let avgVowelScore = 0;
+    if (vowelScores.length > 0) {
+      let sum = 0;
+      for (let i = 0; i < vowelScores.length; i++) sum += vowelScores[i];
+      avgVowelScore = Math.round(sum / vowelScores.length * 100);
+    }
 
     // Strain count
     const strainCount = crystallized.filter(s => s.strainFlag).length;
 
     // Resonance average
     const centroids = crystallized.filter(s => s.avgCentroid > 0).map(s => s.avgCentroid);
-    const avgResonance = centroids.length > 0
-      ? Math.round(centroids.reduce((a, b) => a + b, 0) / centroids.length * 100)
-      : 0;
+    let avgResonance = 0;
+    if (centroids.length > 0) {
+      let sum = 0;
+      for (let i = 0; i < centroids.length; i++) sum += centroids[i];
+      avgResonance = Math.round(sum / centroids.length * 100);
+    }
 
     // Confidence average
-    const avgConfidence = Math.round(
-      crystallized.reduce((a, s) => a + s.confidence, 0) / crystallized.length * 100
-    );
+    let avgConfidence = 0;
+    if (crystallized.length > 0) {
+      let sum = 0;
+      for (let i = 0; i < crystallized.length; i++) sum += crystallized[i].confidence;
+      avgConfidence = Math.round(sum / crystallized.length * 100);
+    }
 
     // Pitch variability (intonation) — semitone standard deviation
     let intonationScore = 0;
@@ -10397,8 +10418,12 @@ class VoxBallGame {
     if (pitches.length >= 3) {
       // Convert to semitones relative to mean for perceptual accuracy
       const semitonePitches = pitches.map(p => 12 * Math.log2(p / avgPitch));
-      const stMean = semitonePitches.reduce((a, b) => a + b, 0) / semitonePitches.length;
-      const stVar = semitonePitches.reduce((sum, st) => sum + (st - stMean) ** 2, 0) / semitonePitches.length;
+      let stSum = 0;
+      for (let i = 0; i < semitonePitches.length; i++) stSum += semitonePitches[i];
+      const stMean = stSum / semitonePitches.length;
+      let stVarSum = 0;
+      for (let i = 0; i < semitonePitches.length; i++) stVarSum += (semitonePitches[i] - stMean) ** 2;
+      const stVar = stVarSum / semitonePitches.length;
       const stStdDev = Math.sqrt(stVar);
       // Score: 0-2 semitones = monotone, 2-4 = moderate, 4+ = expressive
       intonationScore = Math.round(Math.min(100, stStdDev * 25));
@@ -10413,8 +10438,12 @@ class VoxBallGame {
     let paceConsistency = 0;
     let paceLabel = '';
     if (durations.length >= 3) {
-      const durMean = durations.reduce((a, b) => a + b, 0) / durations.length;
-      const durVar = durations.reduce((sum, d) => sum + (d - durMean) ** 2, 0) / durations.length;
+      let durSum = 0;
+      for (let i = 0; i < durations.length; i++) durSum += durations[i];
+      const durMean = durSum / durations.length;
+      let durVarSum = 0;
+      for (let i = 0; i < durations.length; i++) durVarSum += (durations[i] - durMean) ** 2;
+      const durVar = durVarSum / durations.length;
       const durCV = durMean > 0 ? Math.sqrt(durVar) / durMean : 0;
       // Lower CV = more consistent pacing. Score inversely
       paceConsistency = Math.round(Math.max(0, Math.min(100, (1 - durCV) * 100)));
