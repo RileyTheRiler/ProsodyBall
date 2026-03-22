@@ -16,11 +16,12 @@
     "typecheck": "npm run lint"
   },
   "devDependencies": {
-    "serve": "^14.2.0",
-    "puppeteer": "^24.37.5"
+    "puppeteer": "^24.40.0",
+    "serve": "^14.2.0"
   },
-  "dependencies": {},
   "pnpm": {
-    "ignoredBuiltDependencies": ["puppeteer"]
+    "ignoredBuiltDependencies": [
+      "puppeteer"
+    ]
   }
 }
