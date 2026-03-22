@@ -9715,6 +9715,11 @@ class VoxBallGame {
     const pLen = syl.pitchSamples.length;
     if (pLen >= 2) {
       const pitchMean = avg(syl.pitchSamples);
+      let pitchSqSum = 0;
+      for (let i = 0; i < syl.pitchSamples.length; i++) {
+        pitchSqSum += (syl.pitchSamples[i] - pitchMean) ** 2;
+      }
+      const pitchVar = pitchSqSum / syl.pitchSamples.length;
       // ⚡ Bolt: Traditional loop for variance calculation (avoids array reduction GC)
       let sumSq = 0;
       for (let i = 0; i < pLen; i++) {
@@ -9732,6 +9737,11 @@ class VoxBallGame {
     const eLen = syl.energySamples.length;
     if (eLen >= 2) {
       const eMean = avg(syl.energySamples);
+      let eSqSum = 0;
+      for (let i = 0; i < syl.energySamples.length; i++) {
+        eSqSum += (syl.energySamples[i] - eMean) ** 2;
+      }
+      const eVar = eSqSum / syl.energySamples.length;
       // ⚡ Bolt: Traditional loop for variance calculation
       let sumSq = 0;
       for (let i = 0; i < eLen; i++) {
