@@ -5590,6 +5590,7 @@ class VoxBallGame {
       t.phase += dt * (1.5 + ps);
     }
     if (m.syllable > 0.5 && ps > 0.1) {
+      // ⚡ Bolt: Prevent GC spikes by avoiding array.map and spread operator in hot per-frame path
       // ⚡ Bolt Optimization: Replace Math.max spread with traditional loop to avoid GC spikes
       let maxR = 0;
       for (let i = 0; i < c.points.length; i++) {
@@ -6047,6 +6048,7 @@ class VoxBallGame {
       ctx.bezierCurveTo(x1 + (x2 - x0) * T, y1 + (y2 - y0) * T, x2 - (x3 - x1) * T, y2 - (y3 - y1) * T, x2, y2);
     }
     ctx.closePath();
+    // ⚡ Bolt: Prevent GC spikes by avoiding array.map and spread operator in hot per-frame path
 
     // ⚡ Bolt Optimization: Replace Math.max spread with traditional loop to avoid GC spikes
     let bR = 0;
