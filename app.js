@@ -9716,13 +9716,10 @@ class VoxBallGame {
     if (pLen >= 2) {
       const pitchMean = avg(syl.pitchSamples);
       let pitchSqSum = 0;
-      for (let i = 0; i < syl.pitchSamples.length; i++) {
+      for (let i = 0; i < pLen; i++) {
         pitchSqSum += (syl.pitchSamples[i] - pitchMean) ** 2;
       }
-      const pitchVar = pitchSqSum / syl.pitchSamples.length;
-      // ⚡ Bolt: Traditional loop for variance calculation (avoids array reduction GC)
-      let sumSq = 0;
-      for (let i = 0; i < pLen; i++) {
+      const pitchVar = pitchSqSum / pLen;
         sumSq += (syl.pitchSamples[i] - pitchMean) ** 2;
       }
       const pitchVar = sumSq / pLen;
@@ -9738,13 +9735,10 @@ class VoxBallGame {
     if (eLen >= 2) {
       const eMean = avg(syl.energySamples);
       let eSqSum = 0;
-      for (let i = 0; i < syl.energySamples.length; i++) {
+      for (let i = 0; i < eLen; i++) {
         eSqSum += (syl.energySamples[i] - eMean) ** 2;
       }
-      const eVar = eSqSum / syl.energySamples.length;
-      // ⚡ Bolt: Traditional loop for variance calculation
-      let sumSq = 0;
-      for (let i = 0; i < eLen; i++) {
+      const eVar = eSqSum / eLen;
         sumSq += (syl.energySamples[i] - eMean) ** 2;
       }
       const eVar = sumSq / eLen;
@@ -10951,6 +10945,8 @@ class VoxBallGame {
       stats.push({ value: `${this.vowelValley.score}`, label: 'Score' });
     }
 
+    // Render stats grid (Security enhancement: safe DOM construction)
+    grid.textContent = '';
     // Render stats grid
     grid.innerHTML = '';
     const gridFrag = document.createDocumentFragment();
@@ -10988,9 +10984,11 @@ class VoxBallGame {
       // Downsample to ~60 bars max
       const maxBars = 60;
       const step = Math.max(1, Math.floor(history.length / maxBars));
-      const bars = [];
+      bar.textContent = '';
+      const barFrag = document.createDocumentFragment();
       for (let i = 0; i < history.length; i += step) {
         const slice = history.slice(i, i + step);
+        const v = slice.reduce((a, b) => a + b, 0) / slice.length;
         bars.push(slice.reduce((a, b) => a + b, 0) / slice.length);
       }
       bar.innerHTML = '';
