@@ -15,3 +15,6 @@
 ## 2026-03-15 - [Inaccessible custom toggle switches]
 **Learning:** Discovered that custom toggle switches built with `<label class="toggle-switch">` wrapping an `<input type="checkbox">` and `<span class="toggle-slider">` were inaccessible to screen readers because they lacked `aria-label` attributes on the actual `<input>` element. Also, adjacent descriptive text was using generic `<span>` tags, resulting in poor clickable hit-areas.
 **Action:** Always add an explicit `aria-label` directly to the `<input>` element inside custom toggle components. In addition, replace adjacent text elements like `<span>` with `<label for="[input-id]">` to drastically improve the clickable hit-area for mouse and touch users.
+## $(date +%Y-%m-%d) - [Inaccessible custom toggle switches due to duplicate IDs]
+**Learning:** Discovered that custom toggle switches built with `<label class="toggle-switch">` wrapping an `<input type="checkbox">` were failing because the `id` on the `<input>` was duplicated elsewhere in the DOM. This breaks the `<label for="[id]">` association, rendering the toggle invisible to screen readers and difficult to click.
+**Action:** Ensure custom toggle `<input>` elements have strictly unique IDs across the entire document so they correctly link with their `<label>` elements.
