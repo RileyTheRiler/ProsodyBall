@@ -10568,9 +10568,24 @@ class VoxBallGame {
 
     // Prism light refraction effect at center
     if (pr.syllables.length > 0) {
-      const crystallized = pr.syllables.filter(s => s.state === 'crystallized');
-      const progress = crystallized.length / Math.max(1, pr.syllables.length);
+      // ⚡ Bolt Optimization: Replace filter/reduce with a single loop to reduce GC pressure
+      let crystCount = 0;
+      let hueSum = 0;
+      let lastCrystSyl = null;
+      for (let i = 0; i < pr.syllables.length; i++) {
+        const s = pr.syllables[i];
+        if (s.state === 'crystallized') {
+          crystCount++;
+          hueSum += s.hue;
+          lastCrystSyl = s;
+        }
+      }
 
+      const progress = crystCount / Math.max(1, pr.syllables.length);
+
+      if (crystCount > 0) {
+        const avgHue = hueSum / crystCount;
+        const recentHue = lastCrystSyl.hue;
       if (crystallized.length > 0) {
         // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce()
         // to prevent GC spikes in hot render paths
@@ -10594,8 +10609,8 @@ class VoxBallGame {
 
         // Spawn particles on new crystallizations
         const prevCrystCount = this._prevPrismCrystCount || 0;
-        if (crystallized.length > prevCrystCount) {
-          const newSyl = crystallized[crystallized.length - 1];
+        if (crystCount > prevCrystCount) {
+          const newSyl = lastCrystSyl;
           for (let p = 0; p < 3; p++) {
             this._prismParticles.push({
               x: w * (0.3 + Math.random() * 0.4),
@@ -10610,7 +10625,7 @@ class VoxBallGame {
             });
           }
         }
-        this._prevPrismCrystCount = crystallized.length;
+        this._prevPrismCrystCount = crystCount;
 
         // Update and draw particles
         ctx.save();
