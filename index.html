@@ -975,11 +975,6 @@
       box-shadow: 0 0 10px rgba(77, 150, 255, 0.5), inset 0 1px 0 rgba(255,255,255,0.15);
     }
 
-    .meter-syllable .meter-bar-fill {
-      background: linear-gradient(90deg, var(--accent-syllable), rgba(192, 132, 252, 0.7));
-      box-shadow: 0 0 10px rgba(192, 132, 252, 0.5), inset 0 1px 0 rgba(255,255,255,0.15);
-    }
-
     /* Colorblind: fix hardcoded box-shadow colors to match Okabe-Ito palette */
     :root.colorblind .meter-bounce .meter-bar-fill {
       box-shadow: 0 0 10px rgba(213, 94, 0, 0.5);
@@ -995,10 +990,6 @@
 
     :root.colorblind .meter-artic .meter-bar-fill {
       box-shadow: 0 0 10px rgba(86, 180, 233, 0.5);
-    }
-
-    :root.colorblind .meter-syllable .meter-bar-fill {
-      box-shadow: 0 0 10px rgba(204, 121, 167, 0.5);
     }
 
     /* Colorblind: pitch gradient → blue-cyan-yellow (luminance-safe) */
@@ -4814,9 +4805,9 @@
           <input type="file" id="audioUploadInput" accept="audio/*" style="display: none;">
         </label>
         <button class="btn btn-rec" id="recBtn"><span class="rec-dot"></span><span class="rec-label">Rec</span></button>
-        <button class="btn btn-help" id="prismClearRecBtn"
+        <button class="btn btn-help" id="prismClearRecBtn" aria-label="Clear Prism Recording"
           style="display: none; opacity: 0; transform: scale(0.95); transition: opacity 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28), transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);">Clear</button>
-        <button class="btn btn-help" id="prismSaveRecBtn"
+        <button class="btn btn-help" id="prismSaveRecBtn" aria-label="Save Prism Recording"
           style="display: none; opacity: 0; transform: scale(0.95); transition: opacity 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28), transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);">Save
           Clip</button>
         <button class="btn btn-recordings" id="recordingsBtn" aria-expanded="false" aria-controls="recordingsDrawer"><span>Clips&nbsp;</span><span class="badge" id="recBadge">0</span></button>
@@ -4837,7 +4828,7 @@
           <option value="rainbow">Teleprompter: Rainbow Passage</option>
           <option value="custom">Teleprompter: Custom Text</option>
         </select>
-        <button class="btn btn-help" id="teleprompterCustomBtn" title="Edit custom teleprompter text">Edit Text</button>
+        <button class="btn btn-help" id="teleprompterCustomBtn" aria-label="Edit custom teleprompter text" title="Edit custom teleprompter text">Edit Text</button>
 
         <button class="btn btn-cb" id="cbToggle" aria-label="Toggle colorblind mode" title="Colorblind mode">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
@@ -4872,7 +4863,7 @@
           </svg>
           Menu
         </button>
-        <button class="btn btn-help" id="recoverMicBtn" title="Recover microphone session" hidden>Recover Mic</button>
+        <button class="btn btn-help" id="recoverMicBtn" aria-label="Recover microphone session" title="Recover microphone session" hidden>Recover Mic</button>
       </div>
     </div>
 
@@ -4901,16 +4892,16 @@
           <option value="default">Microphone: System Default</option>
         </select>
         <div class="settings-row">
-          <span>Echo cancellation</span>
-          <label class="toggle-switch"><input id="echoCancelToggle" type="checkbox" checked><span class="toggle-slider"></span></label>
+          <label for="echoCancelToggle">Echo cancellation</label>
+          <label class="toggle-switch"><input id="echoCancelToggle" type="checkbox" aria-label="Toggle echo cancellation" checked><span class="toggle-slider"></span></label>
         </div>
         <div class="settings-row">
-          <span>Noise suppression</span>
-          <label class="toggle-switch"><input id="noiseSuppressToggle" type="checkbox" checked><span class="toggle-slider"></span></label>
+          <label for="noiseSuppressToggle">Noise suppression</label>
+          <label class="toggle-switch"><input id="noiseSuppressToggle" type="checkbox" aria-label="Toggle noise suppression" checked><span class="toggle-slider"></span></label>
         </div>
         <div class="settings-row">
-          <span>Auto gain control</span>
-          <label class="toggle-switch"><input id="autoGainToggle" type="checkbox" checked><span class="toggle-slider"></span></label>
+          <label for="autoGainToggle">Auto gain control</label>
+          <label class="toggle-switch"><input id="autoGainToggle" type="checkbox" aria-label="Toggle auto gain control" checked><span class="toggle-slider"></span></label>
         </div>
       </div>
 
@@ -4922,7 +4913,7 @@
 
       <div class="settings-group">
         <span class="settings-label">Calibration</span>
-        <button class="btn btn-help btn-fill" id="recalibrateBtn"
+        <button class="btn btn-help btn-fill" id="recalibrateBtn" aria-label="Run microphone calibration again"
           title="Run mic calibration again">Recalibrate</button>
       </div>
 
@@ -5564,11 +5555,13 @@
         </div>
 
         <div class="vib-master">
-          <label>Vibration alerts</label>
+          <label for="vibMasterToggle">Vibration alerts</label>
           <div class="toggle-switch">
-            <input type="checkbox" id="vibMasterToggle">
+            <input type="checkbox" id="vibMasterToggle" aria-label="Toggle vibration alerts">
+          <label class="toggle-switch">
+            <input type="checkbox" id="vibMasterToggle" aria-label="Toggle all vibration alerts">
             <span class="toggle-slider"></span>
-          </div>
+          </label>
         </div>
 
         <div id="vibEmptyHint"
@@ -5598,7 +5591,9 @@
     </div>
 
     <div class="context-bar canvas-only" id="canvasContextBar">
-      <button class="context-toggle" id="contextToggleBtn" type="button" aria-expanded="false">Canvas Controls</button>
+      <button class="context-toggle" id="contextToggleBtn" type="button" aria-expanded="false" aria-controls="contextControls">Canvas Controls</button>
+      <div class="context-controls" id="contextControls">
+      <button class="context-toggle" id="contextToggleBtn" type="button" aria-expanded="false" aria-controls="canvasContextBar">Canvas Controls</button>
       <div class="context-controls">
       <select id="visualStyleSelect" class="theme-select canvas-only" aria-label="Visual style mode">
         <option value="artistic">🖌️ Artistic</option>
@@ -5622,7 +5617,7 @@
       </div>
     </div>
     <div class="meters-panel" id="metersPanel">
-      <button class="meters-expand-toggle" id="metersExpandToggle" aria-label="Expand metrics" aria-expanded="false">
+      <button class="meters-expand-toggle" id="metersExpandToggle" aria-label="Expand metrics" aria-expanded="false" aria-controls="metersExpanded">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="18 15 12 9 6 15"></polyline>
         </svg>
@@ -5673,7 +5668,7 @@
         </div>
         <div class="meter-value" id="valBounce">0</div>
       </div>
-      <div class="meter meter-tempo">
+      <div class="meter meter-tempo" style="display:none">
         <div class="meter-label">Tempo
           <div class="info-wrapper">
             <button class="info-trigger" aria-label="More Info">?</button>
@@ -5698,13 +5693,6 @@
           <div class="meter-bar-fill" id="meterArtic"></div>
         </div>
         <div class="meter-value" id="valArtic">0</div>
-      </div>
-      <div class="meter meter-syllable">
-        <div class="meter-label">Syllables</div>
-        <div class="meter-bar-bg">
-          <div class="meter-bar-fill" id="meterSyllable"></div>
-        </div>
-        <div class="meter-value" id="valSyllable">0</div>
       </div>
       </div>
       <!-- Expanded metric cards -->
