@@ -2281,7 +2281,7 @@ class VoxBallGame {
       },
     };
     const data = helpData[this.gameMode] || helpData.ball;
-    el.innerHTML = '';
+    el.textContent = '';
     const h3 = document.createElement('h3');
     h3.textContent = data.title;
     const p = document.createElement('p');
@@ -2931,7 +2931,7 @@ class VoxBallGame {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const mics = devices.filter((d) => d.kind === 'audioinput');
-        micDeviceSelect.innerHTML = '';
+        micDeviceSelect.textContent = '';
         const defaultOption = document.createElement('option');
         defaultOption.value = 'default';
         defaultOption.textContent = 'Microphone: System Default';
@@ -3122,7 +3122,7 @@ class VoxBallGame {
       clearError();
       const initialDiag = await getMicDiagnostics(this.analyzer.audioCtx);
       if (diagPanel) {
-        diagPanel.innerHTML = '';
+        diagPanel.textContent = '';
         diagPanel.textContent = '';
         diagPanel.append(
           'Mic permission: ', Object.assign(document.createElement('b'), { textContent: initialDiag.permission }),
@@ -3242,7 +3242,7 @@ class VoxBallGame {
 
       const activeDiag = await getMicDiagnostics(this.analyzer.audioCtx);
       if (diagPanel) {
-        diagPanel.innerHTML = '';
+        diagPanel.textContent = '';
         diagPanel.textContent = '';
         diagPanel.append(
           'Mic permission: ', Object.assign(document.createElement('b'), { textContent: activeDiag.permission }),
@@ -4201,7 +4201,7 @@ class VoxBallGame {
     const getMetricInfo = (val) => vibMetrics.find(m => m.value === val) || vibMetrics[0];
 
     const renderVibRules = () => {
-      vibRulesList.innerHTML = '';
+      vibRulesList.textContent = '';
       const hintEl = document.getElementById('vibEmptyHint');
       if (hintEl) hintEl.style.display = this.vibration.rules.length === 0 ? 'block' : 'none';
       for (const rule of this.vibration.rules) {
@@ -4210,29 +4210,88 @@ class VoxBallGame {
         el.className = 'vib-rule' + (rule.tripped ? ' tripped' : '');
         el.dataset.ruleId = rule.id;
 
-        el.innerHTML = `
-          <div class="vib-rule-config">
-            <div class="vib-rule-top">
-              <select class="vib-metric" aria-label="Metric">
-                ${vibMetrics.map(m => `<option value="${m.value}" ${m.value === rule.metric ? 'selected' : ''}>${m.label}</option>`).join('')}
-              </select>
-              <select class="vib-dir" aria-label="Direction">
-                <option value="below" ${rule.direction === 'below' ? 'selected' : ''}>drops below</option>
-                <option value="above" ${rule.direction === 'above' ? 'selected' : ''}>goes above</option>
-              </select>
-            </div>
-            <div class="vib-rule-top">
-              <input type="number" class="vib-threshold" value="${rule.threshold}" min="${info.min}" max="${info.max}" step="${info.step}" aria-label="Threshold">
-              <span class="vib-rule-unit">${info.unit}</span>
-              <span class="vib-live-val" data-rule-id="${rule.id}" style="font-size:0.62rem;color:rgba(255,255,255,0.35);margin-left:4px;min-width:32px;text-align:right">—</span>
-              <label class="toggle-switch" style="margin-left:4px">
-                <input type="checkbox" class="vib-rule-toggle" aria-label="Enable alert rule" ${rule.enabled ? 'checked' : ''}>
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-          </div>
-          <button class="vib-rule-del" title="Delete rule" aria-label="Delete rule">✕</button>
-        `;
+        const frag = document.createDocumentFragment();
+
+        const configDiv = document.createElement('div');
+        configDiv.className = 'vib-rule-config';
+
+        const topDiv1 = document.createElement('div');
+        topDiv1.className = 'vib-rule-top';
+
+        const metricSelect = document.createElement('select');
+        metricSelect.className = 'vib-metric';
+        metricSelect.setAttribute('aria-label', 'Metric');
+        for (const m of vibMetrics) {
+          const opt = document.createElement('option');
+          opt.value = m.value;
+          opt.textContent = m.label;
+          if (m.value === rule.metric) opt.selected = true;
+          metricSelect.append(opt);
+        }
+
+        const dirSelect = document.createElement('select');
+        dirSelect.className = 'vib-dir';
+        dirSelect.setAttribute('aria-label', 'Direction');
+        const optBelow = document.createElement('option');
+        optBelow.value = 'below';
+        optBelow.textContent = 'drops below';
+        if (rule.direction === 'below') optBelow.selected = true;
+        const optAbove = document.createElement('option');
+        optAbove.value = 'above';
+        optAbove.textContent = 'goes above';
+        if (rule.direction === 'above') optAbove.selected = true;
+        dirSelect.append(optBelow, optAbove);
+
+        topDiv1.append(metricSelect, dirSelect);
+
+        const topDiv2 = document.createElement('div');
+        topDiv2.className = 'vib-rule-top';
+
+        const thresholdInput = document.createElement('input');
+        thresholdInput.type = 'number';
+        thresholdInput.className = 'vib-threshold';
+        thresholdInput.value = rule.threshold;
+        thresholdInput.min = info.min;
+        thresholdInput.max = info.max;
+        thresholdInput.step = info.step;
+        thresholdInput.setAttribute('aria-label', 'Threshold');
+
+        const unitSpan = document.createElement('span');
+        unitSpan.className = 'vib-rule-unit';
+        unitSpan.textContent = info.unit;
+
+        const liveValSpan = document.createElement('span');
+        liveValSpan.className = 'vib-live-val';
+        liveValSpan.dataset.ruleId = rule.id;
+        liveValSpan.style.cssText = 'font-size:0.62rem;color:rgba(255,255,255,0.35);margin-left:4px;min-width:32px;text-align:right';
+        liveValSpan.textContent = '—';
+
+        const toggleLabel = document.createElement('label');
+        toggleLabel.className = 'toggle-switch';
+        toggleLabel.style.marginLeft = '4px';
+
+        const toggleInput = document.createElement('input');
+        toggleInput.type = 'checkbox';
+        toggleInput.className = 'vib-rule-toggle';
+        toggleInput.setAttribute('aria-label', 'Enable alert rule');
+        if (rule.enabled) toggleInput.checked = true;
+
+        const toggleSlider = document.createElement('span');
+        toggleSlider.className = 'toggle-slider';
+
+        toggleLabel.append(toggleInput, toggleSlider);
+        topDiv2.append(thresholdInput, unitSpan, liveValSpan, toggleLabel);
+
+        configDiv.append(topDiv1, topDiv2);
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'vib-rule-del';
+        delBtn.title = 'Delete rule';
+        delBtn.setAttribute('aria-label', 'Delete rule');
+        delBtn.textContent = '✕';
+
+        frag.append(configDiv, delBtn);
+        el.append(frag);
 
         // Wire events
         el.querySelector('.vib-metric').addEventListener('change', (e) => {
@@ -9443,7 +9502,7 @@ class VoxBallGame {
 
     const container = document.getElementById('prismScrollContainer');
     if (container) {
-      container.innerHTML = '';
+      container.textContent = '';
       // Build DOM with sentence break markers
       let prevSentenceEnd = false;
       for (let i = 0; i < pr.syllables.length; i++) {
@@ -9611,6 +9670,13 @@ class VoxBallGame {
     const syl = this.prismReader.syllables[index];
     if (!syl || syl.state === 'crystallized') return;
 
+    // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce()
+    // to minimize closure allocation and GC overhead during high-frequency processing paths.
+    const avg = (arr) => {
+      if (arr.length === 0) return 0;
+      let sum = 0;
+      for (let i = 0; i < arr.length; i++) sum += arr[i];
+      return sum / arr.length;
     // ⚡ Bolt Optimization: Replacing array.reduce with standard for loops in a hot path
     // _crystallizePrismSyllable is called frequently in per-frame logic when auto-crystallizing
     // or processing timeouts. Avoiding higher-order array methods reduces GC pressure.
@@ -9621,6 +9687,14 @@ class VoxBallGame {
         sum += arr[i];
       }
       return sum / arr.length;
+    // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce()
+    // to minimize closure allocation and GC overhead during high-frequency processing paths.
+    const avg = (arr) => {
+      const len = arr.length;
+      if (len === 0) return 0;
+      let sum = 0;
+      for (let i = 0; i < len; i++) sum += arr[i];
+      return sum / len;
     };
 
     const median = (arr) => {
@@ -9655,6 +9729,11 @@ class VoxBallGame {
       // ⚡ Bolt: Traditional loop for variance calculation (avoids array reduction GC)
       let sumSq = 0;
       for (let i = 0; i < pLen; i++) {
+      let pitchSqSum = 0;
+      for (let i = 0; i < pLen; i++) {
+        pitchSqSum += (syl.pitchSamples[i] - pitchMean) ** 2;
+      }
+      const pitchVar = pitchSqSum / pLen;
         sumSq += (syl.pitchSamples[i] - pitchMean) ** 2;
       }
       const pitchVar = sumSq / pLen;
@@ -9672,6 +9751,11 @@ class VoxBallGame {
       // ⚡ Bolt: Traditional loop for variance calculation
       let sumSq = 0;
       for (let i = 0; i < eLen; i++) {
+      let eSqSum = 0;
+      for (let i = 0; i < eLen; i++) {
+        eSqSum += (syl.energySamples[i] - eMean) ** 2;
+      }
+      const eVar = eSqSum / eLen;
         sumSq += (syl.energySamples[i] - eMean) ** 2;
       }
       const eVar = sumSq / eLen;
@@ -10302,7 +10386,12 @@ class VoxBallGame {
 
     // Aggregate pitch stats
     const pitches = crystallized.filter(s => s.avgF0 > 0).map(s => s.avgF0);
-    const avgPitch = pitches.length > 0 ? Math.round(pitches.reduce((a, b) => a + b, 0) / pitches.length) : 0;
+    let avgPitch = 0;
+    if (pitches.length > 0) {
+      let sum = 0;
+      for (let i = 0; i < pitches.length; i++) sum += pitches[i];
+      avgPitch = Math.round(sum / pitches.length);
+    }
     let minPitch = 0, maxPitch = 0;
     if (pitches.length > 0) {
       minPitch = pitches[0]; maxPitch = pitches[0];
@@ -10317,23 +10406,32 @@ class VoxBallGame {
 
     // Vowel score average
     const vowelScores = crystallized.filter(s => s.vowelScore > 0).map(s => s.vowelScore);
-    const avgVowelScore = vowelScores.length > 0
-      ? Math.round(vowelScores.reduce((a, b) => a + b, 0) / vowelScores.length * 100)
-      : 0;
+    let avgVowelScore = 0;
+    if (vowelScores.length > 0) {
+      let sum = 0;
+      for (let i = 0; i < vowelScores.length; i++) sum += vowelScores[i];
+      avgVowelScore = Math.round(sum / vowelScores.length * 100);
+    }
 
     // Strain count
     const strainCount = crystallized.filter(s => s.strainFlag).length;
 
     // Resonance average
     const centroids = crystallized.filter(s => s.avgCentroid > 0).map(s => s.avgCentroid);
-    const avgResonance = centroids.length > 0
-      ? Math.round(centroids.reduce((a, b) => a + b, 0) / centroids.length * 100)
-      : 0;
+    let avgResonance = 0;
+    if (centroids.length > 0) {
+      let sum = 0;
+      for (let i = 0; i < centroids.length; i++) sum += centroids[i];
+      avgResonance = Math.round(sum / centroids.length * 100);
+    }
 
     // Confidence average
-    const avgConfidence = Math.round(
-      crystallized.reduce((a, s) => a + s.confidence, 0) / crystallized.length * 100
-    );
+    let avgConfidence = 0;
+    if (crystallized.length > 0) {
+      let sum = 0;
+      for (let i = 0; i < crystallized.length; i++) sum += crystallized[i].confidence;
+      avgConfidence = Math.round(sum / crystallized.length * 100);
+    }
 
     // Pitch variability (intonation) — semitone standard deviation
     let intonationScore = 0;
@@ -10341,8 +10439,12 @@ class VoxBallGame {
     if (pitches.length >= 3) {
       // Convert to semitones relative to mean for perceptual accuracy
       const semitonePitches = pitches.map(p => 12 * Math.log2(p / avgPitch));
-      const stMean = semitonePitches.reduce((a, b) => a + b, 0) / semitonePitches.length;
-      const stVar = semitonePitches.reduce((sum, st) => sum + (st - stMean) ** 2, 0) / semitonePitches.length;
+      let stSum = 0;
+      for (let i = 0; i < semitonePitches.length; i++) stSum += semitonePitches[i];
+      const stMean = stSum / semitonePitches.length;
+      let stVarSum = 0;
+      for (let i = 0; i < semitonePitches.length; i++) stVarSum += (semitonePitches[i] - stMean) ** 2;
+      const stVar = stVarSum / semitonePitches.length;
       const stStdDev = Math.sqrt(stVar);
       // Score: 0-2 semitones = monotone, 2-4 = moderate, 4+ = expressive
       intonationScore = Math.round(Math.min(100, stStdDev * 25));
@@ -10357,8 +10459,12 @@ class VoxBallGame {
     let paceConsistency = 0;
     let paceLabel = '';
     if (durations.length >= 3) {
-      const durMean = durations.reduce((a, b) => a + b, 0) / durations.length;
-      const durVar = durations.reduce((sum, d) => sum + (d - durMean) ** 2, 0) / durations.length;
+      let durSum = 0;
+      for (let i = 0; i < durations.length; i++) durSum += durations[i];
+      const durMean = durSum / durations.length;
+      let durVarSum = 0;
+      for (let i = 0; i < durations.length; i++) durVarSum += (durations[i] - durMean) ** 2;
+      const durVar = durVarSum / durations.length;
       const durCV = durMean > 0 ? Math.sqrt(durVar) / durMean : 0;
       // Lower CV = more consistent pacing. Score inversely
       paceConsistency = Math.round(Math.max(0, Math.min(100, (1 - durCV) * 100)));
@@ -10373,54 +10479,48 @@ class VoxBallGame {
 
     const grid = document.getElementById('prismCompletionGrid');
     if (grid) {
-      grid.innerHTML = `
-        <div class="prism-comp-card">
-          <div class="prism-comp-label">Reading Speed</div>
-          <div class="prism-comp-value">${wpm} wpm</div>
-          <div class="prism-comp-sub">${minutes}:${String(seconds).padStart(2, '0')} total</div>
-        </div>
-        <div class="prism-comp-card">
-          <div class="prism-comp-label">Avg Pitch</div>
-          <div class="prism-comp-value">${avgPitch} Hz</div>
-          <div class="prism-comp-sub">Range: ${pitchRange} Hz (${minPitch}–${maxPitch})</div>
-        </div>
-        <div class="prism-comp-card">
-          <div class="prism-comp-label">Intonation</div>
-          <div class="prism-comp-value">${intonationScore}%</div>
-          <div class="prism-comp-sub">${intonationLabel}</div>
-        </div>
-        <div class="prism-comp-card">
-          <div class="prism-comp-label">Vowel Accuracy</div>
-          <div class="prism-comp-value">${avgVowelScore}%</div>
-          <div class="prism-comp-sub">${vowelScores.length} vowels scored</div>
-        </div>
-        <div class="prism-comp-card">
-          <div class="prism-comp-label">Resonance</div>
-          <div class="prism-comp-value">${avgResonance}%</div>
-          <div class="prism-comp-sub">Forward brightness</div>
-        </div>
-        ${durations.length >= 3 ? `
-        <div class="prism-comp-card">
-          <div class="prism-comp-label">Pace Consistency</div>
-          <div class="prism-comp-value">${paceConsistency}%</div>
-          <div class="prism-comp-sub">${paceLabel}</div>
-        </div>` : ''}
-        <div class="prism-comp-card">
-          <div class="prism-comp-label">Syllables</div>
-          <div class="prism-comp-value">${crystallized.length} / ${pr.syllables.length}</div>
-          <div class="prism-comp-sub">Confidence: ${avgConfidence}%</div>
-        </div>
-        <div class="prism-comp-card">
-          <div class="prism-comp-label">Strain Alerts</div>
-          <div class="prism-comp-value" style="color: ${strainCount > 0 ? 'rgba(255,120,100,0.9)' : 'rgba(120,255,160,0.9)'}">${strainCount}</div>
-          <div class="prism-comp-sub">${strainCount === 0 ? 'No strain detected' : 'High energy + low weight'}</div>
-        </div>
-        ${pitches.length >= 3 ? `
-        <div class="prism-sparkline-wrap">
-          <div class="prism-comp-label">Pitch Contour</div>
-          <canvas class="prism-sparkline-canvas" id="prismSparkline"></canvas>
-        </div>` : ''}
-      `;
+      grid.textContent = '';
+      const frag = document.createDocumentFragment();
+
+      const createCard = (label, value, sub, valueColor) => {
+        const card = document.createElement('div');
+        card.className = 'prism-comp-card';
+        card.append(
+          Object.assign(document.createElement('div'), { className: 'prism-comp-label', textContent: label }),
+          Object.assign(document.createElement('div'), { className: 'prism-comp-value', textContent: value, style: valueColor ? `color: ${valueColor}` : '' }),
+          Object.assign(document.createElement('div'), { className: 'prism-comp-sub', textContent: sub })
+        );
+        return card;
+      };
+
+      frag.append(
+        createCard('Reading Speed', `${wpm} wpm`, `${minutes}:${String(seconds).padStart(2, '0')} total`),
+        createCard('Avg Pitch', `${avgPitch} Hz`, `Range: ${pitchRange} Hz (${minPitch}–${maxPitch})`),
+        createCard('Intonation', `${intonationScore}%`, intonationLabel),
+        createCard('Vowel Accuracy', `${avgVowelScore}%`, `${vowelScores.length} vowels scored`),
+        createCard('Resonance', `${avgResonance}%`, 'Forward brightness')
+      );
+
+      if (durations.length >= 3) {
+        frag.append(createCard('Pace Consistency', `${paceConsistency}%`, paceLabel));
+      }
+
+      frag.append(
+        createCard('Syllables', `${crystallized.length} / ${pr.syllables.length}`, `Confidence: ${avgConfidence}%`),
+        createCard('Strain Alerts', `${strainCount}`, strainCount === 0 ? 'No strain detected' : 'High energy + low weight', strainCount > 0 ? 'rgba(255,120,100,0.9)' : 'rgba(120,255,160,0.9)')
+      );
+
+      if (pitches.length >= 3) {
+        const wrap = document.createElement('div');
+        wrap.className = 'prism-sparkline-wrap';
+        wrap.append(
+          Object.assign(document.createElement('div'), { className: 'prism-comp-label', textContent: 'Pitch Contour' }),
+          Object.assign(document.createElement('canvas'), { className: 'prism-sparkline-canvas', id: 'prismSparkline' })
+        );
+        frag.append(wrap);
+      }
+
+      grid.append(frag);
     }
 
     const comp = document.getElementById('prismCompletion');
@@ -10472,7 +10572,13 @@ class VoxBallGame {
       const progress = crystallized.length / Math.max(1, pr.syllables.length);
 
       if (crystallized.length > 0) {
-        const avgHue = crystallized.reduce((s, c) => s + c.hue, 0) / crystallized.length;
+        // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce()
+        // to prevent GC spikes in hot render paths
+        let sumHue = 0;
+        for (let i = 0; i < crystallized.length; i++) {
+          sumHue += crystallized[i].hue;
+        }
+        const avgHue = sumHue / crystallized.length;
         const recentHue = crystallized.length > 0 ? crystallized[crystallized.length - 1].hue : avgHue;
 
         // Central ambient glow that shifts with reading progress
@@ -10856,13 +10962,37 @@ class VoxBallGame {
       stats.push({ value: `${this.vowelValley.score}`, label: 'Score' });
     }
 
+    // Render stats grid (Security enhancement: safe DOM construction)
+    grid.textContent = '';
     // Render stats grid
-    grid.innerHTML = stats.map(s =>
-      `<div class="summary-stat${s.wide ? ' wide' : ''}">
-        <div class="summary-stat-value">${s.value}</div>
-        <div class="summary-stat-label">${s.label}</div>
-      </div>`
-    ).join('');
+    grid.innerHTML = '';
+    const gridFrag = document.createDocumentFragment();
+    for (const s of stats) {
+      const statEl = document.createElement('div');
+      statEl.className = 'summary-stat' + (s.wide ? ' wide' : '');
+      const valEl = document.createElement('div');
+      valEl.className = 'summary-stat-value';
+      valEl.textContent = s.value;
+      const lblEl = document.createElement('div');
+      lblEl.className = 'summary-stat-label';
+      lblEl.textContent = s.label;
+      statEl.append(valEl, lblEl);
+      gridFrag.append(statEl);
+    grid.textContent = '';
+    const gridFrag = document.createDocumentFragment();
+    for (const s of stats) {
+      const statDiv = document.createElement('div');
+      statDiv.className = 'summary-stat' + (s.wide ? ' wide' : '');
+      const valDiv = document.createElement('div');
+      valDiv.className = 'summary-stat-value';
+      valDiv.textContent = s.value;
+      const labelDiv = document.createElement('div');
+      labelDiv.className = 'summary-stat-label';
+      labelDiv.textContent = s.label;
+      statDiv.append(valDiv, labelDiv);
+      gridFrag.append(statDiv);
+    }
+    grid.append(gridFrag);
 
     // Render prosody sparkline
     const history = sess.prosodyHistory;
@@ -10871,16 +11001,28 @@ class VoxBallGame {
       // Downsample to ~60 bars max
       const maxBars = 60;
       const step = Math.max(1, Math.floor(history.length / maxBars));
-      const bars = [];
+      bar.textContent = '';
+      const barFrag = document.createDocumentFragment();
       for (let i = 0; i < history.length; i += step) {
         const slice = history.slice(i, i + step);
+        const v = slice.reduce((a, b) => a + b, 0) / slice.length;
         bars.push(slice.reduce((a, b) => a + b, 0) / slice.length);
       }
-      bar.innerHTML = bars.map(v => {
+      bar.innerHTML = '';
+
+      bar.textContent = '';
+      const barFrag = document.createDocumentFragment();
+      for (const v of bars) {
         const h = Math.max(2, v * 30);
         const hue = 220 + v * 80; // blue → purple as prosody increases
-        return `<div class="bar-seg" style="height:${h}px;background:hsl(${hue},60%,${45 + v * 20}%)"></div>`;
-      }).join('');
+        const seg = document.createElement('div');
+        seg.className = 'bar-seg';
+        seg.style.height = `${h}px`;
+        seg.style.background = `hsl(${hue},60%,${45 + v * 20}%)`;
+        seg.style.background = `hsl(${hue}, 60%, ${45 + v * 20}%)`;
+        barFrag.append(seg);
+      }
+      bar.append(barFrag);
     } else {
       document.getElementById('summaryProsodyWrap').style.display = 'none';
     }
@@ -10914,12 +11056,26 @@ class VoxBallGame {
     const active = Math.floor(this.teleprompterIndex);
     const start = Math.max(0, active - 8);
     const end = Math.min(words.length, active + 14);
-    const view = [];
+
+    overlay.innerHTML = '';
+    const fragment = document.createDocumentFragment();
+    overlay.textContent = '';
+    const frag = document.createDocumentFragment();
     for (let i = start; i < end; i++) {
-      const cls = i === active ? 'active-word' : '';
-      view.push(`<span class="${cls}">${escapeHtml(words[i])}</span>`);
+      const span = document.createElement('span');
+      if (i === active) span.className = 'active-word';
+      span.textContent = words[i];
+      frag.append(span);
+      frag.append(document.createTextNode(' '));
+      fragment.appendChild(span);
+      fragment.appendChild(document.createTextNode(' '));
     }
-    overlay.innerHTML = view.join(' ');
+    overlay.innerHTML = '';
+    overlay.appendChild(fragment);
+      frag.append(span);
+      if (i < end - 1) frag.append(' ');
+    }
+    overlay.append(frag);
   }
 
   updateMeters() {
