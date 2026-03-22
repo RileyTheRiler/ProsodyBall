@@ -9602,31 +9602,12 @@ class VoxBallGame {
 
     // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce()
     // to minimize closure allocation and GC overhead during high-frequency processing paths.
-    // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce() to prevent GC spikes in hot loops
-    const avg = (arr) => {
-      if (arr.length === 0) return 0;
-      let sum = 0;
-      for (let i = 0; i < arr.length; i++) sum += arr[i];
-      return sum / arr.length;
-    };
-    // ⚡ Bolt: Use traditional for loop instead of .reduce to prevent
-    // GC spikes and function call overhead in this hot path
     const avg = (arr) => {
       const len = arr.length;
       if (len === 0) return 0;
       let sum = 0;
       for (let i = 0; i < len; i++) sum += arr[i];
       return sum / len;
-    // ⚡ Bolt Optimization: Replacing array.reduce with standard for loops in a hot path
-    // _crystallizePrismSyllable is called frequently in per-frame logic when auto-crystallizing
-    // or processing timeouts. Avoiding higher-order array methods reduces GC pressure.
-    const avg = (arr) => {
-      if (arr.length === 0) return 0;
-      let sum = 0;
-      for (let i = 0; i < arr.length; i++) {
-        sum += arr[i];
-      }
-      return sum / arr.length;
     };
 
     const median = (arr) => {
@@ -9663,17 +9644,6 @@ class VoxBallGame {
         pitchSqSum += (syl.pitchSamples[i] - pitchMean) ** 2;
       }
       const pitchVar = pitchSqSum / syl.pitchSamples.length;
-      // ⚡ Bolt: Traditional loop for variance calculation (avoids array reduction GC)
-      let sumSq = 0;
-      for (let i = 0; i < pLen; i++) {
-        sumSq += (syl.pitchSamples[i] - pitchMean) ** 2;
-      }
-      const pitchVar = sumSq / pLen;
-      let pitchVarSum = 0;
-      for (let i = 0; i < syl.pitchSamples.length; i++) {
-        pitchVarSum += (syl.pitchSamples[i] - pitchMean) ** 2;
-      }
-      const pitchVar = pitchVarSum / syl.pitchSamples.length;
       const pitchStdDev = Math.sqrt(pitchVar);
       // Coefficient of variation — normalized stability measure
       const cv = pitchMean > 0 ? pitchStdDev / pitchMean : 0;
@@ -9690,17 +9660,6 @@ class VoxBallGame {
         eSqSum += (syl.energySamples[i] - eMean) ** 2;
       }
       const eVar = eSqSum / syl.energySamples.length;
-      // ⚡ Bolt: Traditional loop for variance calculation
-      let sumSq = 0;
-      for (let i = 0; i < eLen; i++) {
-        sumSq += (syl.energySamples[i] - eMean) ** 2;
-      }
-      const eVar = sumSq / eLen;
-      let eVarSum = 0;
-      for (let i = 0; i < syl.energySamples.length; i++) {
-        eVarSum += (syl.energySamples[i] - eMean) ** 2;
-      }
-      const eVar = eVarSum / syl.energySamples.length;
       const eCV = eMean > 0 ? Math.sqrt(eVar) / eMean : 0;
       energyConsistency = Math.max(0, 1 - eCV * 3);
     }
