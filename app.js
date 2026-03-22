@@ -491,15 +491,30 @@ export class VoiceAnalyzer {
 
       if (this.noiseCalibrationTimer >= this.noiseCalibrationDuration) {
         const samples = this.noiseCalibrationSamples;
-        const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
-        const std = Math.sqrt(samples.reduce((a, v) => a + (v - mean) ** 2, 0) / samples.length);
+        let sum = 0, sqSum = 0;
+        for (let i = 0; i < samples.length; i++) {
+          sum += samples[i];
+          sqSum += samples[i] * samples[i];
+        }
+        const mean = sum / samples.length;
+        // Optimize standard deviation with single pass: Math.sqrt(E[X^2] - (E[X])^2)
+        const std = Math.sqrt(Math.max(0, (sqSum / samples.length) - (mean * mean)));
+
         // Set floor at mean + 4*std — aggressively above ambient noise (fans, AC, etc)
         this.noiseFloor = Math.max(0.01, mean + std * 4);
         this.syllableThreshold = this.noiseFloor * 1.2;
         this.sustainedThreshold = this.noiseFloor * 1.5;
+
         // HF noise floor — mean + 2*std of HF energy during silence
-        const hfMean = this.hfCalibrationSamples.reduce((a, b) => a + b, 0) / this.hfCalibrationSamples.length;
-        const hfStd = Math.sqrt(this.hfCalibrationSamples.reduce((a, v) => a + (v - hfMean) ** 2, 0) / this.hfCalibrationSamples.length);
+        const hfSamples = this.hfCalibrationSamples;
+        let hfSum = 0, hfSqSum = 0;
+        for (let i = 0; i < hfSamples.length; i++) {
+          hfSum += hfSamples[i];
+          hfSqSum += hfSamples[i] * hfSamples[i];
+        }
+        const hfMean = hfSum / hfSamples.length;
+        const hfStd = Math.sqrt(Math.max(0, (hfSqSum / hfSamples.length) - (hfMean * hfMean)));
+
         this.hfNoiseFloor = hfMean + hfStd * 2;
         this.isCalibrated = true;
         console.log(`Noise calibrated: floor=${(this.noiseFloor * 1000).toFixed(1)}mRMS, hfFloor=${this.hfNoiseFloor.toFixed(4)} (ambient=${(mean * 1000).toFixed(1)}mRMS)`);
