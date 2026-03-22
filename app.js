@@ -9672,6 +9672,8 @@ class VoxBallGame {
     const syl = this.prismReader.syllables[index];
     if (!syl || syl.state === 'crystallized') return;
 
+    // ⚡ Bolt: Use traditional for-loop instead of reduce to avoid function call
+    // overhead and garbage collection in this per-frame hot loop.
     // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce()
     // to minimize closure allocation and GC overhead during high-frequency processing paths.
     const avg = (arr) => {
@@ -9729,6 +9731,14 @@ class VoxBallGame {
     const pLen = syl.pitchSamples.length;
     if (pLen >= 2) {
       const pitchMean = avg(syl.pitchSamples);
+      // ⚡ Bolt: Replace reduce with traditional loop for performance
+      let sumSq = 0;
+      const len = syl.pitchSamples.length;
+      for (let i = 0; i < len; i++) {
+        const diff = syl.pitchSamples[i] - pitchMean;
+        sumSq += diff * diff;
+      }
+      const pitchVar = sumSq / len;
       let pitchSqSum = 0;
       for (let i = 0; i < pLen; i++) {
         pitchSqSum += (syl.pitchSamples[i] - pitchMean) ** 2;
@@ -9756,6 +9766,14 @@ class VoxBallGame {
     const eLen = syl.energySamples.length;
     if (eLen >= 2) {
       const eMean = avg(syl.energySamples);
+      // ⚡ Bolt: Replace reduce with traditional loop for performance
+      let sumSq = 0;
+      const len = syl.energySamples.length;
+      for (let i = 0; i < len; i++) {
+        const diff = syl.energySamples[i] - eMean;
+        sumSq += diff * diff;
+      }
+      const eVar = sumSq / len;
       let eSqSum = 0;
       for (let i = 0; i < eLen; i++) {
         eSqSum += (syl.energySamples[i] - eMean) ** 2;
