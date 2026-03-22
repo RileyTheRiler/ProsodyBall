@@ -9659,6 +9659,9 @@ class VoxBallGame {
     const syl = this.prismReader.syllables[index];
     if (!syl || syl.state === 'crystallized') return;
 
+    // ⚡ Bolt Optimization: Replacing array.reduce with standard for loops in a hot path
+    // _crystallizePrismSyllable is called frequently in per-frame logic when auto-crystallizing
+    // or processing timeouts. Avoiding higher-order array methods reduces GC pressure.
     // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce()
     // to minimize closure allocation and GC overhead during high-frequency processing paths.
     const avg = (arr) => {
@@ -10512,7 +10515,13 @@ class VoxBallGame {
       const progress = crystallized.length / Math.max(1, pr.syllables.length);
 
       if (crystallized.length > 0) {
-        const avgHue = crystallized.reduce((s, c) => s + c.hue, 0) / crystallized.length;
+        // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce()
+        // to prevent GC spikes in hot render paths
+        let sumHue = 0;
+        for (let i = 0; i < crystallized.length; i++) {
+          sumHue += crystallized[i].hue;
+        }
+        const avgHue = sumHue / crystallized.length;
         const recentHue = crystallized.length > 0 ? crystallized[crystallized.length - 1].hue : avgHue;
 
         // Central ambient glow that shifts with reading progress
