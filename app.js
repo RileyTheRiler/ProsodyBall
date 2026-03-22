@@ -9662,6 +9662,13 @@ class VoxBallGame {
     // ⚡ Bolt Optimization: Replacing array.reduce with standard for loops in a hot path
     // _crystallizePrismSyllable is called frequently in per-frame logic when auto-crystallizing
     // or processing timeouts. Avoiding higher-order array methods reduces GC pressure.
+    const avg = (arr) => {
+      if (arr.length === 0) return 0;
+      let sum = 0;
+      for (let i = 0; i < arr.length; i++) {
+        sum += arr[i];
+      }
+      return sum / arr.length;
     // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce()
     // to minimize closure allocation and GC overhead during high-frequency processing paths.
     const avg = (arr) => {
@@ -10906,6 +10913,19 @@ class VoxBallGame {
     }
 
     // Render stats grid
+    grid.innerHTML = '';
+    const gridFrag = document.createDocumentFragment();
+    for (const s of stats) {
+      const statEl = document.createElement('div');
+      statEl.className = 'summary-stat' + (s.wide ? ' wide' : '');
+      const valEl = document.createElement('div');
+      valEl.className = 'summary-stat-value';
+      valEl.textContent = s.value;
+      const lblEl = document.createElement('div');
+      lblEl.className = 'summary-stat-label';
+      lblEl.textContent = s.label;
+      statEl.append(valEl, lblEl);
+      gridFrag.append(statEl);
     grid.textContent = '';
     const gridFrag = document.createDocumentFragment();
     for (const s of stats) {
@@ -10934,6 +10954,7 @@ class VoxBallGame {
         const slice = history.slice(i, i + step);
         bars.push(slice.reduce((a, b) => a + b, 0) / slice.length);
       }
+      bar.innerHTML = '';
 
       bar.textContent = '';
       const barFrag = document.createDocumentFragment();
@@ -10943,6 +10964,7 @@ class VoxBallGame {
         const seg = document.createElement('div');
         seg.className = 'bar-seg';
         seg.style.height = `${h}px`;
+        seg.style.background = `hsl(${hue},60%,${45 + v * 20}%)`;
         seg.style.background = `hsl(${hue}, 60%, ${45 + v * 20}%)`;
         barFrag.append(seg);
       }
@@ -10980,6 +11002,8 @@ class VoxBallGame {
     const active = Math.floor(this.teleprompterIndex);
     const start = Math.max(0, active - 8);
     const end = Math.min(words.length, active + 14);
+
+    overlay.innerHTML = '';
     const fragment = document.createDocumentFragment();
     overlay.textContent = '';
     const frag = document.createDocumentFragment();
@@ -10987,6 +11011,8 @@ class VoxBallGame {
       const span = document.createElement('span');
       if (i === active) span.className = 'active-word';
       span.textContent = words[i];
+      frag.append(span);
+      frag.append(document.createTextNode(' '));
       fragment.appendChild(span);
       fragment.appendChild(document.createTextNode(' '));
     }
