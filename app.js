@@ -10993,6 +10993,10 @@ class VoxBallGame {
     grid.textContent = '';
     // Render stats grid
     grid.innerHTML = '';
+    const statsFrag = document.createDocumentFragment();
+    stats.forEach(s => {
+      const el = document.createElement('div');
+      el.className = 'summary-stat' + (s.wide ? ' wide' : '');
     const gridFrag = document.createDocumentFragment();
     for (const s of stats) {
       const statEl = document.createElement('div');
@@ -11003,6 +11007,10 @@ class VoxBallGame {
       const lblEl = document.createElement('div');
       lblEl.className = 'summary-stat-label';
       lblEl.textContent = s.label;
+      el.append(valEl, lblEl);
+      statsFrag.append(el);
+    });
+    grid.append(statsFrag);
       statEl.append(valEl, lblEl);
       gridFrag.append(statEl);
     grid.textContent = '';
@@ -11036,6 +11044,8 @@ class VoxBallGame {
         bars.push(slice.reduce((a, b) => a + b, 0) / slice.length);
       }
       bar.innerHTML = '';
+      const barFrag = document.createDocumentFragment();
+      bars.forEach(v => {
 
       bar.textContent = '';
       const barFrag = document.createDocumentFragment();
@@ -11044,6 +11054,10 @@ class VoxBallGame {
         const hue = 220 + v * 80; // blue → purple as prosody increases
         const seg = document.createElement('div');
         seg.className = 'bar-seg';
+        seg.style.height = h + 'px';
+        seg.style.background = `hsl(${hue},60%,${45 + v * 20}%)`;
+        barFrag.append(seg);
+      });
         seg.style.height = `${h}px`;
         seg.style.background = `hsl(${hue},60%,${45 + v * 20}%)`;
         seg.style.background = `hsl(${hue}, 60%, ${45 + v * 20}%)`;
