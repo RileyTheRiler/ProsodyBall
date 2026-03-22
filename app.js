@@ -5590,7 +5590,12 @@ class VoxBallGame {
       t.phase += dt * (1.5 + ps);
     }
     if (m.syllable > 0.5 && ps > 0.1) {
-      const bS = Math.max(...c.points.map(p => p.r)) * 0.8;
+      // ⚡ Bolt Optimization: Replace Math.max spread with traditional loop to avoid GC spikes
+      let maxR = 0;
+      for (let i = 0; i < c.points.length; i++) {
+        if (c.points[i].r > maxR) maxR = c.points[i].r;
+      }
+      const bS = maxR * 0.8;
       c.pulseRings.push({ r: bS, maxR: bS * 3, life: 1 });
     }
     for (let i = c.pulseRings.length - 1; i >= 0; i--) {
@@ -6042,7 +6047,13 @@ class VoxBallGame {
       ctx.bezierCurveTo(x1 + (x2 - x0) * T, y1 + (y2 - y0) * T, x2 - (x3 - x1) * T, y2 - (y3 - y1) * T, x2, y2);
     }
     ctx.closePath();
-    const bR = Math.max(...pts.map(p => p.r));
+
+    // ⚡ Bolt Optimization: Replace Math.max spread with traditional loop to avoid GC spikes
+    let bR = 0;
+    for (let i = 0; i < n; i++) {
+      if (pts[i].r > bR) bR = pts[i].r;
+    }
+
     const bG = ctx.createRadialGradient(0, 0, 0, 0, 0, bR);
     bG.addColorStop(0, `hsla(${hue},${sat}%,${Math.min(95, lit + 25)}%,${0.6 + c.glow * 0.35})`);
     bG.addColorStop(0.4, `hsla(${hue},${sat}%,${lit}%,${0.4 + c.glow * 0.3})`);
@@ -9715,6 +9726,9 @@ class VoxBallGame {
     const pLen = syl.pitchSamples.length;
     if (pLen >= 2) {
       const pitchMean = avg(syl.pitchSamples);
+      // ⚡ Bolt: Traditional loop for variance calculation (avoids array reduction GC)
+      let sumSq = 0;
+      for (let i = 0; i < pLen; i++) {
       let pitchSqSum = 0;
       for (let i = 0; i < pLen; i++) {
         pitchSqSum += (syl.pitchSamples[i] - pitchMean) ** 2;
@@ -9734,6 +9748,9 @@ class VoxBallGame {
     const eLen = syl.energySamples.length;
     if (eLen >= 2) {
       const eMean = avg(syl.energySamples);
+      // ⚡ Bolt: Traditional loop for variance calculation
+      let sumSq = 0;
+      for (let i = 0; i < eLen; i++) {
       let eSqSum = 0;
       for (let i = 0; i < eLen; i++) {
         eSqSum += (syl.energySamples[i] - eMean) ** 2;
