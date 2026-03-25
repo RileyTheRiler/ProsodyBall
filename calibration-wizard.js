@@ -21,7 +21,7 @@ export class CalibrationWizard {
         } else {
           this.descEl.appendChild(desc);
         }
-      if (desc instanceof Node) {
+      } else if (desc instanceof Node) {
         this.descEl.append(desc);
       } else {
         this.descEl.textContent = desc;
@@ -208,14 +208,6 @@ export class CalibrationWizard {
       }
 
       if (vowelPassed && elapsed >= minVowelTime) {
-        const vowelGreatDesc = document.createDocumentFragment();
-        vowelGreatDesc.append('✅ Great vowel sustain detected! Click ');
-        vowelGreatDesc.append(Object.assign(document.createElement('strong'), { textContent: 'Next' }));
-        vowelGreatDesc.append(' to continue.');
-
-        this._setStep(
-          'Step 2 of 2 · Hold a Vowel ✓',
-          vowelGreatDesc,
         const passFinalDesc = document.createDocumentFragment();
         passFinalDesc.append('✅ Great vowel sustain detected! Click ', Object.assign(document.createElement('strong'), { textContent: 'Next' }), ' to continue.');
         this._setStep(
