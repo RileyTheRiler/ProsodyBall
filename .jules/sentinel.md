@@ -47,3 +47,7 @@
 **Vulnerability:** Unsafe assignment to `innerHTML` using a template string inside a loop (`view.join(' ')`) in `app.js` (`renderTeleprompter`) presented an XSS vector if any of the array sources were tampered with, despite the use of an `escapeHtml()` helper.
 **Learning:** Any dynamic string construction for `innerHTML` poses a risk and often relies on secondary helper functions like `escapeHtml` that can easily fail or be misused.
 **Prevention:** Eliminate `innerHTML` by rebuilding the `DocumentFragment` dynamically using `document.createDocumentFragment()`, `document.createElement('span')`, and `textContent`.
+## 2026-03-23 - [DOM-based XSS Risk via DOM Construction in Multiple Components]
+**Vulnerability:** Safe DOM construction using `document.createDocumentFragment()` and `.append()` was not consistently applied in `app.js` (e.g. `_showSessionSummary`, `renderTeleprompter`) or `calibration-wizard.js`. This allowed potential injection if dynamic data was ever used within loops with string concatenation, and led to conflicts with `innerHTML`.
+**Learning:** Relying on `innerHTML` for UI construction is inherently risky. Furthermore, manual DOM mocks in tests (like `MockEl`) require robust state initialization (e.g., `this.childNodes`) to correctly support safe DOM traversal methods like `.append()`.
+**Prevention:** Replace all complex `innerHTML` assignments with safe programmatic elements (`DocumentFragment`, `.createElement()`, `.textContent`). Ensure any manual DOM mocks fully implement necessary Node properties.
