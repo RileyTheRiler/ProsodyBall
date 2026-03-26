@@ -34,6 +34,7 @@ class MockEl {
       if (typeof n === 'string') {
         this.textContent += n;
       } else {
+        this.children.push(n);
         this.childNodes.push(n);
         this.textContent += n.textContent || '';
       }

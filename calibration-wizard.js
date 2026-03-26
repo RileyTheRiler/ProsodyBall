@@ -15,6 +15,7 @@ export class CalibrationWizard {
     if (this.titleEl) this.titleEl.textContent = title;
     if (this.descEl) {
       this.descEl.textContent = '';
+      if (desc instanceof Node) {
       if (typeof desc === 'object' && desc !== null && (desc.nodeType !== undefined || Array.isArray(desc))) {
         if (Array.isArray(desc)) {
           this.descEl.append(...desc);
@@ -23,6 +24,8 @@ export class CalibrationWizard {
         }
       } else if (desc instanceof Node) {
         this.descEl.append(desc);
+      } else if (Array.isArray(desc)) {
+        this.descEl.append(...desc);
       } else {
         this.descEl.textContent = desc;
       }

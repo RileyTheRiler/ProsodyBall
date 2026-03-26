@@ -9726,6 +9726,15 @@ class VoxBallGame {
     const pLen = syl.pitchSamples.length;
     if (pLen >= 2) {
       const pitchMean = avg(syl.pitchSamples);
+      // ⚡ Bolt: Replace reduce with traditional loop for performance
+      // ⚡ Bolt: Traditional loop for variance calculation (avoids array reduction GC)
+      let sumSq = 0;
+      const len = syl.pitchSamples.length;
+      for (let i = 0; i < len; i++) {
+        const diff = syl.pitchSamples[i] - pitchMean;
+        sumSq += diff * diff;
+      }
+      const pitchVar = sumSq / len;
       // ⚡ Bolt: Traditional loop for variance calculation (avoids array reduction GC)
       let pitchSqSum = 0;
       for (let i = 0; i < pLen; i++) {
@@ -9743,6 +9752,14 @@ class VoxBallGame {
     const eLen = syl.energySamples.length;
     if (eLen >= 2) {
       const eMean = avg(syl.energySamples);
+      // ⚡ Bolt: Replace reduce with traditional loop for performance
+      // ⚡ Bolt: Traditional loop for variance calculation
+      let eSumSq = 0;
+      for (let i = 0; i < eLen; i++) {
+        const diff = syl.energySamples[i] - eMean;
+        eSumSq += diff * diff;
+      }
+      const eVar = eSumSq / eLen;
       // ⚡ Bolt: Traditional loop for variance calculation
       let eSqSum = 0;
       for (let i = 0; i < eLen; i++) {
@@ -10993,17 +11010,16 @@ class VoxBallGame {
       const bars = [];
       for (let i = 0; i < history.length; i += step) {
         const slice = history.slice(i, i + step);
+        const v = slice.reduce((a, b) => a + b, 0) / slice.length;
         bars.push(slice.reduce((a, b) => a + b, 0) / slice.length);
       }
 
-      bar.textContent = '';
-      const barFrag = document.createDocumentFragment();
-      for (const v of bars) {
         const h = Math.max(2, v * 30);
         const hue = 220 + v * 80; // blue → purple as prosody increases
         const seg = document.createElement('div');
         seg.className = 'bar-seg';
         seg.style.height = `${h}px`;
+        seg.style.background = `hsl(${hue}, 60%, ${45 + v * 20}%)`;
         seg.style.backgroundColor = `hsl(${Math.round(hue)}, 60%, ${Math.round(45 + v * 20)}%)`;
         barFrag.append(seg);
       }
@@ -11042,8 +11058,6 @@ class VoxBallGame {
     const start = Math.max(0, active - 8);
     const end = Math.min(words.length, active + 14);
 
-    overlay.innerHTML = '';
-    const fragment = document.createDocumentFragment();
     overlay.textContent = '';
     const frag = document.createDocumentFragment();
     for (let i = start; i < end; i++) {
@@ -11051,6 +11065,7 @@ class VoxBallGame {
       if (i === active) span.className = 'active-word';
       span.textContent = words[i];
       frag.append(span);
+      if (i < end - 1) frag.append(' ');
       if (i < end - 1) frag.append(document.createTextNode(' '));
     }
     overlay.textContent = '';
