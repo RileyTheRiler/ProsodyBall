@@ -2892,7 +2892,7 @@ class VoxBallGame {
       const link = document.createElement('a');
       link.href = directUrl;
       link.target = '_blank';
-      link.rel = 'noopener';
+      link.rel = 'noopener noreferrer';
       link.textContent = 'Open in new tab for full access ↗';
       iframeNotice.appendChild(link);
       iframeNotice.classList.add('show');
@@ -3167,6 +3167,7 @@ class VoxBallGame {
           const link = document.createElement('a');
           link.href = window.location.href;
           link.target = '_blank';
+          link.rel = 'noopener noreferrer';
           link.textContent = 'Try opening in a new tab ↗';
           errNode.appendChild(link);
         } else {
@@ -3214,6 +3215,7 @@ class VoxBallGame {
             const link = document.createElement('a');
             link.href = window.location.href;
             link.target = '_blank';
+            link.rel = 'noopener noreferrer';
             link.textContent = 'Open in a new tab for full mic access ↗';
             msg.appendChild(link);
           } else {
@@ -9735,12 +9737,6 @@ class VoxBallGame {
         sumSq += diff * diff;
       }
       const pitchVar = sumSq / len;
-      // ⚡ Bolt: Traditional loop for variance calculation (avoids array reduction GC)
-      let pitchSqSum = 0;
-      for (let i = 0; i < pLen; i++) {
-        pitchSqSum += (syl.pitchSamples[i] - pitchMean) ** 2;
-      }
-      const pitchVar = pitchSqSum / pLen;
       const pitchStdDev = Math.sqrt(pitchVar);
       // Coefficient of variation — normalized stability measure
       const cv = pitchMean > 0 ? pitchStdDev / pitchMean : 0;
@@ -9760,12 +9756,6 @@ class VoxBallGame {
         eSumSq += diff * diff;
       }
       const eVar = eSumSq / eLen;
-      // ⚡ Bolt: Traditional loop for variance calculation
-      let eSqSum = 0;
-      for (let i = 0; i < eLen; i++) {
-        eSqSum += (syl.energySamples[i] - eMean) ** 2;
-      }
-      const eVar = eSqSum / eLen;
       const eCV = eMean > 0 ? Math.sqrt(eVar) / eMean : 0;
       energyConsistency = Math.max(0, 1 - eCV * 3);
     }
@@ -11011,15 +11001,14 @@ class VoxBallGame {
       for (let i = 0; i < history.length; i += step) {
         const slice = history.slice(i, i + step);
         const v = slice.reduce((a, b) => a + b, 0) / slice.length;
-        bars.push(slice.reduce((a, b) => a + b, 0) / slice.length);
+        bars.push(v);
       }
-
+      for (const v of bars) {
         const h = Math.max(2, v * 30);
         const hue = 220 + v * 80; // blue → purple as prosody increases
         const seg = document.createElement('div');
         seg.className = 'bar-seg';
         seg.style.height = `${h}px`;
-        seg.style.background = `hsl(${hue}, 60%, ${45 + v * 20}%)`;
         seg.style.backgroundColor = `hsl(${Math.round(hue)}, 60%, ${Math.round(45 + v * 20)}%)`;
         barFrag.append(seg);
       }
