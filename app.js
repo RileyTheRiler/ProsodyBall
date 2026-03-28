@@ -2485,7 +2485,11 @@ class VoxBallGame {
         if (this._recBuffers.length === 0) { resolve(); return; }
 
         // Merge all Float32 buffers
-        const totalLen = this._recBuffers.reduce((sum, b) => sum + b.length, 0);
+        // ⚡ Bolt: Replace reduce with traditional loop for performance
+        let totalLen = 0;
+        for (let i = 0; i < this._recBuffers.length; i++) {
+          totalLen += this._recBuffers[i].length;
+        }
         const merged = new Float32Array(totalLen);
         let offset = 0;
         for (const buf of this._recBuffers) {
@@ -9735,12 +9739,6 @@ class VoxBallGame {
         sumSq += diff * diff;
       }
       const pitchVar = sumSq / len;
-      // ⚡ Bolt: Traditional loop for variance calculation (avoids array reduction GC)
-      let pitchSqSum = 0;
-      for (let i = 0; i < pLen; i++) {
-        pitchSqSum += (syl.pitchSamples[i] - pitchMean) ** 2;
-      }
-      const pitchVar = pitchSqSum / pLen;
       const pitchStdDev = Math.sqrt(pitchVar);
       // Coefficient of variation — normalized stability measure
       const cv = pitchMean > 0 ? pitchStdDev / pitchMean : 0;
@@ -9760,12 +9758,6 @@ class VoxBallGame {
         eSumSq += diff * diff;
       }
       const eVar = eSumSq / eLen;
-      // ⚡ Bolt: Traditional loop for variance calculation
-      let eSqSum = 0;
-      for (let i = 0; i < eLen; i++) {
-        eSqSum += (syl.energySamples[i] - eMean) ** 2;
-      }
-      const eVar = eSqSum / eLen;
       const eCV = eMean > 0 ? Math.sqrt(eVar) / eMean : 0;
       energyConsistency = Math.max(0, 1 - eCV * 3);
     }
@@ -10918,9 +10910,12 @@ class VoxBallGame {
 
     // Average prosody
     if (sess.prosodyHistory.length > 0) {
-      const avgProsody = Math.round(
-        (sess.prosodyHistory.reduce((a, b) => a + b, 0) / sess.prosodyHistory.length) * 100
-      );
+      // ⚡ Bolt: Replace reduce with traditional loop for performance
+      let prosodySum = 0;
+      for (let i = 0; i < sess.prosodyHistory.length; i++) {
+        prosodySum += sess.prosodyHistory[i];
+      }
+      const avgProsody = Math.round((prosodySum / sess.prosodyHistory.length) * 100);
       stats.push({ value: `${avgProsody}%`, label: 'Avg Prosody' });
     } else {
       stats.push({ value: '—', label: 'Avg Prosody' });
@@ -10961,8 +10956,12 @@ class VoxBallGame {
       const crystallized = pr.syllables.filter(s => s.state === 'crystallized');
       const total = pr.syllables.length;
       const scored = crystallized.filter(s => s.vowelScore > 0);
-      const avgScore = scored.length > 0
-        ? scored.reduce((sum, s) => sum + s.vowelScore, 0) / scored.length : 0;
+      // ⚡ Bolt: Replace reduce with traditional loop for performance
+      let scoreSum = 0;
+      for (let i = 0; i < scored.length; i++) {
+        scoreSum += scored[i].vowelScore;
+      }
+      const avgScore = scored.length > 0 ? scoreSum / scored.length : 0;
       const strainCount = crystallized.filter(s => s.strainFlag).length;
       const elapsed = pr.firstOnsetTime > 0 ? (performance.now() - pr.firstOnsetTime) / 1000 : 0;
       const wpm = elapsed > 1 ? Math.round((pr.wordsCompleted || 0) / (elapsed / 60)) : 0;
@@ -11010,10 +11009,16 @@ class VoxBallGame {
       const bars = [];
       for (let i = 0; i < history.length; i += step) {
         const slice = history.slice(i, i + step);
-        const v = slice.reduce((a, b) => a + b, 0) / slice.length;
-        bars.push(slice.reduce((a, b) => a + b, 0) / slice.length);
+        // ⚡ Bolt: Replace duplicate reduce calls with single traditional loop
+        let sliceSum = 0;
+        for (let j = 0; j < slice.length; j++) {
+          sliceSum += slice[j];
+        }
+        const v = sliceSum / slice.length;
+        bars.push(v);
       }
 
+      for (const v of bars) {
         const h = Math.max(2, v * 30);
         const hue = 220 + v * 80; // blue → purple as prosody increases
         const seg = document.createElement('div');
