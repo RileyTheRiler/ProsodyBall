@@ -2896,7 +2896,7 @@ class VoxBallGame {
       const link = document.createElement('a');
       link.href = directUrl;
       link.target = '_blank';
-      link.rel = 'noopener';
+      link.rel = 'noopener noreferrer';
       link.textContent = 'Open in new tab for full access ↗';
       iframeNotice.appendChild(link);
       iframeNotice.classList.add('show');
@@ -3171,6 +3171,7 @@ class VoxBallGame {
           const link = document.createElement('a');
           link.href = window.location.href;
           link.target = '_blank';
+          link.rel = 'noopener noreferrer';
           link.textContent = 'Try opening in a new tab ↗';
           errNode.appendChild(link);
         } else {
@@ -3218,6 +3219,7 @@ class VoxBallGame {
             const link = document.createElement('a');
             link.href = window.location.href;
             link.target = '_blank';
+            link.rel = 'noopener noreferrer';
             link.textContent = 'Open in a new tab for full mic access ↗';
             msg.appendChild(link);
           } else {
@@ -9738,6 +9740,7 @@ class VoxBallGame {
         sumSq += diff * diff;
       }
       const pitchVar = sumSq / pLen;
+      const pitchVar = sumSq / len;
       const pitchStdDev = Math.sqrt(pitchVar);
       // Coefficient of variation — normalized stability measure
       const cv = pitchMean > 0 ? pitchStdDev / pitchMean : 0;
@@ -11020,6 +11023,10 @@ class VoxBallGame {
         }
         const v = sum / slice.length;
 
+        const v = slice.reduce((a, b) => a + b, 0) / slice.length;
+        bars.push(v);
+      }
+      for (const v of bars) {
         const h = Math.max(2, v * 30);
         const hue = 220 + v * 80; // blue → purple as prosody increases
         const seg = document.createElement('div');
