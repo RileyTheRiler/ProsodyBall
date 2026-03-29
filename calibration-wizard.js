@@ -21,6 +21,7 @@ export class CalibrationWizard {
         } else {
           this.descEl.appendChild(desc);
         }
+
       } else {
         this.descEl.textContent = desc;
       }

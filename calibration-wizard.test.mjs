@@ -23,11 +23,13 @@ class MockEl {
     this.children.push(child);
   }
   append(...nodes) {
+
     if (!this.childNodes) this.childNodes = [];
     for (const n of nodes) {
       if (typeof n === 'string') {
         this.textContent += n;
       } else {
+        this.children.push(n);
         this.childNodes.push(n);
         this.textContent += n.textContent || '';
       }
