@@ -21,6 +21,10 @@ export class CalibrationWizard {
         } else {
           this.descEl.appendChild(desc);
         }
+      if (desc instanceof Node) {
+        this.descEl.append(desc);
+      } else if (Array.isArray(desc)) {
+        this.descEl.append(...desc);
       } else {
         this.descEl.textContent = desc;
       }
