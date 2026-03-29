@@ -11002,6 +11002,8 @@ class VoxBallGame {
         const slice = history.slice(i, i + step);
         const v = slice.reduce((a, b) => a + b, 0) / slice.length;
         bars.push(v);
+      }
+      for (const v of bars) {
         const h = Math.max(2, v * 30);
         const hue = 220 + v * 80; // blue → purple as prosody increases
         const seg = document.createElement('div');
