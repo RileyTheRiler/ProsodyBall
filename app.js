@@ -11024,6 +11024,7 @@ class VoxBallGame {
         const v = sum / slice.length;
 
         const v = slice.reduce((a, b) => a + b, 0) / slice.length;
+
         bars.push(v);
       }
       for (const v of bars) {
