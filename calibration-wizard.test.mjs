@@ -23,12 +23,7 @@ class MockEl {
     this.children.push(child);
   }
   append(...nodes) {
-    for (const node of nodes) {
-      this.children.push(node);
-    }
-    this.childNodes = [];
-  }
-  append(...nodes) {
+    if (!this.childNodes) this.childNodes = [];
     for (const n of nodes) {
       if (typeof n === 'string') {
         this.textContent += n;
@@ -67,7 +62,6 @@ function buildWizard() {
   global.document = {
     getElementById: (id) => els[id] || null,
     createElement: (tag) => new MockEl(),
-    createDocumentFragment: () => new MockEl()
     createDocumentFragment: () => {
       const frag = new MockEl();
       Object.setPrototypeOf(frag, new Proxy(MockEl.prototype, {

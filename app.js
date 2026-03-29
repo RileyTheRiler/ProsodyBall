@@ -9687,26 +9687,6 @@ class VoxBallGame {
     const syl = this.prismReader.syllables[index];
     if (!syl || syl.state === 'crystallized') return;
 
-    // ⚡ Bolt: Use traditional for-loop instead of reduce to avoid function call
-    // overhead and garbage collection in this per-frame hot loop.
-    // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce()
-    // to minimize closure allocation and GC overhead during high-frequency processing paths.
-    const avg = (arr) => {
-      if (arr.length === 0) return 0;
-      let sum = 0;
-      for (let i = 0; i < arr.length; i++) sum += arr[i];
-      return sum / arr.length;
-    // ⚡ Bolt Optimization: Replacing array.reduce with standard for loops in a hot path
-    // _crystallizePrismSyllable is called frequently in per-frame logic when auto-crystallizing
-    // or processing timeouts. Avoiding higher-order array methods reduces GC pressure.
-    const avg = (arr) => {
-      const len = arr.length;
-      if (len === 0) return 0;
-      let sum = 0;
-      for (let i = 0; i < len; i++) {
-        sum += arr[i];
-      }
-      return sum / arr.length;
     // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce()
     // to minimize closure allocation and GC overhead during high-frequency processing paths.
     const avg = (arr) => {
@@ -9747,29 +9727,12 @@ class VoxBallGame {
     if (pLen >= 2) {
       const pitchMean = avg(syl.pitchSamples);
       // ⚡ Bolt: Replace reduce with traditional loop for performance
-      let sumSq = 0;
-      const len = syl.pitchSamples.length;
-      for (let i = 0; i < len; i++) {
+      let pitchSqSum = 0;
+      for (let i = 0; i < pLen; i++) {
         const diff = syl.pitchSamples[i] - pitchMean;
-        sumSq += diff * diff;
-      }
-      const pitchVar = sumSq / len;
-      let pitchSqSum = 0;
-      for (let i = 0; i < pLen; i++) {
-        pitchSqSum += (syl.pitchSamples[i] - pitchMean) ** 2;
+        pitchSqSum += diff * diff;
       }
       const pitchVar = pitchSqSum / pLen;
-      // ⚡ Bolt: Traditional loop for variance calculation (avoids array reduction GC)
-      let sumSq = 0;
-      for (let i = 0; i < pLen; i++) {
-      let pitchSqSum = 0;
-      for (let i = 0; i < pLen; i++) {
-        pitchSqSum += (syl.pitchSamples[i] - pitchMean) ** 2;
-      }
-      const pitchVar = pitchSqSum / pLen;
-        sumSq += (syl.pitchSamples[i] - pitchMean) ** 2;
-      }
-      const pitchVar = sumSq / pLen;
       const pitchStdDev = Math.sqrt(pitchVar);
       // Coefficient of variation — normalized stability measure
       const cv = pitchMean > 0 ? pitchStdDev / pitchMean : 0;
@@ -9782,29 +9745,12 @@ class VoxBallGame {
     if (eLen >= 2) {
       const eMean = avg(syl.energySamples);
       // ⚡ Bolt: Replace reduce with traditional loop for performance
-      let sumSq = 0;
-      const len = syl.energySamples.length;
-      for (let i = 0; i < len; i++) {
+      let eSqSum = 0;
+      for (let i = 0; i < eLen; i++) {
         const diff = syl.energySamples[i] - eMean;
-        sumSq += diff * diff;
-      }
-      const eVar = sumSq / len;
-      let eSqSum = 0;
-      for (let i = 0; i < eLen; i++) {
-        eSqSum += (syl.energySamples[i] - eMean) ** 2;
+        eSqSum += diff * diff;
       }
       const eVar = eSqSum / eLen;
-      // ⚡ Bolt: Traditional loop for variance calculation
-      let sumSq = 0;
-      for (let i = 0; i < eLen; i++) {
-      let eSqSum = 0;
-      for (let i = 0; i < eLen; i++) {
-        eSqSum += (syl.energySamples[i] - eMean) ** 2;
-      }
-      const eVar = eSqSum / eLen;
-        sumSq += (syl.energySamples[i] - eMean) ** 2;
-      }
-      const eVar = sumSq / eLen;
       const eCV = eMean > 0 ? Math.sqrt(eVar) / eMean : 0;
       energyConsistency = Math.max(0, 1 - eCV * 3);
     }
@@ -10632,15 +10578,6 @@ class VoxBallGame {
       if (crystCount > 0) {
         const avgHue = hueSum / crystCount;
         const recentHue = lastCrystSyl.hue;
-      if (crystallized.length > 0) {
-        // ⚡ Bolt Optimization: Use traditional for loops instead of .reduce()
-        // to prevent GC spikes in hot render paths
-        let sumHue = 0;
-        for (let i = 0; i < crystallized.length; i++) {
-          sumHue += crystallized[i].hue;
-        }
-        const avgHue = sumHue / crystallized.length;
-        const recentHue = crystallized.length > 0 ? crystallized[crystallized.length - 1].hue : avgHue;
 
         // Central ambient glow that shifts with reading progress
         const grad = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w * 0.6);
@@ -11025,29 +10962,6 @@ class VoxBallGame {
 
     // Render stats grid (Security enhancement: safe DOM construction)
     grid.textContent = '';
-    // Render stats grid
-    grid.innerHTML = '';
-    const statsFrag = document.createDocumentFragment();
-    stats.forEach(s => {
-      const el = document.createElement('div');
-      el.className = 'summary-stat' + (s.wide ? ' wide' : '');
-    const gridFrag = document.createDocumentFragment();
-    for (const s of stats) {
-      const statEl = document.createElement('div');
-      statEl.className = 'summary-stat' + (s.wide ? ' wide' : '');
-      const valEl = document.createElement('div');
-      valEl.className = 'summary-stat-value';
-      valEl.textContent = s.value;
-      const lblEl = document.createElement('div');
-      lblEl.className = 'summary-stat-label';
-      lblEl.textContent = s.label;
-      el.append(valEl, lblEl);
-      statsFrag.append(el);
-    });
-    grid.append(statsFrag);
-      statEl.append(valEl, lblEl);
-      gridFrag.append(statEl);
-    grid.textContent = '';
     const gridFrag = document.createDocumentFragment();
     for (const s of stats) {
       const statDiv = document.createElement('div');
@@ -11070,17 +10984,12 @@ class VoxBallGame {
       // Downsample to ~60 bars max
       const maxBars = 60;
       const step = Math.max(1, Math.floor(history.length / maxBars));
-      bar.textContent = '';
-      const barFrag = document.createDocumentFragment();
+      const bars = [];
       for (let i = 0; i < history.length; i += step) {
         const slice = history.slice(i, i + step);
         const v = slice.reduce((a, b) => a + b, 0) / slice.length;
-        bars.push(slice.reduce((a, b) => a + b, 0) / slice.length);
+        bars.push(v);
       }
-      bar.innerHTML = '';
-      const barFrag = document.createDocumentFragment();
-      bars.forEach(v => {
-
       bar.textContent = '';
       const barFrag = document.createDocumentFragment();
       for (const v of bars) {
@@ -11088,12 +10997,7 @@ class VoxBallGame {
         const hue = 220 + v * 80; // blue → purple as prosody increases
         const seg = document.createElement('div');
         seg.className = 'bar-seg';
-        seg.style.height = h + 'px';
-        seg.style.background = `hsl(${hue},60%,${45 + v * 20}%)`;
-        barFrag.append(seg);
-      });
         seg.style.height = `${h}px`;
-        seg.style.background = `hsl(${hue},60%,${45 + v * 20}%)`;
         seg.style.background = `hsl(${hue}, 60%, ${45 + v * 20}%)`;
         barFrag.append(seg);
       }
@@ -11132,21 +11036,12 @@ class VoxBallGame {
     const start = Math.max(0, active - 8);
     const end = Math.min(words.length, active + 14);
 
-    overlay.innerHTML = '';
-    const fragment = document.createDocumentFragment();
     overlay.textContent = '';
     const frag = document.createDocumentFragment();
     for (let i = start; i < end; i++) {
       const span = document.createElement('span');
       if (i === active) span.className = 'active-word';
       span.textContent = words[i];
-      frag.append(span);
-      frag.append(document.createTextNode(' '));
-      fragment.appendChild(span);
-      fragment.appendChild(document.createTextNode(' '));
-    }
-    overlay.innerHTML = '';
-    overlay.appendChild(fragment);
       frag.append(span);
       if (i < end - 1) frag.append(' ');
     }
