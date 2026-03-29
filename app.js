@@ -10957,6 +10957,12 @@ class VoxBallGame {
       const crystallized = pr.syllables.filter(s => s.state === 'crystallized');
       const total = pr.syllables.length;
       const scored = crystallized.filter(s => s.vowelScore > 0);
+      // ⚡ Bolt: Replace reduce with traditional loop for performance
+      let scoreSum = 0;
+      for (let i = 0; i < scored.length; i++) {
+        scoreSum += scored[i].vowelScore;
+      }
+      const avgScore = scored.length > 0 ? scoreSum / scored.length : 0;
 
       // ⚡ Bolt: Replace reduce with traditional loop for performance
       let vowelScoreSum = 0;
@@ -11015,6 +11021,15 @@ class VoxBallGame {
       const step = Math.max(1, Math.floor(history.length / maxBars));
       for (let i = 0; i < history.length; i += step) {
         const slice = history.slice(i, i + step);
+        // ⚡ Bolt: Replace duplicate reduce calls with single traditional loop
+        let sliceSum = 0;
+        for (let j = 0; j < slice.length; j++) {
+          sliceSum += slice[j];
+        }
+        const v = sliceSum / slice.length;
+        bars.push(v);
+      }
+
 
         // ⚡ Bolt: Replace reduce with traditional loop for performance in UI render path
         let sum = 0;
