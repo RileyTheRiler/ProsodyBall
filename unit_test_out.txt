@@ -1,0 +1,24 @@
+
+> test:unit
+> node --test *.test.mjs
+
+Γ£ö calibration wizard returns skipped outcome on initial skip (1.5384ms)
+Γ£ö calibration wizard completes when analyzer passes checks (7984.1204ms)
+Γ£ö computeRawProsody applies weighted sum (1.2128ms)
+Γ£ö computeProsodyScore smooths toward target (0.2506ms)
+Γ£ö pitchHzToPosition clamps to [0,1] (0.1549ms)
+Γ£ö ensureAudioContextRunning handles missing context (0.926ms)
+Γ£ö ensureAudioContextRunning resumes suspended context (0.1646ms)
+Γ£ö ensureAudioContextRunning surfaces resume failure reason (0.3401ms)
+Γ£ö clamp01 clamps values (0.8054ms)
+Γ£ö normalizeAgainstRange is bounded and monotonic (0.1662ms)
+Γ£ö normalizeAgainstPercentiles maps p50-p90 spread (0.2013ms)
+Γ£ö computeFrameReliability lowers confidence on weak signal (0.1817ms)
+Γä╣ tests 12
+Γä╣ suites 0
+Γä╣ pass 12
+Γä╣ fail 0
+Γä╣ cancelled 0
+Γä╣ skipped 0
+Γä╣ todo 0
+Γä╣ duration_ms 8081.9732

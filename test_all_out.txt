@@ -1,0 +1,42 @@
+
+> test:all
+> npm run lint && npm run test:unit && npm run test:audio-fixtures
+
+
+> lint
+> node --check app.js && node --check calibration-wizard.js && node --check reliability.js && node --check tools/browser-smoke.mjs
+
+
+> test:unit
+> node --test *.test.mjs
+
+Γ£ö calibration wizard returns skipped outcome on initial skip (2.128ms)
+Γ£ö calibration wizard completes when analyzer passes checks (7998.4706ms)
+Γ£ö computeRawProsody applies weighted sum (1.183ms)
+Γ£ö computeProsodyScore smooths toward target (0.3744ms)
+Γ£ö pitchHzToPosition clamps to [0,1] (0.1971ms)
+Γ£ö ensureAudioContextRunning handles missing context (0.9346ms)
+Γ£ö ensureAudioContextRunning resumes suspended context (0.172ms)
+Γ£ö ensureAudioContextRunning surfaces resume failure reason (0.3037ms)
+Γ£ö clamp01 clamps values (0.9ms)
+Γ£ö normalizeAgainstRange is bounded and monotonic (0.2309ms)
+Γ£ö normalizeAgainstPercentiles maps p50-p90 spread (0.2439ms)
+Γ£ö computeFrameReliability lowers confidence on weak signal (0.2898ms)
+Γä╣ tests 12
+Γä╣ suites 0
+Γä╣ pass 12
+Γä╣ fail 0
+Γä╣ cancelled 0
+Γä╣ skipped 0
+Γä╣ todo 0
+Γä╣ duration_ms 8124.6737
+
+> test:audio-fixtures
+> node tools/eval-audio-fixtures.mjs
+
+All 3 fixture frames are within expected ranges.
+npm notice
+npm notice New minor version of npm available! 11.7.0 -> 11.12.1
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.12.1
+npm notice To update run: npm install -g npm@11.12.1
+npm notice

@@ -1,0 +1,4 @@
+
+> lint
+> node --check app.js && node --check calibration-wizard.js && node --check reliability.js && node --check tools/browser-smoke.mjs
+

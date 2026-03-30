@@ -10962,13 +10962,6 @@ class VoxBallGame {
       }
       const avgScore = scored.length > 0 ? scoreSum / scored.length : 0;
 
-      // ⚡ Bolt: Replace reduce with traditional loop for performance
-      let vowelScoreSum = 0;
-      for (let i = 0; i < scored.length; i++) {
-        vowelScoreSum += scored[i].vowelScore;
-      }
-      const avgScore = scored.length > 0 ? vowelScoreSum / scored.length : 0;
-
       const strainCount = crystallized.filter(s => s.strainFlag).length;
       const elapsed = pr.firstOnsetTime > 0 ? (performance.now() - pr.firstOnsetTime) / 1000 : 0;
       const wpm = elapsed > 1 ? Math.round((pr.wordsCompleted || 0) / (elapsed / 60)) : 0;
@@ -11027,8 +11020,7 @@ class VoxBallGame {
         const v = sliceSum / slice.length;
         bars.push(v);
       }
-      bar.textContent = '';
-      const barFrag = document.createDocumentFragment();
+      // ...
       for (const v of bars) {
         const h = Math.max(2, v * 30);
         const hue = 220 + v * 80; // blue → purple as prosody increases

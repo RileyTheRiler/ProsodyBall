@@ -1,0 +1,8 @@
+C:\Users\riley\Downloads\ProsodyBall-main\app.js:10970
+      const avgScore = scored.length > 0 ? vowelScoreSum / scored.length : 0;
+            ^
+
+SyntaxError: Identifier 'avgScore' has already been declared
+    at checkSyntax (node:internal/main/check_syntax:72:5)
+
+Node.js v24.11.1
