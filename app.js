@@ -10254,7 +10254,20 @@ class VoxBallGame {
 
   _drawPrismPitchSparkline(canvasEl) {
     const pr = this.prismReader;
-    const crystallized = pr.syllables.filter(s => s.state === 'crystallized' && s.avgF0 > 0);
+
+    // ⚡ Bolt Optimization: Single-pass iteration to reduce GC and function overhead
+    const crystallized = [];
+    let minP = null;
+    let maxP = null;
+    for (let i = 0; i < pr.syllables.length; i++) {
+      const s = pr.syllables[i];
+      if (s.state === 'crystallized' && s.avgF0 > 0) {
+        crystallized.push(s);
+        if (minP === null || s.avgF0 < minP) minP = s.avgF0;
+        if (maxP === null || s.avgF0 > maxP) maxP = s.avgF0;
+      }
+    }
+
     if (crystallized.length < 3 || !canvasEl) return;
 
     const dpr = window.devicePixelRatio || 1;
@@ -10265,12 +10278,9 @@ class VoxBallGame {
     const ctx = canvasEl.getContext('2d');
     ctx.scale(dpr, dpr);
 
-    const pitches = crystallized.map(s => s.avgF0);
-    let minP = pitches[0] || 0, maxP = pitches[0] || 0;
-    for (let i = 1; i < pitches.length; i++) {
-      if (pitches[i] < minP) minP = pitches[i];
-      if (pitches[i] > maxP) maxP = pitches[i];
-    }
+    // Ensure minP and maxP have valid fallbacks if somehow pitches length > 0 but null
+    minP = minP || 0;
+    maxP = maxP || 0;
     const range = Math.max(1, maxP - minP);
 
     const padX = 4;
