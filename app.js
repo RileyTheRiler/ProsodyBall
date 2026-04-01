@@ -10952,20 +10952,33 @@ class VoxBallGame {
       stats.push({ value: `${Math.max(0, dyn)}%`, label: 'Dynamic Range' });
     } else if (this.gameMode === 'prism') {
       const pr = this.prismReader;
-      const crystallized = pr.syllables.filter(s => s.state === 'crystallized');
       const total = pr.syllables.length;
-      const scored = crystallized.filter(s => s.vowelScore > 0);
-      // ⚡ Bolt: Replace reduce with traditional loop for performance
-      let scoreSum = 0;
-      for (let i = 0; i < scored.length; i++) {
-        scoreSum += scored[i].vowelScore;
-      }
-      const avgScore = scored.length > 0 ? scoreSum / scored.length : 0;
 
-      const strainCount = crystallized.filter(s => s.strainFlag).length;
+      // ⚡ Bolt: Consolidate multiple filter passes into a single loop to reduce GC pressure
+      let crystCount = 0;
+      let scoreSum = 0;
+      let scoredCount = 0;
+      let strainCount = 0;
+
+      for (let i = 0; i < total; i++) {
+        const s = pr.syllables[i];
+        if (s.state === 'crystallized') {
+          crystCount++;
+          if (s.vowelScore > 0) {
+            scoreSum += s.vowelScore;
+            scoredCount++;
+          }
+          if (s.strainFlag) {
+            strainCount++;
+          }
+        }
+      }
+
+      const avgScore = scoredCount > 0 ? scoreSum / scoredCount : 0;
       const elapsed = pr.firstOnsetTime > 0 ? (performance.now() - pr.firstOnsetTime) / 1000 : 0;
       const wpm = elapsed > 1 ? Math.round((pr.wordsCompleted || 0) / (elapsed / 60)) : 0;
-      stats.push({ value: `${crystallized.length}/${total}`, label: 'Syllables Read' });
+
+      stats.push({ value: `${crystCount}/${total}`, label: 'Syllables Read' });
       stats.push({ value: `${wpm} wpm`, label: 'Reading Speed' });
       stats.push({ value: `${Math.round(avgScore * 100)}%`, label: 'Avg Vowel Score' });
       if (strainCount > 0) {
