@@ -3986,9 +3986,10 @@ class VoxBallGame {
 
     teleprompterCustomBtn?.addEventListener('click', () => {
       const existing = this.teleprompterCustomText || '';
-      const input = window.prompt('Paste or type your teleprompter text:', existing);
+      const input = window.prompt('Paste or type your teleprompter text (max 5000 chars):', existing);
       if (input === null) return;
-      this.teleprompterCustomText = input.trim();
+      // Security enhancement: Limit input length to prevent denial of service (DoS) or performance issues from massive pasted strings
+      this.teleprompterCustomText = input.trim().substring(0, 5000);
       if (!this.teleprompterCustomText) {
         this.teleprompterMode = 'rainbow';
       } else {
