@@ -14,6 +14,18 @@ function escapeHtml(text) {
     .replace(/'/g, "&#039;");
 }
 
+function sanitizeUrl(url) {
+  try {
+    const parsed = new URL(url, window.location.href);
+    if (parsed.protocol === 'javascript:' || parsed.protocol === 'data:' || parsed.protocol === 'vbscript:') {
+      return 'about:blank';
+    }
+    return parsed.href;
+  } catch (e) {
+    return 'about:blank';
+  }
+}
+
 // ============================================================
 // DSP TUNING CONSTANTS
 // Centralised so they're easy to find, tweak, and document.
@@ -2894,7 +2906,7 @@ class VoxBallGame {
       iframeNotice.appendChild(document.createTextNode('This app needs microphone access, which may be blocked when embedded.'));
       iframeNotice.appendChild(document.createElement('br'));
       const link = document.createElement('a');
-      link.href = directUrl;
+      link.href = sanitizeUrl(directUrl);
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       link.textContent = 'Open in new tab for full access ↗';
@@ -3169,7 +3181,7 @@ class VoxBallGame {
         errNode.appendChild(document.createTextNode('This requires HTTPS and a modern browser. '));
         if (isInIframe) {
           const link = document.createElement('a');
-          link.href = window.location.href;
+          link.href = sanitizeUrl(window.location.href);
           link.target = '_blank';
           link.rel = 'noopener noreferrer';
           link.textContent = 'Try opening in a new tab ↗';
@@ -3217,7 +3229,7 @@ class VoxBallGame {
             msg.appendChild(document.createTextNode('🎙 Microphone blocked by browser — this usually happens inside iframes.'));
             msg.appendChild(document.createElement('br'));
             const link = document.createElement('a');
-            link.href = window.location.href;
+            link.href = sanitizeUrl(window.location.href);
             link.target = '_blank';
             link.rel = 'noopener noreferrer';
             link.textContent = 'Open in a new tab for full mic access ↗';
