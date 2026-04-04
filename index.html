@@ -5529,16 +5529,16 @@
       </div>
 
       <div class="tooltip" id="helpTooltip">
-        <div class="help-tabs">
-          <button class="help-tab active" data-tab="howto">How To Play</button>
-          <button class="help-tab" data-tab="rainbow">Rainbow Passage</button>
+        <div class="help-tabs" role="tablist" aria-label="Help Options">
+          <button class="help-tab active" data-tab="howto" role="tab" aria-selected="true" aria-controls="helpHowTo" id="tabHowTo">How To Play</button>
+          <button class="help-tab" data-tab="rainbow" role="tab" aria-selected="false" aria-controls="helpRainbow" id="tabRainbow">Rainbow Passage</button>
         </div>
 
-        <div class="help-panel active" data-panel="howto" id="helpHowTo">
+        <div class="help-panel active" data-panel="howto" id="helpHowTo" role="tabpanel" aria-labelledby="tabHowTo">
           <!-- Populated dynamically per mode -->
         </div>
 
-        <div class="help-panel" data-panel="rainbow">
+        <div class="help-panel" data-panel="rainbow" id="helpRainbow" role="tabpanel" aria-labelledby="tabRainbow">
           <h3>Rainbow Passage</h3>
           <p>When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is a
             division of white light into many beautiful colors. These take the shape of a long round arch, with its path
