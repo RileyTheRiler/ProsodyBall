@@ -2190,7 +2190,7 @@ class VoxBallGame {
   }
 
   _updateHelpContent() {
-    const el = document.getElementById('helpHowTo');
+    const el = document.getElementById('panel-howto');
     if (!el) return;
     const c = (color, label, desc) =>
       `<b style="color:var(--accent-${color})">${label}:</b> ${desc}`;
@@ -4502,9 +4502,19 @@ class VoxBallGame {
     helpTabs.forEach((tab) => {
       tab.addEventListener('click', () => {
         const selected = tab.dataset.tab;
-        helpTabs.forEach((btn) => btn.classList.toggle('active', btn === tab));
+        helpTabs.forEach((btn) => {
+          const isActive = btn === tab;
+          btn.classList.toggle('active', isActive);
+          btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
         helpPanels.forEach((panel) => {
-          panel.classList.toggle('active', panel.dataset.panel === selected);
+          const isActive = panel.dataset.panel === selected;
+          panel.classList.toggle('active', isActive);
+          if (isActive) {
+            panel.removeAttribute('hidden');
+          } else {
+            panel.setAttribute('hidden', '');
+          }
         });
       });
     });
