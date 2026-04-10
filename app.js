@@ -10700,24 +10700,38 @@ class VoxBallGame {
       }
       progressFill.style.width = `${Math.min(100, pct)}%`;
 
-      // Dynamic gradient from crystallized syllable hues — modulated by confidence & vowel score
-      const crystallized = pr.syllables.filter(s => s.state === 'crystallized');
-      if (crystallized.length >= 2) {
+      // ⚡ Bolt: Replace .filter() with manual loops for dynamic UI gradient calculations in per-frame rendering to prevent array allocation overhead.
+      let cCount = 0;
+      const sylLen = pr.syllables.length;
+      for (let i = 0; i < sylLen; i++) {
+        if (pr.syllables[i].state === 'crystallized') cCount++;
+      }
+
+      if (cCount >= 2) {
         const stops = [];
-        const step = Math.max(1, Math.floor(crystallized.length / 5));
-        for (let i = 0; i < crystallized.length; i += step) {
-          const s = crystallized[i];
-          const pos = Math.round((i / (crystallized.length - 1)) * 100);
-          // Saturation reflects vowel accuracy, lightness reflects confidence
-          const sat = Math.round(40 + s.vowelScore * 35);
-          const light = Math.round(45 + s.confidence * 20);
-          stops.push(`hsl(${Math.round(s.hue)}, ${sat}%, ${light}%) ${pos}%`);
+        const step = Math.max(1, Math.floor(cCount / 5));
+        let cIdx = 0;
+        let lastSyl = null;
+        for (let i = 0; i < sylLen; i++) {
+          const s = pr.syllables[i];
+          if (s.state === 'crystallized') {
+            if (cIdx % step === 0) {
+              const pos = Math.round((cIdx / (cCount - 1)) * 100);
+              // Saturation reflects vowel accuracy, lightness reflects confidence
+              const sat = Math.round(40 + s.vowelScore * 35);
+              const light = Math.round(45 + s.confidence * 20);
+              stops.push(`hsl(${Math.round(s.hue)}, ${sat}%, ${light}%) ${pos}%`);
+            }
+            lastSyl = s;
+            cIdx++;
+          }
         }
         // Always include the last one
-        const last = crystallized[crystallized.length - 1];
-        const lastSat = Math.round(40 + last.vowelScore * 35);
-        const lastLight = Math.round(45 + last.confidence * 20);
-        stops.push(`hsl(${Math.round(last.hue)}, ${lastSat}%, ${lastLight}%) 100%`);
+        if (lastSyl) {
+          const lastSat = Math.round(40 + lastSyl.vowelScore * 35);
+          const lastLight = Math.round(45 + lastSyl.confidence * 20);
+          stops.push(`hsl(${Math.round(lastSyl.hue)}, ${lastSat}%, ${lastLight}%) 100%`);
+        }
         progressFill.style.background = `linear-gradient(90deg, ${stops.join(', ')})`;
       }
     }
