@@ -3876,7 +3876,7 @@ class VoxBallGame {
     });
 
     roadCustomText?.addEventListener('input', (e) => {
-      this.resonanceRoad.customText = e.target.value;
+      this.resonanceRoad.customText = e.target.value.substring(0, 5000);
     });
 
     prismPacingSelect?.addEventListener('change', (e) => {
@@ -3893,7 +3893,7 @@ class VoxBallGame {
     this._updatePrismPassageMeta();
 
     prismCustomText?.addEventListener('input', (e) => {
-      this.prismReader.customText = e.target.value;
+      this.prismReader.customText = e.target.value.substring(0, 5000);
     });
 
     const prismModeSelect = document.getElementById('prismModeSelect');
@@ -3988,7 +3988,7 @@ class VoxBallGame {
       const existing = this.teleprompterCustomText || '';
       const input = window.prompt('Paste or type your teleprompter text:', existing);
       if (input === null) return;
-      this.teleprompterCustomText = input.trim();
+      this.teleprompterCustomText = input.trim().substring(0, 5000);
       if (!this.teleprompterCustomText) {
         this.teleprompterMode = 'rainbow';
       } else {
