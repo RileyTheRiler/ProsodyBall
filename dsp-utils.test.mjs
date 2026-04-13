@@ -1,6 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeRawProsody, computeProsodyScore, pitchHzToPosition } from './dsp-utils.js';
+import { computeRawProsody, computeProsodyScore, pitchHzToPosition, sanitizeUrl } from './dsp-utils.js';
+
+test('sanitizeUrl blocks dangerous protocols', () => {
+  assert.equal(sanitizeUrl('javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl(' javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('data:text/html,<script>alert(1)</script>'), 'about:blank');
+  assert.equal(sanitizeUrl('vbscript:msgbox("hello")'), 'about:blank');
+});
+
+test('sanitizeUrl allows safe protocols', () => {
+  assert.equal(sanitizeUrl('https://example.com'), 'https://example.com');
+  assert.equal(sanitizeUrl('http://localhost'), 'http://localhost');
+  assert.equal(sanitizeUrl('/relative/path'), '/relative/path');
+  assert.equal(sanitizeUrl('mailto:test@example.com'), 'mailto:test@example.com');
+});
 
 test('computeRawProsody applies weighted sum', () => {
   const metrics = { bounce: 1, tempo: 0.5, vowel: 0.5, articulation: 0.5, syllable: 0.5 };

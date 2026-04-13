@@ -1,3 +1,8 @@
+export function sanitizeUrl(url) {
+  if (typeof url !== 'string') return 'about:blank';
+  return /^(%20|\s)*(javascript|data|vbscript):/i.test(url) ? 'about:blank' : url;
+}
+
 export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
