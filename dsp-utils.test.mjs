@@ -1,11 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeRawProsody, computeProsodyScore, pitchHzToPosition } from './dsp-utils.js';
+import { computeRawProsody, computeProsodyScore, pitchHzToPosition, sanitizeUrl } from './dsp-utils.js';
 
 test('computeRawProsody applies weighted sum', () => {
   const metrics = { bounce: 1, tempo: 0.5, vowel: 0.5, articulation: 0.5, syllable: 0.5 };
   const got = computeRawProsody(metrics);
   assert.equal(got, 0.35 + 0.1 + 0.1 + 0.075 + 0.05);
+});
+
+test('sanitizeUrl protects against malicious protocols', () => {
+  assert.equal(sanitizeUrl('javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl(' javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('%20javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('data:text/html,<script>alert(1)</script>'), 'about:blank');
+  assert.equal(sanitizeUrl('vbscript:msgbox(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('https://example.com'), 'https://example.com');
+  assert.equal(sanitizeUrl('/local/path'), '/local/path');
+  assert.equal(sanitizeUrl(''), 'about:blank');
+  assert.equal(sanitizeUrl(null), 'about:blank');
+  assert.equal(sanitizeUrl(undefined), 'about:blank');
 });
 
 test('computeProsodyScore smooths toward target', () => {
