@@ -18,6 +18,13 @@ function escapeHtml(text) {
 // DSP TUNING CONSTANTS
 // Centralised so they're easy to find, tweak, and document.
 // ============================================================
+
+// --- PITCH GUIDES ---
+// ⚡ Bolt: Hoisted static guides to module level to prevent per-frame allocation
+const STATIC_PITCH_GUIDES = [100, 150, 200, 250, 300].map((hz) => ({
+  hz,
+  norm: Math.max(0, Math.min(1, (hz - 80) / (300 - 80))),
+}));
 const YIN_THRESHOLD = 0.15;               // CMND threshold for pitch detection (lower = stricter)
 const PITCH_CONFIDENCE_FACTOR = 3.3;      // Maps CMND → confidence: conf = 1 - cmnd * factor
 const BOUNCE_NORM_DIVISOR = 70;           // Hz std-dev mapped to [0,1] bounce
@@ -7588,11 +7595,9 @@ class VoxBallGame {
     ctx.font = '500 10px "Space Mono", monospace';
     ctx.fillStyle = this.pitchGridStrength === 'strong' ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.48)';
     ctx.textAlign = 'left';
-    const guides = [100, 150, 200, 250, 300].map((hz) => ({
-      hz,
-      norm: Math.max(0, Math.min(1, (hz - 80) / (300 - 80))),
-    }));
-    for (const guide of guides) {
+    // ⚡ Bolt Optimization: Use module-level array and traditional loop to avoid array.map and GC spikes
+    for (let i = 0; i < STATIC_PITCH_GUIDES.length; i++) {
+      const guide = STATIC_PITCH_GUIDES[i];
       const gy = 40 + (1 - guide.norm) * (h - 80);
       ctx.beginPath();
       ctx.moveTo(margin + 5, gy);
