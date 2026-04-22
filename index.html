@@ -4811,7 +4811,7 @@
           style="display: none; opacity: 0; transform: scale(0.95); transition: opacity 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28), transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);">Save
           Clip</button>
         <button class="btn btn-recordings" id="recordingsBtn" aria-expanded="false" aria-controls="recordingsDrawer"><span>Clips&nbsp;</span><span class="badge" id="recBadge">0</span></button>
-        <button class="btn btn-cb canvas-only btn-canvas-action" id="pauseCanvasBtn" title="Pause paint updates" aria-label="Pause paint updates">Pause</button>
+        <button class="btn btn-cb canvas-only btn-canvas-action" id="pauseCanvasBtn" title="Pause paint updates" aria-label="Pause paint updates" aria-pressed="false">Pause</button>
         <button class="btn btn-cb canvas-only btn-canvas-action" id="clearCanvasBtn" title="Clear current canvas drawing" aria-label="Clear current canvas drawing">Clear</button>
       </div>
       <div class="hud-controls hud-secondary" aria-label="Secondary settings">
@@ -4828,9 +4828,9 @@
           <option value="rainbow">Teleprompter: Rainbow Passage</option>
           <option value="custom">Teleprompter: Custom Text</option>
         </select>
-        <button class="btn btn-help" id="teleprompterCustomBtn" aria-label="Edit custom teleprompter text" title="Edit custom teleprompter text">Edit Text</button>
+        <button class="btn btn-help" id="teleprompterCustomBtn" aria-label="Edit custom teleprompter text" title="Edit custom teleprompter text" aria-pressed="false">Edit Text</button>
 
-        <button class="btn btn-cb" id="cbToggle" aria-label="Toggle colorblind mode" title="Colorblind mode">
+        <button class="btn btn-cb" id="cbToggle" aria-label="Toggle colorblind mode" title="Colorblind mode" aria-pressed="false">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" />
@@ -4907,7 +4907,7 @@
 
       <div class="settings-group">
         <span class="settings-label">Performance</span>
-        <button class="btn btn-help btn-fill" id="motionToggle" aria-label="Toggle low motion mode"
+        <button class="btn btn-help btn-fill" id="motionToggle" aria-label="Toggle low motion mode" aria-pressed="false"
           title="Low motion mode">Motion: Auto</button>
       </div>
 
