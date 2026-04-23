@@ -32,6 +32,10 @@ const SYLLABLE_OFF_MULT = 0.15;          // Energy range multiplier for syllable
 const SYLLABLE_IMPULSE_DECAY = 0.88;     // Per-frame decay of syllable impulse
 const MAX_SPARKLES = 100;                // Maximum sparkle particles in ball mode
 const MAX_NEBULA_FLARES = 10;            // Maximum flare particles for nebula creature
+const STATIC_PITCH_GUIDES = [100, 150, 200, 250, 300].map((hz) => ({
+  hz,
+  norm: Math.max(0, Math.min(1, (hz - 80) / (300 - 80))),
+}));
 
 // ============================================================
 // VOICE ANALYZER
@@ -7588,11 +7592,9 @@ class VoxBallGame {
     ctx.font = '500 10px "Space Mono", monospace';
     ctx.fillStyle = this.pitchGridStrength === 'strong' ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.48)';
     ctx.textAlign = 'left';
-    const guides = [100, 150, 200, 250, 300].map((hz) => ({
-      hz,
-      norm: Math.max(0, Math.min(1, (hz - 80) / (300 - 80))),
-    }));
-    for (const guide of guides) {
+    // ⚡ Bolt Optimization: Use hoisted static pitch guides to eliminate per-frame GC overhead
+    for (let i = 0; i < STATIC_PITCH_GUIDES.length; i++) {
+      const guide = STATIC_PITCH_GUIDES[i];
       const gy = 40 + (1 - guide.norm) * (h - 80);
       ctx.beginPath();
       ctx.moveTo(margin + 5, gy);
