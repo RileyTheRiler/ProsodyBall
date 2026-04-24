@@ -1918,6 +1918,8 @@ class VoxBallGame {
       `The rainbow is a division of white light into many beautiful colors. These take the shape of a long round arch, ` +
       `with its path high above, and its two ends apparently beyond the horizon. There is, according to legend, a boiling pot of gold at one end.`);
 
+    this._teleprompterCache = { text: null, words: [], activeIndex: -1 };
+
     // Additional Prism Reader passages
     this.prismPassages = {
       rainbow: this.teleprompterRainbowText,
@@ -11054,7 +11056,17 @@ class VoxBallGame {
     const sourceText = roadMode
       ? this._getResonanceRoadPassageText()
       : (this.teleprompterMode === 'custom' ? this.teleprompterCustomText : this.teleprompterRainbowText);
-    const words = sourceText.trim().split(/\s+/).filter(Boolean);
+
+    // ⚡ Bolt Optimization: Cache parsed words to prevent expensive split/filter operations
+    // and DOM rebuilds 60 times a second when the text/state hasn't changed.
+    let cache = this._teleprompterCache;
+    let textChanged = cache.text !== sourceText;
+    if (textChanged) {
+      cache.text = sourceText;
+      cache.words = sourceText.trim().split(/\s+/).filter(Boolean);
+    }
+    const words = cache.words;
+
     if (!words.length) return;
     if (this.isRunning && this.analyzer.metrics.energy > 0.03) {
       const rate = 2.5 + this.analyzer.metrics.tempo * 3.5;
@@ -11062,6 +11074,11 @@ class VoxBallGame {
       if (this.teleprompterIndex >= words.length) this.teleprompterIndex = 0;
     }
     const active = Math.floor(this.teleprompterIndex);
+
+    // Only rebuild DOM if the active word index has actually advanced
+    if (active === cache.activeIndex && !textChanged && overlay.hasChildNodes()) return;
+    cache.activeIndex = active;
+
     const start = Math.max(0, active - 8);
     const end = Math.min(words.length, active + 14);
 
