@@ -11054,14 +11054,27 @@ class VoxBallGame {
     const sourceText = roadMode
       ? this._getResonanceRoadPassageText()
       : (this.teleprompterMode === 'custom' ? this.teleprompterCustomText : this.teleprompterRainbowText);
-    const words = sourceText.trim().split(/\s+/).filter(Boolean);
-    if (!words.length) return;
+
+    // ⚡ Bolt: Cache expensive string parsing and array allocation
+    if (this._lastTeleprompterText !== sourceText) {
+      this._lastTeleprompterText = sourceText;
+      this._teleprompterWords = sourceText.trim().split(/\s+/).filter(Boolean);
+      this._lastTeleprompterActiveIndex = -1; // force render
+    }
+    const words = this._teleprompterWords;
+    if (!words || !words.length) return;
+
     if (this.isRunning && this.analyzer.metrics.energy > 0.03) {
       const rate = 2.5 + this.analyzer.metrics.tempo * 3.5;
       this.teleprompterIndex += dt * rate;
       if (this.teleprompterIndex >= words.length) this.teleprompterIndex = 0;
     }
     const active = Math.floor(this.teleprompterIndex);
+
+    // ⚡ Bolt: Skip expensive DOM updates if the active word hasn't changed
+    if (this._lastTeleprompterActiveIndex === active) return;
+    this._lastTeleprompterActiveIndex = active;
+
     const start = Math.max(0, active - 8);
     const end = Math.min(words.length, active + 14);
 
