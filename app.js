@@ -11054,25 +11054,36 @@ class VoxBallGame {
     const sourceText = roadMode
       ? this._getResonanceRoadPassageText()
       : (this.teleprompterMode === 'custom' ? this.teleprompterCustomText : this.teleprompterRainbowText);
-    const words = sourceText.trim().split(/\s+/).filter(Boolean);
+
+    // ⚡ Bolt: Cache text parsing to avoid per-frame regex/array allocations
+    if (this._teleprompterCachedText !== sourceText) {
+      this._teleprompterCachedText = sourceText;
+      this._teleprompterCachedWords = sourceText.trim().split(/\s+/).filter(Boolean);
+      this._teleprompterLastActive = -1; // Force DOM rebuild
+    }
+    const words = this._teleprompterCachedWords;
     if (!words.length) return;
+
     if (this.isRunning && this.analyzer.metrics.energy > 0.03) {
       const rate = 2.5 + this.analyzer.metrics.tempo * 3.5;
       this.teleprompterIndex += dt * rate;
       if (this.teleprompterIndex >= words.length) this.teleprompterIndex = 0;
     }
     const active = Math.floor(this.teleprompterIndex);
+
+    // ⚡ Bolt: Only rebuild DOM if the active word index changes
+    if (active === this._teleprompterLastActive) return;
+    this._teleprompterLastActive = active;
+
     const start = Math.max(0, active - 8);
     const end = Math.min(words.length, active + 14);
 
-    overlay.textContent = '';
     const frag = document.createDocumentFragment();
     for (let i = start; i < end; i++) {
       const span = document.createElement('span');
       if (i === active) span.className = 'active-word';
       span.textContent = words[i];
       frag.append(span);
-      if (i < end - 1) frag.append(' ');
       if (i < end - 1) frag.append(document.createTextNode(' '));
     }
     overlay.textContent = '';
