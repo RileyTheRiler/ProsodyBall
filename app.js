@@ -4502,9 +4502,19 @@ class VoxBallGame {
     helpTabs.forEach((tab) => {
       tab.addEventListener('click', () => {
         const selected = tab.dataset.tab;
-        helpTabs.forEach((btn) => btn.classList.toggle('active', btn === tab));
+        helpTabs.forEach((btn) => {
+          const isActive = btn === tab;
+          btn.classList.toggle('active', isActive);
+          btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
         helpPanels.forEach((panel) => {
-          panel.classList.toggle('active', panel.dataset.panel === selected);
+          const isActivePanel = panel.dataset.panel === selected;
+          panel.classList.toggle('active', isActivePanel);
+          if (isActivePanel) {
+            panel.removeAttribute('hidden');
+          } else {
+            panel.setAttribute('hidden', '');
+          }
         });
       });
     });
