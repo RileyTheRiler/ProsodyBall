@@ -21,6 +21,14 @@ export function computeProsodyScore(previous, metrics, smoothing = 0.12) {
   return clamp(smoothToward(previous, raw, smoothing), 0, 1);
 }
 
+export function sanitizeUrl(url) {
+  const urlStr = String(url);
+  if (/^(%20|\s)*(javascript|data|vbscript):/i.test(urlStr)) {
+    return 'about:blank';
+  }
+  return urlStr;
+}
+
 export function pitchHzToPosition(hz, minHz = 80, maxHz = 300) {
   if (!Number.isFinite(hz)) return 0;
   return clamp((hz - minHz) / (maxHz - minHz), 0, 1);
