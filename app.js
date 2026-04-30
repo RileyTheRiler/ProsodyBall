@@ -3520,6 +3520,7 @@ class VoxBallGame {
     perfBtn?.addEventListener('click', () => {
       this.perfMonitor.toggle();
       perfBtn.classList.toggle('active', this.perfMonitor.enabled);
+      perfBtn.setAttribute('aria-pressed', String(this.perfMonitor.enabled));
     });
 
     homeBtn?.addEventListener('click', () => {
@@ -3614,6 +3615,7 @@ class VoxBallGame {
         e.preventDefault();
         this.perfMonitor.toggle();
         perfBtn?.classList.toggle('active', this.perfMonitor.enabled);
+        perfBtn?.setAttribute('aria-pressed', String(this.perfMonitor.enabled));
       }
       if (e.code === 'KeyR' && this.isRunning) {
         e.preventDefault();
@@ -3998,12 +4000,14 @@ class VoxBallGame {
       this.teleprompterIndex = 0;
       if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
       teleprompterCustomBtn.classList.toggle('active', this.teleprompterMode === 'custom');
+      teleprompterCustomBtn.setAttribute('aria-pressed', String(this.teleprompterMode === 'custom'));
     });
 
     pauseCanvasBtn?.addEventListener('click', () => {
       this.voiceCanvasPaused = !this.voiceCanvasPaused;
       pauseCanvasBtn.textContent = this.voiceCanvasPaused ? 'Resume' : 'Pause';
       pauseCanvasBtn.classList.toggle('active', this.voiceCanvasPaused);
+      pauseCanvasBtn.setAttribute('aria-pressed', String(this.voiceCanvasPaused));
     });
 
     clearCanvasBtn?.addEventListener('click', () => {
@@ -4035,6 +4039,7 @@ class VoxBallGame {
         this.colorblindMode = !this.colorblindMode;
         document.documentElement.classList.toggle('colorblind', this.colorblindMode);
         cbBtn.classList.toggle('active', this.colorblindMode);
+        cbBtn.setAttribute('aria-pressed', String(this.colorblindMode));
       });
     }
 
@@ -4080,6 +4085,7 @@ class VoxBallGame {
       const next = this.userMotionPreference === 'auto' ? 'Auto' : this.userMotionPreference === 'low' ? 'Low' : 'Full';
       motionToggle.textContent = `Motion: ${next}`;
       motionToggle.classList.toggle('active', this.userMotionPreference === 'low');
+      motionToggle.setAttribute('aria-pressed', String(this.userMotionPreference === 'low'));
     };
     syncMotionToggleLabel();
     syncMicSettingsUi();
@@ -4502,7 +4508,10 @@ class VoxBallGame {
     helpTabs.forEach((tab) => {
       tab.addEventListener('click', () => {
         const selected = tab.dataset.tab;
-        helpTabs.forEach((btn) => btn.classList.toggle('active', btn === tab));
+        helpTabs.forEach((btn) => {
+          btn.classList.toggle('active', btn === tab);
+          btn.setAttribute('aria-pressed', String(btn === tab));
+        });
         helpPanels.forEach((panel) => {
           panel.classList.toggle('active', panel.dataset.panel === selected);
         });
