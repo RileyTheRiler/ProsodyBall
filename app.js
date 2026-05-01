@@ -2977,6 +2977,7 @@ class VoxBallGame {
       if (!recoverMicBtn) return;
       recoverMicBtn.toggleAttribute('hidden', !visible);
       recoverMicBtn.classList.toggle('active', visible);
+      recoverMicBtn.setAttribute('aria-pressed', (visible).toString());
     };
 
     const showCalibrationOutcome = (calResult) => {
@@ -3310,6 +3311,7 @@ class VoxBallGame {
       if (pauseCanvasBtn) {
         pauseCanvasBtn.textContent = 'Pause';
         pauseCanvasBtn.classList.remove('active');
+        pauseCanvasBtn.setAttribute('aria-pressed', 'false');
       }
       this.guidedStartTs = performance.now();
       this.guidedDismissed = false;
@@ -3520,6 +3522,7 @@ class VoxBallGame {
     perfBtn?.addEventListener('click', () => {
       this.perfMonitor.toggle();
       perfBtn.classList.toggle('active', this.perfMonitor.enabled);
+      perfBtn.setAttribute('aria-pressed', (this.perfMonitor.enabled).toString());
     });
 
     homeBtn?.addEventListener('click', () => {
@@ -3614,6 +3617,7 @@ class VoxBallGame {
         e.preventDefault();
         this.perfMonitor.toggle();
         perfBtn?.classList.toggle('active', this.perfMonitor.enabled);
+        perfBtn?.setAttribute('aria-pressed', (this.perfMonitor.enabled).toString());
       }
       if (e.code === 'KeyR' && this.isRunning) {
         e.preventDefault();
@@ -3846,6 +3850,7 @@ class VoxBallGame {
       if (pauseCanvasBtn) {
         pauseCanvasBtn.textContent = 'Pause';
         pauseCanvasBtn.classList.remove('active');
+        pauseCanvasBtn.setAttribute('aria-pressed', 'false');
       }
       if (canvasModeSelect) canvasModeSelect.style.display = this.gameMode === 'canvas' ? '' : 'none';
       if (keyboardGameSelect) keyboardGameSelect.style.display = this.canvasMode === 'keyboard' ? '' : 'none';
@@ -3982,6 +3987,7 @@ class VoxBallGame {
       this.teleprompterIndex = 0;
       if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
       teleprompterCustomBtn?.classList.toggle('active', this.teleprompterMode === 'custom');
+      teleprompterCustomBtn?.setAttribute('aria-pressed', (this.teleprompterMode === 'custom').toString());
     });
 
     teleprompterCustomBtn?.addEventListener('click', () => {
@@ -3998,12 +4004,14 @@ class VoxBallGame {
       this.teleprompterIndex = 0;
       if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
       teleprompterCustomBtn.classList.toggle('active', this.teleprompterMode === 'custom');
+      teleprompterCustomBtn.setAttribute('aria-pressed', (this.teleprompterMode === 'custom').toString());
     });
 
     pauseCanvasBtn?.addEventListener('click', () => {
       this.voiceCanvasPaused = !this.voiceCanvasPaused;
       pauseCanvasBtn.textContent = this.voiceCanvasPaused ? 'Resume' : 'Pause';
       pauseCanvasBtn.classList.toggle('active', this.voiceCanvasPaused);
+      pauseCanvasBtn.setAttribute('aria-pressed', this.voiceCanvasPaused.toString());
     });
 
     clearCanvasBtn?.addEventListener('click', () => {
@@ -4035,6 +4043,7 @@ class VoxBallGame {
         this.colorblindMode = !this.colorblindMode;
         document.documentElement.classList.toggle('colorblind', this.colorblindMode);
         cbBtn.classList.toggle('active', this.colorblindMode);
+        cbBtn.setAttribute('aria-pressed', this.colorblindMode.toString());
       });
     }
 
@@ -4080,6 +4089,7 @@ class VoxBallGame {
       const next = this.userMotionPreference === 'auto' ? 'Auto' : this.userMotionPreference === 'low' ? 'Low' : 'Full';
       motionToggle.textContent = `Motion: ${next}`;
       motionToggle.classList.toggle('active', this.userMotionPreference === 'low');
+      motionToggle.setAttribute('aria-pressed', (this.userMotionPreference === 'low').toString());
     };
     syncMotionToggleLabel();
     syncMicSettingsUi();
