@@ -3310,6 +3310,7 @@ class VoxBallGame {
       if (pauseCanvasBtn) {
         pauseCanvasBtn.textContent = 'Pause';
         pauseCanvasBtn.classList.remove('active');
+        pauseCanvasBtn.setAttribute('aria-pressed', 'false');
       }
       this.guidedStartTs = performance.now();
       this.guidedDismissed = false;
@@ -3846,6 +3847,7 @@ class VoxBallGame {
       if (pauseCanvasBtn) {
         pauseCanvasBtn.textContent = 'Pause';
         pauseCanvasBtn.classList.remove('active');
+        pauseCanvasBtn.setAttribute('aria-pressed', 'false');
       }
       if (canvasModeSelect) canvasModeSelect.style.display = this.gameMode === 'canvas' ? '' : 'none';
       if (keyboardGameSelect) keyboardGameSelect.style.display = this.canvasMode === 'keyboard' ? '' : 'none';
@@ -4004,6 +4006,7 @@ class VoxBallGame {
       this.voiceCanvasPaused = !this.voiceCanvasPaused;
       pauseCanvasBtn.textContent = this.voiceCanvasPaused ? 'Resume' : 'Pause';
       pauseCanvasBtn.classList.toggle('active', this.voiceCanvasPaused);
+      pauseCanvasBtn.setAttribute('aria-pressed', this.voiceCanvasPaused.toString());
     });
 
     clearCanvasBtn?.addEventListener('click', () => {
@@ -4035,6 +4038,7 @@ class VoxBallGame {
         this.colorblindMode = !this.colorblindMode;
         document.documentElement.classList.toggle('colorblind', this.colorblindMode);
         cbBtn.classList.toggle('active', this.colorblindMode);
+        cbBtn.setAttribute('aria-pressed', this.colorblindMode.toString());
       });
     }
 
@@ -4080,6 +4084,7 @@ class VoxBallGame {
       const next = this.userMotionPreference === 'auto' ? 'Auto' : this.userMotionPreference === 'low' ? 'Low' : 'Full';
       motionToggle.textContent = `Motion: ${next}`;
       motionToggle.classList.toggle('active', this.userMotionPreference === 'low');
+      motionToggle.setAttribute('aria-pressed', (this.userMotionPreference === 'low').toString());
     };
     syncMotionToggleLabel();
     syncMicSettingsUi();
