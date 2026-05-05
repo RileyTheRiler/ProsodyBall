@@ -10265,11 +10265,12 @@ class VoxBallGame {
     const ctx = canvasEl.getContext('2d');
     ctx.scale(dpr, dpr);
 
-    const pitches = crystallized.map(s => s.avgF0);
-    let minP = pitches[0] || 0, maxP = pitches[0] || 0;
-    for (let i = 1; i < pitches.length; i++) {
-      if (pitches[i] < minP) minP = pitches[i];
-      if (pitches[i] > maxP) maxP = pitches[i];
+    let minP = crystallized[0]?.avgF0 || 0;
+    let maxP = minP;
+    for (let i = 1; i < crystallized.length; i++) {
+      const p = crystallized[i]?.avgF0 || 0;
+      if (p < minP) minP = p;
+      if (p > maxP) maxP = p;
     }
     const range = Math.max(1, maxP - minP);
 
