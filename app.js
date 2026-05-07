@@ -7588,20 +7588,22 @@ class VoxBallGame {
     ctx.font = '500 10px "Space Mono", monospace';
     ctx.fillStyle = this.pitchGridStrength === 'strong' ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.48)';
     ctx.textAlign = 'left';
-    const guides = [100, 150, 200, 250, 300].map((hz) => ({
-      hz,
-      norm: Math.max(0, Math.min(1, (hz - 80) / (300 - 80))),
-    }));
-    for (const guide of guides) {
-      const gy = 40 + (1 - guide.norm) * (h - 80);
+    // ⚡ Bolt Optimization: Replace .map() with single loop and static array to reduce GC and CPU overhead
+    const PITCH_GUIDES = [100, 150, 200, 250, 300];
+    for (let i = 0; i < PITCH_GUIDES.length; i++) {
+      const hz = PITCH_GUIDES[i];
+      const norm = Math.max(0, Math.min(1, (hz - 80) / (300 - 80)));
+      const gy = 40 + (1 - norm) * (h - 80);
+
       ctx.beginPath();
       ctx.moveTo(margin + 5, gy);
       ctx.lineTo(w - margin - 5, gy);
       ctx.stroke();
+
       if (this.pitchGuideLabelMode !== 'off') {
         const label = this.pitchGuideLabelMode === 'notes'
-          ? `${this._pitchHzToNoteLabel(guide.hz)} (${guide.hz}Hz)`
-          : `${guide.hz}Hz`;
+          ? `${this._pitchHzToNoteLabel(hz)} (${hz}Hz)`
+          : `${hz}Hz`;
         ctx.fillText(label, margin + 10, gy - 4);
       }
     }
@@ -10265,11 +10267,16 @@ class VoxBallGame {
     const ctx = canvasEl.getContext('2d');
     ctx.scale(dpr, dpr);
 
-    const pitches = crystallized.map(s => s.avgF0);
-    let minP = pitches[0] || 0, maxP = pitches[0] || 0;
-    for (let i = 1; i < pitches.length; i++) {
-      if (pitches[i] < minP) minP = pitches[i];
-      if (pitches[i] > maxP) maxP = pitches[i];
+    // ⚡ Bolt Optimization: Replace .map() and two-pass iteration with single fast loop
+    let minP = 0, maxP = 0;
+    const len = crystallized.length;
+    if (len > 0) {
+      minP = maxP = crystallized[0]?.avgF0 || 0;
+      for (let i = 1; i < len; i++) {
+        const p = crystallized[i]?.avgF0 || 0;
+        if (p < minP) minP = p;
+        if (p > maxP) maxP = p;
+      }
     }
     const range = Math.max(1, maxP - minP);
 
