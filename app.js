@@ -33,6 +33,12 @@ const SYLLABLE_IMPULSE_DECAY = 0.88;     // Per-frame decay of syllable impulse
 const MAX_SPARKLES = 100;                // Maximum sparkle particles in ball mode
 const MAX_NEBULA_FLARES = 10;            // Maximum flare particles for nebula creature
 
+// Pre-computed constants to avoid per-frame allocations
+const PITCH_GUIDES = [100, 150, 200, 250, 300].map((hz) => ({
+  hz,
+  norm: Math.max(0, Math.min(1, (hz - 80) / (300 - 80))),
+}));
+
 // ============================================================
 // VOICE ANALYZER
 // ============================================================
@@ -7588,11 +7594,7 @@ class VoxBallGame {
     ctx.font = '500 10px "Space Mono", monospace';
     ctx.fillStyle = this.pitchGridStrength === 'strong' ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.48)';
     ctx.textAlign = 'left';
-    const guides = [100, 150, 200, 250, 300].map((hz) => ({
-      hz,
-      norm: Math.max(0, Math.min(1, (hz - 80) / (300 - 80))),
-    }));
-    for (const guide of guides) {
+    for (const guide of PITCH_GUIDES) {
       const gy = 40 + (1 - guide.norm) * (h - 80);
       ctx.beginPath();
       ctx.moveTo(margin + 5, gy);
@@ -10265,11 +10267,11 @@ class VoxBallGame {
     const ctx = canvasEl.getContext('2d');
     ctx.scale(dpr, dpr);
 
-    const pitches = crystallized.map(s => s.avgF0);
-    let minP = pitches[0] || 0, maxP = pitches[0] || 0;
-    for (let i = 1; i < pitches.length; i++) {
-      if (pitches[i] < minP) minP = pitches[i];
-      if (pitches[i] > maxP) maxP = pitches[i];
+    let minP = crystallized[0]?.avgF0 || 0, maxP = crystallized[0]?.avgF0 || 0;
+    for (let i = 1; i < crystallized.length; i++) {
+      const p = crystallized[i].avgF0;
+      if (p < minP) minP = p;
+      if (p > maxP) maxP = p;
     }
     const range = Math.max(1, maxP - minP);
 
