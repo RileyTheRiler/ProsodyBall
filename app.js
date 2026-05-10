@@ -11054,18 +11054,33 @@ class VoxBallGame {
     const sourceText = roadMode
       ? this._getResonanceRoadPassageText()
       : (this.teleprompterMode === 'custom' ? this.teleprompterCustomText : this.teleprompterRainbowText);
-    const words = sourceText.trim().split(/\s+/).filter(Boolean);
-    if (!words.length) return;
+
+    // ⚡ Bolt Optimization: Cache string parsing and only update DOM when visual state changes
+    // Eliminates per-frame split() array allocation and redundant DOM reflows reducing GC overhead.
+    if (this._lastTeleprompterText !== sourceText) {
+      this._lastTeleprompterText = sourceText;
+      this._teleprompterWords = sourceText.trim().split(/\s+/).filter(Boolean);
+    }
+    const words = this._teleprompterWords;
+
+    if (!words || !words.length) return;
     if (this.isRunning && this.analyzer.metrics.energy > 0.03) {
       const rate = 2.5 + this.analyzer.metrics.tempo * 3.5;
       this.teleprompterIndex += dt * rate;
       if (this.teleprompterIndex >= words.length) this.teleprompterIndex = 0;
     }
     const active = Math.floor(this.teleprompterIndex);
+
+    // Only rebuild DOM if the active word index has changed
+    if (this._lastTeleprompterActive === active && this._lastTeleprompterOverlayText === sourceText) {
+        return;
+    }
+    this._lastTeleprompterActive = active;
+    this._lastTeleprompterOverlayText = sourceText;
+
     const start = Math.max(0, active - 8);
     const end = Math.min(words.length, active + 14);
 
-    overlay.textContent = '';
     const frag = document.createDocumentFragment();
     for (let i = start; i < end; i++) {
       const span = document.createElement('span');
@@ -11073,7 +11088,6 @@ class VoxBallGame {
       span.textContent = words[i];
       frag.append(span);
       if (i < end - 1) frag.append(' ');
-      if (i < end - 1) frag.append(document.createTextNode(' '));
     }
     overlay.textContent = '';
     overlay.append(frag);
