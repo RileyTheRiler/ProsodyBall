@@ -51,3 +51,8 @@
 **Vulnerability:** Safe DOM construction using `document.createDocumentFragment()` and `.append()` was not consistently applied in `app.js` (e.g. `_showSessionSummary`, `renderTeleprompter`) or `calibration-wizard.js`. This allowed potential injection if dynamic data was ever used within loops with string concatenation, and led to conflicts with `innerHTML`.
 **Learning:** Relying on `innerHTML` for UI construction is inherently risky. Furthermore, manual DOM mocks in tests (like `MockEl`) require robust state initialization (e.g., `this.childNodes`) to correctly support safe DOM traversal methods like `.append()`.
 **Prevention:** Replace all complex `innerHTML` assignments with safe programmatic elements (`DocumentFragment`, `.createElement()`, `.textContent`). Ensure any manual DOM mocks fully implement necessary Node properties.
+
+## 2024-05-29 - [Client-side DoS Risk via Unconstrained Text Inputs]
+**Vulnerability:** Found unconstrained `textarea` inputs (`#roadCustomText` and `#prismCustomText`) mapping directly to internal component state for rendering. Pasting extremely large texts (e.g., millions of characters) could cause UI freezing and Client-side Denial of Service (DoS) due to excessive DOM manipulation or string processing in per-frame rendering loops.
+**Learning:** Any user input that feeds into high-frequency UI rendering or processing (like word/syllable counting and syllable rendering in this app) must have explicit length bounds to prevent CPU saturation.
+**Prevention:** Always apply length constraints directly on HTML input elements (e.g., `maxlength="5000"`) and enforce them defensively in JavaScript state assignments (e.g., `e.target.value.substring(0, 5000)`) to ensure malicious payloads cannot bypass UI limits.
