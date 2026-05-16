@@ -24,3 +24,6 @@
 ## $(date +%Y-%m-%d) - [Inaccessible custom toggle switches due to duplicate IDs]
 **Learning:** Discovered that custom toggle switches built with `<label class="toggle-switch">` wrapping an `<input type="checkbox">` were failing because the `id` on the `<input>` was duplicated elsewhere in the DOM. This breaks the `<label for="[id]">` association, rendering the toggle invisible to screen readers and difficult to click.
 **Action:** Ensure custom toggle `<input>` elements have strictly unique IDs across the entire document so they correctly link with their `<label>` elements.
+## $(date +%Y-%m-%d) - [Missing aria-describedby and aria-expanded on info tooltips]
+**Learning:** Found that info tooltips triggered by buttons (`.info-trigger` and `.info-popup`) lacked proper screen reader associations. The triggers were missing `aria-expanded` attributes, and there was no `aria-describedby` linking the trigger to the popup content.
+**Action:** When creating or modifying tooltips or info popups, dynamically assign a unique `id` to the popup container and set `aria-describedby` on the trigger button to point to that `id`. Additionally, ensure `aria-expanded` is initially set and toggled (true/false) as the tooltip's visibility changes.
