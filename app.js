@@ -19,6 +19,10 @@ function escapeHtml(text) {
 // Centralised so they're easy to find, tweak, and document.
 // ============================================================
 const YIN_THRESHOLD = 0.15;               // CMND threshold for pitch detection (lower = stricter)
+const PITCH_GUIDES = [100, 150, 200, 250, 300].map((hz) => ({
+  hz,
+  norm: Math.max(0, Math.min(1, (hz - 80) / (300 - 80))),
+}));
 const PITCH_CONFIDENCE_FACTOR = 3.3;      // Maps CMND → confidence: conf = 1 - cmnd * factor
 const BOUNCE_NORM_DIVISOR = 70;           // Hz std-dev mapped to [0,1] bounce
 const TEMPO_TRANSITION_DIVISOR = 12;      // Energy crossings → [0,1] tempo
@@ -7588,11 +7592,9 @@ class VoxBallGame {
     ctx.font = '500 10px "Space Mono", monospace';
     ctx.fillStyle = this.pitchGridStrength === 'strong' ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.48)';
     ctx.textAlign = 'left';
-    const guides = [100, 150, 200, 250, 300].map((hz) => ({
-      hz,
-      norm: Math.max(0, Math.min(1, (hz - 80) / (300 - 80))),
-    }));
-    for (const guide of guides) {
+    // ⚡ Bolt Optimization: Use hoisted PITCH_GUIDES to avoid array.map allocation per frame
+    for (let i = 0; i < PITCH_GUIDES.length; i++) {
+      const guide = PITCH_GUIDES[i];
       const gy = 40 + (1 - guide.norm) * (h - 80);
       ctx.beginPath();
       ctx.moveTo(margin + 5, gy);
@@ -10265,11 +10267,16 @@ class VoxBallGame {
     const ctx = canvasEl.getContext('2d');
     ctx.scale(dpr, dpr);
 
-    const pitches = crystallized.map(s => s.avgF0);
-    let minP = pitches[0] || 0, maxP = pitches[0] || 0;
-    for (let i = 1; i < pitches.length; i++) {
-      if (pitches[i] < minP) minP = pitches[i];
-      if (pitches[i] > maxP) maxP = pitches[i];
+    // ⚡ Bolt Optimization: Use standard loop instead of .map to prevent GC spikes in sparkline render
+    let minP = 0, maxP = 0;
+    if (crystallized.length > 0) {
+      minP = crystallized[0].avgF0;
+      maxP = crystallized[0].avgF0;
+      for (let i = 1; i < crystallized.length; i++) {
+        const p = crystallized[i].avgF0;
+        if (p < minP) minP = p;
+        if (p > maxP) maxP = p;
+      }
     }
     const range = Math.max(1, maxP - minP);
 
