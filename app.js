@@ -1462,6 +1462,30 @@ class VoxBallGame {
     this.ballSat = 70;
     this.ballLit = 55;
 
+    // ⚡ Bolt Optimization: Cache DOM element references for high-frequency updateMeters()
+    this.meterEls = {
+      meterBounce: document.getElementById('meterBounce'),
+      meterTempo: document.getElementById('meterTempo'),
+      meterVowel: document.getElementById('meterVowel'),
+      meterArtic: document.getElementById('meterArtic'),
+      meterPitch: document.getElementById('meterPitch'),
+      valPitch: document.getElementById('valPitch'),
+      meterResonance: document.getElementById('meterResonance'),
+      valResonance: document.getElementById('valResonance'),
+      valBounce: document.getElementById('valBounce'),
+      valTempo: document.getElementById('valTempo'),
+      valVowel: document.getElementById('valVowel'),
+      valArtic: document.getElementById('valArtic'),
+      hlBounce: document.querySelector('.meter-bounce .meter-label'),
+      hlTempo: document.querySelector('.meter-tempo .meter-label'),
+      hlVowel: document.querySelector('.meter-vowel .meter-label'),
+      hlArtic: document.querySelector('.meter-artic .meter-label'),
+      mapSplatter: document.getElementById('mapSplatter'),
+      pitchStatus: document.getElementById('pitchProfileLearned'),
+      tiltStatus: document.getElementById('tiltProfileLearned'),
+      confidenceStatus: document.getElementById('frameConfidenceLabel')
+    };
+
     this.ball = {
       x: 0, y: 0, vy: 0,
       radius: 22, baseRadius: 22, targetRadius: 22,
@@ -11085,59 +11109,67 @@ class VoxBallGame {
     this._triggerMetricHighlight('vowel', 0.7);
     this._triggerMetricHighlight('bounce', 0.75);
 
-    const set = (id, val) => {
-      document.getElementById(id).style.width = (val * 100) + '%';
-    };
-    set('meterBounce', m.bounce);
-    set('meterTempo', m.tempo);
-    set('meterVowel', m.vowel);
-    set('meterArtic', m.articulation);
+    const els = this.meterEls;
+
+    if (els.meterBounce) els.meterBounce.style.width = (m.bounce * 100) + '%';
+    if (els.meterTempo) els.meterTempo.style.width = (m.tempo * 100) + '%';
+    if (els.meterVowel) els.meterVowel.style.width = (m.vowel * 100) + '%';
+    if (els.meterArtic) els.meterArtic.style.width = (m.articulation * 100) + '%';
+
     // Pitch meter — position-based indicator (not fill width)
     // Map 80-300 Hz to 0-100% position on the gradient bar
     const hz = this.analyzer.smoothPitchHz;
     const pitchPos = pitchHzToPosition(hz, 80, 300);
-    const pitchEl = document.getElementById('meterPitch');
-    pitchEl.style.left = (pitchPos * 100) + '%';
-    pitchEl.style.width = '3px';
-    document.getElementById('valPitch').textContent =
-      this.analyzer.lastPitch > 0 ? Math.round(hz) + ' Hz' : '— Hz';
+    if (els.meterPitch) {
+      els.meterPitch.style.left = (pitchPos * 100) + '%';
+      els.meterPitch.style.width = '3px';
+    }
+    if (els.valPitch) {
+      els.valPitch.textContent = this.analyzer.lastPitch > 0 ? Math.round(hz) + ' Hz' : '— Hz';
+    }
 
     // Resonance meter — position-based indicator like pitch
     const res = this.analyzer.smoothResonance;
-    const resEl = document.getElementById('meterResonance');
-    resEl.style.left = (res * 100) + '%';
-    resEl.style.width = '3px';
+    if (els.meterResonance) {
+      els.meterResonance.style.left = (res * 100) + '%';
+      els.meterResonance.style.width = '3px';
+    }
     // Show F1/F2/F3 Hz during voiced speech for method comparison
     const resConf = this.analyzer.formantConfidence;
-    if (resConf > 0.2 && this.analyzer.metrics.energy > 0.05) {
-      const f1 = Math.round(this.analyzer.smoothF1);
-      const f2 = Math.round(this.analyzer.smoothF2);
-      const f3 = Math.round(this.analyzer.smoothF3);
-      document.getElementById('valResonance').textContent = `${f1}/${f2}/${f3}`;
-    } else {
-      document.getElementById('valResonance').textContent = '—';
+    if (els.valResonance) {
+      if (resConf > 0.2 && this.analyzer.metrics.energy > 0.05) {
+        const f1 = Math.round(this.analyzer.smoothF1);
+        const f2 = Math.round(this.analyzer.smoothF2);
+        const f3 = Math.round(this.analyzer.smoothF3);
+        els.valResonance.textContent = `${f1}/${f2}/${f3}`;
+      } else {
+        els.valResonance.textContent = '—';
+      }
     }
 
-    document.getElementById('valBounce').textContent = this._meterLabel(m.bounce, 'Flat', 'Varied', 'Wild');
-    document.getElementById('valTempo').textContent = this._meterLabel(m.tempo, 'Steady', 'Varied', 'Dynamic');
-    document.getElementById('valVowel').textContent = this._meterLabel(m.vowel, 'Short', 'Held', 'Sustained');
-    document.getElementById('valArtic').textContent = this._meterLabel(m.articulation, 'Soft', 'Clear', 'Crisp');
-    const highlightMap = {
-      bounce: document.querySelector('.meter-bounce .meter-label'),
-      tempo: document.querySelector('.meter-tempo .meter-label'),
-      vowel: document.querySelector('.meter-vowel .meter-label'),
-      articulation: document.querySelector('.meter-artic .meter-label'),
-    };
-    for (const [k, el] of Object.entries(highlightMap)) {
+    if (els.valBounce) els.valBounce.textContent = this._meterLabel(m.bounce, 'Flat', 'Varied', 'Wild');
+    if (els.valTempo) els.valTempo.textContent = this._meterLabel(m.tempo, 'Steady', 'Varied', 'Dynamic');
+    if (els.valVowel) els.valVowel.textContent = this._meterLabel(m.vowel, 'Short', 'Held', 'Sustained');
+    if (els.valArtic) els.valArtic.textContent = this._meterLabel(m.articulation, 'Soft', 'Clear', 'Crisp');
+
+    const hls = [
+      ['bounce', els.hlBounce],
+      ['tempo', els.hlTempo],
+      ['vowel', els.hlVowel],
+      ['articulation', els.hlArtic]
+    ];
+    for (let i = 0; i < hls.length; i++) {
+      const k = hls[i][0];
+      const el = hls[i][1];
       this.metricHighlightTimers[k] = Math.max(0, this.metricHighlightTimers[k] - 1 / 60);
       if (el) el.classList.toggle('active-ping', this.metricHighlightTimers[k] > 0);
     }
-    const mapSplatter = document.getElementById('mapSplatter');
-    if (mapSplatter) mapSplatter.classList.toggle('active-ping', this.metricHighlightTimers.articulation > 0);
 
-    const pitchStatus = document.getElementById('pitchProfileLearned');
-    const tiltStatus = document.getElementById('tiltProfileLearned');
-    const confidenceStatus = document.getElementById('frameConfidenceLabel');
+    if (els.mapSplatter) els.mapSplatter.classList.toggle('active-ping', this.metricHighlightTimers.articulation > 0);
+
+    const pitchStatus = els.pitchStatus;
+    const tiltStatus = els.tiltStatus;
+    const confidenceStatus = els.confidenceStatus;
     if (pitchStatus || tiltStatus || confidenceStatus) {
       const pitch = this.analyzer.pitchProfile;
       const tilt = this.analyzer.tiltProfile;
