@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeRawProsody, computeProsodyScore, pitchHzToPosition } from './dsp-utils.js';
+import { computeRawProsody, computeProsodyScore, pitchHzToPosition, sanitizeUrl } from './dsp-utils.js';
 
 test('computeRawProsody applies weighted sum', () => {
   const metrics = { bounce: 1, tempo: 0.5, vowel: 0.5, articulation: 0.5, syllable: 0.5 };
@@ -20,4 +20,26 @@ test('pitchHzToPosition clamps to [0,1]', () => {
   assert.equal(pitchHzToPosition(190), 0.5);
   assert.equal(pitchHzToPosition(30), 0);
   assert.equal(pitchHzToPosition(500), 1);
+});
+
+test('sanitizeUrl handles empty, safe, and dangerous protocols', () => {
+  // Safe cases
+  assert.equal(sanitizeUrl('https://example.com'), 'https://example.com');
+  assert.equal(sanitizeUrl('http://test.com'), 'http://test.com');
+  assert.equal(sanitizeUrl('/relative/path'), '/relative/path');
+  assert.equal(sanitizeUrl('tel:12345'), 'tel:12345');
+  assert.equal(sanitizeUrl('mailto:test@example.com'), 'mailto:test@example.com');
+
+  // Empty / Null cases
+  assert.equal(sanitizeUrl(''), 'about:blank');
+  assert.equal(sanitizeUrl(null), 'about:blank');
+  assert.equal(sanitizeUrl(undefined), 'about:blank');
+
+  // Dangerous cases
+  assert.equal(sanitizeUrl('javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('  javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('%20javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('JAVASCRIPT:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('data:text/html,<script>alert(1)</script>'), 'about:blank');
+  assert.equal(sanitizeUrl('vbscript:msgbox(1)'), 'about:blank');
 });
