@@ -2740,7 +2740,9 @@ class VoxBallGame {
       } else if (action === 'download') {
         this.downloadRecording(idx);
       } else if (action === 'delete') {
-        this.deleteRecording(idx);
+        if (window.confirm('Delete this recording?')) {
+          this.deleteRecording(idx);
+        }
       }
     };
   }
