@@ -24,3 +24,6 @@
 ## $(date +%Y-%m-%d) - [Inaccessible custom toggle switches due to duplicate IDs]
 **Learning:** Discovered that custom toggle switches built with `<label class="toggle-switch">` wrapping an `<input type="checkbox">` were failing because the `id` on the `<input>` was duplicated elsewhere in the DOM. This breaks the `<label for="[id]">` association, rendering the toggle invisible to screen readers and difficult to click.
 **Action:** Ensure custom toggle `<input>` elements have strictly unique IDs across the entire document so they correctly link with their `<label>` elements.
+## 2026-05-26 - [Missing aria-pressed on CSS-driven toggle buttons]
+**Learning:** Found that toggle buttons using the `.active` CSS class for their visual state (e.g., `#cbToggle`, `#pauseCanvasBtn`, `#motionToggle`, `#vibToggle`) lacked dynamic synchronization of the `aria-pressed` attribute. This results in screen readers not being informed of the button's toggled state, as the visual change is invisible to assistive technologies.
+**Action:** Always add an explicit `aria-pressed="false"` initially and dynamically sync it (e.g., `button.setAttribute('aria-pressed', isActive ? 'true' : 'false')`) in JavaScript whenever the `.active` class is toggled.
