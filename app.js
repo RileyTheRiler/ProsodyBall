@@ -2031,12 +2031,19 @@ class VoxBallGame {
       const trigger = wrapper.querySelector('.info-trigger');
       if (!popup || !trigger) return;
 
+      if (!popup.id) {
+        popup.id = `info-popup-${Math.random().toString(36).substr(2, 9)}`;
+      }
+      trigger.setAttribute('aria-describedby', popup.id);
+      trigger.setAttribute('aria-expanded', 'false');
+
       const show = () => {
         popup.removeAttribute('hidden');
         popup.style.display = '';
         popup.style.opacity = '1';
         popup.style.visibility = 'visible';
         popup.style.pointerEvents = 'auto';
+        trigger.setAttribute('aria-expanded', 'true');
       };
       const hide = () => {
         popup.style.display = 'none';
@@ -2044,6 +2051,7 @@ class VoxBallGame {
         popup.style.visibility = 'hidden';
         popup.style.pointerEvents = 'none';
         popup.setAttribute('hidden', '');
+        trigger.setAttribute('aria-expanded', 'false');
       };
 
       wrapper.addEventListener('mouseenter', show);
