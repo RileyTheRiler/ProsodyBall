@@ -25,3 +25,14 @@ export function pitchHzToPosition(hz, minHz = 80, maxHz = 300) {
   if (!Number.isFinite(hz)) return 0;
   return clamp((hz - minHz) / (maxHz - minHz), 0, 1);
 }
+
+export function sanitizeUrl(url) {
+  if (!url) return null;
+  const str = String(url).trim();
+  if (!str) return null;
+  // Prevent DOM-based XSS by blocking javascript:, vbscript:, and data: URLs
+  if (/^(%20|\s)*(javascript|data|vbscript):/i.test(str)) {
+    return 'about:blank';
+  }
+  return str;
+}
