@@ -21,6 +21,9 @@
 ## 2026-03-15 - [Inaccessible custom toggle switches]
 **Learning:** Discovered that custom toggle switches built with `<label class="toggle-switch">` wrapping an `<input type="checkbox">` and `<span class="toggle-slider">` were inaccessible to screen readers because they lacked `aria-label` attributes on the actual `<input>` element. Also, adjacent descriptive text was using generic `<span>` tags, resulting in poor clickable hit-areas.
 **Action:** Always add an explicit `aria-label` directly to the `<input>` element inside custom toggle components. In addition, replace adjacent text elements like `<span>` with `<label for="[input-id]">` to drastically improve the clickable hit-area for mouse and touch users.
-## $(date +%Y-%m-%d) - [Inaccessible custom toggle switches due to duplicate IDs]
+## 2024-06-03 - [Inaccessible custom toggle switches due to duplicate IDs]
 **Learning:** Discovered that custom toggle switches built with `<label class="toggle-switch">` wrapping an `<input type="checkbox">` were failing because the `id` on the `<input>` was duplicated elsewhere in the DOM. This breaks the `<label for="[id]">` association, rendering the toggle invisible to screen readers and difficult to click.
 **Action:** Ensure custom toggle `<input>` elements have strictly unique IDs across the entire document so they correctly link with their `<label>` elements.
+## 2025-06-03 - [Inaccessible Tooltips]
+**Learning:** Found that `.info-trigger` tooltip buttons lacked `aria-expanded` attributes and did not programmatically associate with their `.info-popup` content via `aria-describedby`, making their state and purpose opaque to screen reader users.
+**Action:** When building interactive tooltips, ensure the tooltip content has a unique ID, the trigger button references it via `aria-describedby`, and the trigger explicitly updates its `aria-expanded` state on hover/focus.
