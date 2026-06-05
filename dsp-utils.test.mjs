@@ -1,6 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeRawProsody, computeProsodyScore, pitchHzToPosition } from './dsp-utils.js';
+import { computeRawProsody, computeProsodyScore, pitchHzToPosition, sanitizeUrl } from './dsp-utils.js';
+
+test('sanitizeUrl blocks dangerous protocols', () => {
+  assert.equal(sanitizeUrl('javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('  javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('%20javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('data:text/html,<html>'), 'about:blank');
+  assert.equal(sanitizeUrl('vbscript:msgbox("hello")'), 'about:blank');
+});
+
+test('sanitizeUrl allows safe URLs', () => {
+  assert.equal(sanitizeUrl('https://example.com/page?query=javascript:alert(1)'), 'https://example.com/page?query=javascript:alert(1)');
+  assert.equal(sanitizeUrl('/local/path'), '/local/path');
+  assert.equal(sanitizeUrl('blob:http://localhost/123'), 'blob:http://localhost/123');
+});
+
+test('sanitizeUrl handles empty inputs', () => {
+  assert.equal(sanitizeUrl(''), 'about:blank');
+  assert.equal(sanitizeUrl(null), 'about:blank');
+  assert.equal(sanitizeUrl(undefined), 'about:blank');
+});
 
 test('computeRawProsody applies weighted sum', () => {
   const metrics = { bounce: 1, tempo: 0.5, vowel: 0.5, articulation: 0.5, syllable: 0.5 };
