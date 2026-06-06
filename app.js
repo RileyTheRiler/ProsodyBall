@@ -2,7 +2,7 @@ import { computeProsodyScore, computeRawProsody, pitchHzToPosition } from './dsp
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { getMicDiagnostics, ensureAudioContextRunning } from './reliability.js';
-import { computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange } from './voice-analyzer-core.js';
+import { clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness } from './voice-analyzer-core.js';
 
 function escapeHtml(text) {
   if (!text) return text;
@@ -31,10 +31,15 @@ const SYLLABLE_ON_MULT = 0.6;            // Energy range multiplier for syllable
 const SYLLABLE_OFF_MULT = 0.15;          // Energy range multiplier for syllable-off threshold
 const SYLLABLE_IMPULSE_DECAY = 0.88;     // Per-frame decay of syllable impulse
 const WEIGHT_F2_BLEND = 0.15;            // Small F2-darkness contribution to perceived weight
+const WEIGHT_TILT_BASE = 0.55;           // Baseline blend weight for spectral-tilt heaviness
+const WEIGHT_H1H2_BLEND = 0.30;          // Max blend weight for the H1-H2 breathiness cue (× confidence)
+const H1H2_HEAVY_DB = -2;                // H1-H2 (dB) anchor for pressed/heavy phonation
+const H1H2_LIGHT_DB = 14;                // H1-H2 (dB) anchor for breathy/light phonation
 const WEIGHT_SMOOTH_BASE = 0.10;         // Base EMA rate toward the weight target
 const ATTACK_RISE_WINDOW_SECS = 0.06;    // Capture peak energy-rise within 60ms of an onset
 const ATTACK_IMPULSE_DECAY = 0.90;       // Per-frame decay of the vocal-attack impulse
 const ATTACK_RISE_LEARN_RATE = 0.02;     // EMA rate for the adaptive rise-rate ceiling
+const ATTACK_ABRUPT_BLEND = 0.30;        // Blend weight for onset-abruptness vs amplitude-rise hardness
 const MAX_SPARKLES = 100;                // Maximum sparkle particles in ball mode
 const MAX_NEBULA_FLARES = 10;            // Maximum flare particles for nebula creature
 
@@ -91,6 +96,9 @@ export class VoiceAnalyzer {
     this.attackWindowTimer = -1; // <0 = inactive; >=0 = counting up during capture window
     this.attackRiseCeiling = 0.02;
     this.attackImpulse = 0;
+    this.attackPeakTime = 0;     // time (s) into the onset window at which the rise peaked
+    this.h1h2SmoothedDb = 6;     // smoothed H1-H2 (dB); ~6 ≈ modal-voice default → mid weight
+    this.h1h2Confidence = 0;     // 0..1 trust in the current H1-H2 estimate
 
     // Energy
     this.energyHistory = [];
@@ -297,6 +305,9 @@ export class VoiceAnalyzer {
     this.attackWindowTimer = -1;
     this.attackRiseCeiling = 0.02;
     this.attackImpulse = 0;
+    this.attackPeakTime = 0;
+    this.h1h2SmoothedDb = 6;
+    this.h1h2Confidence = 0;
     this.sustainedDuration = 0;
     this.syllableImpulse = 0;
     this.syllableState = 'silent';
@@ -688,6 +699,30 @@ export class VoiceAnalyzer {
     this.spectralWeight += (normalized - this.spectralWeight) * (0.12 + tiltConfidenceGate * 0.2);
     this.spectralTiltConfidence += (tiltConfidenceGate - this.spectralTiltConfidence) * 0.2;
 
+    // ====== H1–H2 (open quotient / breathiness cue for weight) ======
+    // Amplitude of the 1st vs 2nd harmonic (dB). High H1-H2 = open/breathy/light; low or
+    // negative = pressed/heavy. As a ratio of two nearby harmonics it is largely immune to
+    // microphone colouration, complementing the (mic-sensitive) absolute spectral tilt.
+    if (pitch > 0 && this.pitchConfidence > 0.4 && activeF0 > 0) {
+      const hSearch = Math.max(1, Math.floor((activeF0 / fftBinHz) * 0.25));
+      const harmonicPeakDb = (centerHz) => {
+        const center = centerHz / fftBinHz;
+        const lo = Math.max(1, Math.floor(center) - hSearch);
+        const hi = Math.min(fData.length - 1, Math.ceil(center) + hSearch);
+        let peak = -Infinity;
+        for (let i = lo; i <= hi; i++) if (fData[i] > peak) peak = fData[i];
+        return peak;
+      };
+      const h1 = harmonicPeakDb(activeF0);
+      const h2 = harmonicPeakDb(activeF0 * 2);
+      if (isFinite(h1) && isFinite(h2)) {
+        this.h1h2SmoothedDb += ((h1 - h2) - this.h1h2SmoothedDb) * 0.16;
+        this.h1h2Confidence += (clamp01(this.pitchConfidence) - this.h1h2Confidence) * 0.2;
+      }
+    } else {
+      this.h1h2Confidence *= 0.9;
+    }
+
     // ====== FORMANT / RESONANCE ANALYSIS ======
     // Two-stage approach:
     //   Stage 1: Band energy ratios for vowel vs consonant detection (fast, always-on)
@@ -870,6 +905,7 @@ export class VoiceAnalyzer {
         // Open the vocal-attack capture window at this phonation onset.
         this.attackWindowTimer = 0;
         this.attackRisePeak = riseRate;
+        this.attackPeakTime = 0;
       }
       this.syllableState = 'voiced';
     } else if (gatedRms < syllableOffThreshold) {
@@ -882,7 +918,10 @@ export class VoiceAnalyzer {
     //    onset. Steep rise = hard/glottal (→1); gradual rise = soft/breathy (→0).
     if (this.attackWindowTimer >= 0) {
       this.attackWindowTimer += dt;
-      if (riseRate > this.attackRisePeak) this.attackRisePeak = riseRate;
+      if (riseRate > this.attackRisePeak) {
+        this.attackRisePeak = riseRate;
+        this.attackPeakTime = this.attackWindowTimer;
+      }
       if (this.attackWindowTimer >= ATTACK_RISE_WINDOW_SECS) {
         // Train the ceiling only on reliably-voiced onsets, so coughs, mic bumps, or
         // unvoiced bursts can't ratchet it up and de-sensitize real phonation onsets.
@@ -890,12 +929,19 @@ export class VoiceAnalyzer {
           const k = this.attackRisePeak > this.attackRiseCeiling ? 0.30 : ATTACK_RISE_LEARN_RATE;
           this.attackRiseCeiling += (this.attackRisePeak - this.attackRiseCeiling) * k;
         }
-        const ceil = Math.max(0.02, this.attackRiseCeiling);
-        let hardness = Math.max(0, Math.min(1, this.attackRisePeak / ceil));
         // Breathiness refinement: breathy onsets (poor pitch lock, HF-noisy) read softer.
-        const cleanliness = Math.max(0, Math.min(1, this.pitchConfidence)) *
-                            (1 - 0.5 * Math.max(0, Math.min(1, this.metrics.articulation)));
-        hardness *= (0.5 + 0.5 * cleanliness);
+        const cleanliness = clamp01(this.pitchConfidence) *
+                            (1 - 0.5 * clamp01(this.metrics.articulation));
+        // Onset abruptness: impulsive onsets peak at the very start of the capture window
+        // (→1), gradual/breathy onsets peak later within it (→0).
+        const onsetAbruptness = 1 - clamp01(this.attackPeakTime / ATTACK_RISE_WINDOW_SECS);
+        const hardness = computeAttackHardness({
+          risePeak: this.attackRisePeak,
+          riseCeiling: this.attackRiseCeiling,
+          cleanliness,
+          onsetAbruptness,
+          abruptWeight: ATTACK_ABRUPT_BLEND
+        });
         this.attackImpulse = Math.max(this.attackImpulse, hardness);
         this.attackWindowTimer = -1; // close window
       }
@@ -936,10 +982,19 @@ export class VoiceAnalyzer {
     const heavinessTilt = 1 - this.spectralWeight;
     let f2Heavy = 0.5, f2W = 0;
     if (this.formantConfidence > 0.3) {
-      f2Heavy = Math.max(0, Math.min(1, (2400 - this.smoothF2) / 1300)); // low F2 = heavier/darker
+      f2Heavy = clamp01((2400 - this.smoothF2) / 1300); // low F2 = heavier/darker
       f2W = WEIGHT_F2_BLEND;
     }
-    const weightTarget = heavinessTilt * (1 - f2W) + f2Heavy * f2W;
+    // H1-H2 breathiness cue → lightness; only blended in when a clean F0 gives a trustworthy estimate.
+    const h1h2Light = normalizeAgainstRange(this.h1h2SmoothedDb, H1H2_HEAVY_DB, H1H2_LIGHT_DB);
+    const weightTarget = computeWeightTarget({
+      tiltHeaviness: heavinessTilt,
+      tiltWeight: WEIGHT_TILT_BASE,
+      h1h2Heaviness: 1 - h1h2Light,
+      h1h2Weight: WEIGHT_H1H2_BLEND * this.h1h2Confidence,
+      f2Heaviness: f2Heavy,
+      f2Weight: f2W
+    });
     // Only move while tilt is trustworthy, so the metric holds its last value rather
     // than drifting toward "light" during silence or noisy low-confidence frames.
     if (this.spectralTiltConfidence > 0.2) {
@@ -2046,6 +2101,9 @@ class VoxBallGame {
     };
     this._vowelPlotPoints = []; // {x, y} for F1/F2 scatter
     this._vowelPlotMax = 80;
+    // Vocal-attack orb animation: condenses gas→solid on each onset at a speed set by the
+    // measured onset hardness, then evaporates. (Weight orb reads m.weight directly.)
+    this._attackOrb = { solidity: 0, prevAttack: 0, hardness: 0, lastT: 0 };
 
     this.resize();
     const onResize = () => this.resize();
@@ -11272,6 +11330,7 @@ class VoxBallGame {
   _updateExpandedMetrics() {
     if (!this.metersExpanded && !this.metricPopupOpen) return;
     this._pushMetricHistory();
+    this._updateAttackOrb(this.analyzer.metrics.attack);
 
     const m = this.analyzer.metrics;
     const hz = this.analyzer.smoothPitchHz;
@@ -11294,7 +11353,7 @@ class VoxBallGame {
       const vEl = document.getElementById('expValVowels');
       if (vEl) vEl.textContent = Math.round(m.vowel * 100) + '%';
       const atkEl = document.getElementById('expValAttack');
-      if (atkEl) atkEl.textContent = Math.round(m.attack * 100) + '%';
+      if (atkEl) atkEl.textContent = Math.round(this._attackOrb.hardness * 100) + '%';
       const wtEl = document.getElementById('expValWeight');
       if (wtEl) wtEl.textContent = Math.round(m.weight * 100) + '%';
 
@@ -11303,8 +11362,8 @@ class VoxBallGame {
       this._drawSpectrogram('expCanvasResonance');
       this._drawLineGraph('expCanvasBounce', this._metricHistory.bounce, '#ff6b6b', 0, 1, false);
       this._drawVowelPlot('expCanvasVowels');
-      this._drawLineGraph('expCanvasAttack', this._metricHistory.attack, '#2ec4b6', 0, 1, false);
-      this._drawLineGraph('expCanvasWeight', this._metricHistory.weight, '#e06c9f', 0, 1, false);
+      this._drawOrb('expCanvasAttack', this._attackOrb.solidity, '#2ec4b6');
+      this._drawOrb('expCanvasWeight', m.weight, '#e06c9f');
     }
 
     // Render popup if open
@@ -11362,6 +11421,72 @@ class VoxBallGame {
       ctx.beginPath();
       ctx.arc(w - 2, lastY, 3 * devicePixelRatio, 0, Math.PI * 2);
       ctx.fill();
+    }
+  }
+
+  // Advance the vocal-attack orb's gas→solid animation. A rising edge of the (decaying) attack
+  // impulse marks a fresh onset; the orb then condenses toward that hardness at a speed
+  // proportional to it — a hard attack snaps solid almost instantly, a soft attack blooms
+  // slowly — before evaporating back to gas, ready for the next onset. The condensation *speed*
+  // (and the solidity it reaches) is the readable signal.
+  _updateAttackOrb(attackVal) {
+    const st = this._attackOrb;
+    const now = performance.now();
+    const dt = st.lastT ? Math.min(0.1, (now - st.lastT) / 1000) : 0.016;
+    st.lastT = now;
+    if (attackVal > st.prevAttack + 0.02) st.hardness = attackVal; // fresh onset captured
+    st.prevAttack = attackVal;
+    const a = st.hardness;
+    if (a > 0.01 && st.solidity < a - 0.005) {
+      const rate = Math.min(1, (1.5 + a * 12) * dt); // speed ∝ hardness
+      st.solidity += (a - st.solidity) * rate;
+    } else {
+      st.solidity += (0 - st.solidity) * Math.min(1, 2.2 * dt); // evaporate back to gas
+      st.hardness *= 0.96;
+    }
+  }
+
+  // Draw a single "gas → solid" orb for solidity ∈ [0,1]: a wide faint glow when gassy, a bright
+  // dense core with a crisp rim when solid. Used for the Vocal Attack and Weight visualizations
+  // (reads the canvas size, so it scales for both the small cards and the larger focus popup).
+  _drawOrb(canvasId, solidity, color) {
+    const c = document.getElementById(canvasId);
+    if (!c) return;
+    const ctx = c.getContext('2d');
+    const w = c.width, h = c.height;
+    ctx.clearRect(0, 0, w, h);
+    const s = Math.max(0, Math.min(1, solidity || 0));
+    const cx = w / 2, cy = h / 2;
+    const n = parseInt(color.slice(1), 16);
+    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    const rgba = (a) => `rgba(${r},${g},${b},${a})`;
+    const maxR = Math.min(w, h) * 0.42;
+
+    // Halo — wide and faint when gassy, tighter and brighter when solid
+    const haloR = maxR * (1.0 + (1 - s) * 0.8);
+    const haloA = 0.08 + s * 0.22;
+    const halo = ctx.createRadialGradient(cx, cy, maxR * 0.1, cx, cy, haloR);
+    halo.addColorStop(0, rgba(haloA));
+    halo.addColorStop(0.5, rgba(haloA * 0.4));
+    halo.addColorStop(1, rgba(0));
+    ctx.fillStyle = halo;
+    ctx.beginPath(); ctx.arc(cx, cy, haloR, 0, Math.PI * 2); ctx.fill();
+
+    // Core — emerges from the gas and brightens as it solidifies
+    const coreR = maxR * (0.30 + s * 0.55);
+    const coreA = 0.12 + s * 0.82;
+    const core = ctx.createRadialGradient(cx - coreR * 0.3, cy - coreR * 0.3, 0, cx, cy, coreR);
+    core.addColorStop(0, rgba(Math.min(1, coreA + 0.15)));
+    core.addColorStop(0.7, rgba(coreA));
+    core.addColorStop(1, rgba(coreA * (0.2 + s * 0.5)));
+    ctx.fillStyle = core;
+    ctx.beginPath(); ctx.arc(cx, cy, coreR, 0, Math.PI * 2); ctx.fill();
+
+    // Rim — only crisp once solid
+    if (s > 0.12) {
+      ctx.strokeStyle = rgba(0.2 + s * 0.6);
+      ctx.lineWidth = (0.5 + s * 1.5) * (window.devicePixelRatio || 1);
+      ctx.beginPath(); ctx.arc(cx, cy, coreR, 0, Math.PI * 2); ctx.stroke();
     }
   }
 
@@ -11531,10 +11656,10 @@ class VoxBallGame {
         this._drawVowelPlot(canvasId);
         break;
       case 'attack':
-        this._drawLineGraph(canvasId, this._metricHistory.attack, '#2ec4b6', 0, 1, false);
+        this._drawOrb(canvasId, this._attackOrb.solidity, '#2ec4b6');
         break;
       case 'weight':
-        this._drawLineGraph(canvasId, this._metricHistory.weight, '#e06c9f', 0, 1, false);
+        this._drawOrb(canvasId, this.analyzer.metrics.weight, '#e06c9f');
         break;
     }
   }
