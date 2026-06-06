@@ -2003,6 +2003,16 @@
       display: none;
     }
 
+    /* ====== RESPONSIVE BREAKPOINT CONTRACT ======
+       Keep these tiers in sync with the JS mobile flag (app.js):
+         • ≤600px            → mobile   (this block; JS sets `body.is-mobile`, `this.isMobile`)
+         • 601px – 1024px    → tablet   (see @media at ~line 1053)
+         • ≤420px            → small phone refinements (see @media at ~line 2995+)
+         • landscape phones  → see @media at ~line 3129+
+       JS uses matchMedia('(max-width: 600px)') so it never diverges from the
+       mobile breakpoint below. Additional ≤600px rules for the Prism reader
+       live in a separate block further down (~line 4264). */
+
     /* ====== MOBILE-ONLY STYLES (phones ≤600px) ====== */
     @media (max-width: 600px) {
 
@@ -2287,6 +2297,17 @@
       .mobile-scroll-fade.fade-both::before,
       .mobile-scroll-fade.fade-both::after {
         opacity: 1;
+      }
+
+      /* Active-state feedback on tap (JS toggles .mobile-active; see _attachMobile) */
+      .mobile-active {
+        opacity: 0.85;
+        transform: scale(0.97) !important;
+      }
+
+      .mode-card.mobile-active {
+        border-color: rgba(192, 132, 252, 0.5);
+        background: rgba(255, 255, 255, 0.08);
       }
 
       /* Cards: larger, easier to tap */
@@ -4261,6 +4282,8 @@
       height: 8px;
     }
 
+    /* Mobile (≤600px) overrides for the Prism reader — see the main mobile
+       block at ~line 2017 for the rest of the phone layout. */
     @media (max-width: 600px) {
       .prism-scroll-container {
         margin-top: 36px;

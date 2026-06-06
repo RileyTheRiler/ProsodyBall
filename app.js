@@ -1890,6 +1890,29 @@ class VoxBallGame {
     motionMql.addEventListener('change', onMotionChange);
     this._disposables.push(() => motionMql.removeEventListener('change', onMotionChange));
 
+    // ====== MOBILE DETECTION (single source of truth) ======
+    // "Mobile" is defined as <=600px wide, matching the CSS @media breakpoints
+    // exactly so the JS flag and the stylesheet can never disagree. The flag is
+    // exposed as `this.isMobile` and as a `body.is-mobile` class (mirroring
+    // body.low-motion) so JS-dependent styles stay aligned with layout CSS.
+    // A `pointer: coarse` query is tracked separately as `this.isTouch` to gate
+    // touch-only affordances (tap feedback) without redefining "mobile".
+    this._mobileMql = window.matchMedia('(max-width: 600px)');
+    this._touchMql = window.matchMedia('(pointer: coarse)');
+    this.isMobile = this._mobileMql.matches;
+    this.isTouch = this._touchMql.matches;
+    this._mobileTeardown = null;
+    const onMobileMqlChange = (e) => {
+      this.isMobile = e.matches;
+      document.body.classList.toggle('is-mobile', e.matches);
+      this._onMobileChange(e.matches);
+    };
+    const onTouchMqlChange = (e) => { this.isTouch = e.matches; };
+    this._mobileMql.addEventListener('change', onMobileMqlChange);
+    this._touchMql.addEventListener('change', onTouchMqlChange);
+    this._disposables.push(() => this._mobileMql.removeEventListener('change', onMobileMqlChange));
+    this._disposables.push(() => this._touchMql.removeEventListener('change', onTouchMqlChange));
+
     // ====== RUNTIME TOOLS ======
     this.perfMonitor = new PerformanceMonitor({ panelId: 'perfPanel' });
     this.calibrationWizard = new CalibrationWizard();
@@ -1987,7 +2010,10 @@ class VoxBallGame {
     this._disposables.push(() => window.removeEventListener('resize', onResize));
     this.setupUI();
     this._updateHelpContent();
-    this._setupMobile();
+    // Initial mobile evaluation (DOM is now built). Behaviors attach/detach as
+    // the 600px breakpoint is crossed via the matchMedia listener above.
+    document.body.classList.toggle('is-mobile', this.isMobile);
+    this._onMobileChange(this.isMobile);
     this._setupInfoPopups();
     this.drawIdleScene();
   }
@@ -2053,16 +2079,35 @@ class VoxBallGame {
     });
   }
 
-  /** Mobile-only UX enhancements (no-op on desktop/tablet) */
-  _setupMobile() {
-    const mobileQuery = window.matchMedia('(max-width: 600px) and (pointer: coarse)');
-    if (!mobileQuery.matches) return;
+  /**
+   * Attach/detach mobile-only UX enhancements as the 600px breakpoint is
+   * crossed. Driven by the matchMedia listener wired in the constructor, so
+   * resizing or rotating the device dynamically enables/disables the behaviors
+   * without a reload. Idempotent: guarded by `this._mobileTeardown`.
+   */
+  _onMobileChange(matches) {
+    if (matches && !this._mobileTeardown) {
+      this._mobileTeardown = this._attachMobile();
+    } else if (!matches && this._mobileTeardown) {
+      this._mobileTeardown.forEach((fn) => fn());
+      this._mobileTeardown = null;
+    }
+  }
+
+  /**
+   * Wire up mobile UX behaviors and return an array of teardown callbacks.
+   * Teardown is kept local (not on `this._disposables`, which is only consumed
+   * at instance end) so behaviors can be cleanly removed each time the device
+   * leaves the mobile breakpoint.
+   */
+  _attachMobile() {
+    const teardown = [];
 
     // 1. Auto-scroll selected mode card into view
     const menuLeft = document.querySelector('.menu-left');
     if (menuLeft) {
       const scrollCardIntoView = (card) => {
-        if (!card || !menuLeft) return;
+        if (!card) return;
         card.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
       };
       const observer = new MutationObserver(() => {
@@ -2070,46 +2115,42 @@ class VoxBallGame {
         if (selected) scrollCardIntoView(selected);
       });
       observer.observe(menuLeft, { subtree: true, attributes: true, attributeFilter: ['class'] });
-      this._disposables.push(() => observer.disconnect());
+      teardown.push(() => observer.disconnect());
     }
 
-    // 2. Close drawers/panels when tapping outside on mobile
+    // 2. Close drawers/panels when tapping outside
     const onMobilePointerDown = (e) => {
-      if (!mobileQuery.matches) return;
       const vibPanel = document.getElementById('vibPanel');
       const vibToggle = document.getElementById('vibToggle');
       if (vibPanel?.classList.contains('show') && !vibPanel.contains(e.target) && e.target !== vibToggle) {
         vibPanel.classList.remove('show');
-        vibToggle?.setAttribute('aria-expanded', 'false');
         vibToggle?.classList.remove('active');
-        if (vibToggle) vibToggle.setAttribute('aria-expanded', 'false');
         vibToggle?.setAttribute('aria-expanded', 'false');
       }
       const recDrawer = document.getElementById('recordingsDrawer');
       const recBtn = document.getElementById('recordingsBtn');
       if (recDrawer?.classList.contains('show') && !recDrawer.contains(e.target) && e.target !== recBtn && !recBtn?.contains(e.target)) {
         recDrawer.classList.remove('show');
-        if (recBtn) recBtn.setAttribute('aria-expanded', 'false');
         recBtn?.setAttribute('aria-expanded', 'false');
       }
       const helpTooltip = document.getElementById('helpTooltip');
       const helpBtn = document.getElementById('helpBtn');
       if (helpTooltip?.classList.contains('show') && !helpTooltip.contains(e.target) && e.target !== helpBtn) {
         helpTooltip.classList.remove('show');
-        if (helpBtn) helpBtn.setAttribute('aria-expanded', 'false');
         helpBtn?.setAttribute('aria-expanded', 'false');
       }
     };
     document.addEventListener('pointerdown', onMobilePointerDown);
-    this._disposables.push(() => document.removeEventListener('pointerdown', onMobilePointerDown));
+    teardown.push(() => document.removeEventListener('pointerdown', onMobilePointerDown));
 
     // 3. Prevent rubber-band bounce on iOS when scrolling at boundaries
     const appEl = document.getElementById('app');
     if (appEl) {
       appEl.style.overscrollBehavior = 'contain';
+      teardown.push(() => { appEl.style.overscrollBehavior = ''; });
     }
 
-    // 4. Add active state feedback for mobile tap via event delegation
+    // 4. Active-state feedback for taps via event delegation
     const mobileActiveSelector = '.btn, .btn-big, .mode-card, .style-pill, .range-btn, .rec-btn, .help-tab';
     const onTouchStart = (e) => {
       const el = e.target.closest(mobileActiveSelector);
@@ -2122,34 +2163,25 @@ class VoxBallGame {
     document.addEventListener('touchstart', onTouchStart, { passive: true });
     document.addEventListener('touchend', onTouchEnd, { passive: true });
     document.addEventListener('touchcancel', onTouchEnd, { passive: true });
-    this._disposables.push(
+    teardown.push(
       () => document.removeEventListener('touchstart', onTouchStart),
       () => document.removeEventListener('touchend', onTouchEnd),
       () => document.removeEventListener('touchcancel', onTouchEnd)
     );
 
-    // 5. Inject mobile active state CSS (visual feedback on tap)
-    const mobileStyle = document.createElement('style');
-    mobileStyle.textContent = `
-      @media (max-width: 600px) and (pointer: coarse) {
-        .mobile-active {
-          opacity: 0.85;
-          transform: scale(0.97) !important;
-        }
-        .mode-card.mobile-active {
-          border-color: rgba(192, 132, 252, 0.5);
-          background: rgba(255, 255, 255, 0.08);
-        }
-      }
-    `;
-    document.head.appendChild(mobileStyle);
+    // 5. Scroll-fade edge indicators on horizontally-scrollable areas
+    teardown.push(...this._initScrollFades());
 
-    // 6. Scroll fade indicators on horizontally-scrollable areas
-    this._initScrollFades();
+    return teardown;
   }
 
-  /** Attach scroll-fade edge indicators to horizontal scroll containers */
+  /**
+   * Attach scroll-fade edge indicators to horizontal scroll containers.
+   * Returns an array of teardown callbacks so observers/listeners can be
+   * removed when leaving the mobile breakpoint (avoids leaks on re-crossing).
+   */
   _initScrollFades() {
+    const teardown = [];
     const scrollables = [
       document.querySelector('.menu-left'),
       document.querySelector('.context-bar'),
@@ -2169,16 +2201,23 @@ class VoxBallGame {
       }
     };
 
-    scrollables.forEach(el => {
+    scrollables.forEach((el) => {
       el.classList.add('mobile-scroll-fade');
       // Initial check (deferred to ensure layout is computed)
       requestAnimationFrame(() => updateFade(el));
-      el.addEventListener('scroll', () => updateFade(el), { passive: true });
+      const onScroll = () => updateFade(el);
+      el.addEventListener('scroll', onScroll, { passive: true });
       // Re-check when children change (e.g. mode cards appearing)
       const resizeObs = new ResizeObserver(() => updateFade(el));
       resizeObs.observe(el);
-      this._disposables.push(() => resizeObs.disconnect());
+      teardown.push(() => {
+        el.removeEventListener('scroll', onScroll);
+        resizeObs.disconnect();
+        el.classList.remove('mobile-scroll-fade', 'fade-left', 'fade-right', 'fade-both');
+      });
     });
+
+    return teardown;
   }
 
 
