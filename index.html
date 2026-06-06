@@ -1304,9 +1304,7 @@
     .metric-card[data-metric="pitch"] .metric-card-title { color: #c084fc; }
     .metric-card[data-metric="resonance"] .metric-card-title { color: #ffaa44; }
     .metric-card[data-metric="bounce"] .metric-card-title { color: var(--accent-bounce); }
-    .metric-card[data-metric="tempo"] .metric-card-title { color: var(--accent-tempo); }
     .metric-card[data-metric="vowels"] .metric-card-title { color: var(--accent-vowel); }
-    .metric-card[data-metric="artic"] .metric-card-title { color: var(--accent-artic); }
     .metric-card[data-metric="attack"] .metric-card-title { color: var(--accent-attack); }
     .metric-card[data-metric="weight"] .metric-card-title { color: var(--accent-weight); }
 
@@ -5707,31 +5705,12 @@
         </div>
         <div class="meter-value" id="valBounce">0</div>
       </div>
-      <div class="meter meter-tempo" style="display:none">
-        <div class="meter-label">Tempo
-          <div class="info-wrapper">
-            <button class="info-trigger" aria-label="More Info">?</button>
-            <div class="info-popup">The speed of your speech rhythms.</div>
-          </div>
-        </div>
-        <div class="meter-bar-bg">
-          <div class="meter-bar-fill" id="meterTempo"></div>
-        </div>
-        <div class="meter-value" id="valTempo">0</div>
-      </div>
       <div class="meter meter-vowel">
         <div class="meter-label">Vowels</div>
         <div class="meter-bar-bg">
           <div class="meter-bar-fill" id="meterVowel"></div>
         </div>
         <div class="meter-value" id="valVowel">0</div>
-      </div>
-      <div class="meter meter-artic">
-        <div class="meter-label">Artic.</div>
-        <div class="meter-bar-bg">
-          <div class="meter-bar-fill" id="meterArtic"></div>
-        </div>
-        <div class="meter-value" id="valArtic">0</div>
       </div>
       </div>
       <!-- Expanded metric cards -->
@@ -5760,14 +5739,6 @@
           <canvas class="metric-card-canvas" id="expCanvasBounce"></canvas>
           <div class="metric-card-desc">Prosodic inflection wave</div>
         </div>
-        <div class="metric-card" data-metric="tempo">
-          <div class="metric-card-header">
-            <span class="metric-card-title">Tempo</span>
-            <span class="metric-card-value" id="expValTempo">0%</span>
-          </div>
-          <canvas class="metric-card-canvas" id="expCanvasTempo"></canvas>
-          <div class="metric-card-desc">Speech pace gauge</div>
-        </div>
         <div class="metric-card" data-metric="vowels">
           <div class="metric-card-header">
             <span class="metric-card-title">Vowels</span>
@@ -5775,14 +5746,6 @@
           </div>
           <canvas class="metric-card-canvas" id="expCanvasVowels"></canvas>
           <div class="metric-card-desc">F1 vs F2 vowel space</div>
-        </div>
-        <div class="metric-card" data-metric="artic">
-          <div class="metric-card-header">
-            <span class="metric-card-title">Artic</span>
-            <span class="metric-card-value" id="expValArtic">0%</span>
-          </div>
-          <canvas class="metric-card-canvas" id="expCanvasArtic"></canvas>
-          <div class="metric-card-desc">Attack and decay precision</div>
         </div>
         <div class="metric-card" data-metric="attack">
           <div class="metric-card-header">

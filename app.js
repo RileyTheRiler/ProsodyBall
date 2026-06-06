@@ -2033,9 +2033,7 @@ class VoxBallGame {
       pitch: [],       // raw Hz values
       resonance: [],   // 0-1 resonance score
       bounce: [],      // 0-1
-      tempo: [],       // 0-1
       vowels: [],      // 0-1
-      artic: [],       // 0-1
       attack: [],      // 0-1 onset hardness
       weight: [],      // 0-1 perceived heaviness
     };
@@ -11141,9 +11139,7 @@ class VoxBallGame {
       document.getElementById(id).style.width = (val * 100) + '%';
     };
     set('meterBounce', m.bounce);
-    set('meterTempo', m.tempo);
     set('meterVowel', m.vowel);
-    set('meterArtic', m.articulation);
     // Pitch meter — position-based indicator (not fill width)
     // Map 80-300 Hz to 0-100% position on the gradient bar
     const hz = this.analyzer.smoothPitchHz;
@@ -11171,9 +11167,7 @@ class VoxBallGame {
     }
 
     document.getElementById('valBounce').textContent = this._meterLabel(m.bounce, 'Flat', 'Varied', 'Wild');
-    document.getElementById('valTempo').textContent = this._meterLabel(m.tempo, 'Steady', 'Varied', 'Dynamic');
     document.getElementById('valVowel').textContent = this._meterLabel(m.vowel, 'Short', 'Held', 'Sustained');
-    document.getElementById('valArtic').textContent = this._meterLabel(m.articulation, 'Soft', 'Clear', 'Crisp');
     const highlightMap = {
       bounce: document.querySelector('.meter-bounce .meter-label'),
       tempo: document.querySelector('.meter-tempo .meter-label'),
@@ -11228,9 +11222,7 @@ class VoxBallGame {
     h.pitch.push(this.analyzer.smoothPitchHz);
     h.resonance.push(this.analyzer.smoothResonance);
     h.bounce.push(m.bounce);
-    h.tempo.push(m.tempo);
     h.vowels.push(m.vowel);
-    h.artic.push(m.articulation);
     h.attack.push(m.attack);
     h.weight.push(m.weight);
 
@@ -11249,8 +11241,8 @@ class VoxBallGame {
   }
 
   _sizeExpandedCanvases() {
-    const ids = ['expCanvasPitch', 'expCanvasResonance', 'expCanvasBounce', 'expCanvasTempo',
-                 'expCanvasVowels', 'expCanvasArtic', 'expCanvasAttack', 'expCanvasWeight'];
+    const ids = ['expCanvasPitch', 'expCanvasResonance', 'expCanvasBounce',
+                 'expCanvasVowels', 'expCanvasAttack', 'expCanvasWeight'];
     for (const id of ids) {
       const c = document.getElementById(id);
       if (c) {
@@ -11292,12 +11284,8 @@ class VoxBallGame {
       }
       const bEl = document.getElementById('expValBounce');
       if (bEl) bEl.textContent = Math.round(m.bounce * 100) + '%';
-      const tEl = document.getElementById('expValTempo');
-      if (tEl) tEl.textContent = Math.round(m.tempo * 100) + '%';
       const vEl = document.getElementById('expValVowels');
       if (vEl) vEl.textContent = Math.round(m.vowel * 100) + '%';
-      const aEl = document.getElementById('expValArtic');
-      if (aEl) aEl.textContent = Math.round(m.articulation * 100) + '%';
       const atkEl = document.getElementById('expValAttack');
       if (atkEl) atkEl.textContent = Math.round(m.attack * 100) + '%';
       const wtEl = document.getElementById('expValWeight');
@@ -11307,9 +11295,7 @@ class VoxBallGame {
       this._drawLineGraph('expCanvasPitch', this._metricHistory.pitch, '#c084fc', 60, 400, true);
       this._drawSpectrogram('expCanvasResonance');
       this._drawLineGraph('expCanvasBounce', this._metricHistory.bounce, '#ff6b6b', 0, 1, false);
-      this._drawTempoGauge('expCanvasTempo', m.tempo);
       this._drawVowelPlot('expCanvasVowels');
-      this._drawAttackDecay('expCanvasArtic', this._metricHistory.artic);
       this._drawLineGraph('expCanvasAttack', this._metricHistory.attack, '#2ec4b6', 0, 1, false);
       this._drawLineGraph('expCanvasWeight', this._metricHistory.weight, '#e06c9f', 0, 1, false);
     }
@@ -11406,56 +11392,6 @@ class VoxBallGame {
     }
   }
 
-  _drawTempoGauge(canvasId, tempoVal) {
-    const c = document.getElementById(canvasId);
-    if (!c) return;
-    const ctx = c.getContext('2d');
-    const w = c.width, h = c.height;
-    ctx.clearRect(0, 0, w, h);
-
-    const cx = w / 2, cy = h * 0.85;
-    const radius = Math.min(w * 0.4, h * 0.7);
-    const startAngle = Math.PI * 0.8;
-    const endAngle = Math.PI * 0.2;
-    const totalArc = Math.PI * 1.4;
-
-    // Background arc
-    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-    ctx.lineWidth = 6 * devicePixelRatio;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.arc(cx, cy, radius, startAngle, Math.PI * 2 + endAngle);
-    ctx.stroke();
-
-    // Value arc with gradient
-    const angle = startAngle + totalArc * tempoVal;
-    const grad = ctx.createLinearGradient(cx - radius, cy, cx + radius, cy);
-    grad.addColorStop(0, '#4d96ff');
-    grad.addColorStop(0.5, '#ffd93d');
-    grad.addColorStop(1, '#ff6b6b');
-    ctx.strokeStyle = grad;
-    ctx.lineWidth = 6 * devicePixelRatio;
-    ctx.beginPath();
-    ctx.arc(cx, cy, radius, startAngle, angle);
-    ctx.stroke();
-
-    // Needle
-    const needleAngle = startAngle + totalArc * tempoVal;
-    const nx = cx + Math.cos(needleAngle) * (radius - 8 * devicePixelRatio);
-    const ny = cy + Math.sin(needleAngle) * (radius - 8 * devicePixelRatio);
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.arc(nx, ny, 4 * devicePixelRatio, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Labels
-    ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.font = `${9 * devicePixelRatio}px "Space Mono", monospace`;
-    ctx.textAlign = 'center';
-    ctx.fillText('SLOW', cx - radius * 0.6, cy + 12 * devicePixelRatio);
-    ctx.fillText('FAST', cx + radius * 0.6, cy + 12 * devicePixelRatio);
-  }
-
   _drawVowelPlot(canvasId) {
     const c = document.getElementById(canvasId);
     if (!c) return;
@@ -11504,51 +11440,6 @@ class VoxBallGame {
     }
   }
 
-  _drawAttackDecay(canvasId, data) {
-    const c = document.getElementById(canvasId);
-    if (!c || !data.length) return;
-    const ctx = c.getContext('2d');
-    const w = c.width, h = c.height;
-    ctx.clearRect(0, 0, w, h);
-
-    // Background grid
-    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-    ctx.lineWidth = 1;
-    for (let i = 1; i < 4; i++) {
-      const y = (h / 4) * i;
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
-    }
-
-    // Attack/decay filled area
-    const xMax = Math.max(data.length, 2) - 1;
-    ctx.fillStyle = 'rgba(77, 150, 255, 0.15)';
-    ctx.beginPath();
-    ctx.moveTo(0, h);
-    for (let i = 0; i < data.length; i++) {
-      const x = (i / xMax) * w;
-      const val = Math.max(0, Math.min(1, data[i]));
-      const y = h - val * (h - 4) - 2;
-      ctx.lineTo(x, y);
-    }
-    ctx.lineTo(((data.length - 1) / xMax) * w, h);
-    ctx.closePath();
-    ctx.fill();
-
-    // Line on top
-    ctx.strokeStyle = '#4d96ff';
-    ctx.lineWidth = 2 * devicePixelRatio;
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    for (let i = 0; i < data.length; i++) {
-      const x = (i / xMax) * w;
-      const val = Math.max(0, Math.min(1, data[i]));
-      const y = h - val * (h - 4) - 2;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-  }
-
   // ---- Metric Popup ----
 
   _openMetricPopup(metric) {
@@ -11561,17 +11452,14 @@ class VoxBallGame {
       pitch: 'Displays the current fundamental frequency (F0). The color-coded slider shows your position in the pitch range. The line graph shows pitch stability and range over time.',
       resonance: 'Shows a real-time spectrogram tracking formant frequencies (F1, F2). The "Q" value indicates the sharpness of the resonance filter (Harmonic Envelope).',
       bounce: 'A stylized wave graph measuring prosodic inflection or "melody" in speech. Higher values suggest more dynamic pitch variation rather than monotonic delivery.',
-      tempo: 'Features a speed gauge measuring the pace of speech. Faster speech shows higher readings on the gauge.',
       vowels: 'A vowel space plot (F1 vs F2) showing the brightness or darkness of vowel sounds like "EE" and "AH." Tracks resonance shifts during articulation.',
-      artic: 'Articulation module uses an Attack and Decay graph to measure the precision of consonant onsets and vowel offsets.',
       attack: 'Vocal attack measures onset hardness — how steeply your voice rises into phonation. High = crisp glottal onsets; low = soft, breathy, gradual starts.',
       weight: 'Vocal weight is perceived heaviness from spectral tilt. High = thick, heavy, buzzy tone; low = light, bright, breathy tone.',
     };
 
     const colors = {
       pitch: '#c084fc', resonance: '#ffaa44', bounce: '#ff6b6b',
-      tempo: '#ffd93d', vowels: '#6bcb77', artic: '#4d96ff',
-      attack: '#2ec4b6', weight: '#e06c9f',
+      vowels: '#6bcb77', attack: '#2ec4b6', weight: '#e06c9f',
     };
 
     title.textContent = metric.toUpperCase();
@@ -11596,8 +11484,7 @@ class VoxBallGame {
 
     const colors = {
       pitch: '#c084fc', resonance: '#ffaa44', bounce: '#ff6b6b',
-      tempo: '#ffd93d', vowels: '#6bcb77', artic: '#4d96ff',
-      attack: '#2ec4b6', weight: '#e06c9f',
+      vowels: '#6bcb77', attack: '#2ec4b6', weight: '#e06c9f',
     };
     el.style.color = colors[metric] || '#fff';
 
@@ -11615,9 +11502,7 @@ class VoxBallGame {
         }
         break;
       case 'bounce': el.textContent = Math.round(m.bounce * 100) + '%'; break;
-      case 'tempo': el.textContent = Math.round(m.tempo * 100) + '%'; break;
       case 'vowels': el.textContent = Math.round(m.vowel * 100) + '%'; break;
-      case 'artic': el.textContent = Math.round(m.articulation * 100) + '%'; break;
       case 'attack': el.textContent = Math.round(m.attack * 100) + '%'; break;
       case 'weight': el.textContent = Math.round(m.weight * 100) + '%'; break;
     }
@@ -11635,14 +11520,8 @@ class VoxBallGame {
       case 'bounce':
         this._drawLineGraph(canvasId, this._metricHistory.bounce, '#ff6b6b', 0, 1, false);
         break;
-      case 'tempo':
-        this._drawTempoGauge(canvasId, this.analyzer.metrics.tempo);
-        break;
       case 'vowels':
         this._drawVowelPlot(canvasId);
-        break;
-      case 'artic':
-        this._drawAttackDecay(canvasId, this._metricHistory.artic);
         break;
       case 'attack':
         this._drawLineGraph(canvasId, this._metricHistory.attack, '#2ec4b6', 0, 1, false);
