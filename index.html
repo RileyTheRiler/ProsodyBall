@@ -2064,7 +2064,7 @@
       }
 
       .hud-left {
-        min-width: 0;
+        min-width: 90px;
         gap: 6px;
         flex: 1;
       }
@@ -2086,9 +2086,10 @@
         order: 3;
       }
 
-      /* Primary controls: large touch targets */
+      /* Primary controls: full-width row below the title */
       .hud-primary {
         justify-content: flex-start;
+        flex: 0 0 100%;
       }
 
       .hud-controls .btn {
@@ -2105,8 +2106,12 @@
         padding: 10px 18px;
       }
 
-      /* Secondary controls: horizontal scroll strip */
+      /* Secondary controls: compact strip alongside title in Row 1 */
       .hud-secondary {
+        order: 0;
+        width: auto;
+        flex: 0 1 auto;
+        max-width: 65%;
         flex-wrap: nowrap;
         overflow-x: auto;
         overflow-y: hidden;
@@ -2396,13 +2401,13 @@
         min-height: 200px;
       }
 
-      /* --- METERS BAR: two-row grid for readability --- */
+      /* --- METERS BAR: three-row grid for readability --- */
       .meters-bar {
         padding: 8px 10px 10px;
         padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
         gap: 6px 6px;
         display: grid;
-        grid-template-columns: repeat(5, 1fr);
+        grid-template-columns: repeat(3, 1fr);
         grid-auto-rows: auto;
       }
 
@@ -2415,13 +2420,13 @@
         gap: 3px;
       }
 
-      /* Pitch and Resonance: first row, wider */
+      /* Pitch and Resonance: each on their own full-width row */
       .meter-pitch {
-        grid-column: 1 / 3;
+        grid-column: 1 / 4;
       }
 
       .meter-resonance {
-        grid-column: 3 / 6;
+        grid-column: 1 / 4;
         flex: unset;
       }
 
