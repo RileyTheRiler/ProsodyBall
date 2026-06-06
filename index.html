@@ -216,12 +216,26 @@
       display: inline-flex;
     }
 
-    .teleprompter-overlay {
+    /* Positioning container: stacks the teleprompter card and the advance-hint pill in a
+       column with a gap, so the hint always sits below the card's actual height — no overlap
+       however many lines the sentence wraps to. */
+    .teleprompter-stack {
       position: absolute;
       top: 72px;
       left: 50%;
+      transform: translateX(-50%);
       width: min(860px, calc(100% - 40px));
-      transform: translate(-50%, -4px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      z-index: var(--z-overlay);
+      pointer-events: none;
+    }
+
+    .teleprompter-overlay {
+      position: relative;
+      width: 100%;
       padding: 12px 16px;
       background: rgba(18, 22, 36, 0.76);
       border: 1px solid rgba(255, 255, 255, 0.14);
@@ -235,15 +249,15 @@
       line-height: 1.45;
       overflow-wrap: break-word;
       word-break: break-word;
-      z-index: var(--z-overlay);
       pointer-events: none;
       opacity: 0;
+      transform: translateY(-4px);
       transition: opacity 0.2s ease, transform 0.2s ease;
     }
 
     .teleprompter-overlay.show {
       opacity: 1;
-      transform: translate(-50%, 0);
+      transform: translateY(0);
       pointer-events: auto;
       cursor: pointer;
     }
@@ -266,11 +280,7 @@
     }
 
     .teleprompter-hint {
-      position: absolute;
-      top: 124px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: var(--z-overlay);
+      position: relative;
       display: flex;
       align-items: center;
       gap: 6px;
@@ -4962,8 +4972,10 @@
 
     <div class="game-area">
       <canvas id="gameCanvas"></canvas>
-      <div class="teleprompter-overlay" id="teleprompterOverlay"></div>
-      <div class="teleprompter-hint" id="teleprompterHint"><span class="prism-kbd">Space</span> / <span class="prism-kbd">Tap</span> advance sentence</div>
+      <div class="teleprompter-stack" id="teleprompterStack">
+        <div class="teleprompter-overlay" id="teleprompterOverlay"></div>
+        <div class="teleprompter-hint" id="teleprompterHint"><span class="prism-kbd">Space</span> / <span class="prism-kbd">Tap</span> advance sentence</div>
+      </div>
       <div class="prism-overlay" id="prismOverlay">
         <div class="prism-live-stats" id="prismLiveStats">
           <span class="prism-stat" id="prismWpm">0 wpm</span>
@@ -5753,7 +5765,7 @@
             <span class="metric-card-value" id="expValAttack">0%</span>
           </div>
           <canvas class="metric-card-canvas" id="expCanvasAttack"></canvas>
-          <div class="metric-card-desc">Onset hardness over time</div>
+          <div class="metric-card-desc">Onset hardness — orb snaps solid on a hard attack, blooms slowly on a soft one</div>
         </div>
         <div class="metric-card" data-metric="weight">
           <div class="metric-card-header">
@@ -5761,7 +5773,7 @@
             <span class="metric-card-value" id="expValWeight">0%</span>
           </div>
           <canvas class="metric-card-canvas" id="expCanvasWeight"></canvas>
-          <div class="metric-card-desc">Perceived vocal heaviness</div>
+          <div class="metric-card-desc">Perceived heaviness — gassy orb = light, solid orb = heavy</div>
         </div>
       </div>
     </div>
