@@ -884,9 +884,12 @@ export class VoiceAnalyzer {
       this.attackWindowTimer += dt;
       if (riseRate > this.attackRisePeak) this.attackRisePeak = riseRate;
       if (this.attackWindowTimer >= ATTACK_RISE_WINDOW_SECS) {
-        // Adapt the normalizing ceiling toward the user's hardest onsets (fast up, slow down).
-        const k = this.attackRisePeak > this.attackRiseCeiling ? 0.30 : ATTACK_RISE_LEARN_RATE;
-        this.attackRiseCeiling += (this.attackRisePeak - this.attackRiseCeiling) * k;
+        // Train the ceiling only on reliably-voiced onsets, so coughs, mic bumps, or
+        // unvoiced bursts can't ratchet it up and de-sensitize real phonation onsets.
+        if (this.pitchConfidence > 0.35 || this.formantConfidence > 0.35) {
+          const k = this.attackRisePeak > this.attackRiseCeiling ? 0.30 : ATTACK_RISE_LEARN_RATE;
+          this.attackRiseCeiling += (this.attackRisePeak - this.attackRiseCeiling) * k;
+        }
         const ceil = Math.max(0.02, this.attackRiseCeiling);
         let hardness = Math.max(0, Math.min(1, this.attackRisePeak / ceil));
         // Breathiness refinement: breathy onsets (poor pitch lock, HF-noisy) read softer.
@@ -937,7 +940,11 @@ export class VoiceAnalyzer {
       f2W = WEIGHT_F2_BLEND;
     }
     const weightTarget = heavinessTilt * (1 - f2W) + f2Heavy * f2W;
-    this.weightSmoothed += (weightTarget - this.weightSmoothed) * (WEIGHT_SMOOTH_BASE + this.spectralTiltConfidence * 0.18);
+    // Only move while tilt is trustworthy, so the metric holds its last value rather
+    // than drifting toward "light" during silence or noisy low-confidence frames.
+    if (this.spectralTiltConfidence > 0.2) {
+      this.weightSmoothed += (weightTarget - this.weightSmoothed) * (WEIGHT_SMOOTH_BASE + this.spectralTiltConfidence * 0.18);
+    }
     this.metrics.weight = this.weightSmoothed;
 
     // Expose overall frame confidence so the game loop can gate the prosody score
