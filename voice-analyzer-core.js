@@ -27,7 +27,7 @@ export function computeFrameReliability({ pitchConfidence = 0, formantConfidence
 //   h1h2Heaviness  : 1 - normalised H1-H2 breathiness (present only with a clean F0)
 //   f2Heaviness    : low-F2 darkness contribution (present only with confident formants)
 export function computeWeightTarget({
-  tiltHeaviness,
+  tiltHeaviness = 0.5,
   tiltWeight = 1,
   h1h2Heaviness = 0.5,
   h1h2Weight = 0,
@@ -49,8 +49,8 @@ export function computeWeightTarget({
 //   abruptWeight         : how much the abruptness cue blends in vs the amplitude-rise cue
 //   cleanliness          : down-weights breathy/noisy onsets that lack a clean voiced core
 export function computeAttackHardness({
-  risePeak,
-  riseCeiling,
+  risePeak = 0,
+  riseCeiling = 0.5,
   cleanliness = 1,
   onsetAbruptness = 0.5,
   abruptWeight = 0

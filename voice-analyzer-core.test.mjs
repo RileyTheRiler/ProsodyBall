@@ -95,3 +95,10 @@ test('computeAttackHardness: abruptness raises and breathiness lowers hardness',
   assert.ok(clean > breathy, 'a breathy onset should read softer');
   assert.ok(breathy >= 0 && clean <= 1);
 });
+
+test('weight/attack helpers stay finite and bounded with missing inputs (no NaN)', () => {
+  for (const v of [computeWeightTarget({}), computeAttackHardness({})]) {
+    assert.ok(Number.isFinite(v), `expected finite, got ${v}`);
+    assert.ok(v >= 0 && v <= 1, `expected [0,1], got ${v}`);
+  }
+});
