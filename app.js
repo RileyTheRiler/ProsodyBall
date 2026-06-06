@@ -30,6 +30,11 @@ const SYLLABLE_DEBOUNCE_SECS = 0.08;     // Minimum seconds between syllable ons
 const SYLLABLE_ON_MULT = 0.6;            // Energy range multiplier for syllable-on threshold
 const SYLLABLE_OFF_MULT = 0.15;          // Energy range multiplier for syllable-off threshold
 const SYLLABLE_IMPULSE_DECAY = 0.88;     // Per-frame decay of syllable impulse
+const WEIGHT_F2_BLEND = 0.15;            // Small F2-darkness contribution to perceived weight
+const WEIGHT_SMOOTH_BASE = 0.10;         // Base EMA rate toward the weight target
+const ATTACK_RISE_WINDOW_SECS = 0.06;    // Capture peak energy-rise within 60ms of an onset
+const ATTACK_IMPULSE_DECAY = 0.90;       // Per-frame decay of the vocal-attack impulse
+const ATTACK_RISE_LEARN_RATE = 0.02;     // EMA rate for the adaptive rise-rate ceiling
 const MAX_SPARKLES = 100;                // Maximum sparkle particles in ball mode
 const MAX_NEBULA_FLARES = 10;            // Maximum flare particles for nebula creature
 
@@ -78,6 +83,14 @@ export class VoiceAnalyzer {
     this.spectralTiltSmoothedDb = -14;
     this.spectralWeight = 0.5; // 0=heavy, 1=light
     this.spectralTiltConfidence = 0;
+
+    // Vocal weight (heaviness, 0=light .. 1=heavy) and vocal attack (onset hardness)
+    this.weightSmoothed = 0.5;
+    this.prevGatedRms = 0;
+    this.attackRisePeak = 0;
+    this.attackWindowTimer = -1; // <0 = inactive; >=0 = counting up during capture window
+    this.attackRiseCeiling = 0.02;
+    this.attackImpulse = 0;
 
     // Energy
     this.energyHistory = [];
@@ -136,7 +149,8 @@ export class VoiceAnalyzer {
     this.metrics = {
       bounce: 0, tempo: 0, vowel: 0,
       articulation: 0, syllable: 0,
-      pitch: 0, energy: 0, resonance: 0
+      pitch: 0, energy: 0, resonance: 0,
+      attack: 0, weight: 0
     };
     this.frameConfidence = 0; // overall frame confidence for game-level gating
   }
@@ -277,6 +291,12 @@ export class VoiceAnalyzer {
     this.spectralTiltSmoothedDb = -14;
     this.spectralWeight = 0.5;
     this.spectralTiltConfidence = 0;
+    this.weightSmoothed = 0.5;
+    this.prevGatedRms = 0;
+    this.attackRisePeak = 0;
+    this.attackWindowTimer = -1;
+    this.attackRiseCeiling = 0.02;
+    this.attackImpulse = 0;
     this.sustainedDuration = 0;
     this.syllableImpulse = 0;
     this.syllableState = 'silent';
@@ -834,6 +854,10 @@ export class VoiceAnalyzer {
     const articTarget = normalizeAgainstPercentiles(hfEnergy, this.hfNoiseFloor, hfCeiling, ARTIC_SENSITIVITY_GAIN);
     this.metrics.articulation += (articTarget - this.metrics.articulation) * 0.3;
 
+    // Energy rise rate (per second) — feeds the Vocal Attack onset-hardness metric.
+    const riseRate = Math.max(0, gatedRms - this.prevGatedRms) / Math.max(1e-3, dt);
+    this.prevGatedRms = gatedRms;
+
     // 5. SYLLABLE SEPARATION — energy onset detection (uses gated energy)
     const dynamicSyllableOn = this.energyPercentiles.p50 + baseEnergyRange * SYLLABLE_ON_MULT;
     const dynamicSyllableOff = this.energyPercentiles.p50 + baseEnergyRange * SYLLABLE_OFF_MULT;
@@ -843,6 +867,9 @@ export class VoiceAnalyzer {
       if (now - this.lastSyllableTime > SYLLABLE_DEBOUNCE_SECS) {
         this.lastSyllableTime = now;
         this.syllableImpulse = 1.0;
+        // Open the vocal-attack capture window at this phonation onset.
+        this.attackWindowTimer = 0;
+        this.attackRisePeak = riseRate;
       }
       this.syllableState = 'voiced';
     } else if (gatedRms < syllableOffThreshold) {
@@ -850,6 +877,31 @@ export class VoiceAnalyzer {
     }
     this.syllableImpulse *= SYLLABLE_IMPULSE_DECAY;
     this.metrics.syllable = this.syllableImpulse;
+
+    // 6. VOCAL ATTACK — onset hardness from the peak energy-rise rate at phonation
+    //    onset. Steep rise = hard/glottal (→1); gradual rise = soft/breathy (→0).
+    if (this.attackWindowTimer >= 0) {
+      this.attackWindowTimer += dt;
+      if (riseRate > this.attackRisePeak) this.attackRisePeak = riseRate;
+      if (this.attackWindowTimer >= ATTACK_RISE_WINDOW_SECS) {
+        // Train the ceiling only on reliably-voiced onsets, so coughs, mic bumps, or
+        // unvoiced bursts can't ratchet it up and de-sensitize real phonation onsets.
+        if (this.pitchConfidence > 0.35 || this.formantConfidence > 0.35) {
+          const k = this.attackRisePeak > this.attackRiseCeiling ? 0.30 : ATTACK_RISE_LEARN_RATE;
+          this.attackRiseCeiling += (this.attackRisePeak - this.attackRiseCeiling) * k;
+        }
+        const ceil = Math.max(0.02, this.attackRiseCeiling);
+        let hardness = Math.max(0, Math.min(1, this.attackRisePeak / ceil));
+        // Breathiness refinement: breathy onsets (poor pitch lock, HF-noisy) read softer.
+        const cleanliness = Math.max(0, Math.min(1, this.pitchConfidence)) *
+                            (1 - 0.5 * Math.max(0, Math.min(1, this.metrics.articulation)));
+        hardness *= (0.5 + 0.5 * cleanliness);
+        this.attackImpulse = Math.max(this.attackImpulse, hardness);
+        this.attackWindowTimer = -1; // close window
+      }
+    }
+    this.attackImpulse *= ATTACK_IMPULSE_DECAY;
+    this.metrics.attack = this.attackImpulse;
 
     const voicedStrength = normalizeAgainstPercentiles(gatedRms, this.energyPercentiles.p50, this.energyPercentiles.p90, 1);
     const pitchGate = pitch > 0 ? 1 : 0.35;
@@ -872,11 +924,28 @@ export class VoiceAnalyzer {
 
     this.metrics.articulation *= Math.max(0.25, voicedGate * 0.8 + confidenceGate * 0.2);
     this.metrics.syllable *= voicedGate;
+    this.metrics.attack *= Math.max(0.2, voicedGate);
 
     const pitchRange = Math.max(50, this.pitchProfile.max - this.pitchProfile.min);
     this.metrics.pitch = pitch > 0 ? Math.max(0, Math.min(1, (pitch - this.pitchProfile.min) / pitchRange)) : this.metrics.pitch * 0.95;
     this.metrics.energy = normalizeAgainstPercentiles(gatedRms, this.energyPercentiles.p50, this.energyPercentiles.p90, 1.1);
     this.metrics.resonance = this.smoothResonance;
+
+    // 7. WEIGHT — perceived heaviness (1=heavy/thick, 0=light/breathy). Reuses the
+    //    spectral-tilt analysis (spectralWeight: 0=heavy,1=light) with a small F2 blend.
+    const heavinessTilt = 1 - this.spectralWeight;
+    let f2Heavy = 0.5, f2W = 0;
+    if (this.formantConfidence > 0.3) {
+      f2Heavy = Math.max(0, Math.min(1, (2400 - this.smoothF2) / 1300)); // low F2 = heavier/darker
+      f2W = WEIGHT_F2_BLEND;
+    }
+    const weightTarget = heavinessTilt * (1 - f2W) + f2Heavy * f2W;
+    // Only move while tilt is trustworthy, so the metric holds its last value rather
+    // than drifting toward "light" during silence or noisy low-confidence frames.
+    if (this.spectralTiltConfidence > 0.2) {
+      this.weightSmoothed += (weightTarget - this.weightSmoothed) * (WEIGHT_SMOOTH_BASE + this.spectralTiltConfidence * 0.18);
+    }
+    this.metrics.weight = this.weightSmoothed;
 
     // Expose overall frame confidence so the game loop can gate the prosody score
     this.frameConfidence = reliableFrame ? confidenceGate : 0.15;
@@ -1958,6 +2027,7 @@ class VoxBallGame {
       ),
     };
     this.teleprompterIndex = 0;
+    this.teleprompterSentenceIndex = 0; // current sentence for manual (Space/Tap) advance
     this.metricHighlightTimers = { bounce: 0, tempo: 0, vowel: 0, articulation: 0, syllable: 0 };
     this.metricExtremeLatch = { bounce: false, tempo: false, vowel: false, articulation: false, syllable: false };
 
@@ -1970,14 +2040,10 @@ class VoxBallGame {
       pitch: [],       // raw Hz values
       resonance: [],   // 0-1 resonance score
       bounce: [],      // 0-1
-      tempo: [],       // 0-1
       vowels: [],      // 0-1
-      artic: [],       // 0-1
-      syllables: [],   // 0-1 impulse
+      attack: [],      // 0-1 onset hardness
+      weight: [],      // 0-1 perceived heaviness
     };
-    this._syllableCountHistory = []; // per-second syllable counts for histogram
-    this._syllableCountTimer = 0;
-    this._syllableCountInWindow = 0;
     this._vowelPlotPoints = []; // {x, y} for F1/F2 scatter
     this._vowelPlotMax = 80;
 
@@ -2192,8 +2258,7 @@ class VoxBallGame {
   _updateHelpContent() {
     const el = document.getElementById('helpHowTo');
     if (!el) return;
-    const c = (color, label, desc) =>
-      `<b style="color:var(--accent-${color})">${label}:</b> ${desc}`;
+    const c = (color, label, desc) => ({ color, label, desc });
     const helpData = {
       ball: {
         title: 'Voice → Ball Mapping',
@@ -2306,7 +2371,10 @@ class VoxBallGame {
         fragment.appendChild(document.createElement('br'));
         fragment.appendChild(document.createElement('br'));
       }
-      fragment.append(item);
+      const b = document.createElement('b');
+      b.style.color = `var(--accent-${item.color})`;
+      b.textContent = `${item.label}:`;
+      fragment.append(b, ' ', item.desc);
     });
     p.appendChild(fragment);
     el.append(h3, p);
@@ -2825,7 +2893,6 @@ class VoxBallGame {
     const playBtn = document.getElementById('playBtn');
     const helpBtn = document.getElementById('helpBtn');
     const recalibrateBtn = document.getElementById('recalibrateBtn');
-    const recoverMicBtn = document.getElementById('recoverMicBtn');
     const homeBtn = document.getElementById('homeBtn');
     const welcomeOverlay = document.getElementById('welcomeOverlay');
     const helpTooltip = document.getElementById('helpTooltip');
@@ -2868,8 +2935,6 @@ class VoxBallGame {
     const recordingsDrawer = document.getElementById('recordingsDrawer');
     const clearAllRecs = document.getElementById('clearAllRecs');
     const perfBtn = document.getElementById('perfBtn');
-    const pauseCanvasBtn = document.getElementById('pauseCanvasBtn');
-    const clearCanvasBtn = document.getElementById('clearCanvasBtn');
     const teleprompterOverlay = document.getElementById('teleprompterOverlay');
     const diagPanel = document.getElementById('diagPanel');
 
@@ -2973,12 +3038,6 @@ class VoxBallGame {
       }
     };
 
-    const setRecoverMicVisible = (visible) => {
-      if (!recoverMicBtn) return;
-      recoverMicBtn.toggleAttribute('hidden', !visible);
-      recoverMicBtn.classList.toggle('active', visible);
-    };
-
     const showCalibrationOutcome = (calResult) => {
       if (!calResult) return;
       if (calResult.outcome === 'completed') {
@@ -2994,17 +3053,6 @@ class VoxBallGame {
       }
     };
 
-
-    const recoverMicSession = async () => {
-      clearError();
-      setRecoverMicVisible(false);
-      const wasRunning = this.isRunning;
-      if (wasRunning) await stopGame();
-      await startGame();
-      startBtn?.focus();
-    };
-
-    recoverMicBtn?.addEventListener('click', recoverMicSession);
 
     // Camera Mirror Logic
     let cameraStream = null;
@@ -3133,6 +3181,7 @@ class VoxBallGame {
       this._isStarting = true;
       try {
       this._resetKeyboardModeState();
+      this.teleprompterSentenceIndex = 0; // start each session at the first sentence
       if (this.gameMode === 'keyboard') {
         this.canvasMode = 'keyboard';
       } else if (this.gameMode === 'canvas') {
@@ -3254,12 +3303,9 @@ class VoxBallGame {
       const audioTracks = this.analyzer.stream?.getAudioTracks?.() || [];
       audioTracks.forEach((track) => {
         track.onended = () => {
-          showError('🎙 Microphone stream ended unexpectedly. Click Recover Mic to resume without losing your selected mode.');
-          setRecoverMicVisible(true);
+          showError('🎙 Microphone stream ended unexpectedly. Press Start to resume.');
         };
       });
-
-      setRecoverMicVisible(false);
 
       const activeDiag = await getMicDiagnostics(this.analyzer.audioCtx);
       if (diagPanel) {
@@ -3307,10 +3353,6 @@ class VoxBallGame {
       this.targetZoom = 1.4;
       this.prosodyScore = 0;
       this.voiceCanvasPaused = false;
-      if (pauseCanvasBtn) {
-        pauseCanvasBtn.textContent = 'Pause';
-        pauseCanvasBtn.classList.remove('active');
-      }
       this.guidedStartTs = performance.now();
       this.guidedDismissed = false;
       this.guidedCloseHitbox = null;
@@ -3469,7 +3511,6 @@ class VoxBallGame {
       const hud = document.getElementById('creatureStyleHud');
       if (hud) hud.style.display = 'none';
       this.analyzer.stop();
-      setRecoverMicVisible(false);
       // Hide prism overlay on stop
       const prismOvl = document.getElementById('prismOverlay');
       if (prismOvl) prismOvl.classList.remove('show');
@@ -3529,7 +3570,6 @@ class VoxBallGame {
         const hud = document.getElementById('creatureStyleHud');
         if (hud) hud.style.display = 'none';
         this.analyzer.stop();
-        setRecoverMicVisible(false);
         const prismOvl = document.getElementById('prismOverlay');
         if (prismOvl) prismOvl.classList.remove('show');
         startBtn.textContent = '🎙 Start';
@@ -3600,6 +3640,11 @@ class VoxBallGame {
         e.preventDefault();
         if (this.isRunning && this.gameMode === 'prism') {
           this._advancePrismManual();
+          return;
+        }
+        if (this.isRunning && this.gameMode !== 'prism' &&
+            (this.gameMode === 'road' || this.teleprompterMode !== 'off')) {
+          this._advanceTeleprompterManual();
           return;
         }
         if (document.getElementById('summaryOverlay').classList.contains('show')) {
@@ -3843,10 +3888,6 @@ class VoxBallGame {
       this.canvasMode = e.target.value;
       // Reset pause state when switching canvas sub-modes
       this.voiceCanvasPaused = false;
-      if (pauseCanvasBtn) {
-        pauseCanvasBtn.textContent = 'Pause';
-        pauseCanvasBtn.classList.remove('active');
-      }
       if (canvasModeSelect) canvasModeSelect.style.display = this.gameMode === 'canvas' ? '' : 'none';
       if (keyboardGameSelect) keyboardGameSelect.style.display = this.canvasMode === 'keyboard' ? '' : 'none';
       if (!this.isRunning) this.drawIdleScene();
@@ -3966,6 +4007,16 @@ class VoxBallGame {
       });
     }
 
+    // Tap-to-advance for the teleprompter (mobile tap + desktop click)
+    if (teleprompterOverlay) {
+      teleprompterOverlay.addEventListener('click', () => {
+        if (this.isRunning && this.gameMode !== 'prism' &&
+            (this.gameMode === 'road' || this.teleprompterMode !== 'off')) {
+          this._advanceTeleprompterManual();
+        }
+      });
+    }
+
     // Restart button for prism reader
     const prismRestartBtn = document.getElementById('prismRestartBtn');
     if (prismRestartBtn) {
@@ -3980,6 +4031,7 @@ class VoxBallGame {
     teleprompterModeSelect?.addEventListener('change', (e) => {
       this.teleprompterMode = e.target.value;
       this.teleprompterIndex = 0;
+      this.teleprompterSentenceIndex = 0;
       if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
       teleprompterCustomBtn?.classList.toggle('active', this.teleprompterMode === 'custom');
     });
@@ -3996,26 +4048,9 @@ class VoxBallGame {
       }
       if (teleprompterModeSelect) teleprompterModeSelect.value = this.teleprompterMode;
       this.teleprompterIndex = 0;
+      this.teleprompterSentenceIndex = 0;
       if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
       teleprompterCustomBtn.classList.toggle('active', this.teleprompterMode === 'custom');
-    });
-
-    pauseCanvasBtn?.addEventListener('click', () => {
-      this.voiceCanvasPaused = !this.voiceCanvasPaused;
-      pauseCanvasBtn.textContent = this.voiceCanvasPaused ? 'Resume' : 'Pause';
-      pauseCanvasBtn.classList.toggle('active', this.voiceCanvasPaused);
-    });
-
-    clearCanvasBtn?.addEventListener('click', () => {
-      const vc = this.voiceCanvas;
-      if (vc.bufferCtx) vc.bufferCtx.clearRect(0, 0, vc.bufferW, vc.bufferH);
-      vc.splatters = [];
-      vc.drips = [];
-      vc.articMarkers = [];
-      vc.motes = [];
-      vc.strokeCount = 0;
-      vc.totalPaintX = 0;
-      showError('ℹ Canvas cleared.');
     });
 
     document.getElementById('resMethodSelect').addEventListener('change', (e) => {
@@ -4579,8 +4614,7 @@ class VoxBallGame {
         if (navigator.permissions?.query) {
           const mic = await navigator.permissions.query({ name: 'microphone' });
           if (mic.state === 'denied') {
-            showError('🎙 Microphone permission changed to denied. Re-enable browser mic permission, then click Recover Mic.');
-            setRecoverMicVisible(true);
+            showError('🎙 Microphone permission changed to denied. Re-enable browser mic permission, then press Start.');
           }
         }
       } catch (e) {
@@ -11038,44 +11072,67 @@ class VoxBallGame {
     overlay.classList.add('show');
   }
 
+  // Split a passage into sentences, keeping terminal punctuation with each
+  // sentence and capturing any trailing fragment that lacks final punctuation.
+  _splitSentences(text) {
+    if (!text) return [];
+    const parts = text.match(/[^.!?]+[.!?]+(?:["')\]]+)?|\S[^.!?]*$/g);
+    return (parts || [text]).map((s) => s.trim()).filter(Boolean);
+  }
+
+  _teleprompterSourceText() {
+    const roadMode = this.gameMode === 'road';
+    return roadMode
+      ? this._getResonanceRoadPassageText()
+      : (this.teleprompterMode === 'custom' ? this.teleprompterCustomText : this.teleprompterRainbowText);
+  }
+
+  // Manual advance: speaker presses Space (desktop) or taps (mobile) to reveal
+  // the next sentence. Wraps back to the start at the end of the passage.
+  _advanceTeleprompterManual() {
+    const enabled = this.gameMode === 'road' || this.teleprompterMode !== 'off';
+    if (!enabled || this.gameMode === 'prism') return;
+    const sentences = this._splitSentences(this._teleprompterSourceText());
+    if (!sentences.length) return;
+    this.teleprompterSentenceIndex = (this.teleprompterSentenceIndex + 1) % sentences.length;
+  }
+
   renderTeleprompter(dt) {
     const overlay = document.getElementById('teleprompterOverlay');
     if (!overlay) return;
+    const hint = document.getElementById('teleprompterHint');
     if (this.gameMode === 'prism') {
       overlay.classList.remove('show');
+      if (hint) hint.classList.remove('show');
       this.renderPrismOverlay(dt);
       return;
     }
     const roadMode = this.gameMode === 'road';
     const enabled = roadMode || this.teleprompterMode !== 'off';
     overlay.classList.toggle('show', enabled);
+    if (hint) hint.classList.toggle('show', enabled && this.isRunning);
     if (!enabled) return;
 
-    const sourceText = roadMode
-      ? this._getResonanceRoadPassageText()
-      : (this.teleprompterMode === 'custom' ? this.teleprompterCustomText : this.teleprompterRainbowText);
-    const words = sourceText.trim().split(/\s+/).filter(Boolean);
-    if (!words.length) return;
-    if (this.isRunning && this.analyzer.metrics.energy > 0.03) {
-      const rate = 2.5 + this.analyzer.metrics.tempo * 3.5;
-      this.teleprompterIndex += dt * rate;
-      if (this.teleprompterIndex >= words.length) this.teleprompterIndex = 0;
+    const sentences = this._splitSentences(this._teleprompterSourceText());
+    if (!sentences.length) return;
+    if (this.teleprompterSentenceIndex >= sentences.length) {
+      this.teleprompterSentenceIndex = sentences.length - 1;
     }
-    const active = Math.floor(this.teleprompterIndex);
-    const start = Math.max(0, active - 8);
-    const end = Math.min(words.length, active + 14);
+    const idx = this.teleprompterSentenceIndex;
 
     overlay.textContent = '';
     const frag = document.createDocumentFragment();
-    for (let i = start; i < end; i++) {
-      const span = document.createElement('span');
-      if (i === active) span.className = 'active-word';
-      span.textContent = words[i];
-      frag.append(span);
-      if (i < end - 1) frag.append(' ');
-      if (i < end - 1) frag.append(document.createTextNode(' '));
+    const cur = document.createElement('span');
+    cur.className = 'active-sentence';
+    cur.textContent = sentences[idx];
+    frag.append(cur);
+    if (idx + 1 < sentences.length) {
+      frag.append(document.createTextNode(' '));
+      const nxt = document.createElement('span');
+      nxt.className = 'next-sentence';
+      nxt.textContent = sentences[idx + 1];
+      frag.append(nxt);
     }
-    overlay.textContent = '';
     overlay.append(frag);
   }
 
@@ -11089,9 +11146,7 @@ class VoxBallGame {
       document.getElementById(id).style.width = (val * 100) + '%';
     };
     set('meterBounce', m.bounce);
-    set('meterTempo', m.tempo);
     set('meterVowel', m.vowel);
-    set('meterArtic', m.articulation);
     // Pitch meter — position-based indicator (not fill width)
     // Map 80-300 Hz to 0-100% position on the gradient bar
     const hz = this.analyzer.smoothPitchHz;
@@ -11119,9 +11174,7 @@ class VoxBallGame {
     }
 
     document.getElementById('valBounce').textContent = this._meterLabel(m.bounce, 'Flat', 'Varied', 'Wild');
-    document.getElementById('valTempo').textContent = this._meterLabel(m.tempo, 'Steady', 'Varied', 'Dynamic');
     document.getElementById('valVowel').textContent = this._meterLabel(m.vowel, 'Short', 'Held', 'Sustained');
-    document.getElementById('valArtic').textContent = this._meterLabel(m.articulation, 'Soft', 'Clear', 'Crisp');
     const highlightMap = {
       bounce: document.querySelector('.meter-bounce .meter-label'),
       tempo: document.querySelector('.meter-tempo .meter-label'),
@@ -11176,10 +11229,9 @@ class VoxBallGame {
     h.pitch.push(this.analyzer.smoothPitchHz);
     h.resonance.push(this.analyzer.smoothResonance);
     h.bounce.push(m.bounce);
-    h.tempo.push(m.tempo);
     h.vowels.push(m.vowel);
-    h.artic.push(m.articulation);
-    h.syllables.push(m.syllable);
+    h.attack.push(m.attack);
+    h.weight.push(m.weight);
 
     for (const k of Object.keys(h)) {
       const limit = (k === 'pitch' || k === 'bounce') ? this._metricHistoryMaxLong : max;
@@ -11193,21 +11245,11 @@ class VoxBallGame {
       this._vowelPlotPoints.push({ x: f2, y: f1 });
       if (this._vowelPlotPoints.length > this._vowelPlotMax) this._vowelPlotPoints.shift();
     }
-
-    // Syllable count histogram: count syllable impulses per second
-    this._syllableCountTimer += 1 / 60;
-    if (m.syllable > 0.5) this._syllableCountInWindow++;
-    if (this._syllableCountTimer >= 1.0) {
-      this._syllableCountHistory.push(this._syllableCountInWindow);
-      if (this._syllableCountHistory.length > 30) this._syllableCountHistory.shift();
-      this._syllableCountInWindow = 0;
-      this._syllableCountTimer = 0;
-    }
   }
 
   _sizeExpandedCanvases() {
-    const ids = ['expCanvasPitch', 'expCanvasResonance', 'expCanvasBounce', 'expCanvasTempo',
-                 'expCanvasVowels', 'expCanvasArtic', 'expCanvasSyllables'];
+    const ids = ['expCanvasPitch', 'expCanvasResonance', 'expCanvasBounce',
+                 'expCanvasVowels', 'expCanvasAttack', 'expCanvasWeight'];
     for (const id of ids) {
       const c = document.getElementById(id);
       if (c) {
@@ -11249,27 +11291,20 @@ class VoxBallGame {
       }
       const bEl = document.getElementById('expValBounce');
       if (bEl) bEl.textContent = Math.round(m.bounce * 100) + '%';
-      const tEl = document.getElementById('expValTempo');
-      if (tEl) tEl.textContent = Math.round(m.tempo * 100) + '%';
       const vEl = document.getElementById('expValVowels');
       if (vEl) vEl.textContent = Math.round(m.vowel * 100) + '%';
-      const aEl = document.getElementById('expValArtic');
-      if (aEl) aEl.textContent = Math.round(m.articulation * 100) + '%';
-      const sEl = document.getElementById('expValSyllables');
-      if (sEl) {
-        const recent = this._syllableCountHistory;
-        const spm = recent.length > 0 ? Math.round(recent[recent.length - 1] * 60) : 0;
-        sEl.textContent = spm + '/min';
-      }
+      const atkEl = document.getElementById('expValAttack');
+      if (atkEl) atkEl.textContent = Math.round(m.attack * 100) + '%';
+      const wtEl = document.getElementById('expValWeight');
+      if (wtEl) wtEl.textContent = Math.round(m.weight * 100) + '%';
 
       // Render each card canvas
       this._drawLineGraph('expCanvasPitch', this._metricHistory.pitch, '#c084fc', 60, 400, true);
       this._drawSpectrogram('expCanvasResonance');
       this._drawLineGraph('expCanvasBounce', this._metricHistory.bounce, '#ff6b6b', 0, 1, false);
-      this._drawTempoGauge('expCanvasTempo', m.tempo);
       this._drawVowelPlot('expCanvasVowels');
-      this._drawAttackDecay('expCanvasArtic', this._metricHistory.artic);
-      this._drawSyllableHistogram('expCanvasSyllables');
+      this._drawLineGraph('expCanvasAttack', this._metricHistory.attack, '#2ec4b6', 0, 1, false);
+      this._drawLineGraph('expCanvasWeight', this._metricHistory.weight, '#e06c9f', 0, 1, false);
     }
 
     // Render popup if open
@@ -11364,56 +11399,6 @@ class VoxBallGame {
     }
   }
 
-  _drawTempoGauge(canvasId, tempoVal) {
-    const c = document.getElementById(canvasId);
-    if (!c) return;
-    const ctx = c.getContext('2d');
-    const w = c.width, h = c.height;
-    ctx.clearRect(0, 0, w, h);
-
-    const cx = w / 2, cy = h * 0.85;
-    const radius = Math.min(w * 0.4, h * 0.7);
-    const startAngle = Math.PI * 0.8;
-    const endAngle = Math.PI * 0.2;
-    const totalArc = Math.PI * 1.4;
-
-    // Background arc
-    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-    ctx.lineWidth = 6 * devicePixelRatio;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.arc(cx, cy, radius, startAngle, Math.PI * 2 + endAngle);
-    ctx.stroke();
-
-    // Value arc with gradient
-    const angle = startAngle + totalArc * tempoVal;
-    const grad = ctx.createLinearGradient(cx - radius, cy, cx + radius, cy);
-    grad.addColorStop(0, '#4d96ff');
-    grad.addColorStop(0.5, '#ffd93d');
-    grad.addColorStop(1, '#ff6b6b');
-    ctx.strokeStyle = grad;
-    ctx.lineWidth = 6 * devicePixelRatio;
-    ctx.beginPath();
-    ctx.arc(cx, cy, radius, startAngle, angle);
-    ctx.stroke();
-
-    // Needle
-    const needleAngle = startAngle + totalArc * tempoVal;
-    const nx = cx + Math.cos(needleAngle) * (radius - 8 * devicePixelRatio);
-    const ny = cy + Math.sin(needleAngle) * (radius - 8 * devicePixelRatio);
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.arc(nx, ny, 4 * devicePixelRatio, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Labels
-    ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.font = `${9 * devicePixelRatio}px "Space Mono", monospace`;
-    ctx.textAlign = 'center';
-    ctx.fillText('SLOW', cx - radius * 0.6, cy + 12 * devicePixelRatio);
-    ctx.fillText('FAST', cx + radius * 0.6, cy + 12 * devicePixelRatio);
-  }
-
   _drawVowelPlot(canvasId) {
     const c = document.getElementById(canvasId);
     if (!c) return;
@@ -11462,84 +11447,6 @@ class VoxBallGame {
     }
   }
 
-  _drawAttackDecay(canvasId, data) {
-    const c = document.getElementById(canvasId);
-    if (!c || !data.length) return;
-    const ctx = c.getContext('2d');
-    const w = c.width, h = c.height;
-    ctx.clearRect(0, 0, w, h);
-
-    // Background grid
-    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-    ctx.lineWidth = 1;
-    for (let i = 1; i < 4; i++) {
-      const y = (h / 4) * i;
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
-    }
-
-    // Attack/decay filled area
-    const xMax = Math.max(data.length, 2) - 1;
-    ctx.fillStyle = 'rgba(77, 150, 255, 0.15)';
-    ctx.beginPath();
-    ctx.moveTo(0, h);
-    for (let i = 0; i < data.length; i++) {
-      const x = (i / xMax) * w;
-      const val = Math.max(0, Math.min(1, data[i]));
-      const y = h - val * (h - 4) - 2;
-      ctx.lineTo(x, y);
-    }
-    ctx.lineTo(((data.length - 1) / xMax) * w, h);
-    ctx.closePath();
-    ctx.fill();
-
-    // Line on top
-    ctx.strokeStyle = '#4d96ff';
-    ctx.lineWidth = 2 * devicePixelRatio;
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    for (let i = 0; i < data.length; i++) {
-      const x = (i / xMax) * w;
-      const val = Math.max(0, Math.min(1, data[i]));
-      const y = h - val * (h - 4) - 2;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-  }
-
-  _drawSyllableHistogram(canvasId) {
-    const c = document.getElementById(canvasId);
-    if (!c) return;
-    const ctx = c.getContext('2d');
-    const w = c.width, h = c.height;
-    ctx.clearRect(0, 0, w, h);
-
-    const data = this._syllableCountHistory;
-    if (!data.length) return;
-
-    const maxCount = Math.max(1, ...data);
-    const barW = Math.max(4, (w / 30) - 2);
-    const gap = 2;
-
-    for (let i = 0; i < data.length; i++) {
-      const barH = (data[i] / maxCount) * (h - 8);
-      const x = i * (barW + gap);
-      const y = h - barH - 2;
-      const alpha = 0.4 + (i / data.length) * 0.6;
-      ctx.fillStyle = `rgba(192, 132, 252, ${alpha})`;
-      ctx.beginPath();
-      // Rounded top
-      const radius = Math.min(2, barW / 2);
-      ctx.moveTo(x, y + radius);
-      ctx.arcTo(x, y, x + barW, y, radius);
-      ctx.arcTo(x + barW, y, x + barW, y + barH, radius);
-      ctx.lineTo(x + barW, h - 2);
-      ctx.lineTo(x, h - 2);
-      ctx.closePath();
-      ctx.fill();
-    }
-  }
-
   // ---- Metric Popup ----
 
   _openMetricPopup(metric) {
@@ -11552,15 +11459,14 @@ class VoxBallGame {
       pitch: 'Displays the current fundamental frequency (F0). The color-coded slider shows your position in the pitch range. The line graph shows pitch stability and range over time.',
       resonance: 'Shows a real-time spectrogram tracking formant frequencies (F1, F2). The "Q" value indicates the sharpness of the resonance filter (Harmonic Envelope).',
       bounce: 'A stylized wave graph measuring prosodic inflection or "melody" in speech. Higher values suggest more dynamic pitch variation rather than monotonic delivery.',
-      tempo: 'Features a speed gauge measuring the pace of speech. Faster speech shows higher readings on the gauge.',
       vowels: 'A vowel space plot (F1 vs F2) showing the brightness or darkness of vowel sounds like "EE" and "AH." Tracks resonance shifts during articulation.',
-      artic: 'Articulation module uses an Attack and Decay graph to measure the precision of consonant onsets and vowel offsets.',
-      syllables: 'A bar histogram tracking the number of syllables spoken per minute, providing a granular look at speech density and pauses.',
+      attack: 'Vocal attack measures onset hardness — how steeply your voice rises into phonation. High = crisp glottal onsets; low = soft, breathy, gradual starts.',
+      weight: 'Vocal weight is perceived heaviness from spectral tilt. High = thick, heavy, buzzy tone; low = light, bright, breathy tone.',
     };
 
     const colors = {
       pitch: '#c084fc', resonance: '#ffaa44', bounce: '#ff6b6b',
-      tempo: '#ffd93d', vowels: '#6bcb77', artic: '#4d96ff', syllables: '#c084fc',
+      vowels: '#6bcb77', attack: '#2ec4b6', weight: '#e06c9f',
     };
 
     title.textContent = metric.toUpperCase();
@@ -11585,7 +11491,7 @@ class VoxBallGame {
 
     const colors = {
       pitch: '#c084fc', resonance: '#ffaa44', bounce: '#ff6b6b',
-      tempo: '#ffd93d', vowels: '#6bcb77', artic: '#4d96ff', syllables: '#c084fc',
+      vowels: '#6bcb77', attack: '#2ec4b6', weight: '#e06c9f',
     };
     el.style.color = colors[metric] || '#fff';
 
@@ -11603,15 +11509,9 @@ class VoxBallGame {
         }
         break;
       case 'bounce': el.textContent = Math.round(m.bounce * 100) + '%'; break;
-      case 'tempo': el.textContent = Math.round(m.tempo * 100) + '%'; break;
       case 'vowels': el.textContent = Math.round(m.vowel * 100) + '%'; break;
-      case 'artic': el.textContent = Math.round(m.articulation * 100) + '%'; break;
-      case 'syllables': {
-        const recent = this._syllableCountHistory;
-        const spm = recent.length > 0 ? Math.round(recent[recent.length - 1] * 60) : 0;
-        el.textContent = spm + ' syl/min';
-        break;
-      }
+      case 'attack': el.textContent = Math.round(m.attack * 100) + '%'; break;
+      case 'weight': el.textContent = Math.round(m.weight * 100) + '%'; break;
     }
   }
 
@@ -11627,17 +11527,14 @@ class VoxBallGame {
       case 'bounce':
         this._drawLineGraph(canvasId, this._metricHistory.bounce, '#ff6b6b', 0, 1, false);
         break;
-      case 'tempo':
-        this._drawTempoGauge(canvasId, this.analyzer.metrics.tempo);
-        break;
       case 'vowels':
         this._drawVowelPlot(canvasId);
         break;
-      case 'artic':
-        this._drawAttackDecay(canvasId, this._metricHistory.artic);
+      case 'attack':
+        this._drawLineGraph(canvasId, this._metricHistory.attack, '#2ec4b6', 0, 1, false);
         break;
-      case 'syllables':
-        this._drawSyllableHistogram(canvasId);
+      case 'weight':
+        this._drawLineGraph(canvasId, this._metricHistory.weight, '#e06c9f', 0, 1, false);
         break;
     }
   }
