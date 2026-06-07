@@ -10346,7 +10346,22 @@ class VoxBallGame {
 
   _drawPrismPitchSparkline(canvasEl) {
     const pr = this.prismReader;
-    const crystallized = pr.syllables.filter(s => s.state === 'crystallized' && s.avgF0 > 0);
+    // ⚡ Bolt Optimization: Use single-pass for loop to eliminate .filter() and .map() chains
+    const crystallized = [];
+    const pitches = [];
+    let minP = Infinity;
+    let maxP = -Infinity;
+
+    for (let i = 0; i < pr.syllables.length; i++) {
+      const s = pr.syllables[i];
+      if (s.state === 'crystallized' && s.avgF0 > 0) {
+        crystallized.push(s);
+        pitches.push(s.avgF0);
+        if (s.avgF0 < minP) minP = s.avgF0;
+        if (s.avgF0 > maxP) maxP = s.avgF0;
+      }
+    }
+
     if (crystallized.length < 3 || !canvasEl) return;
 
     const dpr = window.devicePixelRatio || 1;
@@ -10357,12 +10372,6 @@ class VoxBallGame {
     const ctx = canvasEl.getContext('2d');
     ctx.scale(dpr, dpr);
 
-    const pitches = crystallized.map(s => s.avgF0);
-    let minP = pitches[0] || 0, maxP = pitches[0] || 0;
-    for (let i = 1; i < pitches.length; i++) {
-      if (pitches[i] < minP) minP = pitches[i];
-      if (pitches[i] > maxP) maxP = pitches[i];
-    }
     const range = Math.max(1, maxP - minP);
 
     const padX = 4;
@@ -10467,14 +10476,9 @@ class VoxBallGame {
 
   _showPrismCompletionSummary() {
     const pr = this.prismReader;
-    const crystallized = pr.syllables.filter(s => s.state === 'crystallized');
-    if (crystallized.length === 0) return;
-
-    const elapsed = pr.firstOnsetTime > 0 ? (performance.now() - pr.firstOnsetTime) / 1000 : 0;
-    const words = pr.wordsCompleted || 0;
-    const wpm = elapsed > 1 ? Math.round(words / (elapsed / 60)) : 0;
-
-    // ⚡ Bolt Optimization: Single-pass iteration to reduce GC and function overhead
+    // ⚡ Bolt Optimization: Single-pass iteration over syllables to build crystallized array
+    // and compute intermediate values in one go, avoiding .filter()
+    const crystallized = [];
     const pitches = [];
     let pitchSum = 0;
     const vowelScores = [];
@@ -10485,24 +10489,33 @@ class VoxBallGame {
     const durations = [];
     let confidenceSum = 0;
 
-    for (let i = 0; i < crystallized.length; i++) {
-      const s = crystallized[i];
-      confidenceSum += s.confidence;
-      if (s.avgF0 > 0) {
-        pitches.push(s.avgF0);
-        pitchSum += s.avgF0;
+    for (let i = 0; i < pr.syllables.length; i++) {
+      const s = pr.syllables[i];
+      if (s.state === 'crystallized') {
+        crystallized.push(s);
+        confidenceSum += s.confidence;
+        if (s.avgF0 > 0) {
+          pitches.push(s.avgF0);
+          pitchSum += s.avgF0;
+        }
+        if (s.vowelScore > 0) {
+          vowelScores.push(s.vowelScore);
+          vowelSum += s.vowelScore;
+        }
+        if (s.strainFlag) strainCount++;
+        if (s.avgCentroid > 0) {
+          centroids.push(s.avgCentroid);
+          centroidSum += s.avgCentroid;
+        }
+        if (s.durationMs > 0) durations.push(s.durationMs);
       }
-      if (s.vowelScore > 0) {
-        vowelScores.push(s.vowelScore);
-        vowelSum += s.vowelScore;
-      }
-      if (s.strainFlag) strainCount++;
-      if (s.avgCentroid > 0) {
-        centroids.push(s.avgCentroid);
-        centroidSum += s.avgCentroid;
-      }
-      if (s.durationMs > 0) durations.push(s.durationMs);
     }
+
+    if (crystallized.length === 0) return;
+
+    const elapsed = pr.firstOnsetTime > 0 ? (performance.now() - pr.firstOnsetTime) / 1000 : 0;
+    const words = pr.wordsCompleted || 0;
+    const wpm = elapsed > 1 ? Math.round(words / (elapsed / 60)) : 0;
 
     // Aggregate pitch stats
     const avgPitch = pitches.length > 0 ? Math.round(pitchSum / pitches.length) : 0;
@@ -10793,7 +10806,15 @@ class VoxBallGame {
       progressFill.style.width = `${Math.min(100, pct)}%`;
 
       // Dynamic gradient from crystallized syllable hues — modulated by confidence & vowel score
-      const crystallized = pr.syllables.filter(s => s.state === 'crystallized');
+      // ⚡ Bolt Optimization: Use single-pass for loop instead of .filter()
+      const crystallized = [];
+      for (let i = 0; i < pr.syllables.length; i++) {
+        const s = pr.syllables[i];
+        if (s.state === 'crystallized') {
+          crystallized.push(s);
+        }
+      }
+
       if (crystallized.length >= 2) {
         const stops = [];
         const step = Math.max(1, Math.floor(crystallized.length / 5));
@@ -11044,20 +11065,31 @@ class VoxBallGame {
       stats.push({ value: `${Math.max(0, dyn)}%`, label: 'Dynamic Range' });
     } else if (this.gameMode === 'prism') {
       const pr = this.prismReader;
-      const crystallized = pr.syllables.filter(s => s.state === 'crystallized');
       const total = pr.syllables.length;
-      const scored = crystallized.filter(s => s.vowelScore > 0);
-      // ⚡ Bolt: Replace reduce with traditional loop for performance
+      // ⚡ Bolt Optimization: Use a single-pass loop to eliminate multiple chained .filter() calls
+      let crystallizedCount = 0;
+      let scoredCount = 0;
       let scoreSum = 0;
-      for (let i = 0; i < scored.length; i++) {
-        scoreSum += scored[i].vowelScore;
-      }
-      const avgScore = scored.length > 0 ? scoreSum / scored.length : 0;
+      let strainCount = 0;
 
-      const strainCount = crystallized.filter(s => s.strainFlag).length;
+      for (let i = 0; i < pr.syllables.length; i++) {
+        const s = pr.syllables[i];
+        if (s.state === 'crystallized') {
+          crystallizedCount++;
+          if (s.vowelScore > 0) {
+            scoredCount++;
+            scoreSum += s.vowelScore;
+          }
+          if (s.strainFlag) {
+            strainCount++;
+          }
+        }
+      }
+
+      const avgScore = scoredCount > 0 ? scoreSum / scoredCount : 0;
       const elapsed = pr.firstOnsetTime > 0 ? (performance.now() - pr.firstOnsetTime) / 1000 : 0;
       const wpm = elapsed > 1 ? Math.round((pr.wordsCompleted || 0) / (elapsed / 60)) : 0;
-      stats.push({ value: `${crystallized.length}/${total}`, label: 'Syllables Read' });
+      stats.push({ value: `${crystallizedCount}/${total}`, label: 'Syllables Read' });
       stats.push({ value: `${wpm} wpm`, label: 'Reading Speed' });
       stats.push({ value: `${Math.round(avgScore * 100)}%`, label: 'Avg Vowel Score' });
       if (strainCount > 0) {
