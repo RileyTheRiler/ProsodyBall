@@ -221,22 +221,27 @@
        column with a gap, so the hint always sits below the card's actual height — no overlap
        however many lines the sentence wraps to. */
     .teleprompter-stack {
-      position: absolute;
-      top: 72px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: min(860px, calc(100% - 40px));
+      /* Sits between .hud and .game-area in #app's flex column.
+         height:0 + overflow:visible means it takes no layout space but
+         translateY(72px) shifts its content visually into the game-area,
+         matching the old position:absolute top:72px behaviour. */
+      position: relative;
+      height: 0;
+      overflow: visible;
+      flex-shrink: 0;
+      width: 100%;
       display: flex;
       flex-direction: column;
       align-items: center;
       gap: 8px;
       z-index: var(--z-overlay);
       pointer-events: none;
+      transform: translateY(72px);
     }
 
     .teleprompter-overlay {
       position: relative;
-      width: 100%;
+      width: min(860px, calc(100% - 40px));
       padding: 12px 16px;
       background: rgba(18, 22, 36, 0.76);
       border: 1px solid rgba(255, 255, 255, 0.14);
@@ -2105,13 +2110,14 @@
         display: inline;
       }
 
-      /* --- HUD HEADER: compact mobile layout --- */
+      /* --- HUD HEADER: 2-row layout (logo+button row / controls row) --- */
       .hud {
-        padding: 8px 12px;
-        padding-top: max(8px, env(safe-area-inset-top, 0px));
-        flex-direction: column;
-        align-items: stretch;
-        gap: 6px;
+        padding: 6px 10px;
+        padding-top: max(6px, env(safe-area-inset-top, 0px));
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px 6px;
         position: sticky;
         top: 0;
         z-index: 15;
@@ -2120,7 +2126,7 @@
       .hud-left {
         min-width: 0;
         gap: 6px;
-        flex: none;
+        flex: 1;
         flex-direction: row;
         align-items: center;
       }
@@ -2137,29 +2143,32 @@
         width: 100%;
       }
 
-      /* Primary controls: large touch targets */
+      /* Primary controls: compact, same row as hud-left */
       .hud-primary {
-        flex: none;
+        flex: 0 0 auto;
+        width: auto;
+        flex-wrap: nowrap;
         justify-content: flex-start;
       }
 
       .hud-controls .btn {
-        font-size: 0.88rem;
-        padding: 10px 14px;
-        min-height: 44px;
+        font-size: 0.85rem;
+        padding: 8px 12px;
+        min-height: 40px;
         border-radius: 10px;
       }
 
       .btn-start {
-        flex: 1 1 auto;
+        flex: 0 0 auto;
         justify-content: center;
-        font-size: 0.95rem;
-        padding: 10px 18px;
+        font-size: 0.9rem;
+        padding: 8px 14px;
+        white-space: nowrap;
       }
 
-      /* Secondary controls: horizontal scroll strip */
+      /* Secondary controls: full-width second row, horizontal scroll */
       .hud-secondary {
-        flex: none;
+        flex: 0 0 100%;
         max-width: 100%;
         flex-wrap: nowrap;
         overflow-x: auto;
@@ -2240,23 +2249,52 @@
         justify-content: center;
       }
 
-      /* Teleprompter overlay: fit above game without obscuring */
+      /* Teleprompter: in-flow above game-area on mobile (not an overlay) */
+      .teleprompter-stack {
+        transform: none;
+        height: auto;
+        max-height: 22vh;
+        overflow: hidden;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        display: none;
+        width: 100%;
+        flex-direction: column;
+        align-items: stretch;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .teleprompter-stack:has(.teleprompter-overlay.show) {
+        display: flex;
+      }
+
       .teleprompter-overlay {
+        position: static;
         top: auto;
-        bottom: calc(100% - 80px);
-        left: 8px;
-        right: 8px;
-        width: auto;
-        transform: translateY(4px);
+        bottom: auto;
+        left: auto;
+        right: auto;
+        width: 100%;
         font-size: 0.88rem;
         padding: 10px 14px;
-        max-height: 30vh;
-        overflow-y: auto;
-        border-radius: 10px;
+        max-height: none;
+        overflow: visible;
+        transform: none;
+        opacity: 0;
+        border-radius: 0;
+        border: none;
+        box-shadow: none;
+        transition: opacity 0.2s ease;
       }
 
       .teleprompter-overlay.show {
-        transform: translateY(0);
+        opacity: 1;
+        transform: none;
+        pointer-events: auto;
+      }
+
+      .teleprompter-hint {
+        display: none;
       }
 
       /* --- OVERLAY / MENU: improved mobile layout --- */
@@ -2464,9 +2502,10 @@
         margin-top: 10px;
       }
 
-      /* --- GAME AREA: ensure minimum playable height --- */
+      /* --- GAME AREA: guaranteed visible space for the ball --- */
       .game-area {
-        min-height: 200px;
+        min-height: 150px;
+        flex: 1;
       }
 
       /* --- METERS BAR: two-row grid for readability --- */
@@ -2533,11 +2572,24 @@
         position: relative;
       }
 
-      /* --- EXPANDED METRICS: 2-col on mobile --- */
+      /* --- EXPANDED METRICS: 2-col on mobile, capped so ball stays visible --- */
       .meters-panel.expanded .meters-expanded {
         grid-template-columns: repeat(2, 1fr);
         padding: 12px 10px 24px;
         gap: 6px;
+        max-height: 38vh;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      /* Prevent the whole panel from crushing the game canvas */
+      .meters-panel {
+        max-height: 50vh;
+        overflow: hidden;
+      }
+
+      .meters-panel.expanded {
+        overflow-y: auto;
       }
 
       .metric-card-canvas {
@@ -3079,7 +3131,7 @@
       }
 
       .btn-start {
-        flex: 1 1 auto;
+        flex: 0 0 auto;
         justify-content: center;
       }
 
@@ -3506,9 +3558,12 @@
         min-height: 38px;
       }
 
-      /* Teleprompter: narrower in landscape */
+      /* Teleprompter: very compact in landscape to preserve canvas height */
+      .teleprompter-stack {
+        max-height: 18vh;
+      }
+
       .teleprompter-overlay {
-        max-height: 25vh;
         font-size: 0.82rem;
       }
 
@@ -4990,12 +5045,12 @@
       <button class="btn btn-close-settings" id="closeSettingsBtn">Close</button>
     </div>
 
+    <div class="teleprompter-stack" id="teleprompterStack">
+      <div class="teleprompter-overlay" id="teleprompterOverlay"></div>
+      <div class="teleprompter-hint" id="teleprompterHint"><span class="prism-kbd">Space</span> / <span class="prism-kbd">Tap</span> advance sentence</div>
+    </div>
     <div class="game-area">
       <canvas id="gameCanvas"></canvas>
-      <div class="teleprompter-stack" id="teleprompterStack">
-        <div class="teleprompter-overlay" id="teleprompterOverlay"></div>
-        <div class="teleprompter-hint" id="teleprompterHint"><span class="prism-kbd">Space</span> / <span class="prism-kbd">Tap</span> advance sentence</div>
-      </div>
       <div class="prism-overlay" id="prismOverlay">
         <div class="prism-live-stats" id="prismLiveStats">
           <span class="prism-stat" id="prismWpm">0 wpm</span>
