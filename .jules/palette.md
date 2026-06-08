@@ -24,3 +24,7 @@
 ## $(date +%Y-%m-%d) - [Inaccessible custom toggle switches due to duplicate IDs]
 **Learning:** Discovered that custom toggle switches built with `<label class="toggle-switch">` wrapping an `<input type="checkbox">` were failing because the `id` on the `<input>` was duplicated elsewhere in the DOM. This breaks the `<label for="[id]">` association, rendering the toggle invisible to screen readers and difficult to click.
 **Action:** Ensure custom toggle `<input>` elements have strictly unique IDs across the entire document so they correctly link with their `<label>` elements.
+
+## $(date +%Y-%m-%d) - [Decorative SVGs and screen readers]
+**Learning:** Found that purely decorative SVG icons within interactive elements (like buttons with `aria-label`) were missing `aria-hidden="true"`, causing screen readers to potentially announce redundant or confusing information.
+**Action:** Always add `aria-hidden="true"` to decorative SVGs when their parent element already provides sufficient accessibility context (e.g. via text content or `aria-label`).
