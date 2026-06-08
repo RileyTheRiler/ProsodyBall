@@ -10346,8 +10346,27 @@ class VoxBallGame {
 
   _drawPrismPitchSparkline(canvasEl) {
     const pr = this.prismReader;
-    const crystallized = pr.syllables.filter(s => s.state === 'crystallized' && s.avgF0 > 0);
+
+    // ⚡ Bolt Optimization: Single-pass for loop to avoid GC overhead from .filter().map()
+    const crystallized = [];
+    const pitches = [];
+    let minP = Infinity;
+    let maxP = -Infinity;
+
+    for (let i = 0; i < pr.syllables.length; i++) {
+      const s = pr.syllables[i];
+      if (s.state === 'crystallized' && s.avgF0 > 0) {
+        crystallized.push(s);
+        pitches.push(s.avgF0);
+        if (s.avgF0 < minP) minP = s.avgF0;
+        if (s.avgF0 > maxP) maxP = s.avgF0;
+      }
+    }
+
     if (crystallized.length < 3 || !canvasEl) return;
+
+    if (minP === Infinity) minP = 0;
+    if (maxP === -Infinity) maxP = 0;
 
     const dpr = window.devicePixelRatio || 1;
     const w = canvasEl.clientWidth;
@@ -10357,12 +10376,6 @@ class VoxBallGame {
     const ctx = canvasEl.getContext('2d');
     ctx.scale(dpr, dpr);
 
-    const pitches = crystallized.map(s => s.avgF0);
-    let minP = pitches[0] || 0, maxP = pitches[0] || 0;
-    for (let i = 1; i < pitches.length; i++) {
-      if (pitches[i] < minP) minP = pitches[i];
-      if (pitches[i] > maxP) maxP = pitches[i];
-    }
     const range = Math.max(1, maxP - minP);
 
     const padX = 4;
