@@ -1284,7 +1284,6 @@
 
     /* Full-width control row at the top of the expanded panel (averaging window) */
     .metrics-avg-bar {
-      grid-column: 1 / -1;
       display: flex;
       align-items: center;
       justify-content: flex-end;
@@ -1297,14 +1296,20 @@
     }
 
     .meters-panel.expanded .meters-expanded {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      align-content: start;
+      display: flex;
+      flex-direction: column;
       flex: 1;
       min-height: 0;
       padding: 12px 16px 24px;
       overflow-y: auto;
       animation: metersSlideUp 0.3s ease-out;
+    }
+
+    .metric-cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 8px;
+      align-content: start;
     }
 
     @keyframes metersSlideUp {
@@ -5846,8 +5851,9 @@
             <option value="10">10s</option>
           </select>
         </div>
-        <div class="metric-card" data-metric="pitch">
-          <div class="metric-card-header">
+        <div class="metric-cards-grid">
+          <div class="metric-card" data-metric="pitch">
+            <div class="metric-card-header">
             <span class="metric-card-title">Pitch</span>
             <span class="metric-card-value" id="expValPitch">— Hz</span>
           </div>
@@ -5901,6 +5907,7 @@
           </div>
           <canvas class="metric-card-canvas" id="expCanvasWeight"></canvas>
           <div class="metric-card-desc">Perceived heaviness — gassy orb = light, solid orb = heavy</div>
+        </div>
         </div>
       </div>
     </div>
