@@ -5035,7 +5035,7 @@
           </svg>
           <input type="file" id="audioUploadInput" accept="audio/*" style="display: none;">
         </label>
-        <button class="btn btn-voice-rec" id="voiceRecBtn" aria-pressed="false" title="Record your voice"><span class="rec-dot"></span><span class="voice-rec-label">Record</span></button>
+        <button class="btn btn-voice-rec" id="voiceRecBtn" aria-pressed="false" title="Record your voice" aria-label="Record your voice"><span class="rec-dot"></span></button>
         <button class="btn btn-voice-play" id="voicePlayBtn" disabled title="Play your last recording"><span aria-hidden="true">▶</span><span class="voice-play-label">&nbsp;Play</span></button>
         <button class="btn btn-rec" id="recBtn"><span class="rec-dot"></span><span class="rec-label">Rec</span></button>
         <button class="btn btn-help" id="prismClearRecBtn" aria-label="Clear Prism Recording"
@@ -5192,7 +5192,7 @@
           </div>
         </div>
         <div class="prism-scroll-container" id="prismScrollContainer"></div>
-        <div class="prism-idle-prompt" id="prismIdlePrompt">Click Rec to start reading</div>
+        <div class="prism-idle-prompt" id="prismIdlePrompt">Press Rec to start reading</div>
         <div class="prism-keep-reading" id="prismKeepReading">Keep reading...</div>
         <div class="prism-progress" id="prismProgress">
           <div class="prism-progress-fill" id="prismProgressFill"></div>
@@ -5515,8 +5515,7 @@
               <div class="mode-detail-panel" id="ascentDetails">
                 <div class="detail-header">
                   <div class="detail-title">🎈 Spectral Ascent</div>
-                  <div class="detail-blurb">Vocal weight directly drives altitude. A live spectral tilt gauge exposes
-                    the raw algorithm output.</div>
+                  <div class="detail-blurb">Vocal weight directly drives altitude. A live tilt gauge shows exactly how light or heavy your phonation is in real time.</div>
                 </div>
                 <div class="rules-grid">
                   <div class="rule-card rule-bounce">
@@ -5533,8 +5532,7 @@
                   </div>
                   <div class="rule-card rule-vowel">
                     <div class="rule-name">Single Vowel Constraint</div>
-                    <div class="rule-desc">Hold one neutral vowel ("Ah"/"Uh") and vary only vocal weight for cleaner
-                      spectral tilt diagnostics.</div>
+                    <div class="rule-desc">Hold a neutral vowel ("Ah" or "Uh") and vary only vocal weight — isolating one variable gives the clearest feedback.</div>
                   </div>
                   <div class="rule-card rule-artic">
                     <div class="rule-name">Spectral Gates</div>
@@ -5584,6 +5582,10 @@
                       detection
                       misaligns.</div>
                   </div>
+                  <div class="rule-card rule-vowel">
+                    <div class="rule-name">Vowels → Saturation</div>
+                    <div class="rule-desc">Sustained vowel sounds increase color richness. Clipped or unstressed syllables appear more washed out.</div>
+                  </div>
                 </div>
                 <div class="prism-settings">
                   <div class="prism-settings-row">
@@ -5604,7 +5606,7 @@
                     </div>
                     <div class="prism-settings-field">
                       <label class="prism-label" for="prismPacingSelect">
-                        <span class="prism-label-icon">⏱</span>Pacing Mode
+                        <span class="prism-label-icon">⏱</span>Advance Mode
                         <div class="info-wrapper">
                           <button class="info-trigger" aria-label="More Info">?</button>
                           <div class="info-popup" style="display:none">Choose how text advances. 'Auto' detects your speech rhythm. 'Manual'
@@ -5759,8 +5761,7 @@
       <div class="vib-panel" id="vibPanel">
         <h3>📳 Vibration Alerts</h3>
         <div class="vib-panel-sub">
-          Get haptic or visual feedback when your voice goes outside target ranges.
-          Add rules below — each triggers a brief vibration when the condition is met.
+          Get haptic feedback when your voice drifts outside a target range. Visual pulse included for devices without vibration.
         </div>
 
         <div class="vib-master">
@@ -5792,7 +5793,7 @@
           <button class="btn-clear-all" id="clearAllRecs" aria-label="Clear all recordings">Clear all</button>
         </div>
         <div class="recordings-list" id="recordingsList">
-          <div class="recordings-empty" id="recsEmpty">No recordings yet. Hit <b>Rec</b> while playing!</div>
+          <div class="recordings-empty" id="recsEmpty">No recordings yet. Press <b>Rec</b> while a session is running.</div>
         </div>
       </div>
     </div>
@@ -5806,7 +5807,7 @@
       </select>
       <select id="canvasModeSelect" class="theme-select canvas-only" aria-label="Canvas mode">
         <option value="paint">Canvas Mode: Paint</option>
-        <option value="freepaint">Canvas Mode: 2D Free Paint</option>
+        <option value="freepaint">Canvas Mode: Free Paint</option>
         <option value="keyboard">Canvas Mode: Keyboard</option>
       </select>
       <select id="keyboardGameSelect" class="theme-select canvas-only" aria-label="Keyboard game mode">

@@ -2522,14 +2522,14 @@ class VoxBallGame {
           c('bounce', 'Pitch Plasma', 'A neon plasma orb tracks exact pitch, including micro-slides between semitones.'),
           c('tempo', 'Mirror Mode', 'Real-time visual reflection of your voice over an expanded C2–C6 keyboard.'),
           c('vowel', 'Target Practice', 'Hold the highlighted key steadily for 1 second to score and trigger a success chime.'),
-          c('syllable', 'Range Finding', 'Explore speaking/singing range and identify comfortable pitch zones by octave.'),
+          c('syllable', 'Neon Keyboard Range', 'Explore speaking/singing range and identify comfortable pitch zones by octave.'),
         ],
       },
       pilot: {
         title: 'Voice → Pitch Pilot Mapping',
         items: [
           c('bounce', 'Pitch → Altitude', 'Your spark moves to the note you sing. Hold a steady note to hold altitude.'),
-          c('tempo', 'Calibration Glide', 'Start by gliding from low to high to map your personal vocal range to the cavern.'),
+          c('tempo', 'Quick Calibration', 'Start by gliding from low to high to map your personal vocal range to the cavern.'),
           c('vowel', 'Silence = Gravity', 'If your voice drops out, the spark slowly falls until you vocalize again.'),
           c('artic', 'Discord Barriers', 'Navigate glowing crystal gaps with smooth pitch jumps and controlled slides.'),
           c('syllable', 'Progressive Phases', 'Warm-up starts easy, then interval steps and slalom tunnels increase challenge.'),
@@ -2539,9 +2539,9 @@ class VoxBallGame {
         title: 'Voice → Resonance Road Mapping',
         items: [
           c('bounce', 'Timbre → Steering', 'Bright vs dark resonance steers the speeder left and right in real time.'),
-          c('tempo', 'Energy → Speed', 'Speaking energy powers forward motion. Silence slows to a crawl.'),
-          c('vowel', 'Target Lane', 'Stay near your selected target posture to remain on the glowing road centerline.'),
-          c('artic', 'Hazard Shoulders', 'Drifting off target creates splattered hazard trails and heavy speed drag.'),
+          c('tempo', 'Voice = Engine', 'Speaking energy powers forward motion. Silence slows to a crawl.'),
+          c('vowel', 'Target Resonance', 'Stay near your selected target posture to remain on the glowing road centerline.'),
+          c('artic', 'Hazard Feedback', 'Drifting off target creates splattered hazard trails and heavy speed drag.'),
           c('syllable', 'Teleprompter Drill', 'Read flowing text while preserving resonance posture through difficult words.'),
         ],
       },
@@ -2552,7 +2552,7 @@ class VoxBallGame {
           c('tempo', 'Tilt Gauge', 'A live vertical gauge shows MAX LIGHT, NEUTRAL, and MAX HEAVY with a fast marker tied to the balloon.'),
           c('vowel', 'Diagnostic Vowel', 'Use a steady "Ah" or "Uh" so changes come from vocal weight, not vowel shape shifts.'),
           c('artic', 'Spectral Gates', 'Fly through high/low/neutral gate patterns to test extremes, stability, and agility.'),
-          c('syllable', 'Session Diagnostics', 'Post-flight feedback reports latency, stability drift, and light-heavy dynamic range.'),
+          c('syllable', 'Post-Flight Diagnostics', 'Post-flight feedback reports latency, stability drift, and light-heavy dynamic range.'),
         ],
       },
       vowelvalley: {
@@ -11320,14 +11320,14 @@ class VoxBallGame {
       stats.push({ value: `${wpm} wpm`, label: 'Reading Speed' });
       stats.push({ value: `${Math.round(avgScore * 100)}%`, label: 'Avg Vowel Score' });
       if (strainCount > 0) {
-        stats.push({ value: `${strainCount}`, label: 'Strain Flags' });
+        stats.push({ value: `${strainCount}`, label: 'Strain Moments' });
       }
     } else if (this.gameMode === 'creature') {
       const stateMap = { blob: this.creature, jellyfish: this._jelly, phoenix: this._phoenix, nebula: this._nebula, spirit: this._spirit, koi: this._koi };
       const st = stateMap[this.creatureStyle] || this.creature;
       const tLevel = Math.round((st.transformLevel || 0) * 100);
       const styleName = this.creatureStyle.charAt(0).toUpperCase() + this.creatureStyle.slice(1);
-      stats.push({ value: `${tLevel}%`, label: 'Peak Transform' });
+      stats.push({ value: `${tLevel}%`, label: 'Best Creature Form' });
       stats.push({ value: styleName, label: 'Style' });
     } else if (this.gameMode === 'vowelvalley') {
       stats.push({ value: `${this.vowelValley.score}`, label: 'Score' });
