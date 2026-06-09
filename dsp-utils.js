@@ -1,3 +1,12 @@
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  const urlStr = String(url);
+  if (/^(%20|\s)*(javascript|data|vbscript):/i.test(urlStr)) {
+    return 'about:blank';
+  }
+  return urlStr;
+}
+
 export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
