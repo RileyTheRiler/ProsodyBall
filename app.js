@@ -2123,6 +2123,7 @@ class VoxBallGame {
     this._avgBuffers = { pitch: [], resonance: [], attack: [], weight: [] };
     this._avgCache = {};              // last computed summary per metric (or null)
     this._avgLastRefresh = 0;         // performance.now()/1000 of last cache recompute
+    this._avgLastFrameId = -1;        // frame id of last Live-mode recompute (de-dupes per frame)
     // Per-metric display modes (mirrors the Resonance method selector the user likes)
     this.pitchDisplayMode = 'hz';     // 'hz' | 'note' | 'range'
     this.weightMode = 'combined';     // 'combined' | 'tilt' | 'h1h2'
@@ -2763,6 +2764,7 @@ class VoxBallGame {
         console.error('Playback failed:', e);
         this.updateRecItemState(index, false);
         this.currentPlayback = null;
+        this._updateVoiceRecBtn();
       });
     }, { once: true });
 
@@ -3555,6 +3557,13 @@ class VoxBallGame {
       this.vibration.flashAlpha = 0;
       if (this._renderVibRules) this._renderVibRules();
 
+      // Clear windowed-average readout buffers so a quick restart doesn't average in
+      // the previous session's history.
+      this._avgBuffers = { pitch: [], resonance: [], attack: [], weight: [] };
+      this._avgCache = {};
+      this._avgLastRefresh = 0;
+      this._avgLastFrameId = -1;
+
       // Initialize session stats
       this.session.startTime = Date.now();
       this.session.duration = 0;
@@ -4174,7 +4183,7 @@ class VoxBallGame {
     // cache recompute so the readout updates on the next frame instead of after the throttle.
     const bindReadoutSelect = (id, apply) => {
       const el = document.getElementById(id);
-      if (el) el.addEventListener('change', (e) => { apply(e.target.value); this._avgLastRefresh = 0; });
+      if (el) el.addEventListener('change', (e) => { apply(e.target.value); this._avgLastRefresh = 0; this._avgLastFrameId = -1; });
     };
     bindReadoutSelect('pitchDisplaySelect', (v) => { this.pitchDisplayMode = v; });
     bindReadoutSelect('weightModeSelect', (v) => { this.weightMode = v; });
@@ -11348,7 +11357,7 @@ class VoxBallGame {
     const t = performance.now() / 1000;
     const B = this._avgBuffers;
 
-    if (a.lastPitch > 0 && a.smoothPitchHz > 0) {
+    if (a.lastPitch > 0 && a.smoothPitchHz > 0 && a.pitchConfidence > 0.35 && m.energy > 0.05) {
       B.pitch.push({ t, v: a.smoothPitchHz });
     }
     if (a.formantConfidence > 0.2 && m.energy > 0.05) {
@@ -11375,8 +11384,12 @@ class VoxBallGame {
   // numbers read calmly even though samples arrive at 60fps.
   _avgSummary(metric) {
     const t = performance.now() / 1000;
-    // Live mode (window 0) bypasses the throttle so the number tracks every frame.
-    if (this._avgWindowSecs <= 0 || t - this._avgLastRefresh >= this._avgRefreshSecs) {
+    if (this._avgWindowSecs <= 0) {
+      // Live mode tracks every frame, but recompute at most once per frame (HUD + cards +
+      // popup all call this), not once per readout.
+      const frameId = Math.floor(t * 1000 / 16);
+      if (frameId !== this._avgLastFrameId) { this._recomputeAvgCache(t); this._avgLastFrameId = frameId; }
+    } else if (t - this._avgLastRefresh >= this._avgRefreshSecs) {
       this._recomputeAvgCache(t);
       this._avgLastRefresh = t;
     }
