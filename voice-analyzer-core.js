@@ -12,10 +12,23 @@ export function normalizeAgainstPercentiles(value, p50, p90, gain = 1) {
   return clamp01(((value - p50) / spread) * gain);
 }
 
-export function computeFrameReliability({ pitchConfidence = 0, formantConfidence = 0, voicedStrength = 0, spectralTiltConfidence = 0 }) {
+export function computeFrameReliability({ pitchConfidence = 0, formantConfidence = 0, voicedStrength = 0, spectralTiltConfidence = 0, wasLastFrameReliable = false }) {
   const confidenceGate = clamp01(Math.max(0.2, pitchConfidence * 0.55 + formantConfidence * 0.25 + spectralTiltConfidence * 0.2));
   const voicedGate = clamp01(Math.max(0.25, voicedStrength * 0.75 + pitchConfidence * 0.25));
-  const reliableFrame = (pitchConfidence > 0.32 || formantConfidence > 0.36) && voicedStrength > 0.2;
+
+  // Dual-threshold hysteresis: once a frame is reliable, use relaxed thresholds
+  // to maintain the state through transitional speech regions (voiced→breathy,
+  // vowel→consonant boundaries). Require stricter confidence to *enter* the
+  // reliable state, preventing false activations on noise or breath.
+  let reliableFrame;
+  if (wasLastFrameReliable) {
+    // Relaxed thresholds to maintain active state — avoids glitchy dropout
+    reliableFrame = (pitchConfidence > 0.25 || formantConfidence > 0.30) && voicedStrength > 0.15;
+  } else {
+    // Stricter thresholds to break out of unvoiced/unreliable state
+    reliableFrame = (pitchConfidence > 0.35 || formantConfidence > 0.40) && voicedStrength > 0.25;
+  }
+
   return { confidenceGate, voicedGate, reliableFrame };
 }
 

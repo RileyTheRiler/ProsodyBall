@@ -1,15 +1,21 @@
 export class CalibrationWizard {
-  constructor({ overlayId = 'calibrationOverlay', titleId = 'calStepTitle', descId = 'calStepDesc', progressId = 'calProgressFill', nextBtnId = 'calNextBtn', skipBtnId = 'calSkipBtn' } = {}) {
+  constructor({ overlayId = 'calibrationOverlay', titleId = 'calStepTitle', descId = 'calStepDesc', progressId = 'calProgressFill', nextBtnId = 'calNextBtn', skipBtnId = 'calSkipBtn', visualId = 'calVisualContainer' } = {}) {
     this.overlay = document.getElementById(overlayId);
     this.titleEl = document.getElementById(titleId);
     this.descEl = document.getElementById(descId);
     this.progressEl = document.getElementById(progressId);
     this.nextBtn = document.getElementById(nextBtnId);
     this.skipBtn = document.getElementById(skipBtnId);
+    this.visualEl = document.getElementById(visualId);
+    this.isWizardLoopActive = false;
   }
 
   _show() { this.overlay?.classList.add('show'); }
-  _hide() { this.overlay?.classList.remove('show'); }
+  _hide() { this.overlay?.classList.remove('show'); this.isWizardLoopActive = false; }
+
+  _clearVisual() {
+    if (this.visualEl) this.visualEl.innerHTML = '';
+  }
 
   _setStep(title, desc, progress) {
     if (this.titleEl) this.titleEl.textContent = title;
@@ -65,6 +71,7 @@ export class CalibrationWizard {
     if (!this.overlay) return { outcome: 'skipped', skipped: true, reason: 'missing-overlay' };
 
     try {
+      this.isWizardLoopActive = true;
       this._show();
     this._setStep(
       '🎙 Calibrate Your Mic?',
@@ -84,16 +91,34 @@ export class CalibrationWizard {
     this._hideBtn(this.skipBtn);
     this._setStep('Step 1 of 2 · Room Check', 'Stay quiet for a moment while we listen to your room…', 10);
 
+    this._clearVisual();
+    const vuTrack = document.createElement('div');
+    vuTrack.className = 'cal-vu-track';
+    const vuFill = document.createElement('div');
+    vuFill.className = 'cal-vu-fill';
+    vuTrack.appendChild(vuFill);
+    if (this.visualEl) this.visualEl.appendChild(vuTrack);
+
     const calDuration = analyzer.noiseCalibrationDuration || 1.0;
     const maxWait = calDuration + 3;
     const roomStart = performance.now();
     let last = performance.now();
 
-    while ((performance.now() - roomStart) / 1000 < maxWait) {
+    while ((performance.now() - roomStart) / 1000 < maxWait && this.isWizardLoopActive) {
+      if (!this.overlay?.classList.contains('show')) {
+        this.isWizardLoopActive = false;
+        break;
+      }
+
       const now = performance.now();
       const dt = (now - last) / 1000;
       last = now;
       analyzer.update(Math.max(0.016, dt));
+
+      if (vuFill) {
+        const e = analyzer.metrics?.energy || 0;
+        vuFill.style.width = `${Math.min(100, e * 500)}%`;
+      }
 
       const elapsed = (performance.now() - roomStart) / 1000;
       const pct = Math.min(40, 10 + (elapsed / calDuration) * 30);
@@ -145,6 +170,18 @@ export class CalibrationWizard {
     holdVowelDesc.append('Say ', Object.assign(document.createElement('strong'), { textContent: '"ahhh"' }), ' steadily now…');
     this._setStep('Step 2 of 2 · Hold a Vowel', holdVowelDesc, 50);
 
+    this._clearVisual();
+    const canvas = document.createElement('canvas');
+    canvas.width = 300;
+    canvas.height = 80;
+    if (this.visualEl) this.visualEl.appendChild(canvas);
+    const ctx = canvas.getContext('2d');
+
+    const styles = window.getComputedStyle(document.documentElement);
+    const successColor = styles.getPropertyValue('--accent-vowel').trim() || '#6bcb77';
+    const normalColor = styles.getPropertyValue('--text-muted').trim() || '#908da5';
+    const ringColor = styles.getPropertyValue('--text-primary').trim() || '#eceaf4';
+
     const vowelStart = performance.now();
     let vowelStable = 0;
     let vowelPassed = false;
@@ -152,11 +189,60 @@ export class CalibrationWizard {
     last = performance.now();
     const vowelTimeout = 10;
 
-    while ((performance.now() - vowelStart) / 1000 < vowelTimeout) {
+    while ((performance.now() - vowelStart) / 1000 < vowelTimeout && this.isWizardLoopActive) {
+      if (!this.overlay?.classList.contains('show')) {
+        this.isWizardLoopActive = false;
+        break;
+      }
+
       const now = performance.now();
       const dt = (now - last) / 1000;
       last = now;
       analyzer.update(Math.max(0.016, dt));
+
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        const cx = canvas.width / 2;
+        const cy = canvas.height / 2;
+        
+        ctx.beginPath();
+        ctx.arc(cx, cy, 15, 0, Math.PI * 2);
+        ctx.strokeStyle = ringColor;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        const v = analyzer.metrics?.vowel || 0;
+        const e = analyzer.metrics?.energy || 0;
+        const clamp01 = (val) => Math.max(0, Math.min(1, val));
+        
+        let markerDist = 0;
+        let isAligned = false;
+        
+        if (e < 0.05) {
+          markerDist = 120;
+        } else {
+          markerDist = 120 * (1.0 - clamp01(v / 0.28));
+          if (v > 0.28 && e > 0.05) {
+             isAligned = true;
+          }
+        }
+        
+        const angle = now / 300;
+        const px = cx + Math.cos(angle) * markerDist;
+        const py = cy + Math.sin(angle) * markerDist;
+        
+        ctx.beginPath();
+        ctx.arc(px, py, 6, 0, Math.PI * 2);
+        ctx.fillStyle = isAligned ? successColor : normalColor;
+        ctx.fill();
+        if (isAligned) {
+           ctx.shadowColor = successColor;
+           ctx.shadowBlur = 10;
+           ctx.fill();
+           ctx.shadowBlur = 0;
+        }
+      }
 
       const elapsed = (performance.now() - vowelStart) / 1000;
       const pct = Math.min(90, 50 + (elapsed / minVowelTime) * 40);
@@ -223,6 +309,7 @@ export class CalibrationWizard {
       return { outcome: 'incomplete', skipped: true, reason: 'exception', error: errMsg };
     } finally {
       this._hide();
+      this._clearVisual();
       this._hideBtn(this.nextBtn);
       this._hideBtn(this.skipBtn);
     }

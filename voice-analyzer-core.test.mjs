@@ -27,7 +27,7 @@ test('normalizeAgainstPercentiles maps p50-p90 spread', () => {
   assert.ok(normalizeAgainstPercentiles(0.4, 0.2, 0.6) > 0.49);
 });
 
-test('computeFrameReliability lowers confidence on weak signal', () => {
+test('computeFrameReliability lowers confidence on weak signal and applies hysteresis', () => {
   const weak = computeFrameReliability({ pitchConfidence: 0.1, formantConfidence: 0.1, voicedStrength: 0.1, spectralTiltConfidence: 0.1 });
   const strong = computeFrameReliability({ pitchConfidence: 0.9, formantConfidence: 0.7, voicedStrength: 0.8, spectralTiltConfidence: 0.8 });
 
@@ -35,6 +35,18 @@ test('computeFrameReliability lowers confidence on weak signal', () => {
   assert.equal(strong.reliableFrame, true);
   assert.ok(strong.confidenceGate > weak.confidenceGate);
   assert.ok(strong.voicedGate > weak.voicedGate);
+
+  // Test Hysteresis
+  // Transitional frame (middle values)
+  const transitionalArgs = { pitchConfidence: 0.30, formantConfidence: 0.35, voicedStrength: 0.20 };
+  
+  // If previously unreliable, transitional frame shouldn't be enough to turn ON
+  const turnOnAttempt = computeFrameReliability({ ...transitionalArgs, wasLastFrameReliable: false });
+  assert.equal(turnOnAttempt.reliableFrame, false);
+
+  // If previously reliable, transitional frame should be enough to stay ON
+  const stayOnAttempt = computeFrameReliability({ ...transitionalArgs, wasLastFrameReliable: true });
+  assert.equal(stayOnAttempt.reliableFrame, true);
 });
 
 test('computeWeightTarget falls back to spectral tilt alone when other cues are absent', () => {

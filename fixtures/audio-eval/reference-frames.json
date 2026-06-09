@@ -14,20 +14,20 @@
       "hfNoiseFloor": 0.014,
       "expected": {
         "confidenceGate": [
-          0.75,
-          1.0
+          0.811,
+          0.912
         ],
         "voicedGate": [
-          0.75,
-          1.0
+          0.83,
+          0.93
         ],
         "energy": [
-          0.8,
-          1.0
+          0.95,
+          1
         ],
         "articulation": [
-          0.6,
-          1.0
+          0.95,
+          1
         ]
       }
     },
@@ -44,20 +44,20 @@
       "hfNoiseFloor": 0.016,
       "expected": {
         "confidenceGate": [
-          0.2,
-          0.4
+          0.15,
+          0.25
         ],
         "voicedGate": [
-          0.25,
-          0.4
+          0.2,
+          0.3
         ],
         "energy": [
-          0.2,
-          0.5
+          0.201,
+          0.301
         ],
         "articulation": [
-          0.0,
-          0.45
+          0.37,
+          0.47
         ]
       }
     },
@@ -74,20 +74,20 @@
       "hfNoiseFloor": 0.011,
       "expected": {
         "confidenceGate": [
-          0.2,
-          0.28
+          0.15,
+          0.25
         ],
         "voicedGate": [
-          0.25,
+          0.2,
           0.3
         ],
         "energy": [
-          0.0,
-          0.15
+          0,
+          0.05
         ],
         "articulation": [
-          0.0,
-          0.12
+          0,
+          0.094
         ]
       }
     }

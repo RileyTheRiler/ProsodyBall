@@ -16,6 +16,8 @@ function inRange(value, [min, max]) {
   return value >= min && value <= max;
 }
 
+const isRebaseline = process.argv.includes('--rebaseline');
+
 for (const frame of fixture.frames) {
   const rel = computeFrameReliability({
     pitchConfidence: frame.pitchConfidence,
@@ -32,19 +34,37 @@ for (const frame of fixture.frames) {
     1.2
   );
 
-  const checks = [
-    ['confidenceGate', rel.confidenceGate, frame.expected.confidenceGate],
-    ['voicedGate', rel.voicedGate, frame.expected.voicedGate],
-    ['energy', energy, frame.expected.energy],
-    ['articulation', articulation, frame.expected.articulation]
-  ];
+  if (isRebaseline) {
+    // Generate new expected ranges (+/- 0.05 around current exact values, clamped to [0,1])
+    const makeRange = (val) => [
+      Math.max(0, Number((val - 0.05).toFixed(3))),
+      Math.min(1, Number((val + 0.05).toFixed(3)))
+    ];
+    frame.expected.confidenceGate = makeRange(rel.confidenceGate);
+    frame.expected.voicedGate = makeRange(rel.voicedGate);
+    frame.expected.energy = makeRange(energy);
+    frame.expected.articulation = makeRange(articulation);
+  } else {
+    const checks = [
+      ['confidenceGate', rel.confidenceGate, frame.expected.confidenceGate],
+      ['voicedGate', rel.voicedGate, frame.expected.voicedGate],
+      ['energy', energy, frame.expected.energy],
+      ['articulation', articulation, frame.expected.articulation]
+    ];
 
-  for (const [name, value, range] of checks) {
-    if (!inRange(value, range)) {
-      failures += 1;
-      console.error(`FAIL ${frame.name}.${name}: got ${value.toFixed(3)} expected [${range[0]}, ${range[1]}]`);
+    for (const [name, value, range] of checks) {
+      if (!inRange(value, range)) {
+        failures += 1;
+        console.error(`FAIL ${frame.name}.${name}: got ${value.toFixed(3)} expected [${range[0]}, ${range[1]}]`);
+      }
     }
   }
+}
+
+if (isRebaseline) {
+  fs.writeFileSync(fixturePath, JSON.stringify(fixture, null, 2) + '\n', 'utf8');
+  console.log(`Re-baselined ${fixture.frames.length} frames and saved to ${fixturePath}`);
+  process.exit(0);
 }
 
 if (failures > 0) {

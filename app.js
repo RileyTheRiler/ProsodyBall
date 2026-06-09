@@ -163,6 +163,8 @@ export class VoiceAnalyzer {
       attack: 0, weight: 0
     };
     this.frameConfidence = 0; // overall frame confidence for game-level gating
+    this.wasLastFrameReliable = false;
+    this.noiseSpectralProfile = null;
   }
 
   // Helper to reuse typed arrays to prevent garbage collection spikes in hot loops
@@ -324,6 +326,8 @@ export class VoiceAnalyzer {
     this.pitchProfile = { samples: [], min: 80, max: 380, isLearned: false, voicedTime: 0, learningDuration: 5.0 };
     this.tiltProfile = { samples: [], min: -34, max: -4, isLearned: false, voicedTime: 0, learningDuration: 5.0 };
     for (const k in this.metrics) this.metrics[k] = 0;
+    this.wasLastFrameReliable = false;
+    this.noiseSpectralProfile = null;
   }
 
   /** Reset calibration state so a fresh calibration can run cleanly */
@@ -332,6 +336,7 @@ export class VoiceAnalyzer {
     this.hfCalibrationSamples = [];
     this.noiseCalibrationTimer = 0;
     this.isCalibrated = false;
+    this.noiseSpectralProfile = null;
   }
 
   // ========================================================
@@ -403,9 +408,14 @@ export class VoiceAnalyzer {
       dsBuf[i] = (buf[2 * i] + buf[2 * i + 1]) * 0.5;
     }
 
-    // Adjust params for downsampled rate
-    const minPeriod = Math.floor(dsRate / 500); // 500 Hz max
-    const maxPeriod = Math.min(Math.floor(dsRate / 60), Math.floor(dsN / 2)); // 60 Hz min
+    // Adjust params for downsampled rate (Adaptive bounds based on voice profile)
+    // Add a 15% safety buffer to variations on the frequency scale
+    const safeMinHz = Math.max(40, this.pitchProfile.min * 0.85);
+    const safeMaxHz = Math.min(600, this.pitchProfile.max * 1.15);
+
+    // Convert safely to period limits (Inverted: Max Hz maps to Min Period)
+    const minPeriod = Math.max(2, Math.floor(dsRate / safeMaxHz)); 
+    const maxPeriod = Math.min(Math.floor(dsRate / safeMinHz), Math.floor(dsN / 2));
     const W = maxPeriod; // integration window
 
     // Step 1 & 2: Difference function d(τ) and CMND d'(τ)
@@ -524,6 +534,15 @@ export class VoiceAnalyzer {
       for (let i = 0; i < this.hfFrequencyData.length; i++) hfSample += this.hfFrequencyData[i];
       this.hfCalibrationSamples.push(hfSample / (this.hfFrequencyData.length * 255));
 
+      this.analyser.getFloatFrequencyData(this.frequencyData);
+      if (!this.noiseSpectralProfile) {
+        this.noiseSpectralProfile = new Float32Array(this.frequencyData.length);
+      }
+      for (let i = 0; i < this.frequencyData.length; i++) {
+        // Convert Decibels to Linear Magnitude for proper calibration scaling
+        this.noiseSpectralProfile[i] += Math.pow(10, this.frequencyData[i] / 20);
+      }
+
       if (this.noiseCalibrationTimer >= this.noiseCalibrationDuration) {
         const samples = this.noiseCalibrationSamples;
         let sum = 0, sqSum = 0;
@@ -552,6 +571,14 @@ export class VoiceAnalyzer {
 
         this.hfNoiseFloor = hfMean + hfStd * 2;
         this.isCalibrated = true;
+
+        // Average the accumulated spectral profile
+        if (this.noiseSpectralProfile) {
+          for (let i = 0; i < this.noiseSpectralProfile.length; i++) {
+            this.noiseSpectralProfile[i] /= this.noiseCalibrationSamples.length;
+          }
+        }
+
         console.log(`Noise calibrated: floor=${(this.noiseFloor * 1000).toFixed(1)}mRMS, hfFloor=${this.hfNoiseFloor.toFixed(4)} (ambient=${(mean * 1000).toFixed(1)}mRMS)`);
       }
       // During calibration, don't trigger any metrics
@@ -636,6 +663,16 @@ export class VoiceAnalyzer {
     }
 
     this.analyser.getFloatFrequencyData(this.frequencyData);
+    if (this.isCalibrated && this.noiseSpectralProfile) {
+      for (let i = 0; i < this.frequencyData.length; i++) {
+        let signalMag = Math.pow(10, this.frequencyData[i] / 20);
+        let noiseMag = this.noiseSpectralProfile[i] || 0;
+        // Apply subtraction factor (over-subtraction = 1.5, floor = 0.01)
+        let cleanMag = Math.max(0.01 * signalMag, signalMag - 1.5 * noiseMag);
+        // Re-convert to dB scale for native compatibility with downstream dsp engines
+        this.frequencyData[i] = cleanMag > 1e-10 ? 20 * Math.log10(cleanMag) : -200;
+      }
+    }
     const fData = this.frequencyData;
 
     // ====== SPECTRAL TILT (dynamic pitch-aware band ratio) ======
@@ -759,6 +796,15 @@ export class VoiceAnalyzer {
     // Only run during confident voiced vowels
     if (pitch > 0 && this.pitchConfidence > 0.4 && this.vowelLikelihood > 0.25) {
       this.analyserFormant.getFloatFrequencyData(this.formantFreqData);
+      if (this.isCalibrated && this.noiseSpectralProfile) {
+        // Both analysers use fftSize=4096 so bins match exactly
+        for (let i = 0; i < this.formantFreqData.length; i++) {
+          let signalMag = Math.pow(10, this.formantFreqData[i] / 20);
+          let noiseMag = this.noiseSpectralProfile[i] || 0;
+          let cleanMag = Math.max(0.01 * signalMag, signalMag - 1.5 * noiseMag);
+          this.formantFreqData[i] = cleanMag > 1e-10 ? 20 * Math.log10(cleanMag) : -200;
+        }
+      }
 
       let f1Candidate = 0, f2Candidate = 0, f3Candidate = 0, conf = 0;
 
@@ -963,8 +1009,10 @@ export class VoiceAnalyzer {
       pitchConfidence: this.pitchConfidence,
       formantConfidence: this.formantConfidence,
       voicedStrength,
-      spectralTiltConfidence: this.spectralTiltConfidence
+      spectralTiltConfidence: this.spectralTiltConfidence,
+      wasLastFrameReliable: this.wasLastFrameReliable
     });
+    this.wasLastFrameReliable = reliableFrame;
 
     // Stricter confidence gating
     if (!reliableFrame && gatedRms < this.energyPercentiles.p75) {
