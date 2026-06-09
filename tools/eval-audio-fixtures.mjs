@@ -16,7 +16,7 @@ function inRange(value, [min, max]) {
   return value >= min && value <= max;
 }
 
-const isRebaseline = process.argv.includes('--rebaseline');
+const isRebaseline = process.argv.includes('--rebaseline') || process.argv.includes('--update');
 
 for (const frame of fixture.frames) {
   const rel = computeFrameReliability({

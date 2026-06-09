@@ -4989,6 +4989,31 @@
       background: linear-gradient(90deg, var(--accent-artic), var(--accent-vowel));
       transition: width 0.06s linear; /* Smooth micro-jitter tracking noise streams */
     }
+    .coaching-toast {
+      position: absolute;
+      top: 20%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.85);
+      color: #fff;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 1.1rem;
+      letter-spacing: 0.5px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      z-index: 100;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(4px);
+    }
+    
+    .coaching-toast.visible {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1.05);
+    }
   </style>
 </head>
 
@@ -5084,6 +5109,14 @@
           <option value="lighter">Profile: High-Range / Bright</option>
           <option value="expressive">Profile: Expressive Practice</option>
         </select>
+        <span class="settings-label" style="margin-top: 10px;">Coaching Preset</span>
+        <select id="practicePresetSelect" class="theme-select btn-fill" aria-label="Practice preset">
+          <option value="presentation" selected>Presentation</option>
+          <option value="storytelling">Storytelling</option>
+          <option value="callcenter">Call-Center</option>
+          <option value="publicspeaking">Public Speaking</option>
+          <option value="monotone">Monotone Minimizer</option>
+        </select>
         <div class="settings-status" aria-live="polite">
           <div class="settings-status-item"><span>Pitch profile</span><strong id="pitchProfileLearned">Learning… 0%</strong></div>
           <div class="settings-status-item"><span>Tilt profile</span><strong id="tiltProfileLearned">Learning… 0%</strong></div>
@@ -5131,6 +5164,7 @@
     </div>
     <div class="game-area">
       <canvas id="gameCanvas"></canvas>
+      <div class="coaching-toast" id="coachingToast"></div>
       <div class="prism-overlay" id="prismOverlay">
         <div class="prism-live-stats" id="prismLiveStats">
           <span class="prism-stat" id="prismWpm">0 wpm</span>
@@ -5246,32 +5280,20 @@
               <div class="mode-detail-panel" id="ballDetails">
                 <div class="detail-header">
                   <div class="detail-title">⚽ Vox Ball</div>
-                  <div class="detail-blurb">Control a bouncing ball with your voice. Pitch bounces, tempo changes speed,
-                    vowels leave trails.</div>
+                  <div class="detail-blurb">Control a bouncing ball with your voice. Pitch variance controls bounce height, vowels grow the ball and leave trails, and crisp consonants sparkle.</div>
                 </div>
                 <div class="rules-grid">
                   <div class="rule-card rule-bounce">
                     <div class="rule-name">① Bounciness</div>
                     <div class="rule-desc">Vary your pitch up and down. Bigger pitch swings = higher bounces.</div>
                   </div>
-                  <div class="rule-card rule-tempo">
-                    <div class="rule-name">② Tempo Variance</div>
-                    <div class="rule-desc">Change your speaking speed. Fast→slow→fast makes the ball accelerate and
-                      decelerate.</div>
-                  </div>
                   <div class="rule-card rule-vowel">
-                    <div class="rule-name">③ Vowel Elongation</div>
-                    <div class="rule-desc">Stretch your vowels ("hellooo"). Sustained sounds create a glowing trail.
-                    </div>
+                    <div class="rule-name">② Vowel Elongation</div>
+                    <div class="rule-desc">Stretch your vowels ("hellooo"). Sustained sounds create a glowing trail.</div>
                   </div>
                   <div class="rule-card rule-artic">
-                    <div class="rule-name">④ Articulation</div>
+                    <div class="rule-name">③ Articulation</div>
                     <div class="rule-desc">Crisp consonants create sparkle effects. Pronounce clearly!</div>
-                  </div>
-                  <div class="rule-card rule-syllable">
-                    <div class="rule-name">⑤ Syllable Separation</div>
-                    <div class="rule-desc">Distinct syllable breaks trigger individual bounce events. E-NUN-CI-ATE!
-                    </div>
                   </div>
                 </div>
               </div>
@@ -5327,12 +5349,6 @@
                     <div class="rule-desc">Low pitch grows mushrooms, mid grows flowers, high grows tall trees. Vary to
                       diversify!</div>
                   </div>
-                  <div class="rule-card rule-tempo">
-                    <div class="rule-name">Resonance → Color</div>
-                    <div class="rule-desc">Bright resonance makes vivid, warm plants. Dark resonance grows cool,
-                      blue-toned
-                      flora.</div>
-                  </div>
                   <div class="rule-card rule-vowel">
                     <div class="rule-name">Vowels → Sunlight</div>
                     <div class="rule-desc">Sustained sounds are photosynthesis — they accelerate growth. Hold vowels to
@@ -5341,11 +5357,6 @@
                   <div class="rule-card rule-artic">
                     <div class="rule-name">Articulation → Pollen</div>
                     <div class="rule-desc">Crisp consonants scatter pollen and firefly particles through the garden.
-                    </div>
-                  </div>
-                  <div class="rule-card rule-syllable">
-                    <div class="rule-name">Syllables → Seeds</div>
-                    <div class="rule-desc">Each distinct syllable plants a new seed. More syllables = denser garden.
                     </div>
                   </div>
                 </div>
@@ -5363,12 +5374,6 @@
                       the
                       top.</div>
                   </div>
-                  <div class="rule-card rule-tempo">
-                    <div class="rule-name">Resonance → Color</div>
-                    <div class="rule-desc">Dark resonance paints cool blues, bright resonance paints warm golds and
-                      pinks.
-                    </div>
-                  </div>
                   <div class="rule-card rule-vowel">
                     <div class="rule-name">Vowels → Curves</div>
                     <div class="rule-desc">Sustained sounds create smooth flowing brushstrokes. Hold vowels for long,
@@ -5379,11 +5384,6 @@
                     <div class="rule-desc">Sharp consonants <span id="mapSplatter" class="map-term">splatter</span>
                       paint
                       droplets and add texture to the canvas.</div>
-                  </div>
-                  <div class="rule-card rule-syllable">
-                    <div class="rule-name">Energy → Width</div>
-                    <div class="rule-desc">Louder, more energetic speech creates wider, bolder strokes. Whisper for fine
-                      detail.</div>
                   </div>
                 </div>
               </div>

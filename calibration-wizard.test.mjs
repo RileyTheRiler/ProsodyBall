@@ -22,6 +22,19 @@ class MockEl {
   appendChild(child) {
     this.children.push(child);
   }
+  getContext() {
+    return {
+      clearRect: () => {},
+      fillRect: () => {},
+      beginPath: () => {},
+      arc: () => {},
+      fill: () => {},
+      moveTo: () => {},
+      lineTo: () => {},
+      stroke: () => {},
+      fillStyle: ''
+    };
+  }
   append(...nodes) {
 
     if (!this.childNodes) this.childNodes = [];
@@ -61,7 +74,12 @@ function buildWizard() {
     calSkipBtn: new MockEl()
   };
   global.Node = class MockNode {};
+  global.window = { 
+    requestAnimationFrame: (cb) => setTimeout(cb, 16),
+    getComputedStyle: () => ({ getPropertyValue: () => '#000000' })
+  };
   global.document = {
+    documentElement: new MockEl(),
     getElementById: (id) => els[id] || null,
     createElement: (tag) => new MockEl(),
     createDocumentFragment: () => {

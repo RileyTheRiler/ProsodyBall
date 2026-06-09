@@ -1,7 +1,6 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning } from './dsp-utils.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
-import { getMicDiagnostics, ensureAudioContextRunning } from './reliability.js';
 import { clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness } from './voice-analyzer-core.js';
 
 function escapeHtml(text) {
@@ -170,8 +169,8 @@ export class VoiceAnalyzer {
     this.noiseAdaptRate = 0.002; // ongoing adaptation for changing environments
 
     this.metrics = {
-      bounce: 0, tempo: 0, vowel: 0,
-      articulation: 0, syllable: 0,
+      bounce: 0, vowel: 0,
+      articulation: 0,
       pitch: 0, energy: 0, resonance: 0,
       attack: 0, weight: 0
     };
@@ -1017,15 +1016,7 @@ export class VoiceAnalyzer {
     // Pre-calculate robust baseline for dynamic thresholding across metrics
     const baseEnergyRange = Math.max(0.001, this.energyPercentiles.p90 - this.energyPercentiles.p50);
 
-    // 2. TEMPO — energy transition rate (uses gated energy history)
-    if (this.energyHistory.length > 5) {
-      let transitions = 0;
-      const thresh = this.energyPercentiles.p50 + baseEnergyRange * 0.5;
-      for (let i = 1; i < this.energyHistory.length; i++) {
-        if ((this.energyHistory[i - 1] > thresh) !== (this.energyHistory[i] > thresh)) transitions++;
-      }
-      this.metrics.tempo = Math.min(1, transitions / TEMPO_TRANSITION_DIVISOR);
-    }
+
 
     // 3. VOWEL ELONGATION — sustained voicing WITH vowel-like formants
     //    Uses vowelLikelihood to distinguish real vowels from "sss" or "mmm"
@@ -1068,7 +1059,6 @@ export class VoiceAnalyzer {
       this.syllableState = 'silent';
     }
     this.syllableImpulse *= SYLLABLE_IMPULSE_DECAY;
-    this.metrics.syllable = this.syllableImpulse;
 
     // 6. VOCAL ATTACK — onset hardness from the peak energy-rise rate at phonation
     //    onset. Steep rise = hard/glottal (→1); gradual rise = soft/breathy (→0).
@@ -1124,14 +1114,11 @@ export class VoiceAnalyzer {
     if (!reliableFrame && gatedRms < this.energyPercentiles.p75) {
       // Freeze/slow-decay updates when signal is muddy or user is breathing
       this.metrics.bounce *= 0.95;
-      this.metrics.tempo *= 0.98;
     } else {
       this.metrics.bounce *= confidenceGate * pitchGate;
-      this.metrics.tempo *= voicedGate;
     }
 
     this.metrics.articulation *= Math.max(0.25, voicedGate * 0.8 + confidenceGate * 0.2);
-    this.metrics.syllable *= voicedGate;
     this.metrics.attack *= Math.max(0.2, voicedGate);
 
     const pitchRange = Math.max(50, this.pitchProfile.max - this.pitchProfile.min);
@@ -2499,10 +2486,8 @@ class VoxBallGame {
         title: 'Voice → Ball Mapping',
         items: [
           c('bounce', 'Bounciness', 'Pitch variation controls bounce height. Speak with intonation!'),
-          c('tempo', 'Tempo', 'Changes in speech rate shift ball speed. Speed up and slow down.'),
           c('vowel', 'Vowel Elongation', 'Sustained sounds grow the ball and leave trails.'),
           c('artic', 'Articulation', 'Sharp consonants create sparkle bursts. Be crisp!'),
-          c('syllable', 'Syllable Separation', 'Each distinct syllable triggers a separate bounce event.'),
         ],
       },
       creature: {
@@ -2519,20 +2504,16 @@ class VoxBallGame {
         title: 'Voice → Garden Mapping',
         items: [
           c('bounce', 'Pitch → Species', 'Low pitch grows mushrooms, mid grows flowers, high grows tall trees.'),
-          c('tempo', 'Resonance → Color', 'Bright resonance makes vivid, warm plants. Dark resonance grows cool flora.'),
           c('vowel', 'Vowels → Sunlight', 'Sustained sounds accelerate growth. Hold vowels to watch plants surge.'),
           c('artic', 'Articulation → Pollen', 'Crisp consonants scatter pollen and fireflies through the garden.'),
-          c('syllable', 'Syllables → Seeds', 'Each distinct syllable plants a new seed. More syllables = denser garden.'),
         ],
       },
       canvas: {
         title: 'Voice → Canvas Mapping',
         items: [
           c('bounce', 'Pitch → Y Position', 'Low voice paints at the bottom, high voice sweeps to the top.'),
-          c('tempo', 'Resonance → Color', 'Dark resonance paints cool blues, bright resonance paints warm golds.'),
           c('vowel', 'Vowels → Flow', 'Sustained sounds create smooth, graceful flowing brushstrokes.'),
           c('artic', 'Articulation → Texture', 'Sharp consonants splatter paint and add texture to the canvas.'),
-          c('syllable', 'Energy → Width', 'Louder speech creates wider, bolder strokes. Whisper for fine detail.'),
         ],
       },
       keyboard: {
@@ -3168,6 +3149,9 @@ class VoxBallGame {
 
     const teleprompterModeSelect = document.getElementById('teleprompterModeSelect');
     const voiceProfileSelect = document.getElementById('voiceProfileSelect');
+    const practicePresetSelect = document.getElementById('practicePresetSelect');
+    const coachingToast = document.getElementById('coachingToast');
+    this.coachingToastHideTimer = 0;
     const micDeviceSelect = document.getElementById('micDeviceSelect');
     const echoCancelToggle = document.getElementById('echoCancelToggle');
     const noiseSuppressToggle = document.getElementById('noiseSuppressToggle');
@@ -4120,6 +4104,12 @@ class VoxBallGame {
       this.analyzer.spectralTiltSmoothedDb += cfg.tiltShift;
     };
 
+    practicePresetSelect?.addEventListener('change', (e) => {
+      if (this.analyzer) {
+        this.analyzer.setPracticePreset(e.target.value);
+      }
+    });
+
     voiceProfileSelect?.addEventListener('change', (e) => {
       applyVoiceProfilePreset(e.target.value);
     });
@@ -4708,7 +4698,7 @@ class VoxBallGame {
             case 'resonance': val = Math.round(this.analyzer.smoothResonance * 100); break;
             case 'energy': val = Math.round(m.energy * 100); break;
             case 'bounce': val = Math.round(m.bounce * 100); break;
-            case 'tempo': val = Math.round(m.tempo * 100); break;
+            case 'tempo': val = 0; break;
             case 'vowel': val = Math.round(m.vowel * 100); break;
             case 'articulation': val = Math.round(m.articulation * 100); break;
             default: val = 0;
@@ -5371,14 +5361,45 @@ class VoxBallGame {
     // unreliable data doesn't jerk the score around.
     // ==========================================================
     const scoreSmoothing = 0.12 * Math.max(0.2, this.analyzer.frameConfidence);
-    this.prosodyScore = computeProsodyScore(this.prosodyScore, m, scoreSmoothing);
+    this.prosodyScore = computeProsodyScore(this.prosodyScore, m, this.analyzer.currentPreset, scoreSmoothing);
+
+    if (this.analyzer && this.analyzer.coachingHint) {
+      if (coachingToast) {
+        coachingToast.textContent = this.analyzer.coachingHint;
+        coachingToast.classList.add('visible');
+      }
+      this.coachingToastHideTimer = 3.0; // Show toast for 3 seconds
+      this.analyzer.state.coachingHint = null; // Clear so we don't re-trigger immediately
+    }
+    
+    if (this.coachingToastHideTimer > 0) {
+      this.coachingToastHideTimer -= dt;
+      if (this.coachingToastHideTimer <= 0 && coachingToast) {
+        coachingToast.classList.remove('visible');
+      }
+    }
+
     const ps = this.prosodyScore;
 
     // ==========================================================
-    // SCROLL SPEED — prosody + tempo drives movement
-    // Monotone: sluggish crawl (20 px/s). High tempo: >300 px/s.
+    // SCROLL SPEED — prosody + rolling syllable frequency drives movement
+    // Monotone: sluggish crawl (20 px/s). High rate: >300 px/s.
     // ==========================================================
-    this.targetScrollSpeed = 20 + ps * 100 + m.tempo * 300;
+    const nowSec = performance.now() / 1000;
+    this.syllableTimes = this.syllableTimes || [];
+    const currentImpulse = this.analyzer.syllableImpulse;
+    if (currentImpulse > 0.9 && !this._hadSyllableTrigger) {
+      this.syllableTimes.push(nowSec);
+      this._hadSyllableTrigger = true;
+    } else if (currentImpulse <= 0.8) {
+      this._hadSyllableTrigger = false;
+    }
+    this.syllableTimes = this.syllableTimes.filter(t => nowSec - t <= 3.0);
+    const syllableFreq = this.syllableTimes.length / 3.0;
+    const speedFactor = Math.min(1.0, syllableFreq / 3.0);
+    this.syllableSpeedFactor = speedFactor;
+
+    this.targetScrollSpeed = 20 + ps * 150 + speedFactor * 250;
     this.scrollSpeed += (this.targetScrollSpeed - this.scrollSpeed) * 0.06;
     this.scrollX += this.scrollSpeed * dt;
 
@@ -5390,10 +5411,11 @@ class VoxBallGame {
     // Monotone syllables = tiny nudge. Prosodic = BIG bounce.
     // At ps=0.4 → ~120px height. At ps=0.8 → ~400px height.
     // ==========================================================
-    if (m.syllable > 0.5) {
+    const sylImpulse = this.analyzer.syllableImpulse;
+    if (sylImpulse > 0.5) {
       const bouncePower = 120 + ps * 1800;
       if (this.ball.vy > -bouncePower * 0.5) {
-        this.ball.vy = -bouncePower * m.syllable;
+        this.ball.vy = -bouncePower * sylImpulse;
         this.ball.onGround = false;
         this.ball.squash = 0.7 - ps * 0.15;
         if (ps > 0.15) {
@@ -5479,8 +5501,8 @@ class VoxBallGame {
     // Also zoom out slightly at high speed for dramatic effect
     const heightAboveGround = Math.max(0, localGround - this.ball.radius - this.ball.y);
     const heightRatio = Math.min(1, heightAboveGround / (this.height * 0.5));
-    const speedFactor = Math.min(1, this.scrollSpeed / 300);
-    this.targetZoom = 1.48 - heightRatio * 0.3 - speedFactor * 0.08; // 1.48 → 1.10
+    const scrollSpeedFactor = Math.min(1, this.scrollSpeed / 300);
+    this.targetZoom = 1.48 - heightRatio * 0.3 - scrollSpeedFactor * 0.08; // 1.48 → 1.10
     this.cameraZoom += (this.targetZoom - this.cameraZoom) * 0.04;
 
     // ==========================================================
@@ -5940,7 +5962,7 @@ class VoxBallGame {
       t.length += (t.targetLength - t.length) * 3 * dt;
       t.phase += dt * (1.5 + ps);
     }
-    if (m.syllable > 0.5 && ps > 0.1) {
+    if (this.analyzer.syllableImpulse > 0.5 && ps > 0.1) {
       // ⚡ Bolt: Prevent GC spikes by avoiding array.map and spread operator in hot per-frame path
       // ⚡ Bolt Optimization: Replace Math.max spread with traditional loop to avoid GC spikes
       let maxR = 0;
@@ -6267,13 +6289,14 @@ class VoxBallGame {
     }
 
     // 3. Tempo Dashes (Speed Lines)
-    if (m.tempo > 0.6 && ps > 0.2) {
-      const lineCount = Math.floor(m.tempo * 15);
-      ctx.strokeStyle = `hsla(${hue}, 80%, 80%, ${m.tempo * 0.3})`;
-      ctx.lineWidth = 1 + m.tempo * 2;
+    const speedFactor = this.syllableSpeedFactor || 0;
+    if (speedFactor > 0.5 && ps > 0.2) {
+      const lineCount = Math.floor(speedFactor * 15);
+      ctx.strokeStyle = `hsla(${hue}, 80%, 80%, ${speedFactor * 0.3})`;
+      ctx.lineWidth = 1 + speedFactor * 2;
       for (let i = 0; i < lineCount; i++) {
         const y = h * 0.2 + Math.random() * h * 0.6;
-        const len = 50 + Math.random() * 200 * m.tempo;
+        const len = 50 + Math.random() * 200 * speedFactor;
         const x = w / 2 - 100 - Math.random() * 300; // Left side rushing in
         ctx.beginPath();
         ctx.moveTo(x, y);
@@ -6290,7 +6313,8 @@ class VoxBallGame {
 
     // 4. Syllable Shockwaves
     if (!this._shockwaves) this._shockwaves = [];
-    if (m.syllable > 0.6 && ps > 0.2) {
+    const sylImp = this.analyzer.syllableImpulse;
+    if (sylImp > 0.6 && ps > 0.2) {
       this._shockwaves.push({ r: 50, life: 1.0, maxLife: 1.0, cx: w / 2, cy: h * 0.5, hue: hue });
     }
 
@@ -6902,7 +6926,7 @@ class VoxBallGame {
 
     // Syllable → spawn new plants
     g.spawnCooldown -= dt;
-    if (m.syllable > 0.5 && g.spawnCooldown <= 0 && m.energy > 0.05) {
+    if (this.analyzer.syllableImpulse > 0.5 && g.spawnCooldown <= 0 && m.energy > 0.05) {
       const hz = this.analyzer.smoothPitchHz;
       let type;
       if (hz < 130) type = 'mushroom';
@@ -6938,7 +6962,7 @@ class VoxBallGame {
       }
       // Bounce Mushroom setup
       if (type === 'mushroom') {
-        newPlant.bounceAmp = 1.0 + m.syllable * 2.0;
+        newPlant.bounceAmp = 1.0 + this.analyzer.syllableImpulse * 2.0;
       }
 
       g.plants.push(newPlant);
@@ -6978,7 +7002,7 @@ class VoxBallGame {
     g.smoothCamX += (targetCamX - g.smoothCamX) * 2.5 * dt;
 
     // Articulation → pollen bursts (Hyper-Vibe when tempo & ps are high)
-    const pollenMult = (m.tempo > 0.7 && ps > 0.5) ? 5 : 1;
+    const pollenMult = (ps > 0.8) ? 5 : 1;
     if (m.articulation > 0.3 && ps > 0.1 && g.pollen.length < 60 * pollenMult) {
       const cnt = Math.floor(m.articulation * 3 * this.particleScale * pollenMult);
       for (let i = 0; i < cnt; i++) {
@@ -7433,7 +7457,7 @@ class VoxBallGame {
           }
 
           // Center pistil (Hyper-vibe glow)
-          const isHyper = ps > 0.8 && this.analyzer.metrics.tempo > 0.7;
+          const isHyper = ps > 0.8;
           ctx.fillStyle = `hsla(${hue + 40}, ${isHyper ? 100 : sat}%, ${isHyper ? 90 : 70}%, ${bloom * 0.8 * depthDim})`;
           ctx.beginPath();
           ctx.arc(flX, flY, (2 + bloom * 2 + (isHyper ? 1.5 : 0)) * depthScale, 0, Math.PI * 2);
@@ -7611,7 +7635,7 @@ class VoxBallGame {
     vc.vibrato += (m.bounce - vc.vibrato) * 4 * dt;
 
     // Advance cursor — ONLY while speaking (slow drift in silence)
-    const tempoMod = 0.6 + m.tempo * 0.8; // tempo modulates speed
+    const tempoMod = 0.6 + ps * 0.8; // prosody modulates speed
     if (!this.voiceCanvasPaused) {
       if (this.canvasMode === 'freepaint') {
         const resNorm = this.analyzer.smoothResonance;
@@ -11130,7 +11154,7 @@ class VoxBallGame {
         case 'resonance': currentVal = this.analyzer.smoothResonance * 100; break;
         case 'energy': currentVal = m.energy * 100; break;
         case 'bounce': currentVal = m.bounce * 100; break;
-        case 'tempo': currentVal = m.tempo * 100; break;
+        case 'tempo': currentVal = 0; break;
         case 'vowel': currentVal = m.vowel * 100; break;
         case 'articulation': currentVal = m.articulation * 100; break;
         default: currentVal = 0;
