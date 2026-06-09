@@ -28,16 +28,16 @@ export function pitchHzToPosition(hz, minHz = 80, maxHz = 300) {
 }
 
 export async function ensureAudioContextRunning(ctx) {
-  if (!ctx) return false;
+  if (!ctx) return { ok: false };
   if (ctx.state === 'suspended') {
     try {
       await ctx.resume();
     } catch (e) {
       console.warn('Failed to resume AudioContext', e);
-      return false;
+      return { ok: false };
     }
   }
-  return ctx.state === 'running';
+  return { ok: ctx.state === 'running' };
 }
 
 export async function getMicDiagnostics(ctx) {
