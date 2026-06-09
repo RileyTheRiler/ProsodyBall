@@ -7,12 +7,12 @@ sdk: static
 app_file: index.html
 pinned: false
 license: mit
-short_description: Control a ball with your voice!
+short_description: 10-mode gamified voice training suite
 ---
 
 # Vox Arcade 🎙
 
-A gamified voice training suite — control a rolling ball with your voice! Practice the 5 rules of expressive prosody:
+A gamified voice training suite with 10 interactive modes — train pitch, resonance, articulation, and prosody through real-time voice-driven games. The flagship **Vox Ball** mode teaches the 5 rules of expressive prosody:
 
 1. **Bounciness** — Pitch variation controls bounce height
 2. **Tempo Variance** — Speech rate changes control ball speed
@@ -31,8 +31,7 @@ A gamified voice training suite — control a rolling ball with your voice! Prac
 
 ## Usage
 
-Click **Start Speaking** and allow microphone access. Then speak expressively — the ball (Vox Ball) responds to your voice in real time!
-Click **Start Speaking** and allow microphone access. Then speak expressively — the ball (Prosody Ball) responds to your voice in real time!
+Click **Start Speaking** and allow microphone access. Then speak expressively — the active mode responds to your voice in real time!
 
 ## Improvement backlog
 
