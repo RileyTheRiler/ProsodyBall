@@ -74,14 +74,20 @@ function buildWizard() {
     calSkipBtn: new MockEl()
   };
   global.Node = class MockNode {};
-  global.window = { 
+  global.window = {
     requestAnimationFrame: (cb) => setTimeout(cb, 16),
     getComputedStyle: () => ({ getPropertyValue: () => '#000000' })
   };
   global.document = {
     documentElement: new MockEl(),
     getElementById: (id) => els[id] || null,
-    createElement: (tag) => new MockEl(),
+    createElement: (tag) => {
+      const el = new MockEl();
+      if (tag === 'canvas') {
+        el.getContext = () => null;
+      }
+      return el;
+    },
     createDocumentFragment: () => {
       const frag = new MockEl();
       Object.setPrototypeOf(frag, new Proxy(MockEl.prototype, {
