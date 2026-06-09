@@ -97,6 +97,8 @@ export class VoiceAnalyzer {
     this.attackRiseCeiling = 0.02;
     this.attackImpulse = 0;
     this.attackPeakTime = 0;     // time (s) into the onset window at which the rise peaked
+    this.attackRiseHardness = 0; // latched per-onset rise-rate hardness (display sub-cue)
+    this.attackAbruptness = 0;   // latched per-onset onset abruptness (display sub-cue)
     this.h1h2SmoothedDb = 6;     // smoothed H1-H2 (dB); ~6 ≈ modal-voice default → mid weight
     this.h1h2Confidence = 0;     // 0..1 trust in the current H1-H2 estimate
 
@@ -306,6 +308,8 @@ export class VoiceAnalyzer {
     this.attackRiseCeiling = 0.02;
     this.attackImpulse = 0;
     this.attackPeakTime = 0;
+    this.attackRiseHardness = 0;
+    this.attackAbruptness = 0;
     this.h1h2SmoothedDb = 6;
     this.h1h2Confidence = 0;
     this.sustainedDuration = 0;
@@ -943,6 +947,10 @@ export class VoiceAnalyzer {
           abruptWeight: ATTACK_ABRUPT_BLEND
         });
         this.attackImpulse = Math.max(this.attackImpulse, hardness);
+        // Latch the two sub-cues for the Attack-mode display (does NOT affect metrics.attack):
+        // rise-rate hardness (steepness of the energy onset) vs onset abruptness (timing).
+        this.attackRiseHardness = clamp01(this.attackRisePeak / Math.max(1e-6, this.attackRiseCeiling));
+        this.attackAbruptness = onsetAbruptness;
         this.attackWindowTimer = -1; // close window
       }
     }
@@ -2105,6 +2113,21 @@ class VoxBallGame {
     // measured onset hardness, then evaporates. (Weight orb reads m.weight directly.)
     this._attackOrb = { solidity: 0, prevAttack: 0, hardness: 0, lastT: 0 };
 
+    // ====== WINDOWED-AVERAGE READOUTS ======
+    // Numeric readouts for pitch/resonance/attack/weight show a rolling time-window average
+    // (calmer + more useful for voice training) instead of a jittery per-frame value. The live
+    // bars/orbs/graphs stay instantaneous. Buffers are TIME-stamped and fed every frame.
+    this._avgWindowSecs = 3.0;        // selectable window length; 0 ⇒ "Live" (instantaneous)
+    this._avgWindowMaxSecs = 10;      // retain up to this much history so window switches are instant
+    this._avgRefreshSecs = 0.6;       // throttle: only recompute the displayed number this often
+    this._avgBuffers = { pitch: [], resonance: [], attack: [], weight: [] };
+    this._avgCache = {};              // last computed summary per metric (or null)
+    this._avgLastRefresh = 0;         // performance.now()/1000 of last cache recompute
+    // Per-metric display modes (mirrors the Resonance method selector the user likes)
+    this.pitchDisplayMode = 'hz';     // 'hz' | 'note' | 'range'
+    this.weightMode = 'combined';     // 'combined' | 'tilt' | 'h1h2'
+    this.attackMode = 'combined';     // 'combined' | 'rise' | 'abrupt'
+
     this.resize();
     const onResize = () => this.resize();
     window.addEventListener('resize', onResize);
@@ -2710,6 +2733,7 @@ class VoxBallGame {
     audio.volume = 1.0;
     this.currentPlayback = { audio, index };
     this.updateRecItemState(index, true);
+    this._updateVoiceRecBtn();
 
     audio.addEventListener('timeupdate', () => {
       const progress = audio.duration > 0 ? (audio.currentTime / audio.duration) * 100 : 0;
@@ -2722,6 +2746,7 @@ class VoxBallGame {
       const el = document.getElementById(`rec-progress-${index}`);
       if (el) el.style.width = '0%';
       this.currentPlayback = null;
+      this._updateVoiceRecBtn();
     });
 
     audio.addEventListener('error', (e) => {
@@ -2729,6 +2754,7 @@ class VoxBallGame {
       console.error(`Audio playback error: ${detail}`);
       this.updateRecItemState(index, false);
       this.currentPlayback = null;
+      this._updateVoiceRecBtn();
     });
 
     // Wait for audio to be loadable before playing
@@ -2755,6 +2781,7 @@ class VoxBallGame {
       const el = document.getElementById(`rec-progress-${this.currentPlayback.index}`);
       if (el) el.style.width = '0%';
       this.currentPlayback = null;
+      this._updateVoiceRecBtn();
     }
   }
 
@@ -2763,6 +2790,26 @@ class VoxBallGame {
     if (btn) {
       btn.textContent = isPlaying ? '⏸' : '▶';
       btn.classList.toggle('playing', isPlaying);
+    }
+  }
+
+  // Keep the always-visible top-bar Record/Play buttons in sync with recording + playback state.
+  _updateVoiceRecBtn() {
+    const recBtn = document.getElementById('voiceRecBtn');
+    if (recBtn) {
+      recBtn.classList.toggle('recording', !!this.isRecording);
+      recBtn.setAttribute('aria-pressed', String(!!this.isRecording));
+      const label = recBtn.querySelector('.voice-rec-label');
+      if (label) label.textContent = this.isRecording ? 'Stop' : 'Record';
+    }
+    const playBtn = document.getElementById('voicePlayBtn');
+    if (playBtn) {
+      const lastIdx = this.recordings.length - 1;
+      const playingLast = !!(this.currentPlayback && this.currentPlayback.index === lastIdx);
+      playBtn.disabled = lastIdx < 0 || this.isRecording;
+      playBtn.classList.toggle('playing', playingLast);
+      const plabel = playBtn.querySelector('.voice-play-label');
+      if (plabel) plabel.textContent = playingLast ? ' Stop' : ' Play';
     }
   }
 
@@ -2812,6 +2859,7 @@ class VoxBallGame {
     if (clearAllBtn) {
       clearAllBtn.disabled = this.recordings.length === 0;
     }
+    this._updateVoiceRecBtn();
 
     if (this.recordings.length === 0) {
       list.textContent = '';
@@ -4121,6 +4169,48 @@ class VoxBallGame {
       this.analyzer.formantConfidence = 0;
     });
 
+    // Readout-display mode selectors (mirror the resonance method selector). These are
+    // display/selection only — they never change analyzer.metrics.* — and force an immediate
+    // cache recompute so the readout updates on the next frame instead of after the throttle.
+    const bindReadoutSelect = (id, apply) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('change', (e) => { apply(e.target.value); this._avgLastRefresh = 0; });
+    };
+    bindReadoutSelect('pitchDisplaySelect', (v) => { this.pitchDisplayMode = v; });
+    bindReadoutSelect('weightModeSelect', (v) => { this.weightMode = v; });
+    bindReadoutSelect('attackModeSelect', (v) => { this.attackMode = v; });
+    bindReadoutSelect('avgWindowSelect', (v) => { this._avgWindowSecs = parseFloat(v) || 0; });
+
+    // ---- Voice recorder: always-available Record + Play-last controls in the top bar ----
+    // Reuses the analyser-based recorder (startRecording/stopRecording) and the recordings
+    // drawer (Clips) for the full list; the Play button plays back the most recent clip.
+    const voiceRecBtn = document.getElementById('voiceRecBtn');
+    if (voiceRecBtn) {
+      voiceRecBtn.addEventListener('click', async () => {
+        if (this.isRecording) {
+          await this.stopRecording();   // pushes the clip + calls updateRecordingsUI → syncs buttons
+          this._updateVoiceRecBtn();    // also reset if no clip was saved (silent recording)
+        } else if (!this.isRunning) {
+          showError('🎙 Press Start to begin a session, then Record.');
+        } else {
+          this.startRecording();
+          this._updateVoiceRecBtn();
+        }
+      });
+    }
+    const voicePlayBtn = document.getElementById('voicePlayBtn');
+    if (voicePlayBtn) {
+      voicePlayBtn.addEventListener('click', () => {
+        const lastIdx = this.recordings.length - 1;
+        if (lastIdx < 0) return;
+        if (this.currentPlayback && this.currentPlayback.index === lastIdx) {
+          this.stopPlayback();
+        } else {
+          this.playRecording(lastIdx);
+        }
+      });
+    }
+
     // Colorblind mode toggle
     const cbBtn = document.getElementById('cbToggle');
     if (cbBtn) {
@@ -4931,6 +5021,7 @@ class VoxBallGame {
       this.update(dt);
       this.drawSceneInternal(this.prosodyScore);
     }
+    this._pushAvgSamples();
     this.updateMeters();
     this._updateExpandedMetrics();
     this.renderTeleprompter(dt);
@@ -5617,13 +5708,6 @@ class VoxBallGame {
 
     // === End camera transform ===
     ctx.restore();
-
-    // Distance (HUD — screen-fixed)
-    const dist = Math.floor(this.scrollX / 50);
-    ctx.font = '600 14px "Space Mono", monospace';
-    ctx.fillStyle = 'rgba(255,255,255,0.15)';
-    ctx.textAlign = 'right';
-    ctx.fillText(`${dist}m`, w - 16, 28);
   }
 
   // ============================================================
@@ -11012,11 +11096,8 @@ class VoxBallGame {
       stats.push({ value: '—', label: 'Avg Prosody' });
     }
 
-    // Mode-specific stat
-    if (this.gameMode === 'ball') {
-      const dist = Math.floor(this.scrollX / 50);
-      stats.push({ value: `${dist}m`, label: 'Distance', wide: true });
-    } else if (this.gameMode === 'garden') {
+    // Mode-specific stat (ball mode intentionally has none — distance isn't a voice metric)
+    if (this.gameMode === 'garden') {
       const grown = this.garden.plants.length - sess.plantsAtStart;
       stats.push({ value: `${Math.max(0, grown)}`, label: 'Plants Grown', wide: true });
     } else if (this.gameMode === 'canvas') {
@@ -11195,48 +11276,27 @@ class VoxBallGame {
   }
 
   updateMeters() {
-    const m = this.analyzer.metrics;
     this._triggerMetricHighlight('articulation', 0.72);
-    this._triggerMetricHighlight('vowel', 0.7);
-    this._triggerMetricHighlight('bounce', 0.75);
 
-    const set = (id, val) => {
-      document.getElementById(id).style.width = (val * 100) + '%';
-    };
-    set('meterBounce', m.bounce);
-    set('meterVowel', m.vowel);
-    // Pitch meter — position-based indicator (not fill width)
+    // Pitch meter — position-based indicator (not fill width). The bar tracks the live pitch;
+    // the numeric readout shows a windowed average (formatted per the Pitch display mode).
     // Map 80-300 Hz to 0-100% position on the gradient bar
     const hz = this.analyzer.smoothPitchHz;
     const pitchPos = pitchHzToPosition(hz, 80, 300);
     const pitchEl = document.getElementById('meterPitch');
     pitchEl.style.left = (pitchPos * 100) + '%';
     pitchEl.style.width = '3px';
-    document.getElementById('valPitch').textContent =
-      this.analyzer.lastPitch > 0 ? Math.round(hz) + ' Hz' : '— Hz';
+    document.getElementById('valPitch').textContent = this._pitchReadout();
 
-    // Resonance meter — position-based indicator like pitch
+    // Resonance meter — position-based indicator like pitch; numeric readout = windowed avg F1/F2
     const res = this.analyzer.smoothResonance;
     const resEl = document.getElementById('meterResonance');
     resEl.style.left = (res * 100) + '%';
     resEl.style.width = '3px';
-    // Show F1/F2/F3 Hz during voiced speech for method comparison
-    const resConf = this.analyzer.formantConfidence;
-    if (resConf > 0.2 && this.analyzer.metrics.energy > 0.05) {
-      const f1 = Math.round(this.analyzer.smoothF1);
-      const f2 = Math.round(this.analyzer.smoothF2);
-      const f3 = Math.round(this.analyzer.smoothF3);
-      document.getElementById('valResonance').textContent = `${f1}/${f2}/${f3}`;
-    } else {
-      document.getElementById('valResonance').textContent = '—';
-    }
+    document.getElementById('valResonance').textContent = this._resonanceReadout('hud');
 
-    document.getElementById('valBounce').textContent = this._meterLabel(m.bounce, 'Flat', 'Varied', 'Wild');
-    document.getElementById('valVowel').textContent = this._meterLabel(m.vowel, 'Short', 'Held', 'Sustained');
     const highlightMap = {
-      bounce: document.querySelector('.meter-bounce .meter-label'),
       tempo: document.querySelector('.meter-tempo .meter-label'),
-      vowel: document.querySelector('.meter-vowel .meter-label'),
       articulation: document.querySelector('.meter-artic .meter-label'),
     };
     for (const [k, el] of Object.entries(highlightMap)) {
@@ -11273,6 +11333,163 @@ class VoxBallGame {
     if (pct <= 15) return `${pct}% · ${low}`;
     if (pct <= 55) return `${pct}% · ${mid}`;
     return `${pct}% · ${high}`;
+  }
+
+  // ============================================================
+  // WINDOWED-AVERAGE READOUTS (pitch / resonance / attack / weight)
+  // ============================================================
+
+  // Collect one time-stamped sample per metric every frame (voicing/confidence-gated so the
+  // averages reflect actual phonation, not silence). Called unconditionally from the render
+  // loop — independent of whether the expanded panel is open — so the always-visible HUD
+  // readouts have history to average.
+  _pushAvgSamples() {
+    const a = this.analyzer, m = a.metrics;
+    const t = performance.now() / 1000;
+    const B = this._avgBuffers;
+
+    if (a.lastPitch > 0 && a.smoothPitchHz > 0) {
+      B.pitch.push({ t, v: a.smoothPitchHz });
+    }
+    if (a.formantConfidence > 0.2 && m.energy > 0.05) {
+      B.resonance.push({ t, f1: a.smoothF1, f2: a.smoothF2 });
+    }
+    if (m.attack > 0.02) {
+      B.attack.push({ t, v: m.attack, rise: a.attackRiseHardness, abrupt: a.attackAbruptness });
+    }
+    if (a.spectralTiltConfidence > 0.2) {
+      B.weight.push({ t, v: m.weight, tilt: 1 - a.spectralWeight, h1h2: a.h1h2SmoothedDb });
+    }
+
+    // Evict samples older than the retained max so buffers stay bounded; the active window
+    // (which may be shorter, or 0 for "Live") is applied at read time in _recomputeAvgCache().
+    const cutoff = t - this._avgWindowMaxSecs;
+    for (const k in B) {
+      const buf = B[k];
+      while (buf.length && buf[0].t < cutoff) buf.shift();
+    }
+  }
+
+  // Throttled accessor: returns a cached per-metric summary (or null when there aren't enough
+  // samples). The whole cache is recomputed at most every _avgRefreshSecs so the displayed
+  // numbers read calmly even though samples arrive at 60fps.
+  _avgSummary(metric) {
+    const t = performance.now() / 1000;
+    // Live mode (window 0) bypasses the throttle so the number tracks every frame.
+    if (this._avgWindowSecs <= 0 || t - this._avgLastRefresh >= this._avgRefreshSecs) {
+      this._recomputeAvgCache(t);
+      this._avgLastRefresh = t;
+    }
+    return this._avgCache[metric] || null;
+  }
+
+  _recomputeAvgCache(now) {
+    const B = this._avgBuffers;
+    const live = this._avgWindowSecs <= 0;
+    // In Live mode use only the most recent sample; otherwise the trailing time window.
+    const within = (buf) => {
+      if (!buf.length) return [];
+      if (live) return buf.slice(-1);
+      const cutoff = now - this._avgWindowSecs;
+      let i = buf.length;
+      while (i > 0 && buf[i - 1].t >= cutoff) i--;
+      return buf.slice(i);
+    };
+    const MIN_N = live ? 1 : 5; // need a few samples for a stable window average
+
+    // Pitch — mean Hz plus min/max and semitone range (range is the most training-useful cue).
+    {
+      const s = within(B.pitch);
+      if (s.length >= MIN_N) {
+        let sum = 0, min = Infinity, max = -Infinity;
+        for (const p of s) { sum += p.v; if (p.v < min) min = p.v; if (p.v > max) max = p.v; }
+        const meanHz = sum / s.length;
+        const rangeSemitones = (min > 0 && max > 0) ? 12 * Math.log2(max / min) : 0;
+        this._avgCache.pitch = { n: s.length, meanHz, minHz: min, maxHz: max, rangeSemitones };
+      } else this._avgCache.pitch = null;
+    }
+
+    // Resonance — mean F1/F2 and a bright/neutral/dark descriptor (from F2, matching the
+    // resonance-score logic in the analyzer).
+    {
+      const s = within(B.resonance);
+      if (s.length >= MIN_N) {
+        let f1 = 0, f2 = 0;
+        for (const p of s) { f1 += p.f1; f2 += p.f2; }
+        const meanF1 = f1 / s.length, meanF2 = f2 / s.length;
+        const descriptor = meanF2 >= 1900 ? 'Bright' : meanF2 >= 1500 ? 'Neutral' : 'Dark';
+        this._avgCache.resonance = { n: s.length, meanF1, meanF2, descriptor };
+      } else this._avgCache.resonance = null;
+    }
+
+    // Attack — mean blended hardness plus the two sub-cues (rise-rate vs abruptness).
+    {
+      const s = within(B.attack);
+      if (s.length >= MIN_N) {
+        let v = 0, rise = 0, abrupt = 0;
+        for (const p of s) { v += p.v; rise += (p.rise || 0); abrupt += (p.abrupt || 0); }
+        const mean = v / s.length;
+        const descriptor = mean <= 0.15 ? 'Soft' : mean <= 0.55 ? 'Medium' : 'Hard';
+        this._avgCache.attack = { n: s.length, mean, meanRise: rise / s.length, meanAbrupt: abrupt / s.length, descriptor };
+      } else this._avgCache.attack = null;
+    }
+
+    // Weight — mean blended heaviness plus per-cue means (spectral tilt, H1–H2 in dB).
+    {
+      const s = within(B.weight);
+      if (s.length >= MIN_N) {
+        let v = 0, tilt = 0, h1h2 = 0;
+        for (const p of s) { v += p.v; tilt += p.tilt; h1h2 += p.h1h2; }
+        const mean = v / s.length;
+        const descriptor = mean <= 0.35 ? 'Light' : mean <= 0.6 ? 'Balanced' : 'Heavy';
+        this._avgCache.weight = { n: s.length, mean, meanTilt: tilt / s.length, meanH1H2: h1h2 / s.length, descriptor };
+      } else this._avgCache.weight = null;
+    }
+  }
+
+  // ---- Readout formatters (shared by HUD meters, expanded cards, and focus popup) ----
+
+  _pitchReadout(rich = false) {
+    const s = this._avgSummary('pitch');
+    if (!s) return (rich || this.pitchDisplayMode === 'hz') ? '— Hz' : '—';
+    const note = this._pitchHzToNoteLabel(s.meanHz);
+    if (rich) return `${Math.round(s.meanHz)} Hz · ${note} · ±${(s.rangeSemitones / 2).toFixed(1)}st`;
+    switch (this.pitchDisplayMode) {
+      case 'note': return note;
+      case 'range': return `${s.rangeSemitones.toFixed(1)} st`;
+      default: return `${Math.round(s.meanHz)} Hz`;
+    }
+  }
+
+  _resonanceReadout(format) {
+    const s = this._avgSummary('resonance');
+    if (!s) return '—';
+    const f1 = Math.round(s.meanF1), f2 = Math.round(s.meanF2);
+    if (format === 'popup') return `F1: ${f1} Hz  F2: ${f2} Hz`;
+    if (format === 'card') return `${s.descriptor} · F2 ${f2}`;
+    return `${f1}/${f2}`; // compact HUD
+  }
+
+  _attackReadout() {
+    const s = this._avgSummary('attack');
+    if (!s) return '—';
+    const v = this.attackMode === 'rise' ? s.meanRise
+            : this.attackMode === 'abrupt' ? s.meanAbrupt
+            : s.mean;
+    const d = v <= 0.15 ? 'Soft' : v <= 0.55 ? 'Medium' : 'Hard';
+    return `${Math.round(v * 100)}% · ${d}`;
+  }
+
+  _weightReadout() {
+    const s = this._avgSummary('weight');
+    if (!s) return '—';
+    let v;
+    if (this.weightMode === 'tilt') v = s.meanTilt;
+    else if (this.weightMode === 'h1h2') v = 1 - normalizeAgainstRange(s.meanH1H2, H1H2_HEAVY_DB, H1H2_LIGHT_DB);
+    else v = s.mean;
+    v = Math.max(0, Math.min(1, v));
+    const d = v <= 0.35 ? 'Light' : v <= 0.6 ? 'Balanced' : 'Heavy';
+    return `${Math.round(v * 100)}% · ${d}`;
   }
 
   // ============================================================
@@ -11333,29 +11550,17 @@ class VoxBallGame {
     this._updateAttackOrb(this.analyzer.metrics.attack);
 
     const m = this.analyzer.metrics;
-    const hz = this.analyzer.smoothPitchHz;
-    const resConf = this.analyzer.formantConfidence;
 
     if (this.metersExpanded) {
-      // Update expanded card values
+      // Update expanded card values — windowed averages (visuals below stay live)
       const pEl = document.getElementById('expValPitch');
-      if (pEl) pEl.textContent = this.analyzer.lastPitch > 0 ? Math.round(hz) + ' Hz' : '— Hz';
+      if (pEl) pEl.textContent = this._pitchReadout(true);
       const rEl = document.getElementById('expValResonance');
-      if (rEl) {
-        if (resConf > 0.2 && m.energy > 0.05) {
-          rEl.textContent = `Q ${Math.round(resConf * 100)}%`;
-        } else {
-          rEl.textContent = '—';
-        }
-      }
-      const bEl = document.getElementById('expValBounce');
-      if (bEl) bEl.textContent = Math.round(m.bounce * 100) + '%';
-      const vEl = document.getElementById('expValVowels');
-      if (vEl) vEl.textContent = Math.round(m.vowel * 100) + '%';
+      if (rEl) rEl.textContent = this._resonanceReadout('card');
       const atkEl = document.getElementById('expValAttack');
-      if (atkEl) atkEl.textContent = Math.round(this._attackOrb.hardness * 100) + '%';
+      if (atkEl) atkEl.textContent = this._attackReadout();
       const wtEl = document.getElementById('expValWeight');
-      if (wtEl) wtEl.textContent = Math.round(m.weight * 100) + '%';
+      if (wtEl) wtEl.textContent = this._weightReadout();
 
       // Render each card canvas
       this._drawLineGraph('expCanvasPitch', this._metricHistory.pitch, '#c084fc', 60, 400, true);
@@ -11612,7 +11817,6 @@ class VoxBallGame {
   _updatePopupValue(metric) {
     const el = document.getElementById('metricPopupValue');
     if (!el) return;
-    const m = this.analyzer.metrics;
 
     const colors = {
       pitch: '#c084fc', resonance: '#ffaa44', bounce: '#ff6b6b',
@@ -11621,22 +11825,13 @@ class VoxBallGame {
     el.style.color = colors[metric] || '#fff';
 
     switch (metric) {
-      case 'pitch':
-        el.textContent = this.analyzer.lastPitch > 0 ? Math.round(this.analyzer.smoothPitchHz) + ' Hz' : '— Hz';
-        break;
-      case 'resonance':
-        if (this.analyzer.formantConfidence > 0.2 && m.energy > 0.05) {
-          const f1 = Math.round(this.analyzer.smoothF1);
-          const f2 = Math.round(this.analyzer.smoothF2);
-          el.textContent = `F1: ${f1} Hz  F2: ${f2} Hz`;
-        } else {
-          el.textContent = '—';
-        }
-        break;
-      case 'bounce': el.textContent = Math.round(m.bounce * 100) + '%'; break;
-      case 'vowels': el.textContent = Math.round(m.vowel * 100) + '%'; break;
-      case 'attack': el.textContent = Math.round(m.attack * 100) + '%'; break;
-      case 'weight': el.textContent = Math.round(m.weight * 100) + '%'; break;
+      case 'pitch': el.textContent = this._pitchReadout(true); break;
+      case 'resonance': el.textContent = this._resonanceReadout('popup'); break;
+      // Bounce/Vowels: percentage readouts removed — the chart below is the readout.
+      case 'bounce': el.textContent = ''; break;
+      case 'vowels': el.textContent = ''; break;
+      case 'attack': el.textContent = this._attackReadout(); break;
+      case 'weight': el.textContent = this._weightReadout(); break;
     }
   }
 

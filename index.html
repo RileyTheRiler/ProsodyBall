@@ -446,6 +446,38 @@
       }
     }
 
+    /* Voice recorder controls (always available in the top bar) */
+    .btn-voice-rec,
+    .btn-voice-play {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .btn-voice-rec .rec-dot {
+      background: #ff6b6b;
+    }
+
+    .btn-voice-rec.recording {
+      background: rgba(255, 60, 60, 0.18);
+      border-color: rgba(255, 60, 60, 0.5);
+      color: #ff8a8a;
+    }
+
+    .btn-voice-rec.recording .rec-dot {
+      animation: pulse-dot 1.2s infinite;
+    }
+
+    .btn-voice-play:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    .btn-voice-play.playing {
+      color: var(--accent-vowel, #6bcb77);
+      border-color: rgba(107, 203, 119, 0.5);
+    }
+
     :root.colorblind .btn-start {
       background: linear-gradient(135deg, #D55E00, #E69F00);
       box-shadow: 0 2px 12px rgba(213, 94, 0, 0.3);
@@ -1248,6 +1280,20 @@
       display: none;
       padding: 0 16px 8px;
       gap: 8px;
+    }
+
+    /* Full-width control row at the top of the expanded panel (averaging window) */
+    .metrics-avg-bar {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      font-family: 'Space Mono', monospace;
+      font-size: 0.66rem;
+      color: var(--text-muted);
+      padding-bottom: 2px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     }
 
     .meters-panel.expanded .meters-expanded {
@@ -2202,7 +2248,8 @@
 
       /* Hide the method select dropdown in the compact bar; it's still
          accessible in the expanded metrics panel */
-      .meters-bar #resMethodSelect {
+      .meters-bar #resMethodSelect,
+      .meters-bar #pitchDisplaySelect {
         display: none;
       }
 
@@ -3193,7 +3240,8 @@
         grid-column: 1 / -1;
       }
 
-      .meters-bar #resMethodSelect {
+      .meters-bar #resMethodSelect,
+      .meters-bar #pitchDisplaySelect {
         display: none;
       }
 
@@ -4932,6 +4980,8 @@
           </svg>
           <input type="file" id="audioUploadInput" accept="audio/*" style="display: none;">
         </label>
+        <button class="btn btn-voice-rec" id="voiceRecBtn" aria-pressed="false" title="Record your voice"><span class="rec-dot"></span><span class="voice-rec-label">Record</span></button>
+        <button class="btn btn-voice-play" id="voicePlayBtn" disabled title="Play your last recording"><span aria-hidden="true">▶</span><span class="voice-play-label">&nbsp;Play</span></button>
         <button class="btn btn-rec" id="recBtn"><span class="rec-dot"></span><span class="rec-label">Rec</span></button>
         <button class="btn btn-help" id="prismClearRecBtn" aria-label="Clear Prism Recording"
           style="display: none; opacity: 0; transform: scale(0.95); transition: opacity 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28), transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);">Clear</button>
@@ -5753,6 +5803,11 @@
             <button class="info-trigger" aria-label="More Info">?</button>
             <div class="info-popup">How high or low your voice sounds in Hertz (Hz).</div>
           </div>
+          <select id="pitchDisplaySelect" class="res-method-select" aria-label="Pitch display">
+            <option value="hz">A: Hz</option>
+            <option value="note">B: Note</option>
+            <option value="range">C: Range (st)</option>
+          </select>
         </div>
         <div class="meter-bar-bg meter-bar-pitch-bg">
           <div class="meter-bar-fill" id="meterPitch"></div>
@@ -5779,29 +5834,18 @@
         </div>
         <div class="meter-value" id="valResonance">—</div>
       </div>
-      <div class="meter meter-bounce">
-        <div class="meter-label">Bounce
-          <div class="info-wrapper">
-            <button class="info-trigger" aria-label="More Info">?</button>
-            <div class="info-popup">Measures your pitch variance. More 'bounce' means more expressive pitch changes.
-            </div>
-          </div>
-        </div>
-        <div class="meter-bar-bg">
-          <div class="meter-bar-fill" id="meterBounce"></div>
-        </div>
-        <div class="meter-value" id="valBounce">0</div>
-      </div>
-      <div class="meter meter-vowel">
-        <div class="meter-label">Vowels</div>
-        <div class="meter-bar-bg">
-          <div class="meter-bar-fill" id="meterVowel"></div>
-        </div>
-        <div class="meter-value" id="valVowel">0</div>
-      </div>
       </div>
       <!-- Expanded metric cards -->
       <div class="meters-expanded" id="metersExpanded">
+        <div class="metrics-avg-bar">
+          <label for="avgWindowSelect">Readout average</label>
+          <select id="avgWindowSelect" class="res-method-select" aria-label="Averaging window">
+            <option value="0">Live</option>
+            <option value="3" selected>3s</option>
+            <option value="5">5s</option>
+            <option value="10">10s</option>
+          </select>
+        </div>
         <div class="metric-card" data-metric="pitch">
           <div class="metric-card-header">
             <span class="metric-card-title">Pitch</span>
@@ -5821,7 +5865,6 @@
         <div class="metric-card" data-metric="bounce">
           <div class="metric-card-header">
             <span class="metric-card-title">Bounce</span>
-            <span class="metric-card-value" id="expValBounce">0%</span>
           </div>
           <canvas class="metric-card-canvas" id="expCanvasBounce"></canvas>
           <div class="metric-card-desc">Prosodic inflection wave</div>
@@ -5829,7 +5872,6 @@
         <div class="metric-card" data-metric="vowels">
           <div class="metric-card-header">
             <span class="metric-card-title">Vowels</span>
-            <span class="metric-card-value" id="expValVowels">0%</span>
           </div>
           <canvas class="metric-card-canvas" id="expCanvasVowels"></canvas>
           <div class="metric-card-desc">F1 vs F2 vowel space</div>
@@ -5837,7 +5879,12 @@
         <div class="metric-card" data-metric="attack">
           <div class="metric-card-header">
             <span class="metric-card-title">Vocal Attack</span>
-            <span class="metric-card-value" id="expValAttack">0%</span>
+            <select id="attackModeSelect" class="res-method-select" aria-label="Attack cue">
+              <option value="combined">A: Combined</option>
+              <option value="rise">B: Rise</option>
+              <option value="abrupt">C: Abruptness</option>
+            </select>
+            <span class="metric-card-value" id="expValAttack">—</span>
           </div>
           <canvas class="metric-card-canvas" id="expCanvasAttack"></canvas>
           <div class="metric-card-desc">Onset hardness — orb snaps solid on a hard attack, blooms slowly on a soft one</div>
@@ -5845,7 +5892,12 @@
         <div class="metric-card" data-metric="weight">
           <div class="metric-card-header">
             <span class="metric-card-title">Weight</span>
-            <span class="metric-card-value" id="expValWeight">0%</span>
+            <select id="weightModeSelect" class="res-method-select" aria-label="Weight cue">
+              <option value="combined">A: Combined</option>
+              <option value="tilt">B: Spectral Tilt</option>
+              <option value="h1h2">C: H1–H2</option>
+            </select>
+            <span class="metric-card-value" id="expValWeight">—</span>
           </div>
           <canvas class="metric-card-canvas" id="expCanvasWeight"></canvas>
           <div class="metric-card-desc">Perceived heaviness — gassy orb = light, solid orb = heavy</div>
