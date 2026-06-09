@@ -83,11 +83,24 @@ export class VoiceAnalyzer {
     this.formantConfidence = 0;  // how reliable current F1/F2/F3 estimates are
     this.vowelLikelihood = 0;   // 0=not vowel-like, 1=strong vowel formants
 
+    // Kalman filters for formants
+    const initKalman = () => ({
+      x: [0, 0], // [freq, velocity]
+      P: [[10000, 0], [0, 1000]],
+      Q: [[100, 0], [0, 10]],
+      initialized: false
+    });
+    this._kalmanF1 = initKalman();
+    this._kalmanF2 = initKalman();
+    this._kalmanF3 = initKalman();
+
     // Spectral tilt diagnostic (light vs heavy vocal weight)
     this.spectralTiltRawDb = -14;
     this.spectralTiltSmoothedDb = -14;
     this.spectralWeight = 0.5; // 0=heavy, 1=light
     this.spectralTiltConfidence = 0;
+    this.micTiltBaselineDb = 0;
+    this.micCalibrationTiltSamples = [];
 
     // Vocal weight (heaviness, 0=light .. 1=heavy) and vocal attack (onset hardness)
     this.weightSmoothed = 0.5;
@@ -299,10 +312,23 @@ export class VoiceAnalyzer {
     this.smoothF3 = 2700;
     this.formantConfidence = 0;
     this.vowelLikelihood = 0;
+
+    const initKalman = () => ({
+      x: [0, 0],
+      P: [[10000, 0], [0, 1000]],
+      Q: [[100, 0], [0, 10]],
+      initialized: false
+    });
+    this._kalmanF1 = initKalman();
+    this._kalmanF2 = initKalman();
+    this._kalmanF3 = initKalman();
+
     this.spectralTiltRawDb = -14;
     this.spectralTiltSmoothedDb = -14;
     this.spectralWeight = 0.5;
     this.spectralTiltConfidence = 0;
+    this.micTiltBaselineDb = 0;
+    this.micCalibrationTiltSamples = [];
     this.weightSmoothed = 0.5;
     this.prevGatedRms = 0;
     this.attackRisePeak = 0;
@@ -337,6 +363,64 @@ export class VoiceAnalyzer {
     this.noiseCalibrationTimer = 0;
     this.isCalibrated = false;
     this.noiseSpectralProfile = null;
+  }
+
+  // Helper: IEC 61672 A-weighting gain (linear)
+  _aWeightGain(freqHz) {
+    if (freqHz < 20) return 0.01;
+    const f2 = freqHz * freqHz;
+    const f4 = f2 * f2;
+    const num = 12194 * 12194 * f4;
+    const den = (f2 + 20.6 * 20.6) * Math.sqrt((f2 + 107.7 * 107.7) * (f2 + 737.9 * 737.9)) * (f2 + 12194 * 12194);
+    const Ra = num / den;
+    const A = 20 * Math.log10(Ra) + 2.0;
+    return Math.pow(10, A / 10);
+  }
+
+  // Helper: 1D Constant-Velocity Kalman Filter Update
+  _kalmanUpdate(filter, measurement, measurementNoise) {
+    const dt = 1; // 1 frame
+    // 1. Predict
+    let [x, v] = filter.x;
+    let P = filter.P;
+    const Q = filter.Q;
+    
+    if (!filter.initialized) {
+      filter.x = [measurement, 0];
+      filter.P = [[10000, 0], [0, 1000]];
+      filter.initialized = true;
+      return measurement;
+    }
+
+    // x_pred = F * x
+    const x_pred = [x + v * dt, v];
+    
+    // P_pred = F * P * F^T + Q
+    const P_pred = [
+      [P[0][0] + dt * P[1][0] + dt * (P[0][1] + dt * P[1][1]) + Q[0][0], P[0][1] + dt * P[1][1] + Q[0][1]],
+      [P[1][0] + dt * P[1][1] + Q[1][0], P[1][1] + Q[1][1]]
+    ];
+
+    // 2. Update
+    // y = z - H * x_pred (H = [1, 0])
+    const y = measurement - x_pred[0];
+    
+    // S = H * P_pred * H^T + R
+    const S = P_pred[0][0] + measurementNoise;
+    
+    // K = P_pred * H^T / S
+    const K = [P_pred[0][0] / S, P_pred[1][0] / S];
+    
+    // x = x_pred + K * y
+    filter.x = [x_pred[0] + K[0] * y, x_pred[1] + K[1] * y];
+    
+    // P = (I - K * H) * P_pred
+    filter.P = [
+      [(1 - K[0]) * P_pred[0][0], (1 - K[0]) * P_pred[0][1]],
+      [-K[1] * P_pred[0][0] + P_pred[1][0], -K[1] * P_pred[0][1] + P_pred[1][1]]
+    ];
+
+    return filter.x[0];
   }
 
   // ========================================================
@@ -538,10 +622,33 @@ export class VoiceAnalyzer {
       if (!this.noiseSpectralProfile) {
         this.noiseSpectralProfile = new Float32Array(this.frequencyData.length);
       }
+      const fftBinHz = this.audioCtx.sampleRate / this.analyser.fftSize;
+      const activeF0 = 160; // Use fixed 160Hz for baseline calibration
+      const lowStartHz = Math.max(70, activeF0 * 0.5);
+      const lowEndHz = Math.min(2200, activeF0 * 3.5);
+      const highStartHz = 2500;
+      const highEndHz = Math.min(5000, this.audioCtx.sampleRate * 0.5 - fftBinHz);
+      const eps = 1e-12;
+
+      let eLowTilt = 0, eHighTilt = 0;
+
       for (let i = 0; i < this.frequencyData.length; i++) {
         // Convert Decibels to Linear Magnitude for proper calibration scaling
-        this.noiseSpectralProfile[i] += Math.pow(10, this.frequencyData[i] / 20);
+        const linearMag = Math.pow(10, this.frequencyData[i] / 20);
+        this.noiseSpectralProfile[i] += linearMag;
+
+        const freqHz = i * fftBinHz;
+        const aWeight = this._aWeightGain(freqHz);
+        const powerA = linearMag * linearMag * aWeight;
+        if (freqHz >= lowStartHz && freqHz <= lowEndHz) {
+          eLowTilt += powerA;
+        } else if (freqHz >= highStartHz && freqHz <= highEndHz) {
+          eHighTilt += powerA;
+        }
       }
+
+      let rawTiltDb = 10 * Math.log10((eHighTilt + eps) / (eLowTilt + eps));
+      if (isFinite(rawTiltDb)) this.micCalibrationTiltSamples.push(rawTiltDb);
 
       if (this.noiseCalibrationTimer >= this.noiseCalibrationDuration) {
         const samples = this.noiseCalibrationSamples;
@@ -572,6 +679,11 @@ export class VoiceAnalyzer {
         this.hfNoiseFloor = hfMean + hfStd * 2;
         this.isCalibrated = true;
 
+        if (this.micCalibrationTiltSamples.length > 0) {
+          const sorted = [...this.micCalibrationTiltSamples].sort((a, b) => a - b);
+          this.micTiltBaselineDb = sorted[Math.floor(sorted.length / 2)];
+        }
+
         // Average the accumulated spectral profile
         if (this.noiseSpectralProfile) {
           for (let i = 0; i < this.noiseSpectralProfile.length; i++) {
@@ -579,7 +691,7 @@ export class VoiceAnalyzer {
           }
         }
 
-        console.log(`Noise calibrated: floor=${(this.noiseFloor * 1000).toFixed(1)}mRMS, hfFloor=${this.hfNoiseFloor.toFixed(4)} (ambient=${(mean * 1000).toFixed(1)}mRMS)`);
+        console.log(`Noise calibrated: floor=${(this.noiseFloor * 1000).toFixed(1)}mRMS, hfFloor=${this.hfNoiseFloor.toFixed(4)}, micTilt=${this.micTiltBaselineDb.toFixed(1)}dB`);
       }
       // During calibration, don't trigger any metrics
       return;
@@ -685,24 +797,28 @@ export class VoiceAnalyzer {
     const highStartHz = 2500;
     const highEndHz = Math.min(5000, this.audioCtx.sampleRate * 0.5 - fftBinHz);
 
-    const sumBandPower = (loHz, hiHz) => {
+    const sumBandPowerAWeighted = (loHz, hiHz) => {
       if (hiHz <= loHz) return 0;
       const startBin = Math.max(0, Math.floor(loHz / fftBinHz));
       const endBin = Math.min(fData.length - 1, Math.ceil(hiHz / fftBinHz));
       if (endBin < startBin) return 0;
       let sum = 0;
       for (let i = startBin; i <= endBin; i++) {
+        const freqHz = i * fftBinHz;
         const mag = Math.pow(10, fData[i] / 20);
-        sum += mag * mag;
+        sum += mag * mag * this._aWeightGain(freqHz);
       }
       return sum;
     };
 
-    const eLowTilt = sumBandPower(lowStartHz, lowEndHz);
-    const eHighTilt = sumBandPower(highStartHz, highEndHz);
+    const eLowTilt = sumBandPowerAWeighted(lowStartHz, lowEndHz);
+    const eHighTilt = sumBandPowerAWeighted(highStartHz, highEndHz);
     let rawTiltDb = 10 * Math.log10((eHighTilt + eps) / (eLowTilt + eps));
     // Guard against -Infinity/NaN when both bands are near-zero
     if (!isFinite(rawTiltDb)) rawTiltDb = this.spectralTiltSmoothedDb;
+    
+    // Subtract microphone color baseline learned during calibration
+    rawTiltDb -= this.micTiltBaselineDb;
     this.spectralTiltRawDb = rawTiltDb;
 
     // EMA smoothing to reduce frame jitter while preserving control latency.
@@ -830,46 +946,27 @@ export class VoiceAnalyzer {
             this._resonanceHarmonicEnvelope(pitch));
       }
 
-      // --- Formant continuity constraint ---
-      // Penalize large frame-to-frame jumps: if a candidate is very far from the
-      // current smoothed value, reduce its lerp weight. This prevents a single
-      // bad frame from pulling the estimate off track while still allowing
-      // gradual real changes (e.g., vowel transitions over ~50-100ms).
-      const maxJump = { f1: 300, f2: 500, f3: 600 }; // Hz: max "trusted" jump per frame
-      const jumpPenalty = (candidate, current, maxJ) => {
-        if (candidate <= 0) return 0;
-        const dist = Math.abs(candidate - current);
-        // Smooth sigmoid: full weight at 0 jump, ~0.15 weight at maxJump, ~0.02 at 2×maxJump
-        return 1 / (1 + (dist / maxJ) * (dist / maxJ));
+      // --- Kalman-Filtered Formant Continuity ---
+      // Replaces simple EMA/jump-penalty with a 1D constant-velocity model.
+      // During pitch slides, velocity tracks the true formant trajectory
+      // and rejects harmonic-locked outliers.
+      
+      const methodTrustMap = {
+        lpc: 1.0,      // precise root-solved values -> low measurement noise
+        harmonic: 0.7, // good but harmonic-resolution limited
+        cepstral: 0.5, // smooth but broad
+        centroid: 0.3  // conflates pitch
       };
-      const f1Trust = jumpPenalty(f1Candidate, this.smoothF1, maxJump.f1);
-      const f2Trust = jumpPenalty(f2Candidate, this.smoothF2, maxJump.f2);
-      const f3Trust = jumpPenalty(f3Candidate || 0, this.smoothF3, maxJump.f3);
+      const methodTrust = methodTrustMap[this.resonanceMethod] || methodTrustMap.harmonic;
+      
+      // Adaptive measurement noise: low confidence = large R (trust prediction more)
+      const R_base = 2500; // Hz^2 base measurement noise
+      const R_scale = Math.max(0.1, conf * methodTrust);
+      const R = R_base / (R_scale * R_scale);
 
-      // --- Method-specific base smoothing rates ---
-      // LPC root-solving gives precise formants → fast lerp
-      // Harmonic envelope is good but discrete (harmonic-resolution limited) → medium
-      // Cepstral is smooth but broad → medium-slow
-      // Centroid conflates pitch → slowest (most smoothing needed)
-      const methodLerp = {
-        lpc: { base: 0.10, confScale: 0.12 },  // fast: precise root-solved values
-        harmonic: { base: 0.06, confScale: 0.10 },  // medium: harmonic-resolution limited
-        cepstral: { base: 0.05, confScale: 0.08 },  // medium-slow: broad smoothing
-        centroid: { base: 0.03, confScale: 0.06 }   // slow: inherently noisy
-      };
-      const ml = methodLerp[this.resonanceMethod] || methodLerp.harmonic;
-      const baseLerp = ml.base + conf * ml.confScale;
-
-      // Update smoothed formants with continuity-weighted lerp
-      if (f1Candidate > 0) {
-        this.smoothF1 += (f1Candidate - this.smoothF1) * baseLerp * f1Trust;
-      }
-      if (f2Candidate > 0) {
-        this.smoothF2 += (f2Candidate - this.smoothF2) * baseLerp * f2Trust;
-      }
-      if (f3Candidate > 0) {
-        this.smoothF3 += (f3Candidate - this.smoothF3) * baseLerp * f3Trust;
-      }
+      if (f1Candidate > 0) this.smoothF1 = this._kalmanUpdate(this._kalmanF1, f1Candidate, R);
+      if (f2Candidate > 0) this.smoothF2 = this._kalmanUpdate(this._kalmanF2, f2Candidate, R);
+      if (f3Candidate > 0) this.smoothF3 = this._kalmanUpdate(this._kalmanF3, f3Candidate, R);
       this.formantConfidence += (conf - this.formantConfidence) * 0.15;
 
       // --- Resonance score: F2-primary with F1 and F3 contributions ---
@@ -884,8 +981,17 @@ export class VoiceAnalyzer {
       const rawResonance = f2Score * 0.70 + f1Score * 0.15 + f3Score * 0.15;
       this.smoothResonance += (rawResonance - this.smoothResonance) * (0.05 + conf * 0.08);
     } else {
-      // During silence/unvoiced: decay confidence, hold resonance steady
+      // During silence/unvoiced: decay confidence, coast Kalman filters on prediction
       this.formantConfidence *= 0.95;
+      if (this._kalmanF1 && this._kalmanF1.initialized) {
+        this.smoothF1 = this._kalmanUpdate(this._kalmanF1, this.smoothF1, 1e6); // large R = ignore measurement
+      }
+      if (this._kalmanF2 && this._kalmanF2.initialized) {
+        this.smoothF2 = this._kalmanUpdate(this._kalmanF2, this.smoothF2, 1e6);
+      }
+      if (this._kalmanF3 && this._kalmanF3.initialized) {
+        this.smoothF3 = this._kalmanUpdate(this._kalmanF3, this.smoothF3, 1e6);
+      }
     }
 
     // ====== METRICS ======
