@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import {
   computeFrameReliability,
   normalizeAgainstPercentiles
-} from '../voice-analyzer-core.js';
+} from '../dsp-utils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixturePath = path.join(__dirname, '..', 'fixtures', 'audio-eval', 'reference-frames.json');

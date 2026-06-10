@@ -1,0 +1,3 @@
+## 2024-06-10 - DOM Query Caching in Game Loop
+**Learning:** Calling `document.getElementById` and `document.querySelector` repeatedly inside a `requestAnimationFrame` game loop (`updateMeters()`) causes unnecessary CPU overhead and can lead to layout thrashing, reducing rendering performance.
+**Action:** Cache these DOM elements unconditionally during the `VoxBallGame` constructor initialization into a `this._domCache` object and reference the cached elements in the loop instead. Use null checks (e.g., `if (this._domCache.pitchEl)`) to safely handle elements that might be missing depending on the loaded state.

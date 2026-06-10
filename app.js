@@ -1735,6 +1735,21 @@ class VoxBallGame {
     this._disposables = []; // cleanup callbacks for listeners/observers
     this._pendingTimeouts = []; // track setTimeout IDs for cleanup
 
+    // Cache DOM elements for game loop to avoid redundant queries
+    this._domCache = {
+      meterPitch: document.getElementById('meterPitch'),
+      valPitch: document.getElementById('valPitch'),
+      meterResonance: document.getElementById('meterResonance'),
+      valResonance: document.getElementById('valResonance'),
+      meterTempoLabel: document.querySelector('.meter-tempo .meter-label'),
+      meterArticLabel: document.querySelector('.meter-artic .meter-label'),
+      mapSplatter: document.getElementById('mapSplatter'),
+      pitchProfileLearned: document.getElementById('pitchProfileLearned'),
+      tiltProfileLearned: document.getElementById('tiltProfileLearned'),
+      frameConfidenceLabel: document.getElementById('frameConfidenceLabel'),
+      sessionTimer: document.getElementById('sessionTimer')
+    };
+
     // FIX: Store ball color as HSL components for proper HSLA compositing
     this.ballHue = 275;
     this.ballSat = 70;
@@ -5201,7 +5216,7 @@ class VoxBallGame {
     // Update HUD timer
     const mins = Math.floor(sess.duration / 60);
     const secs = Math.floor(sess.duration % 60);
-    const timerEl = document.getElementById('sessionTimer');
+    const timerEl = this._domCache.sessionTimer;
     if (timerEl) timerEl.textContent = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 
     // Sample pitch and resonance when speaking
@@ -11483,32 +11498,36 @@ class VoxBallGame {
     // Map 80-300 Hz to 0-100% position on the gradient bar
     const hz = this.analyzer.smoothPitchHz;
     const pitchPos = pitchHzToPosition(hz, 80, 300);
-    const pitchEl = document.getElementById('meterPitch');
-    pitchEl.style.left = (pitchPos * 100) + '%';
-    pitchEl.style.width = '3px';
-    document.getElementById('valPitch').textContent = this._pitchReadout();
+    const pitchEl = this._domCache.meterPitch;
+    if (pitchEl) {
+      pitchEl.style.left = (pitchPos * 100) + '%';
+      pitchEl.style.width = '3px';
+    }
+    if (this._domCache.valPitch) this._domCache.valPitch.textContent = this._pitchReadout();
 
     // Resonance meter — position-based indicator like pitch; numeric readout = windowed avg F1/F2
     const res = this.analyzer.smoothResonance;
-    const resEl = document.getElementById('meterResonance');
-    resEl.style.left = (res * 100) + '%';
-    resEl.style.width = '3px';
-    document.getElementById('valResonance').textContent = this._resonanceReadout('hud');
+    const resEl = this._domCache.meterResonance;
+    if (resEl) {
+      resEl.style.left = (res * 100) + '%';
+      resEl.style.width = '3px';
+    }
+    if (this._domCache.valResonance) this._domCache.valResonance.textContent = this._resonanceReadout('hud');
 
     const highlightMap = {
-      tempo: document.querySelector('.meter-tempo .meter-label'),
-      articulation: document.querySelector('.meter-artic .meter-label'),
+      tempo: this._domCache.meterTempoLabel,
+      articulation: this._domCache.meterArticLabel,
     };
     for (const [k, el] of Object.entries(highlightMap)) {
       this.metricHighlightTimers[k] = Math.max(0, this.metricHighlightTimers[k] - 1 / 60);
       if (el) el.classList.toggle('active-ping', this.metricHighlightTimers[k] > 0);
     }
-    const mapSplatter = document.getElementById('mapSplatter');
+    const mapSplatter = this._domCache.mapSplatter;
     if (mapSplatter) mapSplatter.classList.toggle('active-ping', this.metricHighlightTimers.articulation > 0);
 
-    const pitchStatus = document.getElementById('pitchProfileLearned');
-    const tiltStatus = document.getElementById('tiltProfileLearned');
-    const confidenceStatus = document.getElementById('frameConfidenceLabel');
+    const pitchStatus = this._domCache.pitchProfileLearned;
+    const tiltStatus = this._domCache.tiltProfileLearned;
+    const confidenceStatus = this._domCache.frameConfidenceLabel;
     if (pitchStatus || tiltStatus || confidenceStatus) {
       const pitch = this.analyzer.pitchProfile;
       const tilt = this.analyzer.tiltProfile;
