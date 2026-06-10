@@ -7,7 +7,7 @@ import {
   computeFrameReliability,
   computeWeightTarget,
   computeAttackHardness
-} from './voice-analyzer-core.js';
+} from './dsp-utils.js';
 
 test('clamp01 clamps values', () => {
   assert.equal(clamp01(-1), 0);

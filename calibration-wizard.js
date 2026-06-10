@@ -190,10 +190,21 @@ export class CalibrationWizard {
     const vowelStart = performance.now();
     let vowelStable = 0;
     let vowelPassed = false;
+    let passedShown = false;
     const minVowelTime = 2.0;
     last = performance.now();
     const vowelTimeout = 10;
 
+    // Record clicks that arrive while the tracking loop is still running, so the
+    // loop can keep measuring vowel stability ("keep going") and still exit the
+    // moment the user decides. Listeners are removed deterministically below.
+    let pendingChoice = null;
+    const onLoopNext = () => { pendingChoice = 'next'; };
+    const onLoopSkip = () => { pendingChoice = 'skip'; };
+    this.nextBtn?.addEventListener('click', onLoopNext);
+    this.skipBtn?.addEventListener('click', onLoopSkip);
+
+    try {
     while ((performance.now() - vowelStart) / 1000 < vowelTimeout && this.isWizardLoopActive) {
       if (!this.overlay?.classList.contains('show')) {
         this.isWizardLoopActive = false;
@@ -278,7 +289,8 @@ export class CalibrationWizard {
         }
       }
 
-      if (vowelPassed && elapsed >= minVowelTime) {
+      if (vowelPassed && elapsed >= minVowelTime && !passedShown) {
+        passedShown = true;
         const passFinalDesc = document.createDocumentFragment();
         passFinalDesc.append('✅ Great vowel sustain detected! Click ', Object.assign(document.createElement('strong'), { textContent: 'Next' }), ' to continue.');
         this._setStep(
@@ -290,14 +302,20 @@ export class CalibrationWizard {
         this._showBtn(this.skipBtn, 'Skip');
       }
 
-      if (this.nextBtn && this.nextBtn.style.display !== 'none' && vowelPassed && elapsed >= minVowelTime) {
-        // Continue tracking vowel stability until user clicks next, or we time out.
-        // We only show the button above. We no longer break immediately.
-      }
+      // Keep tracking vowel stability until the user clicks Next/Skip or the loop
+      // times out. The await is what yields to the event loop — without it this
+      // becomes a synchronous busy-loop that freezes the page and spins
+      // analyzer.update() thousands of times per second.
+      if (pendingChoice) break;
+      await new Promise(r => setTimeout(r, 80));
+    }
+    } finally {
+      this.nextBtn?.removeEventListener('click', onLoopNext);
+      this.skipBtn?.removeEventListener('click', onLoopSkip);
     }
 
     // Same safeguard for the final confirmation step.
-    const vowelChoice = await this._waitForClick(5000, 'next');
+    const vowelChoice = pendingChoice ?? await this._waitForClick(5000, 'next');
     if (vowelChoice === 'skip') {
       this._hide();
       return { outcome: 'partial', skipped: true, reason: 'user-skip-vowel-step' };

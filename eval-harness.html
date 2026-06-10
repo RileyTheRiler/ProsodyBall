@@ -71,6 +71,7 @@
 
         upload.onchange = (e) => {
             if (e.target.files.length > 0) {
+                if (audioEl.src) URL.revokeObjectURL(audioEl.src);
                 audioEl.src = URL.createObjectURL(e.target.files[0]);
                 btn.disabled = false;
                 out.textContent = "Ready. Click 'Run Evaluation'.";
@@ -124,7 +125,22 @@
                 return { ok: true };
             };
 
+            // Override stop too: the stock stop() closes the AudioContext, but the
+            // context/source pair is shared across runs (an HTMLMediaElement can only
+            // ever be bound to one MediaElementSourceNode), so closing it would break
+            // every subsequent run. Disconnect this run's analysers instead.
+            analyzer.stop = function () {
+                this.isActive = false;
+                try { window._evalSource.disconnect(); } catch (err) { /* already disconnected */ }
+                this.analyser = null;
+                this.analyserFormant = null;
+                this.analyserHF = null;
+            };
+
             await analyzer.start();
+            if (window._evalAudioCtx.state === 'suspended') {
+                await window._evalAudioCtx.resume();
+            }
             audioEl.play();
 
             const stats = {
