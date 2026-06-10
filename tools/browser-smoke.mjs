@@ -10,8 +10,32 @@ if (!['chrome', 'firefox'].includes(browserName)) {
   process.exit(2);
 }
 
-const server = spawn('npx', ['serve', '.', '-l', String(port)], { stdio: 'ignore', shell: true });
-await new Promise((r) => setTimeout(r, 2000));
+const server = spawn('npx', ['serve', '.', '-l', String(port)], { stdio: 'ignore', shell: true, detached: true });
+
+function killServer() {
+  // With shell:true, server.pid is the wrapper shell, not `serve` itself —
+  // SIGTERM to the shell alone leaves serve squatting on the port, which breaks
+  // the second leg of test:browser-matrix. Kill the whole process group, with a
+  // direct-kill fallback for platforms without group semantics (Windows).
+  try { process.kill(-server.pid, 'SIGTERM'); } catch { try { server.kill('SIGTERM'); } catch { /* gone */ } }
+}
+
+// Wait until the server actually accepts requests instead of a fixed sleep —
+// a cold `npx serve` regularly takes longer than 2s in CI.
+const deadline = Date.now() + 30000;
+let serverReady = false;
+while (Date.now() < deadline) {
+  try {
+    const res = await fetch(baseUrl, { method: 'HEAD' });
+    if (res.ok) { serverReady = true; break; }
+  } catch { /* not listening yet */ }
+  await new Promise((r) => setTimeout(r, 250));
+}
+if (!serverReady) {
+  console.error(`Static server did not become ready on port ${port} within 30s`);
+  killServer();
+  process.exit(2);
+}
 
 let browser;
 try {
@@ -39,5 +63,5 @@ try {
   process.exitCode = 1;
 } finally {
   if (browser) await browser.close();
-  server.kill('SIGTERM');
+  killServer();
 }

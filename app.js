@@ -364,9 +364,23 @@ export class VoiceAnalyzer {
   resetCalibration() {
     this.noiseCalibrationSamples = [];
     this.hfCalibrationSamples = [];
+    this.micCalibrationTiltSamples = [];
     this.noiseCalibrationTimer = 0;
     this.isCalibrated = false;
     this.noiseSpectralProfile = null;
+  }
+
+  // Per-bin A-weighting lookup table. The gain for a bin depends only on the bin's
+  // centre frequency, which is fixed for a given (sampleRate, fftSize) — computing
+  // sqrt/log10/pow for hundreds of bins on every frame is wasted work.
+  _aWeightTableFor(fftBinHz, numBins) {
+    if (!this._aWeightTable || this._aWeightTable.length !== numBins || this._aWeightTableBinHz !== fftBinHz) {
+      const t = new Float32Array(numBins);
+      for (let i = 0; i < numBins; i++) t[i] = this._aWeightGain(i * fftBinHz);
+      this._aWeightTable = t;
+      this._aWeightTableBinHz = fftBinHz;
+    }
+    return this._aWeightTable;
   }
 
   // Helper: IEC 61672 A-weighting gain (linear)
@@ -472,16 +486,20 @@ export class VoiceAnalyzer {
     return i;
   }
 
-  detectPitch() {
+  detectPitch(precomputedRms) {
     // timeDomainData already populated by update() — no need to re-read
     const buf = this.timeDomainData;
     const n = buf.length;
     const sampleRate = this.audioCtx.sampleRate;
 
-    // RMS gate (calculated on full buffer for accuracy)
-    let rms = 0;
-    for (let i = 0; i < n; i++) rms += buf[i] * buf[i];
-    rms = Math.sqrt(rms / n);
+    // RMS gate — reuse the value update() already computed for this frame when
+    // provided, instead of re-summing the full 4096-sample buffer.
+    let rms = precomputedRms;
+    if (!Number.isFinite(rms)) {
+      rms = 0;
+      for (let i = 0; i < n; i++) rms += buf[i] * buf[i];
+      rms = Math.sqrt(rms / n);
+    }
     const silenceThreshold = this.isCalibrated ? this.noiseFloor * 2.5 : 0.015;
     if (rms < silenceThreshold) return 0;
 
@@ -635,6 +653,7 @@ export class VoiceAnalyzer {
       const eps = 1e-12;
 
       let eLowTilt = 0, eHighTilt = 0;
+      const aWeights = this._aWeightTableFor(fftBinHz, this.frequencyData.length);
 
       for (let i = 0; i < this.frequencyData.length; i++) {
         // Convert Decibels to Linear Magnitude for proper calibration scaling
@@ -642,8 +661,7 @@ export class VoiceAnalyzer {
         this.noiseSpectralProfile[i] += linearMag;
 
         const freqHz = i * fftBinHz;
-        const aWeight = this._aWeightGain(freqHz);
-        const powerA = linearMag * linearMag * aWeight;
+        const powerA = linearMag * linearMag * aWeights[i];
         if (freqHz >= lowStartHz && freqHz <= lowEndHz) {
           eLowTilt += powerA;
         } else if (freqHz >= highStartHz && freqHz <= highEndHz) {
@@ -726,7 +744,7 @@ export class VoiceAnalyzer {
     // --- Pitch (only if above noise floor) ---
     let pitch = 0;
     if (rms > this.noiseFloor * 2) {
-      pitch = this.detectPitch();
+      pitch = this.detectPitch(rms);
     }
     if (pitch > 0) {
       this.lastPitch = pitch;
@@ -801,6 +819,7 @@ export class VoiceAnalyzer {
     const highStartHz = 2500;
     const highEndHz = Math.min(5000, this.audioCtx.sampleRate * 0.5 - fftBinHz);
 
+    const aWeights = this._aWeightTableFor(fftBinHz, fData.length);
     const sumBandPowerAWeighted = (loHz, hiHz) => {
       if (hiHz <= loHz) return 0;
       const startBin = Math.max(0, Math.floor(loHz / fftBinHz));
@@ -808,9 +827,8 @@ export class VoiceAnalyzer {
       if (endBin < startBin) return 0;
       let sum = 0;
       for (let i = startBin; i <= endBin; i++) {
-        const freqHz = i * fftBinHz;
         const mag = Math.pow(10, fData[i] / 20);
-        sum += mag * mag * this._aWeightGain(freqHz);
+        sum += mag * mag * aWeights[i];
       }
       return sum;
     };
@@ -4781,14 +4799,18 @@ class VoxBallGame {
         showError('ℹ Start a session first, then tap Recalibrate.');
         return;
       }
-      // Pause main loop updates temporarily while wizard runs to prevent double-driving
+      // Freeze canvas-mode cursor movement while the wizard overlay is up.
+      // (Double-driving of analyzer.update() is prevented in loop(), which skips
+      // its update while the wizard is active.)
       this.voiceCanvasPaused = true;
-
-      // Clear stale calibration data so fresh samples are collected
-      this.analyzer.resetCalibration();
-      const calResult = await this.calibrationWizard.run(this.analyzer);
-      
-      this.voiceCanvasPaused = false;
+      let calResult;
+      try {
+        // Clear stale calibration data so fresh samples are collected
+        this.analyzer.resetCalibration();
+        calResult = await this.calibrationWizard.run(this.analyzer);
+      } finally {
+        this.voiceCanvasPaused = false;
+      }
       this.hasCompletedCalibration = true;
       this.guidedStartTs = performance.now();
       this.guidedDismissed = false;
@@ -5138,7 +5160,12 @@ class VoxBallGame {
     const dt = Math.min(0.05, (now - this.lastTime) / 1000);
     this.lastTime = now;
 
-    this.analyzer.update(dt);
+    // While the calibration wizard is active it drives analyzer.update() from its
+    // own loops — skip the main-loop update so frame time isn't counted twice
+    // (double-driving corrupts calibration timers and every EMA-smoothed metric).
+    if (!this.calibrationWizard?.isWizardLoopActive) {
+      this.analyzer.update(dt);
+    }
 
     // Skip rendering when the tab is hidden to save CPU/GPU.
     // Audio analysis above still runs so calibration state stays warm.
@@ -11450,14 +11477,21 @@ class VoxBallGame {
     const enabled = roadMode || this.teleprompterMode !== 'off';
     overlay.classList.toggle('show', enabled);
     if (hint) hint.classList.toggle('show', enabled && this.isRunning);
-    if (!enabled) return;
+    if (!enabled) { this._tpLastIdx = -1; return; }
 
-    const sentences = this._splitSentences(this._teleprompterSourceText());
+    // This runs every frame — only re-split and rebuild the overlay DOM when the
+    // passage text or sentence index actually changed.
+    const sourceText = this._teleprompterSourceText();
+    if (this.teleprompterSentenceIndex === this._tpLastIdx && sourceText === this._tpLastText) return;
+
+    const sentences = this._splitSentences(sourceText);
     if (!sentences.length) return;
     if (this.teleprompterSentenceIndex >= sentences.length) {
       this.teleprompterSentenceIndex = sentences.length - 1;
     }
     const idx = this.teleprompterSentenceIndex;
+    this._tpLastIdx = idx;
+    this._tpLastText = sourceText;
 
     overlay.textContent = '';
     const frag = document.createDocumentFragment();
@@ -11478,37 +11512,50 @@ class VoxBallGame {
   updateMeters() {
     this._triggerMetricHighlight('articulation', 0.72);
 
+    // Cache the DOM lookups — this runs every frame, and getElementById/querySelector
+    // ten times per frame is pure waste. The static 3px indicator width is set once here too.
+    if (!this._meterEls) {
+      this._meterEls = {
+        pitch: document.getElementById('meterPitch'),
+        valPitch: document.getElementById('valPitch'),
+        resonance: document.getElementById('meterResonance'),
+        valResonance: document.getElementById('valResonance'),
+        highlight: {
+          tempo: document.querySelector('.meter-tempo .meter-label'),
+          articulation: document.querySelector('.meter-artic .meter-label'),
+        },
+        mapSplatter: document.getElementById('mapSplatter'),
+        pitchStatus: document.getElementById('pitchProfileLearned'),
+        tiltStatus: document.getElementById('tiltProfileLearned'),
+        confidenceStatus: document.getElementById('frameConfidenceLabel'),
+      };
+      this._meterEls.pitch.style.width = '3px';
+      this._meterEls.resonance.style.width = '3px';
+    }
+    const els = this._meterEls;
+
     // Pitch meter — position-based indicator (not fill width). The bar tracks the live pitch;
     // the numeric readout shows a windowed average (formatted per the Pitch display mode).
     // Map 80-300 Hz to 0-100% position on the gradient bar
     const hz = this.analyzer.smoothPitchHz;
     const pitchPos = pitchHzToPosition(hz, 80, 300);
-    const pitchEl = document.getElementById('meterPitch');
-    pitchEl.style.left = (pitchPos * 100) + '%';
-    pitchEl.style.width = '3px';
-    document.getElementById('valPitch').textContent = this._pitchReadout();
+    els.pitch.style.left = (pitchPos * 100) + '%';
+    els.valPitch.textContent = this._pitchReadout();
 
     // Resonance meter — position-based indicator like pitch; numeric readout = windowed avg F1/F2
     const res = this.analyzer.smoothResonance;
-    const resEl = document.getElementById('meterResonance');
-    resEl.style.left = (res * 100) + '%';
-    resEl.style.width = '3px';
-    document.getElementById('valResonance').textContent = this._resonanceReadout('hud');
+    els.resonance.style.left = (res * 100) + '%';
+    els.valResonance.textContent = this._resonanceReadout('hud');
 
-    const highlightMap = {
-      tempo: document.querySelector('.meter-tempo .meter-label'),
-      articulation: document.querySelector('.meter-artic .meter-label'),
-    };
-    for (const [k, el] of Object.entries(highlightMap)) {
+    for (const [k, el] of Object.entries(els.highlight)) {
       this.metricHighlightTimers[k] = Math.max(0, this.metricHighlightTimers[k] - 1 / 60);
       if (el) el.classList.toggle('active-ping', this.metricHighlightTimers[k] > 0);
     }
-    const mapSplatter = document.getElementById('mapSplatter');
-    if (mapSplatter) mapSplatter.classList.toggle('active-ping', this.metricHighlightTimers.articulation > 0);
+    if (els.mapSplatter) els.mapSplatter.classList.toggle('active-ping', this.metricHighlightTimers.articulation > 0);
 
-    const pitchStatus = document.getElementById('pitchProfileLearned');
-    const tiltStatus = document.getElementById('tiltProfileLearned');
-    const confidenceStatus = document.getElementById('frameConfidenceLabel');
+    const pitchStatus = els.pitchStatus;
+    const tiltStatus = els.tiltStatus;
+    const confidenceStatus = els.confidenceStatus;
     if (pitchStatus || tiltStatus || confidenceStatus) {
       const pitch = this.analyzer.pitchProfile;
       const tilt = this.analyzer.tiltProfile;
