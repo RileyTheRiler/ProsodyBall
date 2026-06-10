@@ -2,6 +2,15 @@ export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
 
+export function sanitizeUrl(url) {
+  if (!url) return null;
+  const strUrl = String(url);
+  if (/^(%20|\s)*(javascript|data|vbscript):/i.test(strUrl)) {
+    return 'about:blank';
+  }
+  return strUrl;
+}
+
 export function computeRawProsody(metrics, preset = null) {
   const wBounce = preset ? preset.bounce : 0.50;
   const wVowel = preset ? preset.vowel : 0.30;
