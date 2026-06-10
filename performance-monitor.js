@@ -42,27 +42,6 @@ export class PerformanceMonitor {
     // Security enhancement: use safe DOM manipulation instead of innerHTML to prevent DOM-based XSS
     this.panel.textContent = '';
 
-    const appendStat = (label, value) => {
-      const div = document.createElement('div');
-      const b = document.createElement('b');
-      b.textContent = label;
-      div.append(b, ' ', value);
-      this.panel.appendChild(div);
-    };
-
-    appendStat('FPS:', this.fps);
-    appendStat('Frame:', `${this.frameTimeMs.toFixed(1)}ms`);
-    appendStat('Worst:', `${this._worstFrameMs.toFixed(1)}ms`);
-    appendStat('Quality:', quality);
-
-    if (extra) {
-      const extraDiv = document.createElement('div');
-      extraDiv.className = 'perf-extra';
-      extraDiv.textContent = extra;
-      this.panel.appendChild(extraDiv);
-    }
-    this.panel.textContent = '';
-
     const createRow = (label, value) => {
       const div = document.createElement('div');
       div.append(Object.assign(document.createElement('b'), { textContent: label }), ` ${value}`);

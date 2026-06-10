@@ -13,6 +13,11 @@ export class CalibrationWizard {
   _show() { this.overlay?.classList.add('show'); }
   _hide() { this.overlay?.classList.remove('show'); this.isWizardLoopActive = false; }
 
+  cancel() {
+    this.isWizardLoopActive = false;
+    this._hide();
+  }
+
   _clearVisual() {
     if (this.visualEl) this.visualEl.innerHTML = '';
   }
@@ -285,8 +290,10 @@ export class CalibrationWizard {
         this._showBtn(this.skipBtn, 'Skip');
       }
 
-      if (this.nextBtn && this.nextBtn.style.display !== 'none') break;
-      await new Promise(r => setTimeout(r, 80));
+      if (this.nextBtn && this.nextBtn.style.display !== 'none' && vowelPassed && elapsed >= minVowelTime) {
+        // Continue tracking vowel stability until user clicks next, or we time out.
+        // We only show the button above. We no longer break immediately.
+      }
     }
 
     // Same safeguard for the final confirmation step.

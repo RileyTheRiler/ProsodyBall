@@ -9,7 +9,7 @@ async function walk(dir, acc = []) {
   const entries = await readdir(dir, { withFileTypes: true });
   for (const e of entries) {
     if (e.name.startsWith('.') && e.name !== '.gitattributes') {
-      if (e.isDirectory()) continue;
+      continue;
     }
     const full = join(dir, e.name);
     if (e.isDirectory()) {

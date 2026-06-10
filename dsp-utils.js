@@ -42,5 +42,68 @@ export async function ensureAudioContextRunning(ctx) {
 
 export async function getMicDiagnostics(ctx) {
   if (!ctx) return { ok: false, message: 'No audio context' };
-  return { ok: ctx.state === 'running', message: ctx.state };
+  
+  // Try to determine microphone permission status
+  let permission = 'unknown';
+  try {
+    const status = await navigator.permissions.query({ name: 'microphone' });
+    permission = status.state;
+  } catch (e) {
+    // some browsers don't support permissions.query for microphone
+  }
+
+  return { 
+    ok: ctx.state === 'running', 
+    message: ctx.state,
+    permission,
+    audioState: ctx.state,
+    secureContext: window.isSecureContext,
+    inIframe: window.self !== window.top,
+    mediaDevices: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+  };
+}
+
+export function clamp01(v) {
+  return Math.max(0, Math.min(1, v));
+}
+
+export function normalizeAgainstRange(value, min, max) {
+  const denom = Math.max(1e-6, max - min);
+  return clamp01((value - min) / denom);
+}
+
+export function normalizeAgainstPercentiles(value, p50, p90, gain = 1) {
+  const spread = Math.max(0.0005, p90 - p50);
+  return clamp01(((value - p50) / spread) * gain);
+}
+
+export function computeFrameReliability({ pitchConfidence = 0, formantConfidence = 0, voicedStrength = 0, spectralTiltConfidence = 0, wasLastFrameReliable = false }) {
+  const confidenceGate = clamp01(Math.max(0.2, pitchConfidence * 0.55 + formantConfidence * 0.25 + spectralTiltConfidence * 0.2));
+  const voicedGate = clamp01(Math.max(0.25, voicedStrength * 0.75 + pitchConfidence * 0.25));
+
+  let reliableFrame;
+  if (wasLastFrameReliable) {
+    reliableFrame = (pitchConfidence > 0.25 || formantConfidence > 0.30) && voicedStrength > 0.15;
+  } else {
+    reliableFrame = (pitchConfidence > 0.35 || formantConfidence > 0.40) && voicedStrength > 0.25;
+  }
+
+  return { confidenceGate, voicedGate, reliableFrame };
+}
+
+export function computeWeightTarget({ tiltHeaviness = 0.5, tiltWeight = 1, h1h2Heaviness = 0.5, h1h2Weight = 0, f2Heaviness = 0.5, f2Weight = 0 }) {
+  const wT = Math.max(0, tiltWeight);
+  const wH = Math.max(0, h1h2Weight);
+  const wF = Math.max(0, f2Weight);
+  const total = wT + wH + wF;
+  if (total <= 0) return clamp01(tiltHeaviness);
+  return clamp01((tiltHeaviness * wT + h1h2Heaviness * wH + f2Heaviness * wF) / total);
+}
+
+export function computeAttackHardness({ risePeak = 0, riseCeiling = 0.5, cleanliness = 1, onsetAbruptness = 0.5, abruptWeight = 0 }) {
+  const ceil = Math.max(0.02, riseCeiling);
+  const riseHardness = clamp01(risePeak / ceil);
+  const wA = clamp01(abruptWeight);
+  const combined = riseHardness * (1 - wA) + clamp01(onsetAbruptness) * wA;
+  return clamp01(combined * (0.5 + 0.5 * clamp01(cleanliness)));
 }

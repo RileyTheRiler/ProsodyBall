@@ -19,6 +19,8 @@ class MockAudioContext {
       getFloatTimeDomainData: (arr) => {
         if (this._currentChunk) {
           arr.set(this._currentChunk.subarray(0, Math.min(arr.length, this._currentChunk.length)));
+          // Debug check:
+          // console.log("Copied chunk. arr[0]=", arr[0]);
         } else {
           arr.fill(0);
         }
@@ -72,15 +74,22 @@ async function runEval() {
   let validPitchFrames = 0;
   let totalPitchHz = 0;
 
+  // Pre-calibrate to avoid treating the start of the audio file as noise
+  analyzer.isCalibrated = true;
+  analyzer.noiseFloor = 0.01;
+  analyzer.hfNoiseFloor = 0.001;
+  analyzer.micTiltBaselineDb = 0;
+
   for (let i = 0; i < audioData.length; i += chunkSize) {
     const chunk = audioData.subarray(i, i + chunkSize);
     if (chunk.length < chunkSize) break;
     analyzer.audioCtx._currentChunk = chunk;
     analyzer.update(dt);
-    console.log(`Frame: pitch=${analyzer.metrics.pitch?.toFixed(1)} conf=${analyzer.pitchConfidence?.toFixed(2)} rms=${analyzer.metrics.gatedRms?.toFixed(3)} isCalibrated=${analyzer.isCalibrated}`);
-    if (analyzer.pitchConfidence > 0.5 && analyzer.metrics.pitch > 50) {
+    console.log(`Frame: pitch=${analyzer.lastPitch?.toFixed(1)} conf=${analyzer.pitchConfidence?.toFixed(2)} rms=${analyzer.metrics.energy?.toFixed(3)} isCalibrated=${analyzer.isCalibrated}`);
+
+    if (analyzer.pitchConfidence > 0.5 && analyzer.lastPitch > 50) {
       validPitchFrames++;
-      totalPitchHz += analyzer.metrics.pitch;
+      totalPitchHz += analyzer.lastPitch;
     }
   }
 

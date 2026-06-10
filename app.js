@@ -1,7 +1,6 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness } from './dsp-utils.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
-import { clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness } from './voice-analyzer-core.js';
 
 function escapeHtml(text) {
   if (!text) return text;
@@ -3578,7 +3577,10 @@ class VoxBallGame {
           const timeoutMs = 15000;
           calResult = await Promise.race([
             this.calibrationWizard.run(this.analyzer),
-            new Promise((resolve) => setTimeout(() => resolve({ outcome: 'incomplete', skipped: true, reason: 'wizard-timeout' }), timeoutMs)),
+            new Promise((resolve) => setTimeout(() => {
+              this.calibrationWizard.cancel();
+              resolve({ outcome: 'incomplete', skipped: true, reason: 'wizard-timeout' });
+            }, timeoutMs)),
           ]);
         } catch (err) {
           console.error('Calibration flow failed:', err);
@@ -4779,9 +4781,14 @@ class VoxBallGame {
         showError('ℹ Start a session first, then tap Recalibrate.');
         return;
       }
+      // Pause main loop updates temporarily while wizard runs to prevent double-driving
+      this.voiceCanvasPaused = true;
+
       // Clear stale calibration data so fresh samples are collected
       this.analyzer.resetCalibration();
       const calResult = await this.calibrationWizard.run(this.analyzer);
+      
+      this.voiceCanvasPaused = false;
       this.hasCompletedCalibration = true;
       this.guidedStartTs = performance.now();
       this.guidedDismissed = false;

@@ -85,8 +85,12 @@
 
             // Override start to use the audio element instead of the mic
             analyzer.start = async function () {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                this.source = this.audioCtx.createMediaElementSource(audioEl);
+                if (!window._evalAudioCtx) {
+                    window._evalAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    window._evalSource = window._evalAudioCtx.createMediaElementSource(audioEl);
+                }
+                this.audioCtx = window._evalAudioCtx;
+                this.source = window._evalSource;
 
                 this.analyser = this.audioCtx.createAnalyser();
                 this.analyser.fftSize = 4096;
