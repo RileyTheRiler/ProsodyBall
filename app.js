@@ -191,13 +191,19 @@ export class VoiceAnalyzer {
     try {
       this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
+      // Kick resume immediately (fire-and-forget) while still in the user-gesture
+      // call stack so iOS Safari grants permission to un-suspend the context before
+      // getUserMedia breaks the synchronous gesture chain.
+      if (this.audioCtx.state === 'suspended') {
+        this.audioCtx.resume().catch(() => {});
+      }
+
       if (audioFile) {
         // Handle audio file input
         this.audioElement = new Audio();
         this.audioElement.src = URL.createObjectURL(audioFile);
         this.audioElement.loop = false;
 
-        // ensure AudioContext is running before playing
         if (this.audioCtx.state === 'suspended') {
           await this.audioCtx.resume();
         }
