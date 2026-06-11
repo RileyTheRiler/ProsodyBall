@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BulbController, hslToHueApi } from './bulb-controller.js';
+import { BulbController, hslToHueApi, hslToXy } from './bulb-controller.js';
 
 // In-memory localStorage stand-in
 function fakeStorage() {
@@ -33,6 +33,43 @@ test('hslToHueApi maps HSL into Hue integer ranges', () => {
   assert.deepEqual(hslToHueApi(180, 50, 50), { hue: 32768, sat: 127, bri: 127 });
   // bri is clamped to a minimum of 1 so the bulb never goes fully dark unexpectedly
   assert.equal(hslToHueApi(0, 0, 0).bri, 1);
+});
+
+test('hslToXy returns in-range CIE coords and brightness', () => {
+  const red = hslToXy(0, 100, 50);
+  const blue = hslToXy(240, 100, 50);
+  for (const c of [red, blue]) {
+    assert.ok(c.x >= 0 && c.x <= 65535);
+    assert.ok(c.y >= 0 && c.y <= 65535);
+    assert.ok(c.bri >= 1 && c.bri <= 254);
+  }
+  // In CIE 1931, red sits at a high x with moderate y; blue sits at a low x and
+  // a very low y. So red has both a higher x and a higher y than blue.
+  assert.ok(red.x > blue.x);
+  assert.ok(red.y > blue.y);
+});
+
+test('dispatch waits for transports that report not ready', async () => {
+  let t = 1000;
+  let sends = 0;
+  let ready = false;
+  const transport = {
+    isReady: () => ready,
+    send: async () => { sends += 1; },
+    test: async () => {},
+  };
+  const ctrl = makeController({ now: () => t, transport, throttleMs: 100 });
+
+  ctrl.update(220, 80, 50, 1);
+  await Promise.resolve();
+  assert.equal(sends, 0, 'no send while not ready, and no failure counted');
+  assert.equal(ctrl._failCount, 0);
+
+  ready = true;
+  t += 200;
+  ctrl.update(220, 80, 50, 1);
+  await Promise.resolve();
+  assert.equal(sends, 1, 'sends once the transport is ready');
 });
 
 test('update throttles many frames into a single send per interval', async () => {

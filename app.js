@@ -3165,6 +3165,7 @@ class VoxBallGame {
     const enable = document.getElementById('bulbEnableToggle');
     const transportSel = document.getElementById('bulbTransportSelect');
     const testBtn = document.getElementById('bulbTestBtn');
+    const connectBtn = document.getElementById('bulbConnectBtn');
     const fields = {
       hueBridge: document.getElementById('bulbHueBridge'),
       hueUser: document.getElementById('bulbHueUser'),
@@ -3173,6 +3174,7 @@ class VoxBallGame {
       httpUrl: document.getElementById('bulbHttpUrl'),
     };
     const groups = {
+      webbluetooth: document.getElementById('bulbBtFields'),
       hue: document.getElementById('bulbHueFields'),
       homeassistant: document.getElementById('bulbHaFields'),
       http: document.getElementById('bulbHttpFields'),
@@ -3207,6 +3209,8 @@ class VoxBallGame {
       el?.addEventListener('change', () => ctrl.set(key, el.value.trim()));
     }
     testBtn?.addEventListener('click', () => ctrl.test());
+    // Bluetooth needs an explicit connect from a user gesture (this click).
+    connectBtn?.addEventListener('click', () => ctrl.connect());
   }
 
   setupUI() {

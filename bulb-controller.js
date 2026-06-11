@@ -18,6 +18,13 @@ const COLOR_DELTA_SL = 2;          // min sat/lit change (%) worth re-sending
 const MAX_FAILURES = 5;            // consecutive failures before auto-disable
 const REQUEST_TIMEOUT_MS = 2500;
 
+// Philips Hue BLE GATT (community-reverse-engineered; see philble / hue-ble-ctl).
+const HUE_FE0F_SERVICE = 0xfe0f;                                   // advertised service, used for the device-picker filter
+const HUE_LIGHT_SERVICE = '932c32bd-0000-47a2-835a-a8d455b859dd';  // control service
+const HUE_CHAR_ONOFF = '932c32bd-0002-47a2-835a-a8d455b859dd';     // 1 byte: 0 off / 1 on
+const HUE_CHAR_BRIGHT = '932c32bd-0003-47a2-835a-a8d455b859dd';    // 1 byte: 1-254
+const HUE_CHAR_COLOR = '932c32bd-0005-47a2-835a-a8d455b859dd';     // 4 bytes: CIE x,y as uint16 LE
+
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
 }
@@ -28,6 +35,38 @@ export function hslToHueApi(h, s, l) {
   const sat = Math.round((clamp(s, 0, 100) / 100) * 254);
   const bri = Math.max(1, Math.round((clamp(l, 0, 100) / 100) * 254));
   return { hue, sat, bri };
+}
+
+// Convert HSL to the CIE 1931 xy color point (as uint16 0-65535) + brightness
+// (1-254) that the Hue BLE color characteristic expects.
+export function hslToXy(h, s, l) {
+  const sat = clamp(s, 0, 100) / 100;
+  const lit = clamp(l, 0, 100) / 100;
+  const c = (1 - Math.abs(2 * lit - 1)) * sat;
+  const hp = ((((h % 360) + 360) % 360)) / 60;
+  const x1 = c * (1 - Math.abs((hp % 2) - 1));
+  let r = 0, g = 0, b = 0;
+  if (hp < 1) { r = c; g = x1; }
+  else if (hp < 2) { r = x1; g = c; }
+  else if (hp < 3) { g = c; b = x1; }
+  else if (hp < 4) { g = x1; b = c; }
+  else if (hp < 5) { r = x1; b = c; }
+  else { r = c; b = x1; }
+  const m = lit - c / 2;
+  // sRGB gamma -> linear, then Philips' Wide-RGB D65 matrix
+  const gamma = (ch) => (ch > 0.04045 ? Math.pow((ch + 0.055) / 1.055, 2.4) : ch / 12.92);
+  const R = gamma(r + m), G = gamma(g + m), B = gamma(b + m);
+  const X = R * 0.664511 + G * 0.154324 + B * 0.162028;
+  const Y = R * 0.283881 + G * 0.668433 + B * 0.047685;
+  const Z = R * 0.000088 + G * 0.072310 + B * 0.986039;
+  const total = X + Y + Z;
+  const cx = total > 0 ? X / total : 0;
+  const cy = total > 0 ? Y / total : 0;
+  return {
+    x: Math.round(clamp(cx, 0, 1) * 65535),
+    y: Math.round(clamp(cy, 0, 1) * 65535),
+    bri: Math.max(1, Math.round(lit * 254)),
+  };
 }
 
 async function httpJson(fetchImpl, url, method, body) {
@@ -97,6 +136,68 @@ export class HttpTransport {
   }
 }
 
+// Drives a Philips Hue bulb directly over Bluetooth from the browser — no Bridge
+// and no router. Requires a Chromium-based browser (Web Bluetooth) and a one-time
+// user gesture to pick the bulb. connect() must be called from a click handler.
+export class WebBluetoothTransport {
+  constructor({ bluetooth } = {}) {
+    this.bluetooth = bluetooth !== undefined
+      ? bluetooth
+      : (typeof navigator !== 'undefined' ? navigator.bluetooth : null);
+    this.device = null;
+    this.chars = null;
+  }
+
+  isReady() {
+    return !!(this.device && this.device.gatt && this.device.gatt.connected && this.chars);
+  }
+
+  async connect() {
+    if (!this.bluetooth) {
+      throw new Error('Web Bluetooth not supported — use Chrome, Edge, or Opera.');
+    }
+    this.device = await this.bluetooth.requestDevice({
+      filters: [{ services: [HUE_FE0F_SERVICE] }, { namePrefix: 'Hue' }],
+      optionalServices: [HUE_LIGHT_SERVICE],
+    });
+    if (this.device.addEventListener) {
+      this.device.addEventListener('gattserverdisconnected', () => { this.chars = null; });
+    }
+    await this._openGatt();
+  }
+
+  async _openGatt() {
+    const server = await this.device.gatt.connect();
+    const svc = await server.getPrimaryService(HUE_LIGHT_SERVICE);
+    this.chars = {
+      onoff: await svc.getCharacteristic(HUE_CHAR_ONOFF),
+      bright: await svc.getCharacteristic(HUE_CHAR_BRIGHT),
+      color: await svc.getCharacteristic(HUE_CHAR_COLOR),
+    };
+  }
+
+  async test() {
+    if (!this.isReady()) await this.connect();
+    await this.send({ on: true, h: 210, s: 90, l: 55 });
+    return true;
+  }
+
+  async send({ on, h, s, l }) {
+    if (!this.isReady()) {
+      if (this.device && this.device.gatt) await this._openGatt(); // reconnect after a drop
+      else throw new Error('Not connected — click Connect first.');
+    }
+    const write = (ch, data) => (ch.writeValueWithoutResponse
+      ? ch.writeValueWithoutResponse(data)
+      : ch.writeValue(data));
+    if (!on) { await write(this.chars.onoff, Uint8Array.of(0)); return; }
+    const { x, y, bri } = hslToXy(h, s, l);
+    await write(this.chars.onoff, Uint8Array.of(1));
+    await write(this.chars.color, Uint8Array.of(x & 0xff, (x >> 8) & 0xff, y & 0xff, (y >> 8) & 0xff));
+    await write(this.chars.bright, Uint8Array.of(bri));
+  }
+}
+
 // ---- Controller -----------------------------------------------------------
 
 export class BulbController {
@@ -144,6 +245,7 @@ export class BulbController {
       hue: new HueTransport({ fetchImpl: this.fetchImpl, getConfig: () => this.config }),
       homeassistant: new HttpTransport({ fetchImpl: this.fetchImpl, getUrl: () => this.config.webhookUrl }),
       http: new HttpTransport({ fetchImpl: this.fetchImpl, getUrl: () => this.config.httpUrl }),
+      webbluetooth: new WebBluetoothTransport(),
     };
   }
 
@@ -214,6 +316,15 @@ export class BulbController {
     // Real transports are throttled + change-gated so we never flood hardware.
     if (this.config.transport === 'mock') return;
 
+    // Some transports (e.g. Bluetooth) need an explicit user-gesture connect
+    // first. Bail before recording any "sent" bookkeeping, and without counting
+    // a failure, so dispatch resumes cleanly once the user connects.
+    const transport = this.transports[this.config.transport];
+    if (transport && typeof transport.isReady === 'function' && !transport.isReady()) {
+      this._setStatus('Click "Connect bulb" to pair over Bluetooth.', '');
+      return;
+    }
+
     const now = this.now();
     if (now - this._lastSendTs < this.config.throttleMs) return;
     if (!this._colorChangedEnough()) return;
@@ -267,6 +378,32 @@ export class BulbController {
       this._setStatus(`Test failed: ${err && err.message ? err.message : err}`, 'err');
       return false;
     }
+  }
+
+  // Pair a transport that needs an explicit connect step (Web Bluetooth).
+  // MUST be called from a user gesture (e.g. a click handler).
+  async connect() {
+    const transport = this.transports[this.config.transport];
+    if (!transport || typeof transport.connect !== 'function') {
+      this._setStatus('This connection type needs no pairing step.', '');
+      return false;
+    }
+    this._setStatus('Opening device picker…', '');
+    try {
+      await transport.connect();
+      this._failCount = 0;
+      this._setStatus('Bluetooth bulb connected.', 'ok');
+      return true;
+    } catch (err) {
+      this._setStatus(`Connect failed: ${err && err.message ? err.message : err}`, 'err');
+      return false;
+    }
+  }
+
+  // Does the active transport require an explicit connect (for UI affordances)?
+  needsConnect() {
+    const transport = this.transports[this.config.transport];
+    return !!(transport && typeof transport.connect === 'function');
   }
 
   // ---- DOM helpers (no-ops when headless) ----
