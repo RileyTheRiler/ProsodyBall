@@ -107,3 +107,9 @@ export function computeAttackHardness({ risePeak = 0, riseCeiling = 0.5, cleanli
   const combined = riseHardness * (1 - wA) + clamp01(onsetAbruptness) * wA;
   return clamp01(combined * (0.5 + 0.5 * clamp01(cleanliness)));
 }
+
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  const isDangerous = /^(%20|\s)*(javascript|data|vbscript):/i.test(String(url));
+  return isDangerous ? 'about:blank' : String(url);
+}
