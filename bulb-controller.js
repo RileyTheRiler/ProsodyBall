@@ -137,6 +137,7 @@ export class BulbController {
     this._lastSendTs = -Infinity;
     this._failCount = 0;
     this._sending = false;
+    this.onChange = null; // optional listener invoked when config changes
 
     this.transports = transports || {
       mock: new MockTransport(),
@@ -170,8 +171,11 @@ export class BulbController {
   set(key, value) {
     if (!(key in this.config)) return;
     const cur = this.config[key];
-    this.config[key] = typeof cur === 'number' ? Number(value) : value;
+    if (typeof cur === 'boolean') this.config[key] = value === true || value === 'true' || value === '1' || value === 1;
+    else if (typeof cur === 'number') this.config[key] = Number(value);
+    else this.config[key] = value;
     this._saveConfig();
+    this._emitChange();
   }
 
   setEnabled(on) {
@@ -179,6 +183,15 @@ export class BulbController {
     this._failCount = 0;
     this._saveConfig();
     if (!on) this._clearMock();
+    this._emitChange();
+  }
+
+  // Notify any listener (e.g. the settings UI) that config changed so it can
+  // re-hydrate — important when the controller auto-disables itself.
+  _emitChange() {
+    if (typeof this.onChange === 'function') {
+      try { this.onChange(this.config); } catch { /* listener errors shouldn't break the loop */ }
+    }
   }
 
   // ---- Per-frame entry point ----

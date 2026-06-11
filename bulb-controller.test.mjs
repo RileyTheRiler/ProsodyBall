@@ -113,6 +113,27 @@ test('config persists to and reloads from storage', () => {
   assert.equal(b.config.enabled, true);
 });
 
+test('set coerces values to the existing config type', () => {
+  const ctrl = new BulbController({ storage: fakeStorage(), now: () => 0, fetchImpl: null });
+  ctrl.set('enabled', 'true');
+  assert.equal(ctrl.config.enabled, true);
+  ctrl.set('enabled', '0');
+  assert.equal(ctrl.config.enabled, false);
+  ctrl.set('throttleMs', '250');
+  assert.equal(ctrl.config.throttleMs, 250);
+  ctrl.set('hueBridge', '10.0.0.5');
+  assert.equal(ctrl.config.hueBridge, '10.0.0.5');
+});
+
+test('onChange fires when the controller changes config (e.g. auto-disable)', () => {
+  let calls = 0;
+  const ctrl = new BulbController({ storage: fakeStorage(), now: () => 0, fetchImpl: null });
+  ctrl.onChange = () => { calls += 1; };
+  ctrl.setEnabled(true);
+  ctrl.set('transport', 'hue');
+  assert.equal(calls, 2);
+});
+
 test('disabled controller does nothing on update', async () => {
   let sends = 0;
   const ctrl = makeController({

@@ -3185,13 +3185,18 @@ class VoxBallGame {
       }
     };
 
-    // Hydrate controls from persisted config
-    if (enable) enable.checked = ctrl.config.enabled;
-    if (transportSel) transportSel.value = ctrl.config.transport;
-    for (const [key, el] of Object.entries(fields)) {
-      if (el) el.value = ctrl.config[key] ?? '';
-    }
-    syncVisibility();
+    // Reflect controller config into the DOM controls. Runs initially and again
+    // whenever the controller changes config itself (e.g. failure auto-disable).
+    const hydrate = () => {
+      if (enable) enable.checked = ctrl.config.enabled;
+      if (transportSel) transportSel.value = ctrl.config.transport;
+      for (const [key, el] of Object.entries(fields)) {
+        if (el) el.value = ctrl.config[key] ?? '';
+      }
+      syncVisibility();
+    };
+    hydrate();
+    ctrl.onChange = hydrate;
 
     enable?.addEventListener('change', () => ctrl.setEnabled(enable.checked));
     transportSel?.addEventListener('change', () => {
@@ -5267,6 +5272,9 @@ class VoxBallGame {
       this.update(dt);
       this.drawSceneInternal(this.prosodyScore);
     }
+    // Mirror the live ball color onto a smart bulb (throttled internally).
+    // Driven from the central loop so it tracks every mode that updates the color.
+    this.bulbController?.update(this.ballHue, this.ballSat, this.ballLit, dt);
     this._pushAvgSamples();
     this.updateMeters();
     this._updateExpandedMetrics();
@@ -5706,9 +5714,6 @@ class VoxBallGame {
     this.ballLit = this.colorblindMode
       ? (40 + ps * 30) + (pitchHue < 100 ? 10 : 0) // extra luminance boost at yellow end
       : 40 + ps * 30;
-
-    // Mirror the ball's live color onto a smart bulb (throttled internally).
-    this.bulbController?.update(this.ballHue, this.ballSat, this.ballLit, dt);
   }
 
   drawSceneInternal(prosodyGlow) {
