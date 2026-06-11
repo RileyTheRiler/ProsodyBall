@@ -5,6 +5,9 @@ node_modules/
 .gemini/
 .jules/
 
+# Local Hue helper credentials (never commit)
+.hue-credentials.json
+
 # Temp files
 *.pid
 *out*.txt
