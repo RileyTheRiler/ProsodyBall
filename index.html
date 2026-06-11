@@ -4816,6 +4816,53 @@
       border: 1px solid rgba(255, 255, 255, 0.08);
     }
 
+    .bulb-sim {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 4px 0 2px;
+    }
+
+    .bulb-swatch {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: #333;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      flex: 0 0 auto;
+      transition: background 0.12s linear, box-shadow 0.12s linear;
+    }
+
+    .bulb-sim-label {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    .bulb-fields {
+      display: grid;
+      gap: 6px;
+    }
+
+    .bulb-input {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: var(--text-primary);
+      font-size: 0.8rem;
+    }
+
+    .bulb-status {
+      min-height: 1em;
+      font-family: 'Space Mono', monospace;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    .bulb-status[data-kind="ok"] { color: #6ee7a8; }
+    .bulb-status[data-kind="err"] { color: #ff8080; }
+
     .settings-status-item {
       display: flex;
       justify-content: space-between;
@@ -5154,6 +5201,34 @@
         <span class="settings-label">Calibration</span>
         <button class="btn btn-help btn-fill" id="recalibrateBtn" aria-label="Run microphone calibration again"
           title="Run mic calibration again">Recalibrate</button>
+      </div>
+
+      <div class="settings-group">
+        <span class="settings-label">Smart Bulb</span>
+        <div class="settings-row">
+          <label for="bulbEnableToggle">Mirror ball color to bulb</label>
+          <label class="toggle-switch"><input id="bulbEnableToggle" type="checkbox" aria-label="Enable smart bulb sync"><span class="toggle-slider"></span></label>
+        </div>
+        <div class="bulb-sim"><div id="bulbSimSwatch" class="bulb-swatch" aria-hidden="true"></div><span class="bulb-sim-label">Simulated bulb</span></div>
+        <select id="bulbTransportSelect" class="theme-select btn-fill" aria-label="Smart bulb connection type">
+          <option value="mock" selected>Connection: Simulated (no hardware)</option>
+          <option value="hue">Connection: Philips Hue Bridge</option>
+          <option value="homeassistant">Connection: Home Assistant webhook</option>
+          <option value="http">Connection: Custom HTTP endpoint</option>
+        </select>
+        <div id="bulbHueFields" class="bulb-fields" style="display:none">
+          <input id="bulbHueBridge" class="bulb-input" type="text" placeholder="Bridge IP (e.g. 192.168.1.20)" aria-label="Hue bridge IP">
+          <input id="bulbHueUser" class="bulb-input" type="text" placeholder="API username" aria-label="Hue API username">
+          <input id="bulbHueLightId" class="bulb-input" type="text" placeholder="Light ID (e.g. 1)" aria-label="Hue light ID">
+        </div>
+        <div id="bulbHaFields" class="bulb-fields" style="display:none">
+          <input id="bulbWebhookUrl" class="bulb-input" type="text" placeholder="Webhook URL" aria-label="Home Assistant webhook URL">
+        </div>
+        <div id="bulbHttpFields" class="bulb-fields" style="display:none">
+          <input id="bulbHttpUrl" class="bulb-input" type="text" placeholder="POST URL" aria-label="Custom HTTP endpoint URL">
+        </div>
+        <button class="btn btn-help btn-fill" id="bulbTestBtn" aria-label="Test smart bulb connection" title="Send a test color to the bulb">Test connection</button>
+        <div id="bulbStatus" class="bulb-status" aria-live="polite"></div>
       </div>
 
       <button class="btn btn-close-settings" id="closeSettingsBtn">Close</button>

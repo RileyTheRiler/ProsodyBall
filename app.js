@@ -1,6 +1,7 @@
 import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness } from './dsp-utils.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
+import { BulbController } from './bulb-controller.js';
 
 function escapeHtml(text) {
   if (!text) return text;
@@ -2189,6 +2190,7 @@ class VoxBallGame {
     // ====== RUNTIME TOOLS ======
     this.perfMonitor = new PerformanceMonitor({ panelId: 'perfPanel' });
     this.calibrationWizard = new CalibrationWizard();
+    this.bulbController = new BulbController({ swatchId: 'bulbSimSwatch', statusId: 'bulbStatus' });
     this.hasCompletedCalibration = false;
     this.guidedStartTs = 0;
     this.guidedDurationSec = 5;
@@ -3152,6 +3154,54 @@ class VoxBallGame {
       osc.stop(ctx.currentTime + 0.08);
       osc.onended = () => ctx.close();
     } catch (_) { /* audio not available */ }
+  }
+
+  // Wire the Smart Bulb section of the settings panel to the BulbController.
+  // All transport/config state lives in the controller (persisted to localStorage);
+  // this just binds the DOM controls and shows/hides transport-specific fields.
+  _setupBulbUI() {
+    const ctrl = this.bulbController;
+    if (!ctrl) return;
+    const enable = document.getElementById('bulbEnableToggle');
+    const transportSel = document.getElementById('bulbTransportSelect');
+    const testBtn = document.getElementById('bulbTestBtn');
+    const fields = {
+      hueBridge: document.getElementById('bulbHueBridge'),
+      hueUser: document.getElementById('bulbHueUser'),
+      hueLightId: document.getElementById('bulbHueLightId'),
+      webhookUrl: document.getElementById('bulbWebhookUrl'),
+      httpUrl: document.getElementById('bulbHttpUrl'),
+    };
+    const groups = {
+      hue: document.getElementById('bulbHueFields'),
+      homeassistant: document.getElementById('bulbHaFields'),
+      http: document.getElementById('bulbHttpFields'),
+    };
+
+    const syncVisibility = () => {
+      const t = ctrl.config.transport;
+      for (const [key, el] of Object.entries(groups)) {
+        if (el) el.style.display = key === t ? '' : 'none';
+      }
+    };
+
+    // Hydrate controls from persisted config
+    if (enable) enable.checked = ctrl.config.enabled;
+    if (transportSel) transportSel.value = ctrl.config.transport;
+    for (const [key, el] of Object.entries(fields)) {
+      if (el) el.value = ctrl.config[key] ?? '';
+    }
+    syncVisibility();
+
+    enable?.addEventListener('change', () => ctrl.setEnabled(enable.checked));
+    transportSel?.addEventListener('change', () => {
+      ctrl.set('transport', transportSel.value);
+      syncVisibility();
+    });
+    for (const [key, el] of Object.entries(fields)) {
+      el?.addEventListener('change', () => ctrl.set(key, el.value.trim()));
+    }
+    testBtn?.addEventListener('click', () => ctrl.test());
   }
 
   setupUI() {
@@ -4456,6 +4506,9 @@ class VoxBallGame {
       syncMotionToggleLabel();
     });
 
+    // ---- Smart Bulb UI ----
+    this._setupBulbUI();
+
 
     // ---- Vibration alert UI ----
     const vibBtn = document.getElementById('vibToggle');
@@ -5653,6 +5706,9 @@ class VoxBallGame {
     this.ballLit = this.colorblindMode
       ? (40 + ps * 30) + (pitchHue < 100 ? 10 : 0) // extra luminance boost at yellow end
       : 40 + ps * 30;
+
+    // Mirror the ball's live color onto a smart bulb (throttled internally).
+    this.bulbController?.update(this.ballHue, this.ballSat, this.ballLit, dt);
   }
 
   drawSceneInternal(prosodyGlow) {
