@@ -1,14 +1,43 @@
-# Driving Philips Hue bulbs with ProsodyBall
+# Driving a smart bulb with ProsodyBall
 
-The on-screen simulated bulb works with no setup. To light up **real** Philips Hue
-bulbs in sync with your voice you have two options:
+The on-screen simulated bulb works with no setup. To light up a **real** bulb in
+sync with your voice you have a few options:
 
-- **Bluetooth (no Bridge, no router)** — simplest; see below.
+- **Generic BLE bulb (no hub, no router)** — cheapest and simplest for a fresh
+  setup; works with common unencrypted RGB(W) Bluetooth bulbs (Triones /
+  HappyLighting / Magic Blue / Zengge / briturn and similar). See below.
+- **Philips Hue over Bluetooth (no Bridge)** — if you already own Hue bulbs.
 - **Hue Bridge over the LAN** — works in any browser; see "Using the Hue Bridge".
+
+All Bluetooth options need a Chromium-based browser (**Chrome, Edge, or Opera** on
+desktop or Android — not Safari/Firefox/iOS) and the same room as the bulb.
 
 ---
 
-## Bluetooth — no Bridge, no router (recommended to start)
+## Generic BLE bulb — no hub, no router (recommended for a new setup)
+
+Cheap RGB(W) Bluetooth bulbs (sold under generic brands, paired in apps like
+*briturn*, *Happy Lighting*, *Triones*, or *Magic Blue*) use open, unencrypted
+Bluetooth, so ProsodyBall can drive them straight from the browser — no app, no
+hub, no router.
+
+1. Screw the bulb into any lamp/orb shell and turn the fixture on.
+2. Open ProsodyBall in Chrome/Edge (the hosted HTTPS site is fine).
+3. **Settings → Smart Bulb → Connection: "Generic BLE bulb — no hub"**.
+4. Click **Connect bulb (Bluetooth)** and pick the bulb in the browser dialog.
+   ProsodyBall auto-detects the common protocol families.
+5. Flip **Mirror ball color to bulb** on, grant the mic, and talk — low pitch glows
+   blue, high pitch glows pink.
+
+**If auto-detect can't find it:** open a free BLE scanner app (e.g. *nRF Connect*),
+read the bulb's **service UUID** and a **writable characteristic UUID**, and paste
+them into the three **Advanced** fields under this option (an optional device-name
+filter is there too). No code change needed. The bundled physical remote always
+works as a manual backup, independent of the app.
+
+---
+
+## Philips Hue over Bluetooth — no Bridge, no router
 
 Hue White & Color Ambiance bulbs have Bluetooth built in, and ProsodyBall can talk
 to them straight from the browser. No Bridge, no router, no terminal.
@@ -20,7 +49,7 @@ Android — not Safari/Firefox/iOS), and being within ~30 ft / the same room as 
    it in the box. If you already added the bulb to the Bridge, it's fine, but Bluetooth
    control is most reliable on a bulb that isn't being driven by the Bridge.)
 2. Open ProsodyBall (the hosted site is fine — Web Bluetooth needs HTTPS, which it has).
-3. **Settings → Smart Bulb → Connection: "Bluetooth — no Bridge"**.
+3. **Settings → Smart Bulb → Connection: "Philips Hue (Bluetooth)"**.
 4. Click **Connect bulb (Bluetooth)**, pick your Hue bulb in the browser dialog. If your
    OS asks, allow/pair it. (You may need to pair it once in your system Bluetooth settings.)
 5. Flip **Mirror ball color to bulb** on, grant the mic, and talk — low pitch glows blue,

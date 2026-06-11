@@ -3172,19 +3172,25 @@ class VoxBallGame {
       hueLightId: document.getElementById('bulbHueLightId'),
       webhookUrl: document.getElementById('bulbWebhookUrl'),
       httpUrl: document.getElementById('bulbHttpUrl'),
+      bleNamePrefix: document.getElementById('bulbBleNamePrefix'),
+      bleServiceUuid: document.getElementById('bulbBleServiceUuid'),
+      bleWriteUuid: document.getElementById('bulbBleWriteUuid'),
     };
     const groups = {
-      webbluetooth: document.getElementById('bulbBtFields'),
       hue: document.getElementById('bulbHueFields'),
       homeassistant: document.getElementById('bulbHaFields'),
       http: document.getElementById('bulbHttpFields'),
+      genericble: document.getElementById('bulbGenericbleFields'),
     };
+    // The Connect button (Bluetooth pairing) is shared by both BLE transports.
+    const btFields = document.getElementById('bulbBtFields');
 
     const syncVisibility = () => {
       const t = ctrl.config.transport;
       for (const [key, el] of Object.entries(groups)) {
         if (el) el.style.display = key === t ? '' : 'none';
       }
+      if (btFields) btFields.style.display = (t === 'webbluetooth' || t === 'genericble') ? '' : 'none';
     };
 
     // Reflect controller config into the DOM controls. Runs initially and again

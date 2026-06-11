@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BulbController, hslToHueApi, hslToXy } from './bulb-controller.js';
+import { BulbController, GenericBleTransport, hslToHueApi, hslToRgb, hslToXy } from './bulb-controller.js';
 
 // In-memory localStorage stand-in
 function fakeStorage() {
@@ -181,4 +181,78 @@ test('disabled controller does nothing on update', async () => {
   ctrl.update(220, 80, 50, 1);
   await Promise.resolve();
   assert.equal(sends, 0);
+});
+
+test('hslToRgb maps HSL to 8-bit RGB primaries', () => {
+  assert.deepEqual(hslToRgb(0, 100, 50), { r: 255, g: 0, b: 0 });
+  assert.deepEqual(hslToRgb(120, 100, 50), { r: 0, g: 255, b: 0 });
+  assert.deepEqual(hslToRgb(240, 100, 50), { r: 0, g: 0, b: 255 });
+  assert.deepEqual(hslToRgb(0, 0, 100), { r: 255, g: 255, b: 255 });
+  assert.deepEqual(hslToRgb(0, 0, 0), { r: 0, g: 0, b: 0 });
+});
+
+// A minimal in-memory Web Bluetooth GATT stack. `available` lists the
+// {service, write} characteristic combos the fake bulb exposes (values matched
+// exactly as GenericBleTransport requests them). Records every write.
+function fakeBle(available) {
+  const writes = [];
+  let connected = false;
+  const server = {
+    get connected() { return connected; },
+    async getPrimaryService(svc) {
+      if (!available.some((a) => a.service === svc)) throw new Error(`no service ${svc}`);
+      return {
+        async getCharacteristic(ch) {
+          if (!available.some((a) => a.service === svc && a.write === ch)) throw new Error(`no char ${ch}`);
+          return { writeValueWithoutResponse: async (d) => { writes.push(Array.from(d)); } };
+        },
+      };
+    },
+  };
+  const gatt = {
+    get connected() { return connected; },
+    async connect() { connected = true; return server; },
+  };
+  const bluetooth = {
+    requestArgs: null,
+    async requestDevice(opts) { this.requestArgs = opts; return { gatt, addEventListener() {} }; },
+  };
+  return { bluetooth, writes };
+}
+
+test('GenericBleTransport probes the Triones family and writes the 0x56 color packet', async () => {
+  const { bluetooth, writes } = fakeBle([{ service: 0xffd5, write: 0xffd9 }]);
+  const t = new GenericBleTransport({ bluetooth, getConfig: () => ({}) });
+  await t.connect();
+  assert.equal(t.profile.name, 'triones');
+  assert.ok(t.isReady());
+  await t.send({ on: true, h: 0, s: 100, l: 50 }); // pure red
+  assert.deepEqual(writes[0], [0xcc, 0x23, 0x33], 'power-on frame on the off->on edge');
+  assert.deepEqual(writes[1], [0x56, 0xff, 0x00, 0x00, 0x00, 0xf0, 0xaa], 'red color packet');
+});
+
+test('GenericBleTransport falls back to the Magic Blue UUID family', async () => {
+  const { bluetooth } = fakeBle([{ service: 0xffe5, write: 0xffe9 }]);
+  const t = new GenericBleTransport({ bluetooth, getConfig: () => ({}) });
+  await t.connect();
+  assert.equal(t.profile.name, 'magicblue');
+});
+
+test('GenericBleTransport tries the manual UUID override first', async () => {
+  const svc = '0000abcd-0000-1000-8000-00805f9b34fb';
+  const wr = '0000ef01-0000-1000-8000-00805f9b34fb';
+  const { bluetooth, writes } = fakeBle([{ service: svc, write: wr }]);
+  const cfg = { bleServiceUuid: svc.toUpperCase(), bleWriteUuid: wr.toUpperCase() };
+  const t = new GenericBleTransport({ bluetooth, getConfig: () => cfg });
+  await t.connect();
+  assert.equal(t.profile.name, 'custom');
+  await t.send({ on: false });
+  assert.deepEqual(writes[0], [0xcc, 0x24, 0x33], 'power-off frame');
+});
+
+test('GenericBleTransport reports a helpful error when no known service matches', async () => {
+  const { bluetooth } = fakeBle([{ service: 0x1234, write: 0x5678 }]);
+  const t = new GenericBleTransport({ bluetooth, getConfig: () => ({}) });
+  await assert.rejects(() => t.connect(), /advanced UUID fields/);
+  assert.equal(t.isReady(), false);
 });

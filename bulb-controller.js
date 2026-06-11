@@ -37,9 +37,9 @@ export function hslToHueApi(h, s, l) {
   return { hue, sat, bri };
 }
 
-// Convert HSL to the CIE 1931 xy color point (as uint16 0-65535) + brightness
-// (1-254) that the Hue BLE color characteristic expects.
-export function hslToXy(h, s, l) {
+// Convert HSL (h:0-360, s/l:0-100) to sRGB components in the 0..1 range.
+// Shared by hslToRgb (8-bit) and hslToXy (CIE) so there is a single conversion.
+function hslToRgb01(h, s, l) {
   const sat = clamp(s, 0, 100) / 100;
   const lit = clamp(l, 0, 100) / 100;
   const c = (1 - Math.abs(2 * lit - 1)) * sat;
@@ -53,9 +53,23 @@ export function hslToXy(h, s, l) {
   else if (hp < 5) { r = x1; b = c; }
   else { r = c; b = x1; }
   const m = lit - c / 2;
+  return { r: clamp(r + m, 0, 1), g: clamp(g + m, 0, 1), b: clamp(b + m, 0, 1) };
+}
+
+// Convert HSL to 8-bit RGB (0-255) — the format generic BLE bulbs expect.
+export function hslToRgb(h, s, l) {
+  const { r, g, b } = hslToRgb01(h, s, l);
+  return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
+}
+
+// Convert HSL to the CIE 1931 xy color point (as uint16 0-65535) + brightness
+// (1-254) that the Hue BLE color characteristic expects.
+export function hslToXy(h, s, l) {
+  const lit = clamp(l, 0, 100) / 100;
+  const { r, g, b } = hslToRgb01(h, s, l);
   // sRGB gamma -> linear, then Philips' Wide-RGB D65 matrix
   const gamma = (ch) => (ch > 0.04045 ? Math.pow((ch + 0.055) / 1.055, 2.4) : ch / 12.92);
-  const R = gamma(r + m), G = gamma(g + m), B = gamma(b + m);
+  const R = gamma(r), G = gamma(g), B = gamma(b);
   const X = R * 0.664511 + G * 0.154324 + B * 0.162028;
   const Y = R * 0.283881 + G * 0.668433 + B * 0.047685;
   const Z = R * 0.000088 + G * 0.072310 + B * 0.986039;
@@ -198,6 +212,132 @@ export class WebBluetoothTransport {
   }
 }
 
+// Known protocol families for cheap, unencrypted RGB(W) Bluetooth bulbs (the
+// "16M colors + remote + music sync" class sold under generic/no-name brands,
+// e.g. Triones / HappyLighting / Magic Blue / Zengge / briturn). They expose
+// open GATT with no bonding, so a browser can write color directly.
+//
+// `encodeColor(r,g,b)` builds the wire packet for a solid color. The Triones and
+// Magic Blue families share the 7-byte 0x56 command and differ only by UUID, so
+// we probe them in order on connect and use whichever the bulb actually exposes.
+const TRIONES_POWER_ON = Uint8Array.of(0xcc, 0x23, 0x33);
+const TRIONES_POWER_OFF = Uint8Array.of(0xcc, 0x24, 0x33);
+const trionesColor = (r, g, b) => Uint8Array.of(0x56, r, g, b, 0x00, 0xf0, 0xaa);
+
+const BLE_BULB_PROFILES = [
+  // Triones / HappyLighting
+  { name: 'triones', service: 0xffd5, writeChar: 0xffd9, encodeColor: trionesColor,
+    powerOn: TRIONES_POWER_ON, powerOff: TRIONES_POWER_OFF },
+  // Magic Blue / MagicLight / classic Zengge BLE (same 0x56 command, different UUID)
+  { name: 'magicblue', service: 0xffe5, writeChar: 0xffe9, encodeColor: trionesColor,
+    powerOn: TRIONES_POWER_ON, powerOff: TRIONES_POWER_OFF },
+  // ffb0 family: 4-byte B,G,R,W (no dedicated power command — black == off)
+  { name: 'ffb0', service: 0xffb0, writeChar: 0xffb2,
+    encodeColor: (r, g, b) => Uint8Array.of(b, g, r, 0x00), powerOn: null, powerOff: null },
+];
+
+// Drives a generic unencrypted RGB(W) bulb directly over Bluetooth — no hub, no
+// router. Auto-detects the protocol family on connect, with optional manual
+// UUID/name overrides (read from config) as a fallback for unusual bulbs.
+// Requires a Chromium-based browser; connect() must run from a user gesture.
+export class GenericBleTransport {
+  constructor({ bluetooth, getConfig } = {}) {
+    this.bluetooth = bluetooth !== undefined
+      ? bluetooth
+      : (typeof navigator !== 'undefined' ? navigator.bluetooth : null);
+    this.getConfig = getConfig || (() => ({}));
+    this.device = null;
+    this.writeCh = null;
+    this.profile = null;
+    this._poweredOn = false;
+  }
+
+  isReady() {
+    return !!(this.device && this.device.gatt && this.device.gatt.connected
+      && this.writeCh && this.profile);
+  }
+
+  // Custom service+write UUIDs from the advanced fields, if both are set.
+  // Assumes the common 0x56 command set, which covers most rebranded bulbs.
+  _customProfile() {
+    const cfg = this.getConfig() || {};
+    const svc = (cfg.bleServiceUuid || '').trim().toLowerCase();
+    const wr = (cfg.bleWriteUuid || '').trim().toLowerCase();
+    if (!svc || !wr) return null;
+    return { name: 'custom', service: svc, writeChar: wr, encodeColor: trionesColor,
+      powerOn: TRIONES_POWER_ON, powerOff: TRIONES_POWER_OFF };
+  }
+
+  async connect() {
+    if (!this.bluetooth) {
+      throw new Error('Web Bluetooth not supported — use Chrome, Edge, or Opera.');
+    }
+    const cfg = this.getConfig() || {};
+    // These bulbs often don't advertise their service UUID, so a service filter
+    // finds nothing; accept all devices (or a user name filter) and probe later.
+    const optionalServices = BLE_BULB_PROFILES.map((p) => p.service);
+    const custom = this._customProfile();
+    if (custom) optionalServices.push(custom.service);
+    const namePrefix = (cfg.bleNamePrefix || '').trim();
+    this.device = await this.bluetooth.requestDevice(namePrefix
+      ? { filters: [{ namePrefix }], optionalServices }
+      : { acceptAllDevices: true, optionalServices });
+    if (this.device.addEventListener) {
+      this.device.addEventListener('gattserverdisconnected', () => {
+        this.writeCh = null; this.profile = null; this._poweredOn = false;
+      });
+    }
+    await this._openGatt();
+  }
+
+  async _openGatt() {
+    const server = await this.device.gatt.connect();
+    this._poweredOn = false;
+    const custom = this._customProfile();
+    const candidates = custom ? [custom, ...BLE_BULB_PROFILES] : BLE_BULB_PROFILES;
+    let lastErr = null;
+    for (const profile of candidates) {
+      try {
+        const svc = await server.getPrimaryService(profile.service);
+        this.writeCh = await svc.getCharacteristic(profile.writeChar);
+        this.profile = profile;
+        return;
+      } catch (err) { lastErr = err; }
+    }
+    this.writeCh = null;
+    this.profile = null;
+    const detail = lastErr && lastErr.message ? ` (${lastErr.message})` : '';
+    throw new Error(`No known bulb service found${detail}. Try the advanced UUID fields.`);
+  }
+
+  async test() {
+    if (!this.isReady()) await this.connect();
+    await this.send({ on: true, h: 210, s: 90, l: 55 });
+    return true;
+  }
+
+  async send({ on, h, s, l }) {
+    if (!this.isReady()) {
+      if (this.device && this.device.gatt) await this._openGatt(); // reconnect after a drop
+      else throw new Error('Not connected — click Connect first.');
+    }
+    const write = (data) => (this.writeCh.writeValueWithoutResponse
+      ? this.writeCh.writeValueWithoutResponse(data)
+      : this.writeCh.writeValue(data));
+    if (!on) {
+      this._poweredOn = false;
+      if (this.profile.powerOff) { await write(this.profile.powerOff); return; }
+      await write(this.profile.encodeColor(0, 0, 0)); // no power frame: black == off
+      return;
+    }
+    // Send the power-on frame only on the off->on edge so we don't spam it every frame.
+    if (this.profile.powerOn && !this._poweredOn) await write(this.profile.powerOn);
+    this._poweredOn = true;
+    const { r, g, b } = hslToRgb(h, s, l);
+    await write(this.profile.encodeColor(r, g, b));
+  }
+}
+
 // ---- Controller -----------------------------------------------------------
 
 export class BulbController {
@@ -227,6 +367,9 @@ export class BulbController {
       hueLightId: '1',
       webhookUrl: '',
       httpUrl: '',
+      bleNamePrefix: '',    // generic-BLE: optional device-name filter
+      bleServiceUuid: '',   // generic-BLE: optional service UUID override
+      bleWriteUuid: '',     // generic-BLE: optional write-characteristic UUID override
       throttleMs: DEFAULT_THROTTLE_MS,
     };
     this._loadConfig();
@@ -246,6 +389,7 @@ export class BulbController {
       homeassistant: new HttpTransport({ fetchImpl: this.fetchImpl, getUrl: () => this.config.webhookUrl }),
       http: new HttpTransport({ fetchImpl: this.fetchImpl, getUrl: () => this.config.httpUrl }),
       webbluetooth: new WebBluetoothTransport(),
+      genericble: new GenericBleTransport({ getConfig: () => this.config }),
     };
   }
 
