@@ -150,6 +150,18 @@ export class HttpTransport {
   }
 }
 
+// Look up a device the user already granted in a previous session, so we can
+// reconnect after a page reload *without* another picker gesture. Uses Web
+// Bluetooth's getDevices() (Chromium). Returns null if the API is unavailable
+// or no granted device matches — callers fall back to a manual connect.
+async function findGrantedDevice(bluetooth, deviceId) {
+  if (!bluetooth || !deviceId || typeof bluetooth.getDevices !== 'function') return null;
+  try {
+    const devices = await bluetooth.getDevices();
+    return (devices || []).find((d) => d && d.id === deviceId) || null;
+  } catch { return null; }
+}
+
 // Drives a Philips Hue bulb directly over Bluetooth from the browser — no Bridge
 // and no router. Requires a Chromium-based browser (Web Bluetooth) and a one-time
 // user gesture to pick the bulb. connect() must be called from a click handler.
@@ -174,10 +186,26 @@ export class WebBluetoothTransport {
       filters: [{ services: [HUE_FE0F_SERVICE] }, { namePrefix: 'Hue' }],
       optionalServices: [HUE_LIGHT_SERVICE],
     });
-    if (this.device.addEventListener) {
+    this._bindDisconnect();
+    await this._openGatt();
+  }
+
+  _bindDisconnect() {
+    if (this.device && this.device.addEventListener) {
       this.device.addEventListener('gattserverdisconnected', () => { this.chars = null; });
     }
+  }
+
+  getDeviceId() { return this.device && this.device.id ? this.device.id : null; }
+
+  // Re-link to a previously-granted device after a reload — no picker gesture.
+  async reconnect(deviceId) {
+    const dev = await findGrantedDevice(this.bluetooth, deviceId);
+    if (!dev) return false;
+    this.device = dev;
+    this._bindDisconnect();
     await this._openGatt();
+    return this.isReady();
   }
 
   async _openGatt() {
@@ -288,12 +316,28 @@ export class GenericBleTransport {
     this.device = await this.bluetooth.requestDevice(namePrefix
       ? { filters: [{ namePrefix }], optionalServices }
       : { acceptAllDevices: true, optionalServices });
-    if (this.device.addEventListener) {
+    this._bindDisconnect();
+    await this._openGatt();
+  }
+
+  _bindDisconnect() {
+    if (this.device && this.device.addEventListener) {
       this.device.addEventListener('gattserverdisconnected', () => {
         this.writeCh = null; this.profile = null; this._poweredOn = false;
       });
     }
+  }
+
+  getDeviceId() { return this.device && this.device.id ? this.device.id : null; }
+
+  // Re-link to a previously-granted bulb after a reload — no picker gesture.
+  async reconnect(deviceId) {
+    const dev = await findGrantedDevice(this.bluetooth, deviceId);
+    if (!dev) return false;
+    this.device = dev;
+    this._bindDisconnect();
     await this._openGatt();
+    return this.isReady();
   }
 
   async _openGatt() {
@@ -376,10 +420,26 @@ export class Esp32BleTransport {
       filters: [{ services: [ESP32_SERVICE_UUID] }, { namePrefix: ESP32_NAME_PREFIX }],
       optionalServices: [ESP32_SERVICE_UUID],
     });
-    if (this.device.addEventListener) {
+    this._bindDisconnect();
+    await this._openGatt();
+  }
+
+  _bindDisconnect() {
+    if (this.device && this.device.addEventListener) {
       this.device.addEventListener('gattserverdisconnected', () => { this.colorCh = null; });
     }
+  }
+
+  getDeviceId() { return this.device && this.device.id ? this.device.id : null; }
+
+  // Re-link to the previously-granted orb after a reload — no picker gesture.
+  async reconnect(deviceId) {
+    const dev = await findGrantedDevice(this.bluetooth, deviceId);
+    if (!dev) return false;
+    this.device = dev;
+    this._bindDisconnect();
     await this._openGatt();
+    return this.isReady();
   }
 
   async _openGatt() {
@@ -440,6 +500,8 @@ export class BulbController {
       bleNamePrefix: '',    // generic-BLE: optional device-name filter
       bleServiceUuid: '',   // generic-BLE: optional service UUID override
       bleWriteUuid: '',     // generic-BLE: optional write-characteristic UUID override
+      autoReconnect: true,  // BLE: silently re-link the saved device on reload
+      bleDeviceId: '',      // BLE: id of the last-connected device (for auto-reconnect)
       throttleMs: DEFAULT_THROTTLE_MS,
     };
     this._loadConfig();
@@ -607,12 +669,34 @@ export class BulbController {
     try {
       await transport.connect();
       this._failCount = 0;
+      this._rememberDevice(transport);
       this._setStatus('Bluetooth bulb connected.', 'ok');
       return true;
     } catch (err) {
       this._setStatus(`Connect failed: ${err && err.message ? err.message : err}`, 'err');
       return false;
     }
+  }
+
+  // Save the granted device id so we can silently re-link it next session.
+  _rememberDevice(transport) {
+    if (typeof transport.getDeviceId !== 'function') return;
+    const id = transport.getDeviceId();
+    if (id && id !== this.config.bleDeviceId) this.set('bleDeviceId', id);
+  }
+
+  // Clinic convenience: on load, re-link the previously-paired BLE device without
+  // a picker click, so staff just open the app. No-op for non-BLE transports, when
+  // disabled, or when the browser lacks getDevices() (falls back to manual Connect).
+  async restore() {
+    if (!this.config.autoReconnect || !this.config.bleDeviceId) return false;
+    const transport = this.transports[this.config.transport];
+    if (!transport || typeof transport.reconnect !== 'function') return false;
+    try {
+      const ok = await transport.reconnect(this.config.bleDeviceId);
+      if (ok) { this._failCount = 0; this._setStatus('Reconnected to saved bulb.', 'ok'); }
+      return ok;
+    } catch { return false; }
   }
 
   // Does the active transport require an explicit connect (for UI affordances)?

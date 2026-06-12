@@ -3166,6 +3166,7 @@ class VoxBallGame {
     const transportSel = document.getElementById('bulbTransportSelect');
     const testBtn = document.getElementById('bulbTestBtn');
     const connectBtn = document.getElementById('bulbConnectBtn');
+    const autoReconnect = document.getElementById('bulbAutoReconnect');
     const fields = {
       hueBridge: document.getElementById('bulbHueBridge'),
       hueUser: document.getElementById('bulbHueUser'),
@@ -3199,6 +3200,7 @@ class VoxBallGame {
     const hydrate = () => {
       if (enable) enable.checked = ctrl.config.enabled;
       if (transportSel) transportSel.value = ctrl.config.transport;
+      if (autoReconnect) autoReconnect.checked = ctrl.config.autoReconnect;
       for (const [key, el] of Object.entries(fields)) {
         if (el) el.value = ctrl.config[key] ?? '';
       }
@@ -3207,7 +3209,12 @@ class VoxBallGame {
     hydrate();
     ctrl.onChange = hydrate;
 
+    // Clinic convenience: silently re-link the saved BLE device on load so staff
+    // don't re-pick it each session. No-op for non-BLE transports or when off.
+    ctrl.restore?.();
+
     enable?.addEventListener('change', () => ctrl.setEnabled(enable.checked));
+    autoReconnect?.addEventListener('change', () => ctrl.set('autoReconnect', autoReconnect.checked));
     transportSel?.addEventListener('change', () => {
       ctrl.set('transport', transportSel.value);
       syncVisibility();

@@ -47,6 +47,20 @@ static void showColor(uint8_t r, uint8_t g, uint8_t b) {
   FastLED.show();
 }
 
+// Boot self-test: cycle red -> green -> blue, then go dark. Confirms wiring,
+// power, pixel count, and color order BEFORE the app ever connects. If a color
+// looks wrong (e.g. red shows green), fix COLOR_ORDER; if it dims/resets, lower
+// MAX_MILLIAMPS or add external power.
+static void bootSelfTest() {
+  const CRGB seq[] = { CRGB::Red, CRGB::Green, CRGB::Blue };
+  for (uint8_t i = 0; i < 3; i++) {
+    fill_solid(leds, NUM_LEDS, seq[i]);
+    FastLED.show();
+    delay(400);
+  }
+  showColor(0, 0, 0);
+}
+
 // Receives the 3-byte [R,G,B] packets the browser writes.
 class ColorCallback : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic* ch) override {
@@ -60,7 +74,7 @@ class ColorCallback : public BLECharacteristicCallbacks {
 void setup() {
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS);
   FastLED.setMaxPowerInVoltsAndMilliamps(5, MAX_MILLIAMPS);
-  showColor(0, 0, 0); // start dark
+  bootSelfTest(); // red/green/blue sweep, then dark — verifies the strip on power-up
 
   BLEDevice::init(DEVICE_NAME);
   BLEServer* server = BLEDevice::createServer();

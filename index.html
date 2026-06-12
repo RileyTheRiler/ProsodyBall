@@ -4853,6 +4853,14 @@
       font-size: 0.8rem;
     }
 
+    .bulb-reconnect {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
     .bulb-status {
       min-height: 1em;
       font-family: 'Space Mono', monospace;
@@ -5221,6 +5229,7 @@
         </select>
         <div id="bulbBtFields" class="bulb-fields" style="display:none">
           <button class="btn btn-help btn-fill" id="bulbConnectBtn" aria-label="Connect to a Bluetooth bulb" title="Pick your bulb over Bluetooth">Connect bulb (Bluetooth)</button>
+          <label class="bulb-reconnect"><input id="bulbAutoReconnect" type="checkbox"> Reconnect automatically next session</label>
         </div>
         <div id="bulbGenericbleFields" class="bulb-fields" style="display:none">
           <input id="bulbBleNamePrefix" class="bulb-input" type="text" placeholder="Advanced: name filter (optional)" aria-label="Bluetooth device name filter">

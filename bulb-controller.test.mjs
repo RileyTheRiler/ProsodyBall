@@ -194,7 +194,7 @@ test('hslToRgb maps HSL to 8-bit RGB primaries', () => {
 // A minimal in-memory Web Bluetooth GATT stack. `available` lists the
 // {service, write} characteristic combos the fake bulb exposes (values matched
 // exactly as GenericBleTransport requests them). Records every write.
-function fakeBle(available) {
+function fakeBle(available, deviceId = 'dev-1') {
   const writes = [];
   let connected = false;
   const server = {
@@ -213,11 +213,13 @@ function fakeBle(available) {
     get connected() { return connected; },
     async connect() { connected = true; return server; },
   };
+  const device = { id: deviceId, gatt, addEventListener() {} };
   const bluetooth = {
     requestArgs: null,
-    async requestDevice(opts) { this.requestArgs = opts; return { gatt, addEventListener() {} }; },
+    async requestDevice(opts) { this.requestArgs = opts; return device; },
+    async getDevices() { return [device]; },  // previously-granted devices (for reconnect)
   };
-  return { bluetooth, writes };
+  return { bluetooth, writes, device };
 }
 
 test('GenericBleTransport probes the Triones family and writes the 0x56 color packet', async () => {
@@ -276,4 +278,24 @@ test('Esp32BleTransport writes raw 3-byte RGB to the custom service', async () =
   assert.deepEqual(writes[0], [0xff, 0x00, 0x00], 'red as [R,G,B]');
   await t.send({ on: false });
   assert.deepEqual(writes[1], [0x00, 0x00, 0x00], 'off == black');
+});
+
+test('BLE transport reconnects to a saved device id without a new picker', async () => {
+  const { bluetooth } = fakeBle([{ service: ESP32_SERVICE_UUID, write: ESP32_COLOR_UUID }], 'orb-42');
+  // First session: pair and remember the id.
+  const first = new Esp32BleTransport({ bluetooth });
+  await first.connect();
+  assert.equal(first.getDeviceId(), 'orb-42');
+  // Next session (fresh transport, no requestDevice gesture): reconnect by id.
+  const next = new Esp32BleTransport({ bluetooth });
+  const ok = await next.reconnect('orb-42');
+  assert.equal(ok, true);
+  assert.ok(next.isReady());
+});
+
+test('reconnect returns false when the saved device is no longer granted', async () => {
+  const { bluetooth } = fakeBle([{ service: ESP32_SERVICE_UUID, write: ESP32_COLOR_UUID }], 'orb-42');
+  const t = new Esp32BleTransport({ bluetooth });
+  assert.equal(await t.reconnect('some-other-id'), false);
+  assert.equal(t.isReady(), false);
 });
