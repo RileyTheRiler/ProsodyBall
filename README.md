@@ -33,6 +33,13 @@ A gamified voice training suite with 10 interactive modes — train pitch, reson
 
 Click **Start Speaking** and allow microphone access. Then speak expressively — the active mode responds to your voice in real time!
 
+## Smartwatch app (Wear OS)
+
+A standalone Wear OS voice monitor lives in [`wear/`](./wear/README.md) — it ports the
+DSP analyzer to Kotlin, listens through the watch (or a Bluetooth earpiece) with no
+phone required, and coaches via haptic patterns, spoken/tone cues, and a discrete
+disguised-watch-face mode.
+
 ## Improvement backlog
 
 See [`IMPROVEMENT_SUGGESTIONS.md`](./IMPROVEMENT_SUGGESTIONS.md) for a prioritized list of UX, signal-accuracy, and product iteration ideas.

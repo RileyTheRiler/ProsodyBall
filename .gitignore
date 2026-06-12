@@ -21,3 +21,10 @@ voice-analyzer-state.js
 
 # Lockfiles
 pnpm-lock.yaml
+
+# Wear OS (Gradle/Android)
+wear/.gradle/
+wear/build/
+wear/*/build/
+wear/local.properties
+wear/.kotlin/
