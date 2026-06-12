@@ -28,9 +28,12 @@
 #define COLOR_ORDER GRB    // WS2812B is GRB
 
 // Power safety: a laptop USB port supplies only ~0.5-0.9 A. FastLED's governor
-// auto-dims so the strip can NEVER exceed this draw and brown out the ESP32.
-// Bump it up only if you power the strip from a 5V/3A+ brick or PSU.
-#define MAX_MILLIAMPS 800
+// auto-dims so the LEDs can NEVER exceed this draw and brown out the ESP32.
+// NOTE: this caps the LED strip ONLY — the ESP32 + active BLE radio pull another
+// ~150-250 mA on top. So 500 here ≈ 750 mA total, safe on a USB 3.0 / USB-C port
+// (and fine on most laptop USB-A ports). For a strict 500 mA USB 2.0 port, drop
+// to ~250; for full brightness, power the strip from a 5V/3A+ brick and raise this.
+#define MAX_MILLIAMPS 500
 
 static const char* SERVICE_UUID = "5b1e0001-8a0e-4f1b-9c5a-2f3d4e5a6b7c";
 static const char* COLOR_UUID   = "5b1e0002-8a0e-4f1b-9c5a-2f3d4e5a6b7c";

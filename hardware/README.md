@@ -27,9 +27,12 @@ data wire, and a **1000 µF** capacitor across the strip's 5V/GND.
 ### ⚡ Power — read this
 160 WS2812B pixels at full white want ~**9.6 A**; a laptop USB port gives only
 ~0.5–0.9 A. The firmware caps draw via `FastLED.setMaxPowerInVoltsAndMilliamps`
-(`MAX_MILLIAMPS = 800`), so it **auto-dims instead of browning out** — safe on
-USB. For full brightness, power the strip from a dedicated **5V/3A+** USB brick
-or supply (common 5V to the strip and ESP32, common ground) and raise the cap.
+(`MAX_MILLIAMPS = 500`), so it **auto-dims instead of browning out** — safe on
+USB. That cap governs the **LED strip only**; the ESP32 + BLE radio add another
+~150–250 mA, so 500 ≈ ~750 mA total (fine for USB 3.0 / USB-C and most laptop
+ports). For a strict 500 mA USB 2.0 port, lower it to ~250. For full brightness,
+power the strip from a dedicated **5V/3A+** USB brick or supply (common 5V to the
+strip and ESP32, common ground) and raise the cap.
 
 ## Flash the firmware
 
