@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BulbController, GenericBleTransport, hslToHueApi, hslToRgb, hslToXy } from './bulb-controller.js';
+import { BulbController, GenericBleTransport, Esp32BleTransport, ESP32_SERVICE_UUID, ESP32_COLOR_UUID, hslToHueApi, hslToRgb, hslToXy } from './bulb-controller.js';
 
 // In-memory localStorage stand-in
 function fakeStorage() {
@@ -265,4 +265,15 @@ test('GenericBleTransport reports a helpful error when no known service matches'
   const t = new GenericBleTransport({ bluetooth, getConfig: () => ({}) });
   await assert.rejects(() => t.connect(), /advanced UUID fields/);
   assert.equal(t.isReady(), false);
+});
+
+test('Esp32BleTransport writes raw 3-byte RGB to the custom service', async () => {
+  const { bluetooth, writes } = fakeBle([{ service: ESP32_SERVICE_UUID, write: ESP32_COLOR_UUID }]);
+  const t = new Esp32BleTransport({ bluetooth });
+  await t.connect();
+  assert.ok(t.isReady());
+  await t.send({ on: true, h: 0, s: 100, l: 50 }); // pure red
+  assert.deepEqual(writes[0], [0xff, 0x00, 0x00], 'red as [R,G,B]');
+  await t.send({ on: false });
+  assert.deepEqual(writes[1], [0x00, 0x00, 0x00], 'off == black');
 });

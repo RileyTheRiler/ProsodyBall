@@ -344,6 +344,70 @@ export class GenericBleTransport {
   }
 }
 
+// DIY ESP32 orb: ProsodyBall's *own* open BLE service. Because we control both
+// ends — the ESP32 firmware (hardware/prosodyball_orb) and this browser code —
+// there is no protocol to reverse-engineer and nothing to bond: a fixed custom
+// 128-bit service with one writable characteristic that takes a 3-byte [R,G,B].
+// The matching UUIDs live in the firmware sketch; keep them in sync.
+export const ESP32_SERVICE_UUID = '5b1e0001-8a0e-4f1b-9c5a-2f3d4e5a6b7c';
+export const ESP32_COLOR_UUID = '5b1e0002-8a0e-4f1b-9c5a-2f3d4e5a6b7c';
+const ESP32_NAME_PREFIX = 'ProsodyBall';
+
+export class Esp32BleTransport {
+  constructor({ bluetooth } = {}) {
+    this.bluetooth = bluetooth !== undefined
+      ? bluetooth
+      : (typeof navigator !== 'undefined' ? navigator.bluetooth : null);
+    this.device = null;
+    this.colorCh = null;
+  }
+
+  isReady() {
+    return !!(this.device && this.device.gatt && this.device.gatt.connected && this.colorCh);
+  }
+
+  async connect() {
+    if (!this.bluetooth) {
+      throw new Error('Web Bluetooth not supported — use Chrome, Edge, or Opera.');
+    }
+    // Our firmware advertises the service UUID, so we can filter on it directly
+    // (unlike the no-name bulbs that hide their service).
+    this.device = await this.bluetooth.requestDevice({
+      filters: [{ services: [ESP32_SERVICE_UUID] }, { namePrefix: ESP32_NAME_PREFIX }],
+      optionalServices: [ESP32_SERVICE_UUID],
+    });
+    if (this.device.addEventListener) {
+      this.device.addEventListener('gattserverdisconnected', () => { this.colorCh = null; });
+    }
+    await this._openGatt();
+  }
+
+  async _openGatt() {
+    const server = await this.device.gatt.connect();
+    const svc = await server.getPrimaryService(ESP32_SERVICE_UUID);
+    this.colorCh = await svc.getCharacteristic(ESP32_COLOR_UUID);
+  }
+
+  async test() {
+    if (!this.isReady()) await this.connect();
+    await this.send({ on: true, h: 210, s: 90, l: 55 });
+    return true;
+  }
+
+  async send({ on, h, s, l }) {
+    if (!this.isReady()) {
+      if (this.device && this.device.gatt) await this._openGatt(); // reconnect after a drop
+      else throw new Error('Not connected — click Connect first.');
+    }
+    const write = (data) => (this.colorCh.writeValueWithoutResponse
+      ? this.colorCh.writeValueWithoutResponse(data)
+      : this.colorCh.writeValue(data));
+    if (!on) { await write(Uint8Array.of(0, 0, 0)); return; }
+    const { r, g, b } = hslToRgb(h, s, l);
+    await write(Uint8Array.of(r, g, b));
+  }
+}
+
 // ---- Controller -----------------------------------------------------------
 
 export class BulbController {
@@ -396,6 +460,7 @@ export class BulbController {
       http: new HttpTransport({ fetchImpl: this.fetchImpl, getUrl: () => this.config.httpUrl }),
       webbluetooth: new WebBluetoothTransport(),
       genericble: new GenericBleTransport({ getConfig: () => this.config }),
+      esp32: new Esp32BleTransport(),
     };
   }
 

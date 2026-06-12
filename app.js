@@ -3182,15 +3182,16 @@ class VoxBallGame {
       http: document.getElementById('bulbHttpFields'),
       genericble: document.getElementById('bulbGenericbleFields'),
     };
-    // The Connect button (Bluetooth pairing) is shared by both BLE transports.
+    // The Connect button (Bluetooth pairing) is shared by all BLE transports.
     const btFields = document.getElementById('bulbBtFields');
+    const btTransports = new Set(['webbluetooth', 'genericble', 'esp32']);
 
     const syncVisibility = () => {
       const t = ctrl.config.transport;
       for (const [key, el] of Object.entries(groups)) {
         if (el) el.style.display = key === t ? '' : 'none';
       }
-      if (btFields) btFields.style.display = (t === 'webbluetooth' || t === 'genericble') ? '' : 'none';
+      if (btFields) btFields.style.display = btTransports.has(t) ? '' : 'none';
     };
 
     // Reflect controller config into the DOM controls. Runs initially and again
