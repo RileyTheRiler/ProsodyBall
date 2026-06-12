@@ -63,6 +63,16 @@ export async function getMicDiagnostics(ctx) {
   };
 }
 
+export function sanitizeUrl(url) {
+  if (!url) return null;
+  const strUrl = String(url);
+  // Match javascript:, data:, vbscript: with optional leading spaces or %20
+  if (/^(%20|\s)*(javascript|data|vbscript):/i.test(strUrl)) {
+    return 'about:blank';
+  }
+  return strUrl;
+}
+
 export function clamp01(v) {
   return Math.max(0, Math.min(1, v));
 }
