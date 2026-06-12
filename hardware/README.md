@@ -57,13 +57,13 @@ sweep across the whole strip, then goes dark. Use it to sanity-check the build
 
 ## Connect from ProsodyBall
 
-1. Open ProsodyBall in **Chrome or Edge** (Web Bluetooth; not Safari).
+1. Open ProsodyBall in **Chrome, Edge, or Opera** (Web Bluetooth; not Safari).
 2. Settings → Smart Bulb → **Connection: DIY ESP32 orb**.
 3. Click **Connect bulb** → pick **ProsodyBall-01** in the OS picker.
 4. Leave **"Reconnect automatically next session"** checked (default). From now
    on, ProsodyBall silently re-links this orb when the page loads — staff just
-   open the app, no picker click. (Chrome/Edge only; if unavailable it falls back
-   to the manual **Connect bulb** button.)
+   open the app, no picker click. (Chromium browsers only; if unavailable it
+   falls back to the manual **Connect bulb** button.)
 5. **Test connection** lights the orb. Turn on **"Mirror ball color"** — speak
    low → blue, high → pink, in sync with the on-screen ball.
 

@@ -551,7 +551,7 @@ export class BulbController {
     if (!(key in this.config)) return;
     const cur = this.config[key];
     if (typeof cur === 'boolean') this.config[key] = value === true || value === 'true' || value === '1' || value === 1;
-    else if (typeof cur === 'number') this.config[key] = Number(value);
+    else if (typeof cur === 'number') { const n = Number(value); if (Number.isFinite(n)) this.config[key] = n; }
     else this.config[key] = value;
     this._saveConfig();
     this._emitChange();
@@ -689,7 +689,7 @@ export class BulbController {
   // a picker click, so staff just open the app. No-op for non-BLE transports, when
   // disabled, or when the browser lacks getDevices() (falls back to manual Connect).
   async restore() {
-    if (!this.config.autoReconnect || !this.config.bleDeviceId) return false;
+    if (!this.config.enabled || !this.config.autoReconnect || !this.config.bleDeviceId) return false;
     const transport = this.transports[this.config.transport];
     if (!transport || typeof transport.reconnect !== 'function') return false;
     try {

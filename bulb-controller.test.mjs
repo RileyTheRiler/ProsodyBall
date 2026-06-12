@@ -299,3 +299,23 @@ test('reconnect returns false when the saved device is no longer granted', async
   assert.equal(await t.reconnect('some-other-id'), false);
   assert.equal(t.isReady(), false);
 });
+
+test('restore() is a no-op while the bulb feature is disabled', async () => {
+  let reconnects = 0;
+  const transport = { reconnect: async () => { reconnects += 1; return true; } };
+  const ctrl = makeController({ transport });
+  ctrl.config.autoReconnect = true;
+  ctrl.config.bleDeviceId = 'orb-42';
+  ctrl.config.enabled = false;
+  assert.equal(await ctrl.restore(), false);
+  assert.equal(reconnects, 0, 'must not relink BLE while the feature is off');
+  ctrl.config.enabled = true;
+  assert.equal(await ctrl.restore(), true);
+  assert.equal(reconnects, 1);
+});
+
+test('set() ignores non-finite numbers instead of persisting NaN', () => {
+  const ctrl = makeController({ transport: { send: async () => {}, test: async () => {} } });
+  ctrl.set('throttleMs', 'not-a-number');
+  assert.equal(ctrl.config.throttleMs, 150, 'bad numeric input leaves the prior value intact');
+});
