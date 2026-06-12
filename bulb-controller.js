@@ -231,6 +231,12 @@ const BLE_BULB_PROFILES = [
   // Magic Blue / MagicLight / classic Zengge BLE (same 0x56 command, different UUID)
   { name: 'magicblue', service: 0xffe5, writeChar: 0xffe9, encodeColor: trionesColor,
     powerOn: TRIONES_POWER_ON, powerOff: TRIONES_POWER_OFF },
+  // ELK-BLEDOM / MELK / LED-BLE / duoCo Strip — the cheap USB RGB strips. Distinct
+  // family: different UUID *and* a different 0x7e…0xef frame (NOT the 0x56 command).
+  { name: 'elkbledom', service: 0xfff0, writeChar: 0xfff3,
+    encodeColor: (r, g, b) => Uint8Array.of(0x7e, 0x00, 0x05, 0x03, r, g, b, 0x00, 0xef),
+    powerOn: Uint8Array.of(0x7e, 0x00, 0x04, 0xf0, 0x00, 0x01, 0xff, 0x00, 0xef),
+    powerOff: Uint8Array.of(0x7e, 0x00, 0x04, 0x00, 0x00, 0x00, 0xff, 0x00, 0xef) },
   // ffb0 family: 4-byte B,G,R,W (no dedicated power command — black == off)
   { name: 'ffb0', service: 0xffb0, writeChar: 0xffb2,
     encodeColor: (r, g, b) => Uint8Array.of(b, g, r, 0x00), powerOn: null, powerOff: null },

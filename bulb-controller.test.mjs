@@ -238,6 +238,16 @@ test('GenericBleTransport falls back to the Magic Blue UUID family', async () =>
   assert.equal(t.profile.name, 'magicblue');
 });
 
+test('GenericBleTransport drives ELK-BLEDOM strips with the 0x7e frame', async () => {
+  const { bluetooth, writes } = fakeBle([{ service: 0xfff0, write: 0xfff3 }]);
+  const t = new GenericBleTransport({ bluetooth, getConfig: () => ({}) });
+  await t.connect();
+  assert.equal(t.profile.name, 'elkbledom');
+  await t.send({ on: true, h: 0, s: 100, l: 50 }); // pure red
+  assert.deepEqual(writes[0], [0x7e, 0x00, 0x04, 0xf0, 0x00, 0x01, 0xff, 0x00, 0xef], 'power-on edge');
+  assert.deepEqual(writes[1], [0x7e, 0x00, 0x05, 0x03, 0xff, 0x00, 0x00, 0x00, 0xef], 'red color frame');
+});
+
 test('GenericBleTransport tries the manual UUID override first', async () => {
   const svc = '0000abcd-0000-1000-8000-00805f9b34fb';
   const wr = '0000ef01-0000-1000-8000-00805f9b34fb';
