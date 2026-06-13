@@ -40,26 +40,25 @@ strip and ESP32, common ground) and raise the cap.
 2. Add ESP32 support: *File → Preferences → Additional Boards Manager URLs* →
    `https://espressif.github.io/arduino-esp32/package_esp32_index.json`, then
    *Boards Manager → install "esp32"*.
-3. *Library Manager → install "FastLED"*.
-4. Open `prosodyball_orb/prosodyball_orb.ino`. Set `NUM_LEDS` / `LED_PIN` to your
+3. *Library Manager → install "NeoPixelBus" by Makuna*.
+4. Open `prosodyball_orb/prosodyball_orb.ino`. Set `NUM_LEDS` / `DATA_PIN` to your
    build if different. Select your board + port, click **Upload**.
 
 ## Power-on self-test
 
-Every time the ESP32 powers up, the firmware runs a quick **red → green → blue**
-sweep across the whole strip, then goes dark. Use it to sanity-check the build
+Every time the ESP32 powers up, the firmware runs a quick boot splash showing a
+soft teal color across the whole strip. Use it to sanity-check the build
 *before* touching the app:
 
 - Nothing lights up → check the data wire is on GPIO 4 and 5V/GND aren't swapped.
-- A color is wrong (red shows green) → change `COLOR_ORDER` in the sketch.
-- It flickers, dims hard, or the board resets → lower `MAX_MILLIAMPS` or add
+- It flickers, dims hard, or the board resets → check connections or add
   external 5V power.
 
 ## Connect from ProsodyBall
 
 1. Open ProsodyBall in **Chrome, Edge, or Opera** (Web Bluetooth; not Safari).
 2. Settings → Smart Bulb → **Connection: DIY ESP32 orb**.
-3. Click **Connect bulb** → pick **ProsodyBall-01** in the OS picker.
+3. Click **Connect bulb** → pick **ProsodyBall-Orb** in the OS picker.
 4. Leave **"Reconnect automatically next session"** checked (default). From now
    on, ProsodyBall silently re-links this orb when the page loads — staff just
    open the app, no picker click. (Chromium browsers only; if unavailable it
@@ -70,8 +69,14 @@ sweep across the whole strip, then goes dark. Use it to sanity-check the build
 ## Protocol (for reference)
 
 - Service UUID: `5b1e0001-8a0e-4f1b-9c5a-2f3d4e5a6b7c`
-- Color characteristic: `5b1e0002-8a0e-4f1b-9c5a-2f3d4e5a6b7c` — write **3 bytes
-  `[R, G, B]`** (0–255 each). `[0,0,0]` = off.
+- Color characteristic: `5b1e0002-8a0e-4f1b-9c5a-2f3d4e5a6b7c` — write **4 bytes
+  `[R, G, B, Resonance]`** (0–255 each). `[0,0,0,0]` = off. Falls back to **3 bytes
+  `[R, G, B]`** for backwards compatibility.
 
 These must stay identical to `ESP32_SERVICE_UUID` / `ESP32_COLOR_UUID` in
 `bulb-controller.js`.
+
+## Sketch Purpose and Features
+
+1. **Color Balancing (Pink Fix)**: Adjusts raw RGB inputs using a gamma curve of `2.2` and dims green/blue channels (G to 60%, B to 80%) to ensure pink shades show brightly through frosted diffusers instead of appearing washed out.
+2. **Resonance Animation Engine**: Processes the resonance value at a high frame rate. A `millis()`-based continuous loop drives breathing pulses (speed/depth scaled by resonance) and random per-pixel shimmers to visualize dynamic vocal resonance.

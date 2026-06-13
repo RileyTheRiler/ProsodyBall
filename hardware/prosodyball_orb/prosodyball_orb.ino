@@ -1,97 +1,155 @@
-// ProsodyBall DIY orb firmware — ESP32 + WS2812B
-// =================================================
-// Turns an ESP32 into an open Bluetooth-LE "smart bulb" that ProsodyBall's
-// browser app drives directly (no app, no hub, no Wi-Fi). The app's
-// Esp32BleTransport connects to the service below and writes a 3-byte [R,G,B]
-// color whenever the on-screen ball changes. We own both ends, so there's
-// nothing to reverse-engineer and no pairing/bonding dance.
-//
-// Libraries (install once in Arduino IDE):
-//   - ESP32 board package (Boards Manager: "esp32" by Espressif). The BLE*
-//     headers ship with it — no separate download.
-//   - "FastLED" (Library Manager).
-//
-// Board: select your ESP32 dev board (e.g. "ESP32 Dev Module"), then Upload.
-//
-// IMPORTANT — keep these UUIDs identical to bulb-controller.js
-// (ESP32_SERVICE_UUID / ESP32_COLOR_UUID). If you change one, change both.
-
-#include <FastLED.h>
 #include <BLEDevice.h>
-#include <BLEServer.h>
 #include <BLEUtils.h>
+#include <BLEServer.h>
+#include <NeoPixelBus.h>
 
-// ---- Hardware config — edit to match your build ---------------------------
-#define LED_PIN     4      // data wire from the strip -> this GPIO
-#define NUM_LEDS    160    // pixels on the strip (Xnbada 1m @ 160/m)
-#define LED_TYPE    WS2812B
-#define COLOR_ORDER GRB    // WS2812B is GRB
+// --- HARDWARE CONFIG ---
+#define DATA_PIN    4
+#define NUM_LEDS    160
 
-// Power safety: a laptop USB port supplies only ~0.5-0.9 A. FastLED's governor
-// auto-dims so the LEDs can NEVER exceed this draw and brown out the ESP32.
-// NOTE: this caps the LED strip ONLY — the ESP32 + active BLE radio pull another
-// ~150-250 mA on top. So 500 here ≈ 750 mA total, safe on a USB 3.0 / USB-C port
-// (and fine on most laptop USB-A ports). For a strict 500 mA USB 2.0 port, drop
-// to ~250; for full brightness, power the strip from a 5V/3A+ brick and raise this.
-#define MAX_MILLIAMPS 500
+NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt0Ws2812xMethod> strip(NUM_LEDS, DATA_PIN);
 
-static const char* SERVICE_UUID = "5b1e0001-8a0e-4f1b-9c5a-2f3d4e5a6b7c";
-static const char* COLOR_UUID   = "5b1e0002-8a0e-4f1b-9c5a-2f3d4e5a6b7c";
-static const char* DEVICE_NAME  = "ProsodyBall-01";
+// --- BLE UUIDs ---
+#define SERVICE_UUID        "5b1e0001-8a0e-4f1b-9c5a-2f3d4e5a6b7c"
+#define CHARACTERISTIC_UUID "5b1e0002-8a0e-4f1b-9c5a-2f3d4e5a6b7c"
 
-CRGB leds[NUM_LEDS];
+BLEServer* pServer = NULL;
+bool deviceConnected = false;
 
-// Apply a solid color to the whole orb.
-static void showColor(uint8_t r, uint8_t g, uint8_t b) {
-  fill_solid(leds, NUM_LEDS, CRGB(r, g, b));
-  FastLED.show();
-}
+struct ColorPacket { uint8_t r, g, b, res; };
+QueueHandle_t colorQueue;
 
-// Boot self-test: cycle red -> green -> blue, then go dark. Confirms wiring,
-// power, pixel count, and color order BEFORE the app ever connects. If a color
-// looks wrong (e.g. red shows green), fix COLOR_ORDER; if it dims/resets, lower
-// MAX_MILLIAMPS or add external power.
-static void bootSelfTest() {
-  const CRGB seq[] = { CRGB::Red, CRGB::Green, CRGB::Blue };
-  for (uint8_t i = 0; i < 3; i++) {
-    fill_solid(leds, NUM_LEDS, seq[i]);
-    FastLED.show();
-    delay(400);
-  }
-  showColor(0, 0, 0);
-}
-
-// Receives the 3-byte [R,G,B] packets the browser writes.
-class ColorCallback : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic* ch) override {
-    String v = ch->getValue();
-    if (v.length() >= 3) {
-      showColor((uint8_t)v[0], (uint8_t)v[1], (uint8_t)v[2]);
+class ColorPacketCallbacks: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+        String value = pCharacteristic->getValue();
+        if (value.length() == 4) {
+            ColorPacket pkt = {
+                (uint8_t)value[0],
+                (uint8_t)value[1],
+                (uint8_t)value[2],
+                (uint8_t)value[3]
+            };
+            Serial.printf("Received -> R:%d G:%d B:%d Res:%d\n", pkt.r, pkt.g, pkt.b, pkt.res);
+            xQueueSend(colorQueue, &pkt, 0);
+        } else if (value.length() == 3) {
+            // Backwards compatibility
+            ColorPacket pkt = {
+                (uint8_t)value[0],
+                (uint8_t)value[1],
+                (uint8_t)value[2],
+                0
+            };
+            Serial.printf("Received (3-byte) -> R:%d G:%d B:%d\n", pkt.r, pkt.g, pkt.b);
+            xQueueSend(colorQueue, &pkt, 0);
+        }
     }
-  }
 };
 
+// Global animation state
+uint8_t targetR = 0;
+uint8_t targetG = 0;
+uint8_t targetB = 0;
+uint8_t targetRes = 0;
+
+class ServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+        deviceConnected = true;
+        Serial.println(">>> App Connected via Bluetooth!");
+    }
+    void onDisconnect(BLEServer* pServer) {
+        deviceConnected = false;
+        Serial.println(">>> App Disconnected.");
+    }
+};
+
+RgbColor adjustColor(uint8_t r, uint8_t g, uint8_t b) {
+    float gamma = 2.2f;
+    uint8_t cr = (uint8_t)(powf((float)r / 255.0f, gamma) * 255.0f);
+    uint8_t cg = (uint8_t)(powf((float)g / 255.0f, gamma) * 255.0f);
+    uint8_t cb = (uint8_t)(powf((float)b / 255.0f, gamma) * 255.0f);
+    
+    // Scale green and blue to prevent washing out red (green: 60%, blue: 80%)
+    cg = (uint8_t)(cg * 0.60f);
+    cb = (uint8_t)(cb * 0.80f);
+    
+    return RgbColor(cr, cg, cb);
+}
+
 void setup() {
-  FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS);
-  FastLED.setMaxPowerInVoltsAndMilliamps(5, MAX_MILLIAMPS);
-  bootSelfTest(); // red/green/blue sweep, then dark — verifies the strip on power-up
+    Serial.begin(115200);
+    colorQueue = xQueueCreate(5, sizeof(ColorPacket));
 
-  BLEDevice::init(DEVICE_NAME);
-  BLEServer* server = BLEDevice::createServer();
-  BLEService* service = server->createService(SERVICE_UUID);
-  BLECharacteristic* color = service->createCharacteristic(
-      COLOR_UUID,
-      BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
-  color->setCallbacks(new ColorCallback());
-  service->start();
+    strip.Begin();
 
-  BLEAdvertising* adv = BLEDevice::getAdvertising();
-  adv->addServiceUUID(SERVICE_UUID); // so the browser can filter by service
-  adv->setScanResponse(true);
-  BLEDevice::startAdvertising();
+    // Boot splash: Soft Teal
+    RgbColor teal = adjustColor(0, 150, 150);
+    for (int i = 0; i < NUM_LEDS; i++) strip.SetPixelColor(i, teal);
+    strip.Show();
+    delay(1000);
+
+    BLEDevice::init("ProsodyBall-Orb");
+    pServer = BLEDevice::createServer();
+    pServer->setCallbacks(new ServerCallbacks());
+
+    BLEService *pService = pServer->createService(SERVICE_UUID);
+    BLECharacteristic *pCharacteristic = pService->createCharacteristic(
+        CHARACTERISTIC_UUID,
+        BLECharacteristic::PROPERTY_WRITE
+    );
+    pCharacteristic->setCallbacks(new ColorPacketCallbacks());
+    pService->start();
+    pServer->getAdvertising()->start();
+
+    Serial.println("BLE Active. Broadcasting as: 'ProsodyBall-Orb'");
 }
 
 void loop() {
-  // All work happens in the BLE write callback; nothing to poll here.
-  delay(1000);
+    ColorPacket pkt;
+    if (xQueueReceive(colorQueue, &pkt, 0)) {
+        targetR = pkt.r;
+        targetG = pkt.g;
+        targetB = pkt.b;
+        targetRes = pkt.res;
+    }
+
+    // --- ANIMATION ENGINE ---
+    uint32_t t = millis();
+    float resFactor = targetRes / 255.0f;
+    
+    // Breathing pulse: speed and depth scale with resonance
+    float pulseSpeed = 0.002f + (0.004f * resFactor);
+    float pulse = (sin(t * pulseSpeed) * 0.5f + 0.5f);
+    
+    // Get the properly gamma-corrected and balanced base color
+    RgbColor baseColor = adjustColor(targetR, targetG, targetB);
+    
+    // Apply per-pixel shimmer and global pulse
+    for (int i = 0; i < NUM_LEDS; i++) {
+        float shimmer = 1.0f;
+        if (targetRes > 0) {
+            // Create a randomized twinkle effect
+            float noise = (float)random(100) / 100.0f; 
+            shimmer = 1.0f - (noise * resFactor * 0.5f); // up to 50% brightness dip when highly resonant
+        }
+        
+        // Depth of the breathing pulse drops up to 30% depending on resonance
+        float breathMultiplier = 1.0f - (resFactor * 0.3f * pulse);
+        float finalMult = shimmer * breathMultiplier;
+        
+        uint8_t fr = (uint8_t)(baseColor.R * finalMult);
+        uint8_t fg = (uint8_t)(baseColor.G * finalMult);
+        uint8_t fb = (uint8_t)(baseColor.B * finalMult);
+        
+        strip.SetPixelColor(i, RgbColor(fr, fg, fb));
+    }
+    strip.Show();
+
+    if (!deviceConnected) {
+        delay(500);
+        pServer->getAdvertising()->start();
+        Serial.println("Re-advertising...");
+        deviceConnected = true;
+    }
+
+    delay(10);
 }

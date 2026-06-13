@@ -5292,7 +5292,8 @@ class VoxBallGame {
     }
     // Mirror the live ball color onto a smart bulb (throttled internally).
     // Driven from the central loop so it tracks every mode that updates the color.
-    this.bulbController?.update(this.ballHue, this.ballSat, this.ballLit, dt);
+    const currentResonance = this.analyzer ? this.analyzer.smoothResonance : 0;
+    this.bulbController?.update(this.ballHue, this.ballSat, this.ballLit, currentResonance, dt);
     this._pushAvgSamples();
     this.updateMeters();
     this._updateExpandedMetrics();
