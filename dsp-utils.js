@@ -107,3 +107,57 @@ export function computeAttackHardness({ risePeak = 0, riseCeiling = 0.5, cleanli
   const combined = riseHardness * (1 - wA) + clamp01(onsetAbruptness) * wA;
   return clamp01(combined * (0.5 + 0.5 * clamp01(cleanliness)));
 }
+
+// ====== PERCEIVED-GENDER SCORE ======
+// Perceived vocal gender is driven by BOTH fundamental pitch (F0) AND vocal-tract
+// resonance (formants). Pitch alone misreads cases like a deep-voiced singer hitting
+// high notes — high F0 but masculine resonance. We blend a normalized pitch with the
+// resonance score (smoothResonance, already F1/F2/F3-based), and let confidence shift
+// the balance: trust resonance more when formants are confident, trust pitch less when
+// the pitch estimate is weak. When both cues are unreliable the score collapses toward
+// 0.5 (androgynous) so noise reads as neutral rather than flickering between extremes.
+//
+// Returns 0..1: 0 = clearly masculine, 0.5 = androgynous/ambiguous, 1 = clearly feminine.
+export function computeGenderScore({
+  pitchHz = 0,
+  resonance = 0.5,
+  pitchConfidence = 0,
+  formantConfidence = 0,
+  pitchMinHz = 110,
+  pitchMaxHz = 220,
+} = {}) {
+  const pitchNorm = pitchHz > 0
+    ? normalizeAgainstRange(pitchHz, pitchMinHz, pitchMaxHz)
+    : 0.5;
+  const resNorm = clamp01(resonance);
+
+  const pc = clamp01(pitchConfidence);
+  const fc = clamp01(formantConfidence);
+
+  // Base weights ~0.5/0.5, then scale each cue by its confidence so unreliable
+  // cues defer to the confident one. Resonance gets a slight intrinsic edge — it is
+  // the harder-to-fake gender cue and the whole point of this mode.
+  const wPitch = 0.5 * (0.35 + 0.65 * pc);
+  const wRes = 0.5 * (0.35 + 0.65 * fc) * 1.1;
+  const totalW = wPitch + wRes;
+
+  const blended = totalW > 1e-6
+    ? (pitchNorm * wPitch + resNorm * wRes) / totalW
+    : 0.5;
+
+  // Collapse toward 0.5 when overall confidence is low.
+  const overallConf = clamp01(Math.max(pc, fc));
+  const score = 0.5 + (blended - 0.5) * overallConf;
+  return clamp01(score);
+}
+
+// Map a 0..1 perceived-gender score to a hue.
+// Normal palette: blue 210 (masculine) -> purple ~275 (androgynous/nonbinary center) -> pink 340 (feminine).
+// Colorblind palette: luminance-mapped blue 220 -> yellow 55, paralleling the pitch-mode CB ramp.
+export function genderScoreToHue(score, colorblind = false) {
+  const s = clamp01(score);
+  if (colorblind) {
+    return 220 - s * 165; // 220 (blue) -> 55 (yellow)
+  }
+  return 210 + s * 130; // 210 (blue) -> 275 (purple) -> 340 (pink)
+}
