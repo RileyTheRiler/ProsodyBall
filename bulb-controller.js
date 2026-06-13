@@ -454,7 +454,7 @@ export class Esp32BleTransport {
     return true;
   }
 
-  async send({ on, h, s, l, res = 0 }) {
+  async send({ on, h, s, l, res = 0, wgt = 0.5 }) {
     if (!this.isReady()) {
       if (this.device && this.device.gatt) await this._openGatt(); // reconnect after a drop
       else throw new Error('Not connected — click Connect first.');
@@ -462,10 +462,11 @@ export class Esp32BleTransport {
     const write = (data) => (this.colorCh.writeValueWithoutResponse
       ? this.colorCh.writeValueWithoutResponse(data)
       : this.colorCh.writeValue(data));
-    if (!on) { await write(Uint8Array.of(0, 0, 0, 0)); return; }
+    if (!on) { await write(Uint8Array.of(0, 0, 0, 0, 0)); return; }
     const { r, g, b } = hslToRgb(h, s, l);
     const resByte = Math.round(Math.max(0, Math.min(1, res)) * 255);
-    await write(Uint8Array.of(r, g, b, resByte));
+    const wgtByte = Math.round(Math.max(0, Math.min(1, wgt)) * 255);
+    await write(Uint8Array.of(r, g, b, resByte, wgtByte));
   }
 }
 
@@ -508,7 +509,7 @@ export class BulbController {
     this._loadConfig();
 
     // Smoothing + dispatch state
-    this.cur = { h: 220, s: 50, l: 50, res: 0 };
+    this.cur = { h: 220, s: 50, l: 50, res: 0, wgt: 0.5 };
     this.target = { ...this.cur };
     this._lastSentColor = null;
     this._lastSendTs = -Infinity;
@@ -575,20 +576,23 @@ export class BulbController {
   }
 
   // ---- Per-frame entry point ----
-  // hue:0-360, sat:0-100, lit:0-100 (the ball's current HSL), res:0-1 (resonance), dt in seconds.
-  update(hue, sat, lit, res = 0, dt = 0.016) {
+  // hue:0-360, sat:0-100, lit:0-100 (the ball's current HSL), res:0-1 (resonance),
+  // dt in seconds, wgt:0-1 (vocal weight, 0=light .. 1=heavy).
+  update(hue, sat, lit, res = 0, dt = 0.016, wgt = 0.5) {
     if (!this.config.enabled) return;
 
     this.target.h = hue;
     this.target.s = sat;
     this.target.l = lit;
     this.target.res = res;
+    this.target.wgt = wgt;
 
     const k = clamp((dt || 0.016) * SMOOTH_PER_SEC, 0, 1);
     this.cur.h += (this.target.h - this.cur.h) * k;
     this.cur.s += (this.target.s - this.cur.s) * k;
     this.cur.l += (this.target.l - this.cur.l) * k;
     this.cur.res += (this.target.res - this.cur.res) * k;
+    this.cur.wgt += (this.target.wgt - this.cur.wgt) * k;
 
     // Local simulated bulb updates every frame for smooth visual feedback.
     this._paintMock();
@@ -620,7 +624,8 @@ export class BulbController {
     return Math.abs(this.cur.h - last.h) > COLOR_DELTA_H
       || Math.abs(this.cur.s - last.s) > COLOR_DELTA_SL
       || Math.abs(this.cur.l - last.l) > COLOR_DELTA_SL
-      || Math.abs(this.cur.res - last.res) > 0.05;
+      || Math.abs(this.cur.res - last.res) > 0.05
+      || Math.abs(this.cur.wgt - last.wgt) > 0.05;
   }
 
   async _dispatch() {
@@ -630,7 +635,7 @@ export class BulbController {
     const color = { ...this.cur };
     this._sending = true;
     try {
-      await transport.send({ on: true, h: color.h, s: color.s, l: color.l, res: color.res });
+      await transport.send({ on: true, h: color.h, s: color.s, l: color.l, res: color.res, wgt: color.wgt });
       this._failCount = 0;
       this._setStatus('Connected', 'ok');
     } catch (err) {
