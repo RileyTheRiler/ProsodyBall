@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue } from './dsp-utils.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { BulbController } from './bulb-controller.js';
@@ -1779,6 +1779,9 @@ class VoxBallGame {
     this.sparkles = [];
     this.themeMode = 'highcontrast';
     this.colorblindMode = false;
+    // Orb color mode: 'pitch' (hue from F0) or 'gender' (hue from perceived vocal gender).
+    this.colorMode = localStorage.getItem('vox:colorMode') || 'pitch';
+    this.smoothGenderScore = 0.5; // EMA of the 0..1 perceived-gender score (0.5 = androgynous)
     this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road' | 'ascent' | 'prism' | 'vowelvalley'
 
     // ====== CREATURE STATE ======
@@ -3251,6 +3254,7 @@ class VoxBallGame {
     const coachingToast = document.getElementById('coachingToast');
     this.coachingToastHideTimer = 0;
     const micDeviceSelect = document.getElementById('micDeviceSelect');
+    const colorModeSelect = document.getElementById('colorModeSelect');
     const echoCancelToggle = document.getElementById('echoCancelToggle');
     const noiseSuppressToggle = document.getElementById('noiseSuppressToggle');
     const autoGainToggle = document.getElementById('autoGainToggle');
@@ -3350,6 +3354,7 @@ class VoxBallGame {
       if (noiseSuppressToggle) noiseSuppressToggle.checked = this.micInputPreferences.noiseSuppression;
       if (autoGainToggle) autoGainToggle.checked = this.micInputPreferences.autoGainControl;
       if (micDeviceSelect) micDeviceSelect.value = this.micInputPreferences.deviceId || 'default';
+      if (colorModeSelect) colorModeSelect.value = this.colorMode || 'pitch';
     };
 
     const populateMicDevices = async () => {
@@ -4227,6 +4232,12 @@ class VoxBallGame {
       localStorage.setItem('vox:micDeviceId', this.micInputPreferences.deviceId);
     });
 
+    colorModeSelect?.addEventListener('change', (e) => {
+      this.colorMode = e.target.value === 'gender' ? 'gender' : 'pitch';
+      localStorage.setItem('vox:colorMode', this.colorMode);
+      if (!this.isRunning) this.drawIdleScene();
+    });
+
     echoCancelToggle?.addEventListener('change', (e) => {
       this.micInputPreferences.echoCancellation = !!e.target.checked;
       localStorage.setItem('vox:echoCancellation', String(this.micInputPreferences.echoCancellation));
@@ -5090,6 +5101,9 @@ class VoxBallGame {
 
   // FIX: Idle scene animation behind the overlay
   drawIdleScene() {
+    // Cancel any existing idle loop first so repeated calls (e.g. toggling color
+    // mode while idle) don't stack independent rAF loops.
+    if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
     const idleScroll = { x: this.scrollX || 0 };
     let idleTime = 0;
     const animate = () => {
@@ -5693,15 +5707,33 @@ class VoxBallGame {
     if (this.particles.length > 80) this.particles.splice(0, this.particles.length - 80);
 
     // ==========================================================
-    // BALL COLOR — pitch drives hue (blue→purple→pink),
+    // BALL COLOR — hue from pitch or perceived gender (see _computeBallHue),
     // prosody drives saturation and brightness
-    //
-    // ≤100 Hz  → 210 (deep blue)
-    // 145 Hz   → 250 (blue-purple)
-    // 160 Hz   → 275 (true purple / androgynous center)
-    // 175 Hz   → 310 (pink-purple)
-    // ≥250 Hz  → 340 (hot pink)
     // ==========================================================
+    const pitchHue = this._computeBallHue(dt);
+    this.ballHue = pitchHue;
+    this.ballSat = 25 + ps * 75;   // 25% (muted) → 100% (vivid)
+    this.ballLit = this.colorblindMode
+      ? (40 + ps * 30) + (pitchHue < 100 ? 10 : 0) // extra luminance boost at yellow end
+      : 40 + ps * 30;
+  }
+
+  // ==========================================================
+  // BALL HUE — single source of truth shared by ball + creature modes.
+  //
+  // colorMode 'pitch' (default): hue follows F0
+  //   ≤100 Hz → 210 (deep blue), 145 → 250, 160 → 275 (androgynous center),
+  //   175 → 310, ≥250 → 340 (hot pink)
+  //
+  // colorMode 'gender': hue follows perceived vocal gender (pitch + resonance)
+  //   blue (masculine) → purple ~275 (androgynous/nonbinary) → pink (feminine)
+  //
+  // Each mode has a colorblind sub-ramp (luminance-mapped blue→yellow).
+  // ==========================================================
+  _computeBallHue(dt) {
+    if (this.colorMode === 'gender') {
+      return this._updateGenderHue(dt);
+    }
     const hz = this.analyzer.smoothPitchHz;
     let pitchHue;
     if (this.colorblindMode) {
@@ -5729,11 +5761,24 @@ class VoxBallGame {
         pitchHue = 340;
       }
     }
-    this.ballHue = pitchHue;
-    this.ballSat = 25 + ps * 75;   // 25% (muted) → 100% (vivid)
-    this.ballLit = this.colorblindMode
-      ? (40 + ps * 30) + (pitchHue < 100 ? 10 : 0) // extra luminance boost at yellow end
-      : 40 + ps * 30;
+    return pitchHue;
+  }
+
+  // Perceived-gender hue: blend pitch + resonance into a 0..1 score, smooth it,
+  // then map to a hue. Smoothing rate rises with confidence so the hue settles
+  // quickly on confident voiced frames and coasts gently when the signal is weak.
+  _updateGenderHue(dt) {
+    const a = this.analyzer;
+    const rawScore = computeGenderScore({
+      pitchHz: a.smoothPitchHz,
+      resonance: a.smoothResonance,
+      pitchConfidence: a.pitchConfidence,
+      formantConfidence: a.formantConfidence,
+    });
+    const conf = clamp01(Math.max(a.pitchConfidence || 0, a.formantConfidence || 0));
+    const lerp = 0.05 + conf * 0.08;
+    this.smoothGenderScore += (rawScore - this.smoothGenderScore) * lerp;
+    return genderScoreToHue(this.smoothGenderScore, this.colorblindMode);
   }
 
   drawSceneInternal(prosodyGlow) {
@@ -6026,20 +6071,11 @@ class VoxBallGame {
     const ps = this.prosodyScore;
 
     const hz = this.analyzer.smoothPitchHz;
-    if (this.colorblindMode) {
-      if (hz <= 100) this.ballHue = 220;
-      else if (hz <= 160) this.ballHue = 220 - ((hz - 100) / 60) * 30;
-      else if (hz <= 220) this.ballHue = 190 - ((hz - 160) / 60) * 135;
-      else this.ballHue = 55;
-    } else {
-      if (hz <= 100) this.ballHue = 210;
-      else if (hz <= 145) this.ballHue = 210 + ((hz - 100) / 45) * 40;
-      else if (hz <= 175) this.ballHue = 250 + ((hz - 145) / 30) * 60;
-      else if (hz <= 250) this.ballHue = 310 + ((hz - 175) / 75) * 30;
-      else this.ballHue = 340;
-    }
+    this.ballHue = this._computeBallHue(dt); // pitch- or gender-driven, colorblind-aware
     this.ballSat = 25 + ps * 75;
-    this.ballLit = 40 + ps * 30;
+    this.ballLit = this.colorblindMode
+      ? (40 + ps * 30) + (this.ballHue < 100 ? 10 : 0)
+      : 40 + ps * 30;
 
     const pitchNorm = this.analyzer.lastPitch > 0
       ? Math.max(0, Math.min(1, (this.analyzer.lastPitch - 80) / 250)) : 0;
