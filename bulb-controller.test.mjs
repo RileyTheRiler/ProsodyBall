@@ -98,13 +98,13 @@ test('update suppresses near-identical colors', async () => {
   const transport = { send: async () => { sends += 1; }, test: async () => {} };
   const ctrl = makeController({ now: () => t, transport, throttleMs: 100 });
 
-  ctrl.update(220, 80, 50, 1); // dt=1 forces cur to snap to target; first send
+  ctrl.update(220, 80, 50, 0, 1); // res=0, dt=1 snaps cur to target; first send
   await Promise.resolve();
   assert.equal(sends, 1);
 
-  // Past the throttle window but the color barely moved -> no send
+  // Past the throttle window but the color barely moved (and res held) -> no send
   t += 500;
-  ctrl.update(220.5, 80, 50, 1);
+  ctrl.update(220.5, 80, 50, 0, 1);
   await Promise.resolve();
   assert.equal(sends, 1, 'sub-threshold change is skipped');
 });
@@ -269,15 +269,42 @@ test('GenericBleTransport reports a helpful error when no known service matches'
   assert.equal(t.isReady(), false);
 });
 
-test('Esp32BleTransport writes raw 3-byte RGB to the custom service', async () => {
+test('Esp32BleTransport writes [R,G,B,Res,Weight] to the custom service', async () => {
   const { bluetooth, writes } = fakeBle([{ service: ESP32_SERVICE_UUID, write: ESP32_COLOR_UUID }]);
   const t = new Esp32BleTransport({ bluetooth });
   await t.connect();
   assert.ok(t.isReady());
-  await t.send({ on: true, h: 0, s: 100, l: 50 }); // pure red
-  assert.deepEqual(writes[0], [0xff, 0x00, 0x00], 'red as [R,G,B]');
+  await t.send({ on: true, h: 0, s: 100, l: 50, res: 1, wgt: 1 }); // pure red, full resonance + weight
+  assert.deepEqual(writes[0], [0xff, 0x00, 0x00, 0xff, 0xff], 'red as [R,G,B,Res,Weight]');
+  await t.send({ on: true, h: 0, s: 100, l: 50 }); // defaults: res 0, weight 0.5 -> 128
+  assert.deepEqual(writes[1], [0xff, 0x00, 0x00, 0x00, 0x80], 'defaults to res 0, weight mid (128)');
   await t.send({ on: false });
-  assert.deepEqual(writes[1], [0x00, 0x00, 0x00], 'off == black');
+  assert.deepEqual(writes[2], [0x00, 0x00, 0x00, 0x00, 0x00], 'off == five zero bytes');
+});
+
+test('update dispatches when only vocal weight changes past the gate', async () => {
+  let t = 1000;
+  const writes = [];
+  const transport = { send: async (m) => { writes.push(m); }, test: async () => {} };
+  const ctrl = makeController({ now: () => t, transport, throttleMs: 100 });
+
+  // First send (no prior color). dt=1 snaps cur straight to target.
+  ctrl.update(220, 80, 50, 0.5, 1, 0.2);
+  await Promise.resolve();
+  assert.equal(writes.length, 1);
+
+  // Same hue/sat/lit/res, weight 0.2 -> 0.5 (> 0.05), past the throttle window -> send.
+  t += 200;
+  ctrl.update(220, 80, 50, 0.5, 1, 0.5);
+  await Promise.resolve();
+  assert.equal(writes.length, 2, 'weight change past the gate triggers a send');
+  assert.ok(Math.abs(writes[1].wgt - 0.5) < 1e-9, 'forwards the new weight');
+
+  // Tiny weight nudge (< 0.05), past the window -> suppressed.
+  t += 200;
+  ctrl.update(220, 80, 50, 0.5, 1, 0.52);
+  await Promise.resolve();
+  assert.equal(writes.length, 2, 'sub-threshold weight change is skipped');
 });
 
 test('BLE transport reconnects to a saved device id without a new picker', async () => {

@@ -26,13 +26,14 @@ data wire, and a **1000 µF** capacitor across the strip's 5V/GND.
 
 ### ⚡ Power — read this
 160 WS2812B pixels at full white want ~**9.6 A**; a laptop USB port gives only
-~0.5–0.9 A. The firmware caps draw via `FastLED.setMaxPowerInVoltsAndMilliamps`
-(`MAX_MILLIAMPS = 500`), so it **auto-dims instead of browning out** — safe on
-USB. That cap governs the **LED strip only**; the ESP32 + BLE radio add another
-~150–250 mA, so 500 ≈ ~750 mA total (fine for USB 3.0 / USB-C and most laptop
-ports). For a strict 500 mA USB 2.0 port, lower it to ~250. For full brightness,
-power the strip from a dedicated **5V/3A+** USB brick or supply (common 5V to the
-strip and ESP32, common ground) and raise the cap.
+~0.5–0.9 A. **This sketch has no automatic power cap** — it drives NeoPixelBus
+directly — so it relies on never lighting every pixel at full white: the animation
+clamps its brightness multiplier to ≤ 1.0 (`MULT_CEILING`), and the app sends
+saturated hues rather than white. Even so, a heavy/bright voice holds the LEDs near
+their baseline continuously, so on a bare laptop USB port keep brightness modest
+(lower `MULT_CEILING` or the `BASE_BRIGHT_*` constants if your port browns out). For
+full brightness, power the strip from a dedicated **5V/3A+** USB brick or supply
+(common 5V to the strip and ESP32, common ground).
 
 ## Flash the firmware
 
@@ -69,9 +70,10 @@ soft teal color across the whole strip. Use it to sanity-check the build
 ## Protocol (for reference)
 
 - Service UUID: `5b1e0001-8a0e-4f1b-9c5a-2f3d4e5a6b7c`
-- Color characteristic: `5b1e0002-8a0e-4f1b-9c5a-2f3d4e5a6b7c` — write **4 bytes
-  `[R, G, B, Resonance]`** (0–255 each). `[0,0,0,0]` = off. Falls back to **3 bytes
-  `[R, G, B]`** for backwards compatibility.
+- Color characteristic: `5b1e0002-8a0e-4f1b-9c5a-2f3d4e5a6b7c` — write **5 bytes
+  `[R, G, B, Resonance, Weight]`** (0–255 each). `[0,0,0,0,0]` = off. Falls back to
+  **4 bytes `[R, G, B, Resonance]`** (weight defaults to a neutral mid, 128) and **3 bytes
+  `[R, G, B]`** (resonance 0, weight 128) for backwards compatibility.
 
 These must stay identical to `ESP32_SERVICE_UUID` / `ESP32_COLOR_UUID` in
 `bulb-controller.js`.
@@ -79,4 +81,5 @@ These must stay identical to `ESP32_SERVICE_UUID` / `ESP32_COLOR_UUID` in
 ## Sketch Purpose and Features
 
 1. **Color Balancing (Pink Fix)**: Adjusts raw RGB inputs using a gamma curve of `2.2` and dims green/blue channels (G to 60%, B to 80%) to ensure pink shades show brightly through frosted diffusers instead of appearing washed out.
-2. **Resonance Animation Engine**: Processes the resonance value at a high frame rate. A `millis()`-based continuous loop drives breathing pulses (speed/depth scaled by resonance) and random per-pixel shimmers to visualize dynamic vocal resonance.
+2. **Resonance Animation Engine**: A `millis()`-based loop turns resonance into a large-wavelength sine wave that *travels* along the strip, plus a gentle global breath. Both oscillate around a baseline (so a brighter voice never dims the orb), producing a coherent moving glow that survives the opal diffuser — unlike per-pixel random noise, which the diffuser averages away.
+3. **Weight Body**: The vocal-weight byte sets the orb's "body". Heavier voices read fuller and steadier (higher baseline brightness, calmer wave); lighter voices read dimmer and free to shimmer. A final brightness clamp (`MULT_CEILING`) keeps power within the strip's existing envelope.
