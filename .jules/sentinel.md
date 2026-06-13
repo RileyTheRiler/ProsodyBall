@@ -51,3 +51,8 @@
 **Vulnerability:** Safe DOM construction using `document.createDocumentFragment()` and `.append()` was not consistently applied in `app.js` (e.g. `_showSessionSummary`, `renderTeleprompter`) or `calibration-wizard.js`. This allowed potential injection if dynamic data was ever used within loops with string concatenation, and led to conflicts with `innerHTML`.
 **Learning:** Relying on `innerHTML` for UI construction is inherently risky. Furthermore, manual DOM mocks in tests (like `MockEl`) require robust state initialization (e.g., `this.childNodes`) to correctly support safe DOM traversal methods like `.append()`.
 **Prevention:** Replace all complex `innerHTML` assignments with safe programmatic elements (`DocumentFragment`, `.createElement()`, `.textContent`). Ensure any manual DOM mocks fully implement necessary Node properties.
+
+## 2026-04-03 - [DOM-based XSS Risk via Missing URL Sanitization]
+**Vulnerability:** Found multiple instances in `app.js` where tainted URLs (like `window.location.href` and blob URLs) were assigned directly to `.href` properties on dynamically created anchor elements. If the tainted source contained dangerous protocols (`javascript:`, `data:`, `vbscript:`), it could lead to DOM-based XSS when clicked.
+**Learning:** Directly assigning arbitrary URLs to `.href` without sanitizing the protocol is a security risk, especially when the source is external or manipulable (like query parameters or location hash). Even though native DOM properties handle HTML encoding, they do not block dangerous protocols.
+**Prevention:** Implement and consistently use a `sanitizeUrl` helper function (added to `dsp-utils.js`) to filter out dangerous protocols from untrusted URL strings before assigning them to sensitive DOM attributes.
