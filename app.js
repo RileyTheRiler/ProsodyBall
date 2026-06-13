@@ -5101,6 +5101,9 @@ class VoxBallGame {
 
   // FIX: Idle scene animation behind the overlay
   drawIdleScene() {
+    // Cancel any existing idle loop first so repeated calls (e.g. toggling color
+    // mode while idle) don't stack independent rAF loops.
+    if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
     const idleScroll = { x: this.scrollX || 0 };
     let idleTime = 0;
     const animate = () => {
