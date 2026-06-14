@@ -10,8 +10,6 @@ import {
   computeCepstrum,
   computeCPP,
   cppToFemininity,
-  applyCalibrationOffset,
-  finalizeCueCalibration,
   computeGenderScoreMulti,
   computeGenderScore,
   DEFAULT_GENDER_CUE_WEIGHTS,
@@ -82,25 +80,6 @@ test('cppToFemininity inverts: low CPP (breathy) -> feminine', () => {
   assert.ok(cppToFemininity(14) < 0.1);  // modal/pressed
 });
 
-// ---------- Calibration ----------
-test('calibration recenters the speaker neutral to 0.5', () => {
-  assert.equal(applyCalibrationOffset(0.3, 0.3, 0.2), 0.5);
-  assert.equal(applyCalibrationOffset(0.5, 0.3, 0.2), 1); // neutral+spread maps high (0.5+0.5)
-  assert.ok(applyCalibrationOffset(0.4, 0.3, 0.2) > 0.5);
-});
-test('calibration falls back to raw value when not learned', () => {
-  assert.equal(applyCalibrationOffset(0.42, null, null), 0.42);
-});
-test('finalizeCueCalibration derives neutral + spread from samples', () => {
-  const cal = finalizeCueCalibration([0.2, 0.3, 0.4, 0.5, 0.6]);
-  assert.ok(cal.isLearned);
-  assert.ok(Math.abs(cal.neutral - 0.4) < 0.11);
-  assert.ok(cal.spread >= 0.05);
-});
-test('finalizeCueCalibration needs enough samples', () => {
-  assert.equal(finalizeCueCalibration([0.5]).isLearned, false);
-});
-
 // ---------- Multi-cue combiner ----------
 test('disabled cues are excluded from the blend', () => {
   const { score } = computeGenderScoreMulti({
@@ -133,17 +112,14 @@ test('low confidence collapses score toward 0.5', () => {
   });
   assert.ok(Math.abs(score - 0.5) < 0.15);
 });
-test('per-speaker calibration shifts the contribution', () => {
-  const base = computeGenderScoreMulti({
-    cues: { resonance: { value: 0.5, confidence: 1 } },
-    enabledMap: { resonance: true },
+test('decisiveness: a confident, agreeing masculine voice leans clearly blue (not stuck near purple)', () => {
+  // resonance + modalF0 both clearly masculine and confident -> should reach the blue end,
+  // not stall in the purple band the way the pre-tuning conservative collapse did.
+  const { score } = computeGenderScoreMulti({
+    cues: { resonance: { value: 0.15, confidence: 0.9 }, modalF0: { value: 0.15, confidence: 0.9 } },
+    enabledMap: { resonance: true, modalF0: true },
   });
-  const calibrated = computeGenderScoreMulti({
-    cues: { resonance: { value: 0.5, confidence: 1 } },
-    enabledMap: { resonance: true },
-    calibration: { resonance: { neutral: 0.3, spread: 0.2 } }, // raw 0.5 is above this speaker's neutral
-  });
-  assert.ok(calibrated.score > base.score);
+  assert.ok(score < 0.15, `expected clearly masculine/blue, got ${score}`);
 });
 
 // ---------- Intonation opt-in behavior (combiner-level) ----------

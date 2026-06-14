@@ -27,6 +27,30 @@ export function pitchHzToPosition(hz, minHz = 80, maxHz = 300) {
   return clamp((hz - minHz) / (maxHz - minHz), 0, 1);
 }
 
+// YIN octave-up correction. YIN picks the FIRST CMND dip below a strict threshold; when a voice
+// has a weak fundamental, that first dip can land on the 2x harmonic (half the true period),
+// reporting double the pitch. Re-examine integer multiples of the chosen period: if a longer
+// period (m * bestTau) is itself a local CMND minimum that is below a RELAXED threshold AND is
+// at least as deep as the chosen dip, it is the true fundamental that the greedy first-below-
+// threshold rule skipped — return it. A very deep dip at bestTau (cmnd < 0.05) is confidently
+// the fundamental and is never second-guessed, which protects clean strong voices from being
+// pulled an octave DOWN onto a sub-harmonic. Smallest qualifying multiple wins (no over-shoot).
+// Pure + synchronous so it can be unit-tested without audio.
+export function correctOctaveError(cmnd, bestTau, { maxPeriod, relaxedThreshold = 0.35 } = {}) {
+  if (!cmnd || !(bestTau > 0)) return bestTau;
+  const limit = Number.isFinite(maxPeriod) ? Math.min(maxPeriod, cmnd.length - 1) : cmnd.length - 1;
+  const baseVal = cmnd[bestTau];
+  if (!(baseVal >= 0.05)) return bestTau; // confident (or invalid) dip — leave it alone
+  for (let m = 2; m * bestTau <= limit; m++) {
+    const tau = m * bestTau;
+    const v = cmnd[tau];
+    const isLocalMin = v <= cmnd[tau - 1] && (tau + 1 > limit || v <= cmnd[tau + 1]);
+    // Below the relaxed gate and comparably deep (or deeper) than the harmonic YIN latched onto.
+    if (isLocalMin && v < relaxedThreshold && v <= baseVal + 0.02) return tau;
+  }
+  return bestTau;
+}
+
 export async function ensureAudioContextRunning(ctx) {
   if (!ctx) return { ok: false };
   if (ctx.state === 'suspended') {
@@ -285,30 +309,12 @@ export function cppToFemininity(cppDb, { min = 6, max = 14 } = {}) {
   return 1 - normalizeAgainstRange(cppDb, min, max);
 }
 
-// Re-center a raw 0..1 cue value against a per-speaker neutral baseline so the speaker's own
-// neutral reads 0.5 and deviation scales by their spread.
-export function applyCalibrationOffset(rawValue, neutral, spread) {
-  if (!(spread > 0) || neutral == null) return clamp01(rawValue);
-  return clamp01(0.5 + (rawValue - neutral) / (2 * spread));
-}
-
-// Finalize a collected sample set into a per-speaker {neutral, spread} baseline for a cue.
-export function finalizeCueCalibration(samples, { minSpread = 0.05 } = {}) {
-  if (!samples || samples.length < 4) return { neutral: null, spread: null, isLearned: false };
-  const sorted = [...samples].sort((a, b) => a - b);
-  const at = (p) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(sorted.length * p)))];
-  const neutral = at(0.5);
-  const spread = Math.max(minSpread, (at(0.9) - at(0.1)) / 2);
-  return { neutral, spread, isLearned: true };
-}
-
 // Combine per-cue {value, confidence} into a final 0..1 score plus an uncertainty (0..1).
 // enabledMap[id] must be truthy for a cue to contribute (absent => disabled).
 export function computeGenderScoreMulti({
   cues = {},
   weights = DEFAULT_GENDER_CUE_WEIGHTS,
   enabledMap = {},
-  calibration = null,
 } = {}) {
   let sumW = 0, sumWV = 0, sumWC = 0;
   const contribs = [];
@@ -316,11 +322,8 @@ export function computeGenderScoreMulti({
     if (!enabledMap[id]) continue;
     const cue = cues[id];
     if (!cue) continue;
-    let value = clamp01(cue.value);
+    const value = clamp01(cue.value);
     const conf = clamp01(cue.confidence);
-    if (calibration && calibration[id] && calibration[id].spread > 0) {
-      value = applyCalibrationOffset(value, calibration[id].neutral, calibration[id].spread);
-    }
     const base = weights[id] != null ? weights[id] : 0;
     const w = base * conf;
     if (w <= 0) continue;
@@ -335,7 +338,13 @@ export function computeGenderScoreMulti({
   for (const c of contribs) varAcc += c.w * (c.value - blended) * (c.value - blended);
   const disagreement = Math.sqrt(varAcc / sumW);
   const meanConf = sumWC / sumW;
-  const uncertainty = clamp01((1 - meanConf) * 0.9 + disagreement * 1.2);
-  const score = clamp01(0.5 + (blended - 0.5) * (1 - uncertainty));
+  // Keep the confidence term strong so genuinely low-confidence frames still collapse toward 0.5
+  // (purple). Soften the disagreement penalty, and apply a mild decisiveness gain on the
+  // deviation so confident, agreeing voices lean further toward the blue/pink ends instead of
+  // stalling near purple. The gain multiplies (1 - uncertainty), so it has no effect when
+  // uncertainty is high — low-confidence voices stay neutral.
+  const uncertainty = clamp01((1 - meanConf) * 0.9 + disagreement * 0.9);
+  const DECISIVENESS = 1.2;
+  const score = clamp01(0.5 + (blended - 0.5) * (1 - uncertainty) * DECISIVENESS);
   return { score, uncertainty };
 }

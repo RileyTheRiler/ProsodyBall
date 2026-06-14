@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, finalizeCueCalibration } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError } from './dsp-utils.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { BulbController } from './bulb-controller.js';
@@ -611,6 +611,11 @@ export class VoiceAnalyzer {
       if (minVal > 0.4) return 0;
     }
 
+    // Octave-up guard: YIN's first-below-threshold rule can latch onto the 2x harmonic when the
+    // fundamental dip is weak (common for deep voices), reporting double the pitch. Recover the
+    // true (longer) period when an equally-good-or-better dip exists at a multiple of bestTau.
+    bestTau = correctOctaveError(cmnd, bestTau, { maxPeriod });
+
     // Step 4: Parabolic interpolation for sub-sample accuracy
     let period = bestTau;
     // Capture CMND value at bestTau for confidence scoring
@@ -631,10 +636,11 @@ export class VoiceAnalyzer {
     // Map inversely: low CMND → high confidence
     this.pitchConfidence = Math.max(0, Math.min(1, 1 - cmndAtBest * PITCH_CONFIDENCE_FACTOR));
 
-    // Step 5: Median filter — suppresses octave jumps
-    // Keep a small buffer of recent raw detections
+    // Step 5: Median filter — suppresses octave jumps and transient blips
+    // Keep a small buffer of recent raw detections (7 frames so a brief 2-3 frame error can't
+    // dominate the median).
     this._pitchMedianBuf.push(rawHz);
-    if (this._pitchMedianBuf.length > 5) this._pitchMedianBuf.shift();
+    if (this._pitchMedianBuf.length > 7) this._pitchMedianBuf.shift();
 
     if (this._pitchMedianBuf.length >= 3) {
       const sorted = [...this._pitchMedianBuf].sort((a, b) => a - b);
@@ -1881,12 +1887,7 @@ class VoxBallGame {
       dispersion: cueOn('vox:genderCue:dispersion', true),
       cpp: cueOn('vox:genderCue:cpp', true),
       intonation: cueOn('vox:genderCue:intonation', false),
-      calibrated: cueOn('vox:genderCue:calibrated', true),
     };
-    // Per-speaker calibration baselines per cue ({neutral, spread} in 0..1 femininity space).
-    try {
-      this.genderCalibration = JSON.parse(localStorage.getItem('vox:genderCalibration')) || null;
-    } catch { this.genderCalibration = null; }
     this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road' | 'ascent' | 'prism' | 'vowelvalley'
 
     // ====== CREATURE STATE ======
@@ -3366,7 +3367,6 @@ class VoxBallGame {
       sibilant: document.getElementById('genderCueSibilant'),
       cpp: document.getElementById('genderCueCpp'),
       intonation: document.getElementById('genderCueIntonation'),
-      calibrated: document.getElementById('genderCueCalibrated'),
     };
     const echoCancelToggle = document.getElementById('echoCancelToggle');
     const noiseSuppressToggle = document.getElementById('noiseSuppressToggle');
@@ -4358,12 +4358,6 @@ class VoxBallGame {
       input?.addEventListener('change', (e) => {
         this.genderCues[cue] = !!e.target.checked;
         localStorage.setItem(`vox:genderCue:${cue}`, String(this.genderCues[cue]));
-        // Toggling calibration off clears the learned baseline so turning it back on re-learns.
-        if (cue === 'calibrated' && !this.genderCues.calibrated) {
-          this.genderCalibration = null;
-          this._genderCalLearner = null;
-          localStorage.removeItem('vox:genderCalibration');
-        }
         if (!this.isRunning) this.drawIdleScene();
       });
     }
@@ -5862,7 +5856,7 @@ class VoxBallGame {
   // ==========================================================
   _computeBallHue(dt) {
     if (this.colorMode === 'gender') {
-      return this._updateGenderHue(dt);
+      return this._updateGenderHue();
     }
     const hz = this.analyzer.smoothPitchHz;
     let pitchHue;
@@ -5898,7 +5892,7 @@ class VoxBallGame {
   // then map to a hue. Smoothing rate rises with confidence so the hue settles quickly on
   // confident voiced frames and coasts gently when the signal is weak. Every cue feeds only
   // this score, so the smart bulb and colorblind ramp inherit it automatically.
-  _updateGenderHue(dt) {
+  _updateGenderHue() {
     const a = this.analyzer;
     const g = this.genderCues;
 
@@ -5925,49 +5919,13 @@ class VoxBallGame {
       intonation: g.intonation,
     };
 
-    // One-shot per-speaker calibration: learn the user's neutral baseline once over a few
-    // seconds of confident voiced speech, then score each cue relative to it. One-shot (not
-    // continuous) so an intentional voice change reads as deviation rather than re-centering.
-    if (g.calibrated && !this.genderCalibration) this._learnGenderCalibration(dt, cues, enabledMap);
-
-    const calibration = g.calibrated ? this.genderCalibration : null;
-    const { score, uncertainty } = computeGenderScoreMulti({ cues, enabledMap, calibration });
+    const { score, uncertainty } = computeGenderScoreMulti({ cues, enabledMap });
 
     const conf = clamp01(1 - uncertainty);
     const lerp = 0.05 + conf * 0.08;
     this.smoothGenderScore += (score - this.smoothGenderScore) * lerp;
     this.genderUncertainty = uncertainty;
     return genderScoreToHue(this.smoothGenderScore, this.colorblindMode);
-  }
-
-  // Accumulate raw (pre-calibration) cue values during confident voiced speech, then finalize
-  // a per-cue {neutral, spread} baseline. Reuses the same idea as pitch/tilt profile learning.
-  _learnGenderCalibration(dt, cues, enabledMap) {
-    if (!this._genderCalLearner) {
-      this._genderCalLearner = { samples: {}, voicedTime: 0, duration: 6.0 };
-    }
-    const L = this._genderCalLearner;
-    // Only sample when the frame is reasonably voiced/confident.
-    const voiced = (this.analyzer.pitchConfidence || 0) > 0.4 || (this.analyzer.formantConfidence || 0) > 0.4;
-    if (!voiced) return;
-    for (const id of Object.keys(cues)) {
-      if (!enabledMap[id]) continue;
-      const cue = cues[id];
-      if (!cue || clamp01(cue.confidence) < 0.4) continue;
-      (L.samples[id] || (L.samples[id] = [])).push(clamp01(cue.value));
-    }
-    L.voicedTime += dt;
-    if (L.voicedTime >= L.duration) {
-      const cal = {};
-      for (const id of Object.keys(L.samples)) {
-        const fin = finalizeCueCalibration(L.samples[id]);
-        if (fin.isLearned) cal[id] = { neutral: fin.neutral, spread: fin.spread };
-      }
-      this.genderCalibration = cal;
-      this._genderCalLearner = null;
-      try { localStorage.setItem('vox:genderCalibration', JSON.stringify(cal)); } catch { /* quota */ }
-      console.log('[ProsodyBall] Learned per-speaker gender calibration', cal);
-    }
   }
 
   drawSceneInternal(prosodyGlow) {
