@@ -65,8 +65,79 @@ static int correctOctaveError(const float* cmnd, int bestTau, int maxPeriod,
   return bestTau;
 }
 
+// In-place iterative radix-2 Cooley-Tukey FFT. n must be a power of two.
+static void fftRadix2(float* re, float* im, int n) {
+  // Bit-reversal permutation.
+  for (int i = 1, j = 0; i < n; i++) {
+    int bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      float tr = re[i]; re[i] = re[j]; re[j] = tr;
+      float ti = im[i]; im[i] = im[j]; im[j] = ti;
+    }
+  }
+  for (int len = 2; len <= n; len <<= 1) {
+    float ang = -2.0f * (float)M_PI / (float)len;
+    float wlen_r = cosf(ang), wlen_i = sinf(ang);
+    for (int i = 0; i < n; i += len) {
+      float w_r = 1.0f, w_i = 0.0f;
+      for (int k = 0; k < len / 2; k++) {
+        int a = i + k, b = i + k + len / 2;
+        float v_r = re[b] * w_r - im[b] * w_i;
+        float v_i = re[b] * w_i + im[b] * w_r;
+        re[b] = re[a] - v_r; im[b] = im[a] - v_i;
+        re[a] += v_r;        im[a] += v_i;
+        float nw_r = w_r * wlen_r - w_i * wlen_i;
+        w_i = w_r * wlen_i + w_i * wlen_r;
+        w_r = nw_r;
+      }
+    }
+  }
+}
+
+// Spectral centroid (Hz) over [VOX_BRIGHT_LO_HZ, VOX_BRIGHT_HI_HZ], normalized to a 0..1
+// brightness/resonance proxy. Ported from computeSpectralCentroid() in dsp-utils.js.
+float VoxDsp::computeBrightness(const float* buf, size_t n, float rms, float* centroidHzOut) {
+  *centroidHzOut = 0.0f;
+  float silenceThreshold = calibrating() ? 0.015f : _noiseFloor * 2.5f;
+  if (rms < silenceThreshold) return _smoothBright; // hold last value during silence
+
+  static float re[VOX_FRAME_SAMPLES];
+  static float im[VOX_FRAME_SAMPLES];
+  const int N = (int)n;
+  // Hann window to limit spectral leakage, then FFT.
+  for (int i = 0; i < N; i++) {
+    float w = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * i / (N - 1)));
+    re[i] = buf[i] * w;
+    im[i] = 0.0f;
+  }
+  fftRadix2(re, im, N);
+
+  const float binHz = (float)VOX_SAMPLE_RATE / (float)N;
+  int loBin = (int)(VOX_BRIGHT_LO_HZ / binHz);
+  int hiBin = (int)(VOX_BRIGHT_HI_HZ / binHz);
+  if (loBin < 1) loBin = 1;
+  if (hiBin > N / 2) hiBin = N / 2;
+
+  float num = 0.0f, den = 0.0f;
+  for (int i = loBin; i <= hiBin; i++) {
+    float mag = sqrtf(re[i] * re[i] + im[i] * im[i]);
+    num += (i * binHz) * mag;
+    den += mag;
+  }
+  float centroid = den > 0.0f ? num / den : 0.0f;
+  *centroidHzOut = centroid;
+
+  float bright = clamp01f((centroid - VOX_BRIGHT_MIN_HZ) /
+                          (VOX_BRIGHT_MAX_HZ - VOX_BRIGHT_MIN_HZ));
+  _smoothBright += (bright - _smoothBright) * 0.25f; // light EMA for stability
+  return _smoothBright;
+}
+
 VoxDsp::VoxDsp() {
   recalibrate();
+  _smoothBright = 0.0f;
   _pitchMedianLen = 0;
   _confidence = 0.0f;
   _pitchHistLen = 0;
@@ -201,6 +272,11 @@ VoxResult VoxDsp::process(const float* frame, size_t n, float dtSecs) {
   r.pitchHz = hz;
   r.confidence = _confidence;
   r.pitchPos = pitchHzToPosition(hz, VOX_PITCH_MIN_HZ, VOX_PITCH_MAX_HZ);
+
+  // --- brightness / resonance proxy (spectral centroid) ---
+  float centroidHz = 0.0f;
+  r.brightness = computeBrightness(frame, n, rms, &centroidHz);
+  r.centroidHz = centroidHz;
 
   // --- bounce: semitone std-dev of recent voiced pitch vs modal F0 (app.js:1134-1151) ---
   if (r.voiced) {

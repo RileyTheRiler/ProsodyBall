@@ -27,6 +27,16 @@
 #define VOX_PITCH_MIN_HZ  80.0f
 #define VOX_PITCH_MAX_HZ  300.0f
 
+// ---- Brightness/resonance cue ----
+// Spectral centroid (a.k.a. "center of gravity", computeSpectralCentroid in dsp-utils.js)
+// is a cheap, robust proxy for vocal brightness/resonance: a brighter, more forward voice
+// pushes energy higher in the spectrum. It is NOT full formant tracking (that 4096-pt FFT +
+// cepstrum port is still on the roadmap) but is a real, usable cue for colour/haptics.
+#define VOX_BRIGHT_MIN_HZ 400.0f   // centroid mapped to brightness 0
+#define VOX_BRIGHT_MAX_HZ 2200.0f  // centroid mapped to brightness 1
+#define VOX_BRIGHT_LO_HZ  120.0f   // analysis band low edge (skip DC/hum)
+#define VOX_BRIGHT_HI_HZ  5000.0f  // analysis band high edge
+
 // Per-frame analysis result.
 struct VoxResult {
   float rms;             // raw RMS energy of the frame (0..~1)
@@ -35,6 +45,8 @@ struct VoxResult {
   float bounce;          // intonation variability 0..1
   float syllableImpulse; // 0..1, spikes to 1 on a syllable onset then decays
   float confidence;      // pitch confidence 0..1
+  float brightness;      // spectral-centroid resonance proxy 0..1 (smoothed)
+  float centroidHz;      // raw spectral centroid in Hz (0 if silent)
   bool  voiced;          // true when a pitch was found this frame
 };
 
@@ -54,6 +66,10 @@ public:
 
 private:
   float detectPitch(const float* buf, size_t n, float rms);
+  float computeBrightness(const float* buf, size_t n, float rms, float* centroidHzOut);
+
+  // --- brightness smoothing ---
+  float _smoothBright;
 
   // --- calibration ---
   static const int CALIB_TARGET_FRAMES = 16; // ~1 s of quiet at ~64 ms/frame
