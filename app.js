@@ -1869,6 +1869,17 @@ class VoxBallGame {
       canvasAtStart: 0,
     };
 
+    // ====== PITCH REFERENCE TONE ======
+    this.pitchRef = {
+      enabled: localStorage.getItem('vox:pitchRef:enabled') === 'true',
+      targetHz: parseFloat(localStorage.getItem('vox:pitchRef:targetHz') || '220'),
+      toleranceHz: parseFloat(localStorage.getItem('vox:pitchRef:toleranceHz') || '20'),
+      volume: parseFloat(localStorage.getItem('vox:pitchRef:volume') || '0.3'),
+      cooldown: 0,
+      _osc: null,
+      _gain: null,
+    };
+
     // ====== ACCESSIBILITY ======
     this.userMotionPreference = localStorage.getItem('vox:motionPreference') || 'auto';
     this.micInputPreferences = {
@@ -3486,6 +3497,8 @@ class VoxBallGame {
       if (this._renderVibRules) this._renderVibRules();
       if (this._gameArea) this._gameArea.classList.remove('vib-shake');
 
+      this._stopPitchRefTone();
+
       // Close any open panels so they don't block the menu or summary overlay
       // (panels have higher z-index than the welcome overlay, so they must be
       // explicitly closed here — setHudSettingsVisible only hides .hud-setting
@@ -3498,6 +3511,8 @@ class VoxBallGame {
       document.getElementById('helpBtn')?.setAttribute('aria-expanded', 'false');
       document.getElementById('recordingsDrawer')?.classList.remove('show');
       document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'false');
+      document.getElementById('pitchRefPanel')?.classList.remove('show');
+      document.getElementById('pitchRefBtn')?.setAttribute('aria-expanded', 'false');
 
       // Show session summary if session was meaningful (> 3 seconds)
       if (this.session.duration > 3) {
@@ -3551,6 +3566,7 @@ class VoxBallGame {
       document.getElementById('summaryOverlay').classList.remove('show');
 
       // Close all panels and reset aria-expanded
+      this._stopPitchRefTone();
       document.getElementById('settingsPanel')?.classList.remove('show');
       document.getElementById('settingsBtn')?.setAttribute('aria-expanded', 'false');
       document.getElementById('vibPanel')?.classList.remove('show');
@@ -3559,6 +3575,8 @@ class VoxBallGame {
       document.getElementById('helpBtn')?.setAttribute('aria-expanded', 'false');
       document.getElementById('recordingsDrawer')?.classList.remove('show');
       document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'false');
+      document.getElementById('pitchRefPanel')?.classList.remove('show');
+      document.getElementById('pitchRefBtn')?.setAttribute('aria-expanded', 'false');
 
       this.drawIdleScene();
     });
@@ -3578,6 +3596,8 @@ class VoxBallGame {
       document.getElementById('helpBtn')?.setAttribute('aria-expanded', 'false');
       document.getElementById('recordingsDrawer')?.classList.remove('show');
       document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'false');
+      document.getElementById('pitchRefPanel')?.classList.remove('show');
+      document.getElementById('pitchRefBtn')?.setAttribute('aria-expanded', 'false');
       // Reset mode selection so user can pick fresh
       modeDetails.classList.remove('show');
       modeCards.forEach(c => c.classList.remove('selected'));
@@ -4175,6 +4195,15 @@ class VoxBallGame {
         document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
         vibBtn?.setAttribute('aria-expanded', 'false');
       }
+      // Pitch reference tone panel
+      const _prtPanel = document.getElementById('pitchRefPanel');
+      const _prtBtn = document.getElementById('pitchRefBtn');
+      if (_prtPanel && !_prtPanel.contains(e.target) && e.target !== _prtBtn && (!_prtBtn || !_prtBtn.contains(e.target))) {
+        if (_prtPanel.classList.contains('show')) {
+          _prtPanel.classList.remove('show');
+          _prtBtn?.setAttribute('aria-expanded', 'false');
+        }
+      }
     });
 
     if (vibBtn) {
@@ -4431,6 +4460,83 @@ class VoxBallGame {
         { metric: 'resonance', direction: 'above', threshold: 60 },
       ]);
     });
+
+    // ── Pitch Reference Tone handlers ──
+    const pitchRefBtn = document.getElementById('pitchRefBtn');
+    const pitchRefPanel = document.getElementById('pitchRefPanel');
+
+    const _updatePitchRefNote = (hz) => {
+      const noteLabel = document.getElementById('pitchRefNoteLabel');
+      if (noteLabel) noteLabel.textContent = `${hz} Hz · ${this._pitchHzToNoteLabel(hz)}`;
+    };
+
+    const _syncPitchRefHz = (hz) => {
+      hz = Math.max(80, Math.min(400, hz));
+      this.pitchRef.targetHz = hz;
+      localStorage.setItem('vox:pitchRef:targetHz', String(hz));
+      const slider = document.getElementById('pitchRefSlider');
+      const input = document.getElementById('pitchRefHzInput');
+      if (slider) slider.value = hz;
+      if (input) input.value = hz;
+      _updatePitchRefNote(hz);
+    };
+
+    pitchRefBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isVisible = pitchRefPanel.classList.toggle('show');
+      pitchRefBtn.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
+      if (isVisible) {
+        document.getElementById('pitchRefEnableToggle').checked = this.pitchRef.enabled;
+        document.getElementById('pitchRefSlider').value = this.pitchRef.targetHz;
+        document.getElementById('pitchRefHzInput').value = this.pitchRef.targetHz;
+        _updatePitchRefNote(this.pitchRef.targetHz);
+        document.getElementById('pitchRefToleranceSlider').value = this.pitchRef.toleranceHz;
+        document.getElementById('pitchRefToleranceLabel').textContent = `±${this.pitchRef.toleranceHz} Hz`;
+        document.getElementById('pitchRefVolumeSlider').value = this.pitchRef.volume;
+        // close other panels
+        vibPanel?.classList.remove('show');
+        if (vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
+        helpTooltip?.classList.remove('show');
+        recordingsDrawer?.classList.remove('show');
+        if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', 'false');
+        settingsPanel?.classList.remove('show');
+        if (settingsBtn) settingsBtn.setAttribute('aria-expanded', 'false');
+      }
+    });
+
+    document.getElementById('pitchRefEnableToggle')?.addEventListener('change', (e) => {
+      this.pitchRef.enabled = e.target.checked;
+      localStorage.setItem('vox:pitchRef:enabled', String(this.pitchRef.enabled));
+      pitchRefBtn?.classList.toggle('active', this.pitchRef.enabled);
+      if (!this.pitchRef.enabled) this._stopPitchRefTone();
+    });
+
+    document.getElementById('pitchRefSlider')?.addEventListener('input', (e) => {
+      _syncPitchRefHz(parseFloat(e.target.value));
+    });
+
+    document.getElementById('pitchRefHzInput')?.addEventListener('change', (e) => {
+      _syncPitchRefHz(parseFloat(e.target.value));
+    });
+
+    document.getElementById('pitchRefToleranceSlider')?.addEventListener('input', (e) => {
+      this.pitchRef.toleranceHz = parseFloat(e.target.value);
+      localStorage.setItem('vox:pitchRef:toleranceHz', String(this.pitchRef.toleranceHz));
+      const lbl = document.getElementById('pitchRefToleranceLabel');
+      if (lbl) lbl.textContent = `±${this.pitchRef.toleranceHz} Hz`;
+    });
+
+    document.getElementById('pitchRefVolumeSlider')?.addEventListener('input', (e) => {
+      this.pitchRef.volume = parseFloat(e.target.value);
+      localStorage.setItem('vox:pitchRef:volume', String(this.pitchRef.volume));
+    });
+
+    document.getElementById('pitchRefTestBtn')?.addEventListener('click', () => {
+      this._triggerPitchRefTone();
+    });
+
+    if (this.pitchRef.enabled) pitchRefBtn?.classList.add('active');
+    // ── end Pitch Reference Tone handlers ──
 
     recalibrateBtn?.addEventListener('click', async () => {
       if (!this.analyzer.isActive) {
@@ -4843,6 +4949,7 @@ class VoxBallGame {
     this._updateExpandedMetrics();
     this.renderTeleprompter(dt);
     this.checkVibrationAlerts(dt);
+    this.checkPitchRefTone(dt);
     this.perfMonitor.render(`Particles: ${this.particles.length} · Trail: ${this.trailPoints.length}`);
 
     // ---- Session stats accumulation ----
@@ -10756,6 +10863,71 @@ class VoxBallGame {
 
         container.scrollTop += (targetScroll - currentScroll) * easeFactor;
       }
+    }
+  }
+
+  // ============================================================
+  // PITCH REFERENCE TONE ENGINE
+  // ============================================================
+  _triggerPitchRefTone() {
+    const a = this.analyzer;
+    if (!a.audioCtx) return;
+    this._stopPitchRefTone();
+
+    const ctx = a.audioCtx;
+    const now = ctx.currentTime;
+    const dur = 2.0;
+    const vol = this.pitchRef.volume;
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(vol, now + 0.05);
+    gain.gain.setValueAtTime(vol, now + dur - 0.1);
+    gain.gain.linearRampToValueAtTime(0, now + dur);
+    gain.connect(ctx.destination);
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(this.pitchRef.targetHz, now);
+    osc.connect(gain);
+    osc.start(now);
+    osc.stop(now + dur);
+    osc.onended = () => {
+      gain.disconnect();
+      this.pitchRef._osc = null;
+      this.pitchRef._gain = null;
+    };
+
+    this.pitchRef._osc = osc;
+    this.pitchRef._gain = gain;
+    this.pitchRef.cooldown = dur + 0.5;
+  }
+
+  _stopPitchRefTone() {
+    if (!this.pitchRef._osc) return;
+    try {
+      const ctx = this.analyzer?.audioCtx;
+      const now = ctx?.currentTime ?? 0;
+      this.pitchRef._gain?.gain.cancelScheduledValues(now);
+      this.pitchRef._gain?.gain.setValueAtTime(0, now + 0.03);
+      this.pitchRef._osc.stop(now + 0.03);
+    } catch (e) {}
+    this.pitchRef._osc = null;
+    this.pitchRef._gain = null;
+  }
+
+  checkPitchRefTone(dt) {
+    const pr = this.pitchRef;
+    pr.cooldown = Math.max(0, pr.cooldown - dt);
+    if (!pr.enabled || pr.cooldown > 0) return;
+
+    const hz = this.analyzer.smoothPitchHz;
+    const m = this.analyzer.metrics;
+    const isSpeaking = m.energy > 0.05 && this.analyzer.pitchConfidence > 0.3;
+    if (!isSpeaking) return;
+
+    if (Math.abs(hz - pr.targetHz) > pr.toleranceHz) {
+      this._triggerPitchRefTone();
     }
   }
 

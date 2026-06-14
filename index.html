@@ -605,7 +605,55 @@
       color: var(--text-primary);
     }
 
-    /* Toggle switch */
+    .pitch-ref-panel {
+      position: absolute;
+      top: 60px;
+      right: 16px;
+      background: var(--bg-surface);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 16px 18px;
+      max-width: 320px;
+      width: 92vw;
+      z-index: var(--z-dropdown);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      font-size: 1rem;
+      color: var(--text-muted);
+      display: none;
+    }
+
+    .pitch-ref-panel.show { display: block; }
+
+    .pitch-ref-panel h3 {
+      color: var(--text-primary);
+      font-size: 1rem;
+      margin: 0 0 4px;
+    }
+
+    .pitch-ref-slider {
+      width: 100%;
+      margin: 4px 0;
+      accent-color: var(--accent, #a78bfa);
+    }
+
+    .pitch-ref-hz-input {
+      width: 68px;
+      padding: 4px 6px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 6px;
+      color: var(--text-primary);
+      font-size: 0.88rem;
+      font-family: inherit;
+    }
+
+    .btn-pitchref.active {
+      background: rgba(167, 139, 250, 0.2);
+      border-color: rgba(167, 139, 250, 0.6);
+      color: #c4b5fd;
+    }
+
+
     .toggle-switch {
       position: relative;
       width: 36px;
@@ -4847,6 +4895,14 @@
             <path d="M22 10v4" />
           </svg>
         </button>
+        <button class="btn btn-pitchref hud-setting" hidden id="pitchRefBtn" title="Pitch Reference Tone" aria-label="Pitch Reference Tone settings" aria-expanded="false" aria-controls="pitchRefPanel">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 18V5l12-2v13"/>
+            <circle cx="6" cy="18" r="3"/>
+            <circle cx="18" cy="16" r="3"/>
+          </svg>
+        </button>
         <button class="btn btn-cb hud-setting" hidden id="cameraBtn" title="Camera Mirror" aria-label="Camera Mirror" aria-expanded="false" aria-controls="cameraModal">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round" stroke-linejoin="round">
@@ -5575,6 +5631,58 @@
         </div>
         <button class="vib-add-btn" id="vibTestBtn" style="margin-top:8px;border-style:solid;opacity:0.7">📳 Test
           Vibration</button>
+      </div>
+
+      <div class="pitch-ref-panel" id="pitchRefPanel">
+        <h3>🎵 Pitch Reference Tone</h3>
+        <div class="vib-panel-sub">
+          Plays your target pitch as a tone whenever your voice drifts outside the set tolerance.
+          <strong>Wear headphones</strong> to prevent feedback.
+        </div>
+
+        <div class="vib-master">
+          <label for="pitchRefEnableToggle">Enable</label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="pitchRefEnableToggle" aria-label="Enable pitch reference tone">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div style="margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <span style="color:var(--text-primary);font-size:0.88rem;font-weight:600">Target pitch</span>
+            <span id="pitchRefNoteLabel" style="color:var(--accent,#a78bfa);font-weight:700;font-size:0.88rem">220 Hz · A3</span>
+          </div>
+          <input id="pitchRefSlider" type="range" min="80" max="400" step="1" value="220"
+            class="pitch-ref-slider" aria-label="Target pitch in Hz">
+          <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--text-muted)">
+            <span>80 Hz</span><span>400 Hz</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+            <input id="pitchRefHzInput" type="number" min="80" max="400" step="1" value="220"
+              class="pitch-ref-hz-input" aria-label="Target pitch in Hz (type a value)">
+            <span style="font-size:0.82rem">Hz</span>
+            <button id="pitchRefTestBtn" class="btn btn-help" style="padding:4px 10px;font-size:0.78rem;margin-left:auto">▶ Test tone</button>
+          </div>
+        </div>
+
+        <div style="margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <span style="color:var(--text-primary);font-size:0.88rem;font-weight:600">Tolerance</span>
+            <span id="pitchRefToleranceLabel" style="color:var(--text-primary);font-weight:700">±20 Hz</span>
+          </div>
+          <input id="pitchRefToleranceSlider" type="range" min="5" max="80" step="5" value="20"
+            class="pitch-ref-slider" aria-label="Tolerance in Hz above and below target">
+          <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--text-muted)">
+            <span>±5 Hz</span><span>±80 Hz</span>
+          </div>
+        </div>
+
+        <div class="settings-row">
+          <label for="pitchRefVolumeSlider" style="font-size:0.88rem">Tone volume</label>
+          <input id="pitchRefVolumeSlider" type="range" min="0.05" max="0.8" step="0.05" value="0.3"
+            style="width:80px;accent-color:var(--accent,#a78bfa)" aria-label="Tone volume">
+        </div>
       </div>
 
       <div class="recordings-drawer" id="recordingsDrawer">
