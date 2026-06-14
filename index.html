@@ -5086,31 +5086,6 @@
       background: linear-gradient(90deg, var(--accent-artic), var(--accent-vowel));
       transition: width 0.06s linear; /* Smooth micro-jitter tracking noise streams */
     }
-    .coaching-toast {
-      position: absolute;
-      top: 20%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      background: rgba(0, 0, 0, 0.85);
-      color: #fff;
-      padding: 12px 24px;
-      border-radius: 8px;
-      font-weight: 600;
-      font-size: 1.1rem;
-      letter-spacing: 0.5px;
-      pointer-events: none;
-      opacity: 0;
-      transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-      z-index: 100;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      backdrop-filter: blur(4px);
-    }
-    
-    .coaching-toast.visible {
-      opacity: 1;
-      transform: translate(-50%, -50%) scale(1.05);
-    }
   </style>
 </head>
 
@@ -5206,14 +5181,6 @@
           <option value="deeper">Profile: Deep / Chest-Focus</option>
           <option value="lighter">Profile: High-Range / Bright</option>
           <option value="expressive">Profile: Expressive Practice</option>
-        </select>
-        <span class="settings-label" style="margin-top: 10px;">Coaching Preset</span>
-        <select id="practicePresetSelect" class="theme-select btn-fill" aria-label="Practice preset">
-          <option value="presentation" selected>Presentation</option>
-          <option value="storytelling">Storytelling</option>
-          <option value="callcenter">Call-Center</option>
-          <option value="publicspeaking">Public Speaking</option>
-          <option value="monotone">Monotone Minimizer</option>
         </select>
         <div class="settings-status" aria-live="polite">
           <div class="settings-status-item"><span>Pitch profile</span><strong id="pitchProfileLearned">Learning… 0%</strong></div>
@@ -5334,7 +5301,6 @@
     </div>
     <div class="game-area">
       <canvas id="gameCanvas"></canvas>
-      <div class="coaching-toast" id="coachingToast"></div>
       <div class="prism-overlay" id="prismOverlay">
         <div class="prism-live-stats" id="prismLiveStats">
           <span class="prism-stat" id="prismWpm">0 wpm</span>

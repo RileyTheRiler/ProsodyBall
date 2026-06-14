@@ -2,14 +2,11 @@ export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
 
-export function computeRawProsody(metrics, preset = null) {
-  const wBounce = preset ? preset.bounce : 0.50;
-  const wVowel = preset ? preset.vowel : 0.30;
-  const wArtic = preset ? preset.artic : 0.20;
+export function computeRawProsody(metrics) {
   return (
-    metrics.bounce * wBounce +
-    metrics.vowel * wVowel +
-    metrics.articulation * wArtic
+    metrics.bounce * 0.50 +
+    metrics.vowel * 0.30 +
+    metrics.articulation * 0.20
   );
 }
 
@@ -17,8 +14,8 @@ export function smoothToward(current, target, factor) {
   return current + (target - current) * factor;
 }
 
-export function computeProsodyScore(previous, metrics, preset = null, smoothing = 0.12) {
-  const raw = computeRawProsody(metrics, preset);
+export function computeProsodyScore(previous, metrics, smoothing = 0.12) {
+  const raw = computeRawProsody(metrics);
   return clamp(smoothToward(previous, raw, smoothing), 0, 1);
 }
 
