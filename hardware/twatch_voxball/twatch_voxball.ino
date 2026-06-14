@@ -89,6 +89,17 @@ static float prevImpulse = 0.0f;
 static float smoothHue = 270.0f;
 static float smoothR = 18.0f;
 
+// --- Pitch-target training band ---
+// The user trains toward a pitch range: the ball glows and the motor buzzes when their
+// voice sits inside the band. Default to the androgynous zone (~145-175 Hz) the web app
+// references; shift it with the top/bottom touch zones. Band width is held constant.
+static float targetLoHz = 145.0f, targetHiHz = 175.0f;
+static const float TARGET_STEP_HZ = 5.0f;   // per tap
+static bool  prevInTarget = false;
+
+// Session stats (seconds), for a "% of voiced time on target" readout.
+static float voicedTime = 0.0f, inTargetTime = 0.0f;
+
 // Previous ball footprint, so we can erase exactly what we drew (memory-safe, no sprite).
 static int prevX = -1, prevY = -1, prevR = 0;
 
@@ -142,7 +153,19 @@ static void updatePhysics(const VoxResult &res, float dt) {
   smoothR += (rTarget - smoothR) * 0.3f;
 }
 
-static void render(const VoxResult &res) {
+// Map a pitch in Hz to a screen Y, consistent with the ball's pitchPos mapping.
+static int hzToY(float hz) {
+  float pos = clampf((hz - VOX_PITCH_MIN_HZ) / (VOX_PITCH_MAX_HZ - VOX_PITCH_MIN_HZ), 0, 1);
+  return TOP_MARGIN + (int)((1.0f - pos) * USABLE_H);
+}
+
+// Dashed horizontal line across the play area (used for the target band edges).
+static void dashedHLine(int y, uint16_t color) {
+  TFT_eSPI *tft = ttgo->tft;
+  for (int x = 8; x < SCR_W - 8; x += 12) tft->drawFastHLine(x, y, 7, color);
+}
+
+static void render(const VoxResult &res, bool inTarget) {
   TFT_eSPI *tft = ttgo->tft;
 
   float renderPos = clampf(ballPos + bounceY, 0.0f, 1.0f);
@@ -150,26 +173,50 @@ static void render(const VoxResult &res) {
   int y = TOP_MARGIN + (int)((1.0f - renderPos) * USABLE_H);
   int r = (int)smoothR;
 
-  float val = res.voiced ? (0.45f + 0.55f * clampf(res.confidence, 0, 1)) : 0.22f;
+  // In-target voices glow brighter; off-target dims a touch so the goal reads clearly.
+  float base = res.voiced ? (0.45f + 0.55f * clampf(res.confidence, 0, 1)) : 0.22f;
+  float val = inTarget ? clampf(base + 0.25f, 0, 1) : base;
   uint16_t color = hsv565(smoothHue, 0.9f, val);
 
-  // Erase the previous ball, then draw the new one (black background, no full redraw).
-  if (prevX >= 0) tft->fillCircle(prevX, prevY, prevR + 1, TFT_BLACK);
+  // Erase the previous ball (and its glow ring), then repaint the target band so the
+  // erase can't leave a gap where the ball crossed a band line.
+  if (prevX >= 0) tft->fillCircle(prevX, prevY, prevR + 3, TFT_BLACK);
+
+  // When the band moves (on a tap), clear the old line rows so they don't ghost.
+  static int prevYLo = -1, prevYHi = -1;
+  int yLo = hzToY(targetLoHz), yHi = hzToY(targetHiHz);
+  if (prevYLo >= 0 && (prevYLo != yLo || prevYHi != yHi)) {
+    tft->drawFastHLine(0, prevYLo, SCR_W, TFT_BLACK);
+    tft->drawFastHLine(0, prevYHi, SCR_W, TFT_BLACK);
+  }
+  prevYLo = yLo; prevYHi = yHi;
+
+  uint16_t bandColor = inTarget ? TFT_GREEN : tft->color565(70, 90, 80);
+  dashedHLine(yHi, bandColor);
+  dashedHLine(yLo, bandColor);
+
   tft->fillCircle(x, y, r, color);
+  if (inTarget) tft->drawCircle(x, y, r + 3, TFT_GREEN); // glow ring
   prevX = x; prevY = y; prevR = r;
 
-  // HUD: pitch readout / status along the bottom strip.
-  tft->fillRect(0, SCR_H - BOT_MARGIN + 8, SCR_W, BOT_MARGIN - 8, TFT_BLACK);
+  // HUD: pitch + target band + % of voiced time spent on target.
+  tft->fillRect(0, SCR_H - BOT_MARGIN + 6, SCR_W, BOT_MARGIN - 6, TFT_BLACK);
   tft->setTextDatum(MC_DATUM);
   tft->setTextColor(TFT_WHITE, TFT_BLACK);
-  char line[24];
+  char line[40];
   if (gDsp.calibrating()) {
-    tft->drawString("Calibrating... stay quiet", SCR_W / 2, SCR_H - 18, 2);
-  } else if (res.voiced) {
-    snprintf(line, sizeof(line), "%d Hz", (int)(res.pitchHz + 0.5f));
-    tft->drawString(line, SCR_W / 2, SCR_H - 18, 4);
+    tft->drawString("Calibrating... stay quiet", SCR_W / 2, SCR_H - 24, 2);
   } else {
-    tft->drawString("speak — tap to recalibrate", SCR_W / 2, SCR_H - 18, 2);
+    if (res.voiced) snprintf(line, sizeof(line), "%d Hz", (int)(res.pitchHz + 0.5f));
+    else            snprintf(line, sizeof(line), "--");
+    tft->setTextColor(inTarget ? TFT_GREEN : TFT_WHITE, TFT_BLACK);
+    tft->drawString(line, SCR_W / 2, SCR_H - 30, 4);
+
+    int pct = voicedTime > 0.2f ? (int)(100.0f * inTargetTime / voicedTime + 0.5f) : 0;
+    snprintf(line, sizeof(line), "target %d-%d Hz   on-target %d%%",
+             (int)targetLoHz, (int)targetHiHz, pct);
+    tft->setTextColor(tft->color565(160, 180, 170), TFT_BLACK);
+    tft->drawString(line, SCR_W / 2, SCR_H - 10, 2);
   }
 }
 
@@ -180,6 +227,7 @@ void setup() {
   ttgo = TTGOClass::getWatch();
   ttgo->begin();        // inits AXP202 PMU, ST7789 display, touch
   ttgo->openBL();       // backlight on
+  ttgo->motor_begin();  // vibration motor — haptic "on-target" feedback
 
   TFT_eSPI *tft = ttgo->tft;
   tft->setRotation(0);
@@ -212,18 +260,42 @@ void loop() {
   VoxResult got;
   if (xQueueReceive(gResultQueue, &got, 0) == pdTRUE) latest = got;
 
-  // Tap anywhere = recalibrate the noise floor (rising edge only).
+  // Touch zones (rising edge only):
+  //   top third    -> raise the target band
+  //   bottom third -> lower the target band
+  //   middle third -> recalibrate the noise floor
   int16_t tx, ty;
   bool touched = ttgo->getTouch(tx, ty);
-  if (touched && !touchedPrev) gRecalRequest = true;
+  if (touched && !touchedPrev) {
+    if (ty < SCR_H / 3) {
+      targetLoHz = clampf(targetLoHz + TARGET_STEP_HZ, VOX_PITCH_MIN_HZ, VOX_PITCH_MAX_HZ - 10);
+      targetHiHz = clampf(targetHiHz + TARGET_STEP_HZ, VOX_PITCH_MIN_HZ + 10, VOX_PITCH_MAX_HZ);
+    } else if (ty > 2 * SCR_H / 3) {
+      targetLoHz = clampf(targetLoHz - TARGET_STEP_HZ, VOX_PITCH_MIN_HZ, VOX_PITCH_MAX_HZ - 10);
+      targetHiHz = clampf(targetHiHz - TARGET_STEP_HZ, VOX_PITCH_MIN_HZ + 10, VOX_PITCH_MAX_HZ);
+    } else {
+      gRecalRequest = true;
+      voicedTime = inTargetTime = 0.0f; // also resets the session score
+    }
+  }
   touchedPrev = touched;
 
   uint32_t now = millis();
   float dt = lastMs ? (now - lastMs) / 1000.0f : 0.016f;
   lastMs = now;
 
+  // In-target detection + session stats + haptic reinforcement on entry.
+  bool inTarget = latest.voiced &&
+                  latest.pitchHz >= targetLoHz && latest.pitchHz <= targetHiHz;
+  if (latest.voiced) {
+    voicedTime += dt;
+    if (inTarget) inTargetTime += dt;
+  }
+  if (inTarget && !prevInTarget) ttgo->motor->onec(); // buzz once when you hit the band
+  prevInTarget = inTarget;
+
   updatePhysics(latest, dt);
-  render(latest);
+  render(latest, inTarget);
 
   delay(16); // ~60 fps cap; physics/erase-draw is cheap
 }

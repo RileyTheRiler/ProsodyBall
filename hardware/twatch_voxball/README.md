@@ -51,7 +51,20 @@ On boot the screen flashes **soft teal** (mirroring the orb sketch's self-test),
 1. After the splash, the firmware spends ~1 second measuring the room's **noise floor** —
    stay quiet during "Calibrating… stay quiet".
 2. Speak. The ball rises with pitch, hops on each syllable, and shifts blue → pink.
-3. **Tap the screen** any time to re-run noise-floor calibration (handy in a new room).
+3. **Train toward the target band.** Two dashed lines mark a target pitch range. When your
+   voice sits inside it, the ball **glows green, the motor buzzes once**, and the bottom HUD
+   tracks your **% of voiced time on target** for the session.
+
+### Touch controls (screen zones)
+
+| Tap zone | Action |
+|----------|--------|
+| **Top third** | Raise the target band (+5 Hz) |
+| **Bottom third** | Lower the target band (−5 Hz) |
+| **Middle third** | Re-run noise-floor calibration **and** reset the session score |
+
+The band defaults to **145–175 Hz** (the androgynous zone) and keeps a constant width as you
+move it.
 
 ## How it works
 
@@ -93,5 +106,5 @@ the library default; tap-to-sleep / dimming is a future addition.
 
 ## Roadmap
 Formant/resonance/gender cues (need a 4096-pt FFT + cepstrum port), the other arcade modes,
-an optional BLE companion mode (drive the existing orb from the watch), and power management
-(tilt-to-wake, auto-dim).
+an optional BLE companion mode (drive the existing orb from the watch), persisting target/score
+across reboots, and power management (tilt-to-wake, auto-dim).
