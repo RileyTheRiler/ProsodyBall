@@ -234,13 +234,16 @@ export function dispersionToVtlCm(meanSpacingHz, c = 35000) {
 }
 
 // Real cepstrum of a log-magnitude half-spectrum (length M, bins 0..Nyquist) via a type-I DCT.
-// Returns c[q], q=0..M-1, where quefrency index q is a lag in samples at the original sampleRate.
-export function computeCepstrum(logMag) {
+// Returns c[q], q=0..maxQuefrency, where quefrency index q is a lag in samples at the original
+// sampleRate. maxQuefrency bounds cost (the full transform is O(M^2)); only quefrencies up to the
+// lowest F0 of interest are needed for CPP, so callers cap it (e.g. sampleRate/55 Hz).
+export function computeCepstrum(logMag, maxQuefrency = logMag.length - 1) {
   const M = logMag.length;
-  const cep = new Float64Array(M);
   const denom = M - 1;
+  const qMax = Math.min(maxQuefrency, denom);
+  const cep = new Float64Array(qMax + 1);
   if (denom <= 0) return cep;
-  for (let q = 0; q < M; q++) {
+  for (let q = 0; q <= qMax; q++) {
     let sum = logMag[0] + (q % 2 === 0 ? logMag[denom] : -logMag[denom]);
     for (let k = 1; k < denom; k++) {
       sum += 2 * logMag[k] * Math.cos((Math.PI * q * k) / denom);
