@@ -390,6 +390,16 @@ void setup() {
   ttgo->openBL();
   ttgo->motor_begin();
 
+  // Accelerometer — drives tilt-to-wake / auto-dim power saving.
+  ttgo->bma->begin();
+  Acfg cfg;
+  cfg.odr       = BMA4_OUTPUT_DATA_RATE_100HZ;
+  cfg.range     = BMA4_ACCEL_RANGE_2G;
+  cfg.bandwidth = BMA4_ACCEL_NORMAL_AVG4;
+  cfg.perf_mode = BMA4_CONTINUOUS_MODE;
+  ttgo->bma->accelConfig(cfg);
+  ttgo->bma->enableAccel();
+
   TFT_eSPI *tft = ttgo->tft;
   tft->setRotation(0);
 
@@ -463,6 +473,32 @@ void loop() {
     }
   }
   touchedPrev = touched;
+
+  // --- Auto-dim + tilt-wake -------------------------------------------------
+  // Activity = touch, voice, or wrist motion. A wrist tilt redistributes gravity
+  // across the axes (magnitude stays ~1 g), so we watch per-axis change, not |a|.
+  static const uint32_t DIM_AFTER_MS = 20000;
+  static const uint8_t  BRIGHT_LEVEL = 255, DIM_LEVEL = 12;
+  static const long     MOTION_THRESH = 2000; // sum of |Δaxis| counts (BMA4 2 g)
+  static uint32_t lastActivityMs = 0;
+  static bool dimmed = false, haveAccel = false;
+  static int16_t pax = 0, pay = 0, paz = 0;
+
+  bool motion = false;
+  Accel acc;
+  if (ttgo->bma->getAccel(acc)) {
+    if (haveAccel) {
+      int dx = acc.x - pax, dy = acc.y - pay, dz = acc.z - paz;
+      long d = (long)abs(dx) + abs(dy) + abs(dz);
+      if (d > MOTION_THRESH) motion = true;
+    }
+    pax = acc.x; pay = acc.y; paz = acc.z; haveAccel = true;
+  }
+  bool active = touched || motion || (latest.voiced && latest.rms > 0.02f);
+  if (active || lastActivityMs == 0) lastActivityMs = now;
+  bool wantDim = (now - lastActivityMs) > DIM_AFTER_MS;
+  if (wantDim && !dimmed)      { ttgo->setBrightness(DIM_LEVEL);    dimmed = true; }
+  else if (!wantDim && dimmed) { ttgo->setBrightness(BRIGHT_LEVEL); dimmed = false; }
 
   // While in settings, don't run the visualisation.
   if (gState == SETTINGS) { delay(20); return; }

@@ -124,12 +124,14 @@ All tunables are grouped near the top of each file:
 - **Pitch reads wrong/jumpy** — `Serial.printf` `res.pitchHz`; hum a low vs. high note and
   compare against the web app's reading for the same voice.
 
-## Battery note
-The display backlight and continuous mic capture are the main draws. Brightness is left at
-the library default; tap-to-sleep / dimming is a future addition.
+## Power saving
+The screen **auto-dims after ~20 s** of no activity and brightens again on **touch, voice,
+or a wrist tilt** (BMA423 accelerometer). Tune `DIM_AFTER_MS`, `DIM_LEVEL`, and
+`MOTION_THRESH` in `loop()`. The backlight and continuous mic capture remain the main battery
+draws; deeper light-sleep is a future addition.
 
 ## Roadmap
 Full formant/gender model (4096-pt FFT + cepstrum/CPP port), more visualisations, an optional
-BLE companion mode (drive the existing orb from the watch), and power management
-(tilt-to-wake, auto-dim). *(Done: brightness/resonance cue, Color mode, on-device
-customisation, persistence.)*
+BLE companion mode (drive the existing orb from the watch), and deeper sleep. *(Done:
+brightness/resonance cue, Color mode, on-device customisation, persistence, auto-dim +
+tilt-wake.)*
