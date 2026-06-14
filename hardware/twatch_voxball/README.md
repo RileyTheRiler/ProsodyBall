@@ -1,16 +1,18 @@
-# ProsodyBall — Standalone Vox Ball for LilyGo T-Watch 2020 V3
+# ProsodyBall — Standalone Voice Trainer for LilyGo T-Watch 2020 V3
 
-A wearable, self-contained port of the web app's flagship **Vox Ball** mode. The watch
-listens with its **own** built-in PDM microphone, runs pitch + energy analysis **on-device**
-(no phone, no browser, no Bluetooth), and draws the ball on its 240×240 screen:
+A wearable, self-contained voice trainer. The watch listens with its **own** built-in PDM
+microphone, runs pitch + energy + brightness analysis **on-device** (no phone, no browser,
+no Bluetooth), and visualises it on its 240×240 screen. **Two visualisations**, switchable
+in Settings:
 
-- **Pitch → height & colour** — a higher voice lifts the ball and shifts its colour
-  blue → pink (the same pitch ramp the web app uses).
-- **Syllables → bounces** — each syllable onset makes the ball hop; livelier intonation
-  (more pitch variation) makes the hop taller.
+- **Vox Ball** — a ball whose height & colour follow **pitch** (low=blue → high=pink) and
+  that **hops on each syllable**; livelier intonation makes the hop taller. A dashed
+  **target band** lets you train toward a pitch range (green glow + buzz + on-target %).
+- **Color** — the **whole screen** colours from a metric **you choose** (pitch, brightness,
+  bounce, or loudness), blended between **two colours you pick**. Louder = brighter.
 
-This is the first milestone: **Vox Ball only**. Formant/resonance/gender cues and the other
-arcade modes are intentionally left for later (see *Roadmap*).
+Everything is **customisable on-device and saved to flash**: mode, the metric that drives
+colour, the two colours, the haptic trigger + threshold, and the target band.
 
 > The browser-driven LED orb lives in [`../prosodyball_orb`](../prosodyball_orb) and is a
 > completely separate project — that one does no audio processing.
@@ -55,7 +57,9 @@ On boot the screen flashes **soft teal** (mirroring the orb sketch's self-test),
    voice sits inside it, the ball **glows green, the motor buzzes once**, and the bottom HUD
    tracks your **% of voiced time on target** for the session.
 
-### Touch controls (screen zones)
+### Controls
+
+**Short tap** (while running):
 
 | Tap zone | Action |
 |----------|--------|
@@ -63,16 +67,32 @@ On boot the screen flashes **soft teal** (mirroring the orb sketch's self-test),
 | **Bottom third** | Lower the target band (−5 Hz) |
 | **Middle third** | Re-run noise-floor calibration **and** reset the session score |
 
-The band defaults to **145–175 Hz** (the androgynous zone) and keeps a constant width as you
-move it.
+The band defaults to **145–175 Hz** (the androgynous zone) and keeps a constant width.
+
+**Long press** (hold ~0.8 s) opens **Settings**. Tap a row to cycle its value; tap
+**Done** to save and exit (settings persist across reboots via flash/NVS):
+
+| Row | Options |
+|-----|---------|
+| **Mode** | Vox Ball / Color |
+| **Color from** | Pitch / Brightness / Bounce / Loudness *(Color mode)* |
+| **Low color / High color** | Blue, Teal, Green, Purple, Red, Orange, Pink, White |
+| **Haptics** | Off / On-target / Syllables / Bright / Loud |
+| **Haptic thr** | 25 / 50 / 75% (threshold for the Bright/Loud triggers) |
+
+### Haptic feedback
+The vibration motor buzzes once on the chosen trigger: entering the target band
+(*On-target*), each syllable onset (*Syllables*), or when brightness/loudness crosses the
+*Haptic thr* (*Bright* / *Loud*). Set **Off** for silent training.
 
 ## How it works
 
 | Layer | File | Notes |
 |-------|------|-------|
 | Mic capture + DSP (core 0) | `twatch_voxball.ino` `audioTask` | I2S PDM @ 16 kHz, 1024-sample frames |
-| DSP (pitch/energy/bounce/syllable) | `dsp.cpp` / `dsp.h` | 1:1 port of `app.js` / `dsp-utils.js` |
-| Physics + rendering (core 1) | `twatch_voxball.ino` `loop` | spring-to-pitch + syllable hop |
+| DSP (pitch/energy/bounce/syllable/brightness) | `dsp.cpp` / `dsp.h` | port of `app.js` / `dsp-utils.js` |
+| Settings + persistence (NVS) | `twatch_voxball.ino` `Settings` | `Preferences` namespace `voxball` |
+| Visualisation + input (core 1) | `twatch_voxball.ino` `loop` | Vox Ball / Color, touch + long-press |
 
 The two cores hand off through a 1-slot queue (`xQueueOverwrite`) — the same
 producer/consumer shape as the orb sketch's `colorQueue`.
@@ -81,9 +101,11 @@ producer/consumer shape as the orb sketch's `colorQueue`.
 `dsp.cpp` reuses the web app's **proven** algorithms and **identically-named constants** so
 the two stay in sync: YIN pitch detection (`YIN_THRESHOLD`, octave-up guard, parabolic
 interpolation, 7-frame median), the intonation **bounce** metric (`INTONATION_ST_DIVISOR`),
-and the syllable-onset state machine (`SYLLABLE_ON_MULT` / `SYLLABLE_OFF_MULT` /
-`SYLLABLE_DEBOUNCE_SECS` / `SYLLABLE_IMPULSE_DECAY`). Change a constant in one place and
-mirror it in the other.
+the syllable-onset state machine (`SYLLABLE_ON_MULT` / `SYLLABLE_OFF_MULT` /
+`SYLLABLE_DEBOUNCE_SECS` / `SYLLABLE_IMPULSE_DECAY`), and a **brightness/resonance** proxy
+from the spectral centroid (radix-2 FFT; `computeSpectralCentroid`). Full formant tracking
+(4096-pt FFT + cepstrum) is still on the roadmap. Change a constant in one place and mirror
+it in the other.
 
 ## Tuning & troubleshooting
 
@@ -93,8 +115,10 @@ All tunables are grouped near the top of each file:
   (`dsp.h`). These match LilyGo's own `TwatcV3Special/Microphone` example.
 - **Pitch band** — `VOX_PITCH_MIN_HZ` / `VOX_PITCH_MAX_HZ` (`dsp.h`). Narrow it to your
   voice for a more responsive ball; widen it if your range is being clipped.
+- **Brightness mapping** — `VOX_BRIGHT_MIN_HZ` / `VOX_BRIGHT_MAX_HZ` (`dsp.h`) set the
+  spectral-centroid range mapped to brightness 0..1.
 - **Feel** — spring `K`/`DAMP`, hop strength, and `smoothHue`/`smoothR` rates in
-  `updatePhysics()`.
+  `updateBallPhysics()`; the colour palette is the `PALETTE[]` table in the sketch.
 - **Ball never moves / always "speak"** — confirm the mic by temporarily adding
   `Serial.printf("rms %.4f\n", res.rms);` in `audioTask`; values should rise when you speak.
 - **Pitch reads wrong/jumpy** — `Serial.printf` `res.pitchHz`; hum a low vs. high note and
@@ -105,6 +129,7 @@ The display backlight and continuous mic capture are the main draws. Brightness 
 the library default; tap-to-sleep / dimming is a future addition.
 
 ## Roadmap
-Formant/resonance/gender cues (need a 4096-pt FFT + cepstrum port), the other arcade modes,
-an optional BLE companion mode (drive the existing orb from the watch), persisting target/score
-across reboots, and power management (tilt-to-wake, auto-dim).
+Full formant/gender model (4096-pt FFT + cepstrum/CPP port), more visualisations, an optional
+BLE companion mode (drive the existing orb from the watch), and power management
+(tilt-to-wake, auto-dim). *(Done: brightness/resonance cue, Color mode, on-device
+customisation, persistence.)*
