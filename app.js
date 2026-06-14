@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS } from './dsp-utils.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { BulbController } from './bulb-controller.js';
@@ -19,19 +19,23 @@ function escapeHtml(text) {
 // ============================================================
 const YIN_THRESHOLD = 0.15;               // CMND threshold for pitch detection (lower = stricter)
 const PITCH_CONFIDENCE_FACTOR = 3.3;      // Maps CMND → confidence: conf = 1 - cmnd * factor
-const BOUNCE_NORM_DIVISOR = 70;           // Hz std-dev mapped to [0,1] bounce
+const INTONATION_ST_DIVISOR = 6.0;        // Semitone std-dev mapped to [0,1] bounce (0–1 ST flat, 2–4 conversational, 4–6 expressive)
 const TEMPO_TRANSITION_DIVISOR = 12;      // Energy crossings → [0,1] tempo
-const VOWEL_ONSET_SECS = 0.15;           // Seconds of sustain before vowel metric starts rising
-const VOWEL_SATURATION_SECS = 0.6;       // Additional seconds to reach vowel = 1.0
+const VOWEL_ONSET_SECS = 0.15;           // Seconds of sustain before vowel metric starts rising (sustain/diagnostic mode)
+const VOWEL_SATURATION_SECS = 0.6;       // Additional seconds to reach vowel = 1.0 (sustain/diagnostic mode)
+const VOWEL_DECAY_RATE = 0.85;           // Per-frame decay multiplier when not vowel-like (sustain mode)
+const VOWEL_CONNECTED_ONSET_SECS = 0.05; // Onset delay for connected-speech mode
+const VOWEL_CONNECTED_SATURATION_SECS = 0.20; // Saturation time for connected-speech mode
+const VOWEL_CONNECTED_DECAY_RATE = 0.92; // Per-frame decay for connected-speech mode
 const VOWEL_SUSTAIN_MULT = 0.4;          // Energy percentile multiplier for vowel detection threshold
 const ARTIC_SENSITIVITY_GAIN = 1.2;      // Gain applied to articulation normalisation
 const SYLLABLE_DEBOUNCE_SECS = 0.08;     // Minimum seconds between syllable onsets
 const SYLLABLE_ON_MULT = 0.6;            // Energy range multiplier for syllable-on threshold
 const SYLLABLE_OFF_MULT = 0.15;          // Energy range multiplier for syllable-off threshold
 const SYLLABLE_IMPULSE_DECAY = 0.88;     // Per-frame decay of syllable impulse
-const WEIGHT_F2_BLEND = 0.15;            // Small F2-darkness contribution to perceived weight
-const WEIGHT_TILT_BASE = 0.55;           // Baseline blend weight for spectral-tilt heaviness
-const WEIGHT_H1H2_BLEND = 0.30;          // Max blend weight for the H1-H2 breathiness cue (× confidence)
+const WEIGHT_TILT_BASE = 0.45;           // Baseline blend weight for spectral-tilt heaviness
+const WEIGHT_H1H2_BLEND = 0.25;          // Max blend weight for the H1-H2 breathiness cue (× confidence)
+const WEIGHT_CPP_BLEND = 0.30;           // Blend weight for CPP breathiness cue (× confidence); source-only, no filter contamination
 const H1H2_HEAVY_DB = -2;                // H1-H2 (dB) anchor for pressed/heavy phonation
 const H1H2_LIGHT_DB = 14;                // H1-H2 (dB) anchor for breathy/light phonation
 const WEIGHT_SMOOTH_BASE = 0.10;         // Base EMA rate toward the weight target
@@ -148,6 +152,10 @@ export class VoiceAnalyzer {
     this.sustainedDuration = 0;
     this.sustainedThreshold = 0.02;
     this.defaultSustainedThreshold = 0.02;
+    // Ring buffer of recent voiced-segment durations for vowel mode detection.
+    this._phonationDurations = [];
+    this._phonationDurMax = 20;
+    this._currentPhonationStart = -1; // timestamp when current voiced segment began
 
     // Adaptive Pitch Range
     this.pitchProfile = {
@@ -187,9 +195,11 @@ export class VoiceAnalyzer {
     this.metrics = {
       bounce: 0, vowel: 0,
       articulation: 0,
-      pitch: 0, energy: 0, resonance: 0,
+      pitch: 0, pitchEffort: 0, pitchZone: 0.5,
+      energy: 0, resonance: 0,
       attack: 0, weight: 0
     };
+    this.pitchZoneLabel = 'Ambiguous';
     this.frameConfidence = 0; // overall frame confidence for game-level gating
     this.wasLastFrameReliable = false;
     this.noiseSpectralProfile = null;
@@ -372,6 +382,9 @@ export class VoiceAnalyzer {
     this.h1h2SmoothedDb = 6;
     this.h1h2Confidence = 0;
     this.sustainedDuration = 0;
+    this._phonationDurations = [];
+    this._currentPhonationStart = -1;
+    this.pitchZoneLabel = 'Ambiguous';
     this.syllableImpulse = 0;
     this.syllableState = 'silent';
     this.noiseCalibrationSamples = [];
@@ -383,6 +396,7 @@ export class VoiceAnalyzer {
     this.pitchProfile = { samples: [], min: 80, max: 380, isLearned: false, voicedTime: 0, learningDuration: 5.0 };
     this.tiltProfile = { samples: [], min: -34, max: -4, isLearned: false, voicedTime: 0, learningDuration: 5.0 };
     for (const k in this.metrics) this.metrics[k] = 0;
+    this.metrics.pitchZone = 0.5;
     this.wasLastFrameReliable = false;
     this.noiseSpectralProfile = null;
   }
@@ -982,7 +996,10 @@ export class VoiceAnalyzer {
     // or voiced frame never injects a bogus centroid into the blend.
     if (fricativeRatio > 0.5 && hfEnergy > 0 && rms > this.noiseFloor * 1.3) {
       const hfBinHz = this.audioCtx.sampleRate / this.analyserHF.fftSize;
-      const rawCentroid = computeSpectralCentroid(this.hfFrequencyData, hfBinHz, 2000, 11000);
+      // Lower bound raised to 4 kHz to exclude /ʃ/ (~2.5–3.5 kHz) so only /s/ frames
+      // are measured. Upper bound 8500 Hz reaches the feminine /s/ ceiling without
+      // requiring > 44.1 kHz sample rate (Nyquist must exceed 8.5 kHz).
+      const rawCentroid = computeSpectralCentroid(this.hfFrequencyData, hfBinHz, 4000, 8500);
       if (rawCentroid > 0) {
         this.sibilantCentroidHz += (rawCentroid - this.sibilantCentroidHz) * 0.25;
         const target = Math.min(1, fricativeRatio);
@@ -1053,16 +1070,20 @@ export class VoiceAnalyzer {
       if (f3Candidate > 0) this.smoothF3 = this._kalmanUpdate(this._kalmanF3, f3Candidate, R);
       this.formantConfidence += (conf - this.formantConfidence) * 0.15;
 
-      // --- Resonance score: F2-primary with F1 and F3 contributions ---
-      // Clinical references:
-      //   F2 < ~1400 Hz = clearly dark/masculine placement
-      //   F2 > ~2400 Hz = clearly bright/feminine placement
-      //   F1 higher = more open/forward resonance
-      //   F3 > ~2800 Hz adds to perceived femininity (Hillenbrand 1995, Gelfer 2000)
-      const f2Score = Math.max(0, Math.min(1, (this.smoothF2 - 1000) / 1800));
+      // --- Resonance score: aVTL-primary (vowel-robust), with F1 and gated F2 ---
+      // Primary: apparent vocal-tract length from formant dispersion (ΔF). Vowel-robust because
+      // ΔF is the mean adjacent formant spacing across F1–F3, which is much less vowel-dependent
+      // than raw F2 alone.  Anchors: 17 cm (male, score 0) → 14 cm (female, score 1).
+      const aVTL_cm = this.formantDispersionHz > 0 ? 35000 / (2 * this.formantDispersionHz) : 0;
+      const vtlScore = aVTL_cm > 0 ? clamp01((17 - aVTL_cm) / 3) : 0;
+      // F1 (25%): high F1 is decisive for "not male" (open, forward resonance).
       const f1Score = Math.max(0, Math.min(1, (this.smoothF1 - 300) / 600));
-      const f3Score = Math.max(0, Math.min(1, (this.smoothF3 - 2200) / 1200));
-      const rawResonance = f2Score * 0.70 + f1Score * 0.15 + f3Score * 0.15;
+      // Vowel-normalized F2 (20%): only used when a vowel-like frame is detected; otherwise
+      // fold into vtlScore to avoid penalising back vowels (/u/ F2 ≈ 1000 Hz).
+      const f2Score = this.vowelLikelihood > 0.4
+        ? clamp01((this.smoothF2 - 1000) / 1400)
+        : vtlScore;
+      const rawResonance = vtlScore * 0.55 + f1Score * 0.25 + f2Score * 0.20;
       this.smoothResonance += (rawResonance - this.smoothResonance) * (0.05 + conf * 0.08);
 
       // --- Formant dispersion (ΔF) -> apparent vocal-tract length gender cue ---
@@ -1110,20 +1131,21 @@ export class VoiceAnalyzer {
 
     // ====== METRICS ======
 
-    // 1. BOUNCE — pitch variation
-    if (this.pitchHistory.length > 3) {
+    // 1. BOUNCE — pitch variation in semitones relative to modal F0.
+    // Using semitones instead of Hz means the score is invariant to the user's absolute pitch:
+    // the same expressive range sounds the same whether produced by a bass or a soprano.
+    if (this.pitchHistory.length > 3 && this.modalF0Hz > 0) {
+      const fRef = this.modalF0Hz;
       const len = this.pitchHistory.length;
-      let sum = 0;
-      for (let i = 0; i < len; i++) sum += this.pitchHistory[i];
-      const mean = sum / len;
-
-      let sqSum = 0;
+      let stSum = 0;
+      for (let i = 0; i < len; i++) stSum += 12 * Math.log2(this.pitchHistory[i] / fRef);
+      const stMean = stSum / len;
+      let stSqSum = 0;
       for (let i = 0; i < len; i++) {
-        const diff = this.pitchHistory[i] - mean;
-        sqSum += diff * diff;
+        const d = 12 * Math.log2(this.pitchHistory[i] / fRef) - stMean;
+        stSqSum += d * d;
       }
-      const variance = sqSum / len;
-      this.metrics.bounce = Math.min(1, Math.sqrt(variance) / BOUNCE_NORM_DIVISOR);
+      this.metrics.bounce = clamp01(Math.sqrt(stSqSum / len) / INTONATION_ST_DIVISOR);
     } else {
       this.metrics.bounce *= 0.95;
     }
@@ -1134,15 +1156,41 @@ export class VoiceAnalyzer {
 
 
     // 3. VOWEL ELONGATION — sustained voicing WITH vowel-like formants
-    //    Uses vowelLikelihood to distinguish real vowels from "sss" or "mmm"
+    //    Uses vowelLikelihood to distinguish real vowels from "sss" or "mmm".
+    //    Mode detection: track recent voiced-segment lengths. If the median is long (>0.5 s)
+    //    we're in diagnostic/sustain mode; short segments → connected speech mode with
+    //    faster onset/saturation so natural conversational pacing can reach 1.0.
     const dynamicSustainThreshold = this.energyPercentiles.p50 + baseEnergyRange * VOWEL_SUSTAIN_MULT;
-    const isVowelSound = gatedRms > dynamicSustainThreshold && pitch > 0 && this.vowelLikelihood > 0.3;
+    const isVoiced = pitch > 0 && gatedRms > dynamicSustainThreshold;
+    // Update phonation duration ring buffer when a voiced segment ends.
+    if (isVoiced && this._currentPhonationStart < 0) {
+      this._currentPhonationStart = now;
+    } else if (!isVoiced && this._currentPhonationStart >= 0) {
+      const segDur = now - this._currentPhonationStart;
+      this._phonationDurations.push(segDur);
+      if (this._phonationDurations.length > this._phonationDurMax) this._phonationDurations.shift();
+      this._currentPhonationStart = -1;
+    }
+    // Choose timing constants based on typical phonation length.
+    let vowelOnset = VOWEL_ONSET_SECS;
+    let vowelSat = VOWEL_SATURATION_SECS;
+    let vowelDecay = VOWEL_DECAY_RATE;
+    if (this._phonationDurations.length >= 4) {
+      const sorted = [...this._phonationDurations].sort((a, b) => a - b);
+      const median = sorted[Math.floor(sorted.length / 2)];
+      if (median < 0.5) {
+        vowelOnset = VOWEL_CONNECTED_ONSET_SECS;
+        vowelSat = VOWEL_CONNECTED_SATURATION_SECS;
+        vowelDecay = VOWEL_CONNECTED_DECAY_RATE;
+      }
+    }
+    const isVowelSound = isVoiced && this.vowelLikelihood > 0.3;
     if (isVowelSound) {
       this.sustainedDuration += dt * (0.5 + this.vowelLikelihood * 0.5); // stronger vowels accumulate faster
     } else {
-      this.sustainedDuration *= 0.85;
+      this.sustainedDuration *= vowelDecay;
     }
-    this.metrics.vowel = Math.min(1, Math.max(0, this.sustainedDuration - VOWEL_ONSET_SECS) / VOWEL_SATURATION_SECS);
+    this.metrics.vowel = Math.min(1, Math.max(0, this.sustainedDuration - vowelOnset) / vowelSat);
 
     // 4. ARTICULATION — HF bursts (adaptive ceiling from running HF percentiles)
     const hfCeiling = this.hfEnergyWindow.length >= 8
@@ -1237,18 +1285,31 @@ export class VoiceAnalyzer {
     this.metrics.attack *= Math.max(0.2, voicedGate);
 
     const pitchRange = Math.max(50, this.pitchProfile.max - this.pitchProfile.min);
-    this.metrics.pitch = pitch > 0 ? Math.max(0, Math.min(1, (pitch - this.pitchProfile.min) / pitchRange)) : this.metrics.pitch * 0.95;
+    // pitchEffort: position within the user's own adaptive range — hygiene/practice feedback only.
+    this.metrics.pitchEffort = pitch > 0 ? Math.max(0, Math.min(1, (pitch - this.pitchProfile.min) / pitchRange)) : this.metrics.pitchEffort * 0.95;
+    // Legacy alias so existing UI reads of metrics.pitch still work.
+    this.metrics.pitch = this.metrics.pitchEffort;
+    // pitchZone: absolute position across the perceptual gender boundary (110 Hz → 230 Hz).
+    // 0 = reliably masculine, 1 = reliably feminine, independent of the user's own range.
+    if (this.modalF0Hz > 0) {
+      this.metrics.pitchZone = clamp01((this.modalF0Hz - 110) / 120);
+      const hz = this.modalF0Hz;
+      this.pitchZoneLabel = hz < 145 ? 'Masculine'
+        : hz < 175 ? 'Ambiguous'
+        : hz < 180 ? 'Transitional'
+        : 'Feminine';
+    }
     this.metrics.energy = normalizeAgainstPercentiles(gatedRms, this.energyPercentiles.p50, this.energyPercentiles.p90, 1.1);
     this.metrics.resonance = this.smoothResonance;
 
-    // 7. WEIGHT — perceived heaviness (1=heavy/thick, 0=light/breathy). Reuses the
-    //    spectral-tilt analysis (spectralWeight: 0=heavy,1=light) with a small F2 blend.
+    // 7. WEIGHT — perceived heaviness (1=heavy/thick, 0=light/breathy). Source-only cues only;
+    //    F2 (a filter/resonance property) has been removed to avoid cross-contamination.
+    //    Tilt 45% + CPP 30% + H1-H2 25%.
     const heavinessTilt = 1 - this.spectralWeight;
-    let f2Heavy = 0.5, f2W = 0;
-    if (this.formantConfidence > 0.3) {
-      f2Heavy = clamp01((2400 - this.smoothF2) / 1300); // low F2 = heavier/darker
-      f2W = WEIGHT_F2_BLEND;
-    }
+    // CPP: higher CPP = more periodic/pressed (heavier); lower = breathier (lighter).
+    // Anchors: 6 dB (breathy/light) → 14 dB (modal-pressed/heavy).
+    const cppHeaviness = clamp01((this.cppDb - 6) / 8);
+    const cppW = WEIGHT_CPP_BLEND * this.cppConfidence;
     // H1-H2 breathiness cue → lightness; only blended in when a clean F0 gives a trustworthy estimate.
     const h1h2Light = normalizeAgainstRange(this.h1h2SmoothedDb, H1H2_HEAVY_DB, H1H2_LIGHT_DB);
     const weightTarget = computeWeightTarget({
@@ -1256,8 +1317,8 @@ export class VoiceAnalyzer {
       tiltWeight: WEIGHT_TILT_BASE,
       h1h2Heaviness: 1 - h1h2Light,
       h1h2Weight: WEIGHT_H1H2_BLEND * this.h1h2Confidence,
-      f2Heaviness: f2Heavy,
-      f2Weight: f2W
+      cppHeaviness,
+      cppWeight: cppW,
     });
     // Only move while tilt is trustworthy, so the metric holds its last value rather
     // than drifting toward "light" during silence or noisy low-confidence frames.
@@ -1890,12 +1951,19 @@ class VoxBallGame {
       return v == null ? dflt : v === 'true';
     };
     this.genderCues = {
-      modalF0: cueOn('vox:genderCue:modalF0', true),
+      // pitchZone, resonance always on; weight defaults on (source-only, reliable).
+      weight: cueOn('vox:genderCue:weight', true),
       sibilant: cueOn('vox:genderCue:sibilant', true),
+      intonation: cueOn('vox:genderCue:intonation', false),
+      // Legacy keys preserved so stored user prefs are not silently lost.
+      modalF0: cueOn('vox:genderCue:modalF0', true),
       dispersion: cueOn('vox:genderCue:dispersion', true),
       cpp: cueOn('vox:genderCue:cpp', true),
-      intonation: cueOn('vox:genderCue:intonation', false),
     };
+    // Goal direction: 'feminization' | 'masculinization'. Determines cue weights and
+    // incongruence-guard direction. Defaults to feminization.
+    const storedGoal = localStorage.getItem('vox:goalMode');
+    this.goalMode = storedGoal === 'masculinization' ? 'masculinization' : 'feminization';
     this.gameMode = 'ball'; // 'ball' | 'creature' | 'garden' | 'canvas' | 'keyboard' | 'pilot' | 'road' | 'ascent' | 'prism' | 'vowelvalley'
 
     // ====== CREATURE STATE ======
@@ -6029,30 +6097,37 @@ class VoxBallGame {
     const a = this.analyzer;
     const g = this.genderCues;
 
-    // Build per-cue {value (0..1 femininity), confidence}. pitch + resonance always present.
-    const pitchNorm = a.smoothPitchHz > 0 ? normalizeAgainstRange(a.smoothPitchHz, 110, 220) : 0.5;
+    // Build per-cue {value (0..1 femininity), confidence}.
+    // pitchZone: absolute F0 position (110–230 Hz → 0–1) from modal F0 — no longer relative
+    //   to the user's own range, so it carries real gender-perceptual information.
+    // resonance: aVTL-primary score (vowel-robust).
+    // weight: lower = lighter/breathier (more feminine); higher = heavier/pressed (more masculine).
+    // dispersion and cpp are now absorbed into resonance and weight respectively.
     const cues = {
-      pitch: { value: pitchNorm, confidence: a.pitchConfidence },
+      pitchZone: { value: clamp01(a.metrics.pitchZone), confidence: a.modalF0Confidence },
       resonance: { value: clamp01(a.smoothResonance), confidence: a.formantConfidence },
-      modalF0: { value: computeModalF0Femininity(a.modalF0Hz), confidence: a.modalF0Confidence },
+      weight: { value: 1 - clamp01(a.metrics.weight), confidence: a.spectralTiltConfidence }, // invert: low weight = light/feminine
       sibilant: { value: computeSibilantFemininity(a.sibilantCentroidHz), confidence: a.sibilantConfidence },
-      dispersion: { value: dispersionToFemininity(a.formantDispersionHz), confidence: a.formantConfidence },
-      cpp: { value: cppToFemininity(a.cppDb), confidence: a.cppConfidence },
       intonation: { value: clamp01(a.metrics.bounce), confidence: a.pitchConfidence },
     };
 
-    // Modal F0 supersedes instantaneous pitch when enabled (habitual pitch is more representative).
     const enabledMap = {
-      pitch: !g.modalF0,
+      pitchZone: true,
       resonance: true,
-      modalF0: g.modalF0,
+      weight: g.weight != null ? g.weight : true,
       sibilant: g.sibilant,
-      dispersion: g.dispersion,
-      cpp: g.cpp,
       intonation: g.intonation,
     };
 
-    const { score, uncertainty } = computeGenderScoreMulti({ cues, enabledMap });
+    const gMode = this.goalMode || 'feminization';
+    const gWeights = gMode === 'masculinization' ? MASCULINIZATION_CUE_WEIGHTS : FEMINIZATION_CUE_WEIGHTS;
+    const { score, uncertainty } = computeGenderScoreMulti({
+      cues,
+      weights: gWeights,
+      enabledMap,
+      goalMode: gMode,
+      modalF0Hz: a.modalF0Hz,
+    });
 
     const conf = clamp01(1 - uncertainty);
     const lerp = 0.05 + conf * 0.08;

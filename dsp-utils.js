@@ -115,13 +115,13 @@ export function computeFrameReliability({ pitchConfidence = 0, formantConfidence
   return { confidenceGate, voicedGate, reliableFrame };
 }
 
-export function computeWeightTarget({ tiltHeaviness = 0.5, tiltWeight = 1, h1h2Heaviness = 0.5, h1h2Weight = 0, f2Heaviness = 0.5, f2Weight = 0 }) {
+export function computeWeightTarget({ tiltHeaviness = 0.5, tiltWeight = 1, h1h2Heaviness = 0.5, h1h2Weight = 0, cppHeaviness = 0.5, cppWeight = 0 }) {
   const wT = Math.max(0, tiltWeight);
   const wH = Math.max(0, h1h2Weight);
-  const wF = Math.max(0, f2Weight);
-  const total = wT + wH + wF;
+  const wC = Math.max(0, cppWeight);
+  const total = wT + wH + wC;
   if (total <= 0) return clamp01(tiltHeaviness);
-  return clamp01((tiltHeaviness * wT + h1h2Heaviness * wH + f2Heaviness * wF) / total);
+  return clamp01((tiltHeaviness * wT + h1h2Heaviness * wH + cppHeaviness * wC) / total);
 }
 
 export function computeAttackHardness({ risePeak = 0, riseCeiling = 0.5, cleanliness = 1, onsetAbruptness = 0.5, abruptWeight = 0 }) {
@@ -193,17 +193,30 @@ export function genderScoreToHue(score, colorblind = false) {
 // (androgynous) as uncertainty rises. Cue anchors below come from voice-science norms
 // (Hillenbrand 1995; Fitch 1997; Gelfer 2000; sibilant CoG literature).
 
-// Base weights per cue id. Resonance + modal pitch dominate (hardest to fake); breathiness
-// and the stereotype-based intonation cue contribute least.
-export const DEFAULT_GENDER_CUE_WEIGHTS = {
-  resonance: 0.30,
-  modalF0: 0.26,
-  dispersion: 0.16,
-  pitch: 0.10,
-  sibilant: 0.10,
-  cpp: 0.08,
-  intonation: 0.08,
+// Goal-specific cue weights.
+// - Dispersion and CPP are absorbed into Resonance and Weight respectively, so they
+//   are no longer standalone cues in the combiner.
+// - pitchZone replaces modalF0 + pitch: it is the absolute F0 position (110–230 Hz → 0–1),
+//   computed from modal F0 so it reflects habitual pitch, not a momentary note.
+// - weight (vocal heaviness/breathiness) is now a scored gender cue, not just biofeedback.
+export const FEMINIZATION_CUE_WEIGHTS = {
+  resonance: 0.35,  // aVTL-primary, vowel-robust
+  pitchZone: 0.30,  // absolute F0 position; necessary but not sufficient
+  weight: 0.15,     // lower weight (breathier) = more feminine
+  sibilant: 0.10,   // /s/ COG; higher = more feminine
+  intonation: 0.10, // ST variance; contested cue, kept low
 };
+
+export const MASCULINIZATION_CUE_WEIGHTS = {
+  pitchZone: 0.40,  // F0 is the dominant transmasculine cue (T passively lowers it)
+  resonance: 0.30,  // aVTL
+  weight: 0.15,     // higher weight (pressed/modal) = more masculine
+  intonation: 0.10,
+  sibilant: 0.05,   // /s/ stays fronted despite testosterone; never penalise a high /s/
+};
+
+// Legacy alias — used by code that doesn't specify a goal.
+export const DEFAULT_GENDER_CUE_WEIGHTS = FEMINIZATION_CUE_WEIGHTS;
 
 // Modal (median) F0 over a voiced window -> femininity. Habitual pitch, not a momentary note.
 // Anchors: male ~110 Hz, androgynous ~165 Hz, female ~220 Hz.
@@ -228,8 +241,9 @@ export function computeSpectralCentroid(magnitudes, binHz, loHz = 0, hiHz = Infi
 }
 
 // Sibilant /s/ centroid -> femininity. Higher CoG = shorter front cavity = feminine.
-// Anchors: male ~5 kHz, female ~8 kHz.
-export function computeSibilantFemininity(centroidHz, { min = 5000, max = 8000 } = {}) {
+// Anchors: male ~4 kHz (deep /s/ sits here), female ~8.5 kHz.
+// Widened from 5–8 kHz to capture masculine /s/ that sits below 5 kHz.
+export function computeSibilantFemininity(centroidHz, { min = 4000, max = 8500 } = {}) {
   if (!(centroidHz > 0)) return 0.5;
   return normalizeAgainstRange(centroidHz, min, max);
 }
@@ -311,11 +325,28 @@ export function cppToFemininity(cppDb, { min = 6, max = 14 } = {}) {
 
 // Combine per-cue {value, confidence} into a final 0..1 score plus an uncertainty (0..1).
 // enabledMap[id] must be truthy for a cue to contribute (absent => disabled).
+// goalMode: 'feminization' | 'masculinization' (default 'feminization').
+// modalF0Hz: current modal F0 in Hz, used for ambiguous-zone dynamic reweighting.
 export function computeGenderScoreMulti({
   cues = {},
   weights = DEFAULT_GENDER_CUE_WEIGHTS,
   enabledMap = {},
+  goalMode = 'feminization',
+  modalF0Hz = 0,
 } = {}) {
+  // Work on a mutable copy so dynamic reweighting doesn't mutate the caller's object.
+  const w = Object.assign({}, weights);
+
+  // Dynamic reweighting in the ambiguous pitch zone (145–175 Hz):
+  // when pitch doesn't reliably signal gender, shift weight toward resonance + weight.
+  if (modalF0Hz > 145 && modalF0Hz < 175 && w.pitchZone != null) {
+    const ambig = 1 - Math.abs(modalF0Hz - 160) / 15; // 0..1, peaks at 160 Hz
+    const transfer = w.pitchZone * 0.5 * ambig;
+    w.pitchZone -= transfer;
+    if (w.resonance != null) w.resonance += transfer * 0.6;
+    if (w.weight != null) w.weight += transfer * 0.4;
+  }
+
   let sumW = 0, sumWV = 0, sumWC = 0;
   const contribs = [];
   for (const id of Object.keys(cues)) {
@@ -324,16 +355,32 @@ export function computeGenderScoreMulti({
     if (!cue) continue;
     const value = clamp01(cue.value);
     const conf = clamp01(cue.confidence);
-    const base = weights[id] != null ? weights[id] : 0;
-    const w = base * conf;
-    if (w <= 0) continue;
-    sumW += w;
-    sumWV += w * value;
-    sumWC += w * conf;
-    contribs.push({ w, value });
+    const base = w[id] != null ? w[id] : 0;
+    const cueW = base * conf;
+    if (cueW <= 0) continue;
+    sumW += cueW;
+    sumWV += cueW * value;
+    sumWC += cueW * conf;
+    contribs.push({ w: cueW, value, id });
   }
   if (sumW <= 1e-6) return { score: 0.5, uncertainty: 1 };
-  const blended = sumWV / sumW;
+  let blended = sumWV / sumW;
+
+  // Incongruence guard (feminization): high absolute pitch + masculine resonance is a
+  // "male falsetto" pattern — high F0 alone must not yield a fully-feminine reading.
+  if (goalMode === 'feminization') {
+    const pitchCue = cues.pitchZone;
+    const resCue = cues.resonance;
+    if (pitchCue && resCue) {
+      const pitchPull = clamp01(pitchCue.value) * clamp01(pitchCue.confidence);
+      const resonancePull = clamp01(resCue.value) * clamp01(resCue.confidence);
+      if (pitchPull > 0.7 && resonancePull < 0.35) {
+        const guard = 0.5 + resonancePull * 0.5;
+        blended = Math.min(blended, guard);
+      }
+    }
+  }
+
   let varAcc = 0;
   for (const c of contribs) varAcc += c.w * (c.value - blended) * (c.value - blended);
   const disagreement = Math.sqrt(varAcc / sumW);
