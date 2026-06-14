@@ -698,6 +698,44 @@
       color: var(--text-primary);
     }
 
+    .daf-panel {
+      position: absolute;
+      top: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-surface);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 16px 18px;
+      max-width: 320px;
+      width: 92vw;
+      z-index: var(--z-dropdown);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      font-size: 1rem;
+      color: var(--text-muted);
+      display: none;
+    }
+
+    .daf-panel.show { display: block; }
+
+    .daf-panel h3 {
+      color: var(--text-primary);
+      font-size: 1rem;
+      margin: 0 0 4px;
+    }
+
+    .daf-delay-slider {
+      width: 100%;
+      margin: 4px 0;
+      accent-color: var(--accent, #a78bfa);
+    }
+
+    .btn-daf.active {
+      background: rgba(167, 139, 250, 0.2);
+      border-color: rgba(167, 139, 250, 0.6);
+      color: #c4b5fd;
+    }
+
     /* Toggle switch */
     .toggle-switch {
       position: relative;
@@ -5096,6 +5134,7 @@
         </label>
         <button class="btn btn-voice-rec" id="voiceRecBtn" aria-pressed="false" title="Record your voice" aria-label="Record your voice"><span class="rec-dot"></span></button>
         <button class="btn btn-voice-play" id="voicePlayBtn" disabled title="Play your last recording"><span aria-hidden="true">▶</span><span class="voice-play-label">&nbsp;Play</span></button>
+        <button class="btn btn-daf" id="dafBtn" title="Delayed Auditory Feedback" aria-label="Open Delayed Auditory Feedback settings" aria-expanded="false" aria-controls="dafPanel">DAF</button>
         <button class="btn btn-rec" id="recBtn"><span class="rec-dot"></span><span class="rec-label">Rec</span></button>
         <button class="btn btn-help" id="prismClearRecBtn" aria-label="Clear Prism Recording"
           style="display: none; opacity: 0; transform: scale(0.95); transition: opacity 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28), transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);">Clear</button>
@@ -5916,6 +5955,40 @@
         </div>
         <button class="vib-add-btn" id="vibTestBtn" style="margin-top:8px;border-style:solid;opacity:0.7">📳 Test
           Vibration</button>
+      </div>
+
+      <div class="daf-panel" id="dafPanel">
+        <h3>🔁 Delayed Auditory Feedback</h3>
+        <div class="vib-panel-sub">
+          Hear your voice back with a short delay to help slow speech and build vocal awareness.
+          <strong>Wear headphones</strong> to prevent echo feedback.
+        </div>
+        <div class="vib-master">
+          <label for="dafEnableToggle">Enable DAF</label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="dafEnableToggle" aria-label="Enable Delayed Auditory Feedback">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div style="margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <label for="dafDelaySlider" style="color:var(--text-primary);font-size:0.88rem;font-weight:600">Delay</label>
+            <span id="dafDelayLabel" style="color:var(--text-primary);font-weight:700">75ms</span>
+          </div>
+          <input id="dafDelaySlider" type="range" min="50" max="200" step="5" value="75"
+            class="daf-delay-slider" aria-label="DAF delay in milliseconds">
+          <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--text-muted)">
+            <span>50ms</span><span>200ms</span>
+          </div>
+        </div>
+        <div class="settings-row">
+          <label for="dafBassFilterToggle" style="font-size:0.88rem">Cut bass below 150 Hz</label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="dafBassFilterToggle"
+              aria-label="Cut bass frequencies below 150Hz" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
       </div>
 
       <div class="recordings-drawer" id="recordingsDrawer">

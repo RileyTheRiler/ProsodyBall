@@ -1872,6 +1872,14 @@ class VoxBallGame {
     this.colorblindMode = false;
     // Orb color mode: 'pitch' (hue from F0) or 'gender' (hue from perceived vocal gender).
     this.colorMode = localStorage.getItem('vox:colorMode') || 'pitch';
+    this.dafEnabled = localStorage.getItem('vox:daf:enabled') === 'true';
+    this.dafDelayMs = parseInt(localStorage.getItem('vox:daf:delayMs') || '75');
+    this.dafBassFilter = localStorage.getItem('vox:daf:bassFilter') !== 'false';
+    this._dafBuffer = [];
+    this._dafNextPlayTime = 0;
+    this._dafInterval = null;
+    this._dafGain = null;
+    this._dafFilter = null;
     this.smoothGenderScore = 0.5; // EMA of the 0..1 perceived-gender score (0.5 = androgynous)
     this.genderUncertainty = 1;   // 0..1 spread/disagreement of the gender cues
     // Per-cue toggles for the perceived-gender model. pitch + resonance are always on (the
@@ -2948,6 +2956,61 @@ class VoxBallGame {
     });
   }
 
+  startDAF() {
+    const a = this.analyzer;
+    if (!a.audioCtx || !a.analyserRec || this._dafInterval) return;
+    const fftSize = a.analyserRec.fftSize;
+    const sampleRate = a.audioCtx.sampleRate;
+    const intervalMs = Math.round(1000 * fftSize / sampleRate);
+
+    this._dafGain = a.audioCtx.createGain();
+    this._dafGain.gain.value = 0.9;
+    if (this.dafBassFilter) {
+      this._dafFilter = a.audioCtx.createBiquadFilter();
+      this._dafFilter.type = 'highpass';
+      this._dafFilter.frequency.value = 150;
+      this._dafGain.connect(this._dafFilter);
+      this._dafFilter.connect(a.audioCtx.destination);
+    } else {
+      this._dafGain.connect(a.audioCtx.destination);
+    }
+    this._dafBuffer = [];
+    this._dafNextPlayTime = 0;
+
+    this._dafInterval = setInterval(() => {
+      if (!a.analyserRec) return;
+      const samples = new Float32Array(fftSize);
+      a.analyserRec.getFloatTimeDomainData(samples);
+      this._dafBuffer.push({ samples, captureTime: performance.now() });
+
+      const threshold = performance.now() - this.dafDelayMs;
+      while (this._dafBuffer.length > 0 && this._dafBuffer[0].captureTime <= threshold) {
+        const { samples: s } = this._dafBuffer.shift();
+        const buf = a.audioCtx.createBuffer(1, s.length, sampleRate);
+        buf.copyToChannel(s, 0);
+        const src = a.audioCtx.createBufferSource();
+        src.buffer = buf;
+        src.connect(this._dafGain);
+        if (this._dafNextPlayTime < a.audioCtx.currentTime) {
+          this._dafNextPlayTime = a.audioCtx.currentTime;
+        }
+        src.start(this._dafNextPlayTime);
+        this._dafNextPlayTime += buf.duration;
+      }
+    }, intervalMs);
+  }
+
+  stopDAF() {
+    if (this._dafInterval) {
+      clearInterval(this._dafInterval);
+      this._dafInterval = null;
+    }
+    this._dafBuffer = [];
+    this._dafNextPlayTime = 0;
+    if (this._dafFilter) { this._dafFilter.disconnect(); this._dafFilter = null; }
+    if (this._dafGain) { this._dafGain.disconnect(); this._dafGain = null; }
+  }
+
   _encodeWAV(samples, sampleRate) {
     // PCM 16-bit mono WAV
     const numChannels = 1;
@@ -3959,6 +4022,7 @@ class VoxBallGame {
       const hud = document.getElementById('creatureStyleHud');
       if (hud) hud.style.display = this.gameMode === 'creature' ? '' : 'none';
       this.isRunning = true;
+      if (this.dafEnabled) this.startDAF();
       this.lastTime = performance.now();
       this.loop();
       } finally {
@@ -3977,6 +4041,9 @@ class VoxBallGame {
         recBtn.querySelector('.rec-label').textContent = 'Rec';
         await this.stopRecording();
       }
+      this.stopDAF();
+      document.getElementById('dafPanel')?.classList.remove('show');
+      document.getElementById('dafBtn')?.setAttribute('aria-expanded', 'false');
       if (this.prismReader && this.prismReader.speechRecognition) {
         try { this.prismReader.speechRecognition.stop(); } catch (e) { }
       }
@@ -4064,6 +4131,7 @@ class VoxBallGame {
       document.getElementById('summaryOverlay').classList.remove('show');
 
       // Close all panels and reset aria-expanded
+      this.stopDAF();
       document.getElementById('settingsPanel')?.classList.remove('show');
       document.getElementById('settingsBtn')?.setAttribute('aria-expanded', 'false');
       document.getElementById('vibPanel')?.classList.remove('show');
@@ -4072,6 +4140,8 @@ class VoxBallGame {
       document.getElementById('helpBtn')?.setAttribute('aria-expanded', 'false');
       document.getElementById('recordingsDrawer')?.classList.remove('show');
       document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'false');
+      document.getElementById('dafPanel')?.classList.remove('show');
+      document.getElementById('dafBtn')?.setAttribute('aria-expanded', 'false');
 
       this.drawIdleScene();
     });
@@ -4091,6 +4161,8 @@ class VoxBallGame {
       document.getElementById('helpBtn')?.setAttribute('aria-expanded', 'false');
       document.getElementById('recordingsDrawer')?.classList.remove('show');
       document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'false');
+      document.getElementById('dafPanel')?.classList.remove('show');
+      document.getElementById('dafBtn')?.setAttribute('aria-expanded', 'false');
       // Reset mode selection so user can pick fresh
       modeDetails.classList.remove('show');
       modeCards.forEach(c => c.classList.remove('selected'));
@@ -4748,6 +4820,15 @@ class VoxBallGame {
         document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
         vibBtn?.setAttribute('aria-expanded', 'false');
       }
+      // DAF panel
+      const _dafPanel = document.getElementById('dafPanel');
+      const _dafBtn = document.getElementById('dafBtn');
+      if (_dafPanel && !_dafPanel.contains(e.target) && e.target !== _dafBtn && (!_dafBtn || !_dafBtn.contains(e.target))) {
+        if (_dafPanel.classList.contains('show')) {
+          _dafPanel.classList.remove('show');
+          _dafBtn?.setAttribute('aria-expanded', 'false');
+        }
+      }
     });
 
     if (vibBtn) {
@@ -4996,6 +5077,58 @@ class VoxBallGame {
         { metric: 'resonance', direction: 'below', threshold: 40 },
       ]);
     });
+
+    // ── DAF (Delayed Auditory Feedback) panel handlers ──
+    const dafBtn = document.getElementById('dafBtn');
+    const dafPanel = document.getElementById('dafPanel');
+
+    dafBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isVisible = dafPanel.classList.toggle('show');
+      dafBtn.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
+      if (isVisible) {
+        document.getElementById('dafEnableToggle').checked = this.dafEnabled;
+        document.getElementById('dafDelaySlider').value = this.dafDelayMs;
+        document.getElementById('dafDelayLabel').textContent = `${this.dafDelayMs}ms`;
+        document.getElementById('dafBassFilterToggle').checked = this.dafBassFilter;
+        vibPanel?.classList.remove('show');
+        if (vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
+        helpTooltip?.classList.remove('show');
+        recordingsDrawer?.classList.remove('show');
+        if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', 'false');
+        settingsPanel?.classList.remove('show');
+        if (settingsBtn) settingsBtn.setAttribute('aria-expanded', 'false');
+      }
+    });
+
+    document.getElementById('dafEnableToggle')?.addEventListener('change', (e) => {
+      this.dafEnabled = e.target.checked;
+      localStorage.setItem('vox:daf:enabled', String(this.dafEnabled));
+      dafBtn?.classList.toggle('active', this.dafEnabled);
+      if (this.isRunning) {
+        if (this.dafEnabled) this.startDAF();
+        else this.stopDAF();
+      }
+    });
+
+    document.getElementById('dafDelaySlider')?.addEventListener('input', (e) => {
+      this.dafDelayMs = parseInt(e.target.value);
+      localStorage.setItem('vox:daf:delayMs', String(this.dafDelayMs));
+      document.getElementById('dafDelayLabel').textContent = `${this.dafDelayMs}ms`;
+      this._dafBuffer = [];
+    });
+
+    document.getElementById('dafBassFilterToggle')?.addEventListener('change', (e) => {
+      this.dafBassFilter = e.target.checked;
+      localStorage.setItem('vox:daf:bassFilter', String(this.dafBassFilter));
+      if (this._dafInterval) {
+        this.stopDAF();
+        this.startDAF();
+      }
+    });
+
+    if (this.dafEnabled) dafBtn?.classList.add('active');
+    // ── end DAF handlers ──
 
     document.getElementById('vibPresetMasc').addEventListener('click', () => {
       addPresetRules([
