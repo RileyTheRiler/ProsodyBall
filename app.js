@@ -3487,9 +3487,6 @@ class VoxBallGame {
 
     const teleprompterModeSelect = document.getElementById('teleprompterModeSelect');
     const voiceProfileSelect = document.getElementById('voiceProfileSelect');
-    const practicePresetSelect = document.getElementById('practicePresetSelect');
-    const coachingToast = document.getElementById('coachingToast');
-    this.coachingToastHideTimer = 0;
     const micDeviceSelect = document.getElementById('micDeviceSelect');
     const colorModeSelect = document.getElementById('colorModeSelect');
     const genderCueInputs = {
@@ -4472,12 +4469,6 @@ class VoxBallGame {
       this.analyzer.sustainedThreshold = Math.max(0.01, baseSustain * cfg.sustainMul);
       this.analyzer.spectralTiltSmoothedDb += cfg.tiltShift;
     };
-
-    practicePresetSelect?.addEventListener('change', (e) => {
-      if (this.analyzer) {
-        this.analyzer.setPracticePreset(e.target.value);
-      }
-    });
 
     voiceProfileSelect?.addEventListener('change', (e) => {
       applyVoiceProfilePreset(e.target.value);
@@ -5830,23 +5821,7 @@ class VoxBallGame {
     // unreliable data doesn't jerk the score around.
     // ==========================================================
     const scoreSmoothing = 0.12 * Math.max(0.2, this.analyzer.frameConfidence);
-    this.prosodyScore = computeProsodyScore(this.prosodyScore, m, this.analyzer.currentPreset, scoreSmoothing);
-
-    if (this.analyzer && this.analyzer.coachingHint) {
-      if (coachingToast) {
-        coachingToast.textContent = this.analyzer.coachingHint;
-        coachingToast.classList.add('visible');
-      }
-      this.coachingToastHideTimer = 3.0; // Show toast for 3 seconds
-      this.analyzer.state.coachingHint = null; // Clear so we don't re-trigger immediately
-    }
-    
-    if (this.coachingToastHideTimer > 0) {
-      this.coachingToastHideTimer -= dt;
-      if (this.coachingToastHideTimer <= 0 && coachingToast) {
-        coachingToast.classList.remove('visible');
-      }
-    }
+    this.prosodyScore = computeProsodyScore(this.prosodyScore, m, scoreSmoothing);
 
     const ps = this.prosodyScore;
 
