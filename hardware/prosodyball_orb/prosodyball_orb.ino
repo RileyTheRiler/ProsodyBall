@@ -111,64 +111,55 @@ void loop() {
     }
 
     // ====================================================================
-    // ANIMATION ENGINE — coherent traveling wave + breath + weight body
+    // ANIMATION ENGINE — whole-globe resonance PULSE + weight body
     // --------------------------------------------------------------------
-    // Resonance (0..1) -> a large-wavelength sine that SWEEPS across the
-    //   strip, so it survives opal-glass diffusion (random per-pixel noise
-    //   does not — the diffuser averages it into a flat field).
-    // Weight (0..1)    -> baseline brightness + steadiness: heavy = fuller
-    //   and calmer, light = dimmer and free to flutter.
-    // Wave and breath oscillate around 1.0, so a more resonant voice never
-    //   makes the globe dimmer on average.
+    // Resonance (0..1, dark..bright) -> a whole-globe pulse/blink. A
+    //   brighter voice pulses FASTER and DEEPER; a darker voice is a slow,
+    //   shallow throb. A uniform brightness pulse is the most diffuser-proof
+    //   cue there is, so it stays obvious through the frosted globe.
+    // Weight (0..1) -> baseline brightness ("body") plus a mild calming of
+    //   the pulse: heavy = fuller and steadier, light = dimmer and livelier.
     // ====================================================================
 
     // ---- Tunable feel (grouped so you never hunt through the math) ----
-    const float WAVE_SPATIAL_FREQ = 0.10f;   // rad/LED; 2pi/0.10 ~ 63-LED wavelength (~2.5 waves across 160). Lower = broader, more diffusion-proof.
-    const float WAVE_SPEED_MIN    = 0.0010f; // wave travel speed (rad/ms) at zero resonance
-    const float WAVE_SPEED_MAX    = 0.0060f; // wave travel speed at full resonance
-    const float WAVE_AMP_MAX      = 0.22f;   // peak +/- brightness swing of the wave (full resonance, zero weight)
-    const float BREATH_SPEED_MIN  = 0.0015f; // global breath speed (rad/ms) at zero resonance
-    const float BREATH_SPEED_MAX  = 0.0050f; // global breath speed at full resonance
-    const float BREATH_DEPTH_MAX  = 0.10f;   // peak +/- breath swing at full resonance
+    const float PULSE_SPEED_MIN   = 0.0025f; // pulse rate (rad/ms) at dark resonance  (~2.5 s period, slow throb)
+    const float PULSE_SPEED_MAX   = 0.0130f; // pulse rate (rad/ms) at bright resonance (~0.5 s period, fast blink)
+    const float PULSE_DEPTH_MIN   = 0.15f;   // brightness dip at dark resonance   (gentle, 0..1)
+    const float PULSE_DEPTH_MAX   = 0.70f;   // brightness dip at bright resonance (deep blink, 0..1; raise toward 0.9 for near-off troughs)
+    const float PULSE_SHAPE       = 1.0f;    // waveform: 1 = smooth pulse; >1 = blinkier (quick flash, longer dark)
     const float BASE_BRIGHT_LIGHT = 0.55f;   // baseline brightness for the lightest voice (weight 0)
     const float BASE_BRIGHT_HEAVY = 0.95f;   // baseline brightness for the heaviest voice (weight 1)
-    const float STEADINESS_MAX    = 0.85f;   // how much full weight DAMPENS the wave (1 = kill wave, 0 = none)
+    const float STEADINESS_MAX    = 0.35f;   // how much full weight calms the pulse depth (0 = none, 1 = flat)
     const float MULT_CEILING      = 1.00f;   // hard clamp on final multiplier -> never exceeds the old peak power
 
     uint32_t t = millis();
-    float res = targetRes / 255.0f;          // 0..1 resonance
-    float wgt = targetWgt / 255.0f;          // 0..1 weight (0 = light, 1 = heavy)
+    float res = targetRes / 255.0f;          // 0..1 resonance (0 = dark, 1 = bright)
+    float wgt = targetWgt / 255.0f;          // 0..1 weight    (0 = light, 1 = heavy)
 
-    // WEIGHT -> baseline brightness ("body") + steadiness (wave damping).
+    // WEIGHT -> baseline brightness ("body") + a mild steadiness.
     float baseline   = BASE_BRIGHT_LIGHT + (BASE_BRIGHT_HEAVY - BASE_BRIGHT_LIGHT) * wgt;
-    float steadiness = STEADINESS_MAX * wgt;                          // heavier = calmer
+    float steadiness = STEADINESS_MAX * wgt;                          // heavier = a touch calmer
 
-    // RESONANCE -> wave & breath parameters (both oscillate around 1.0).
-    float waveSpeed   = WAVE_SPEED_MIN   + (WAVE_SPEED_MAX   - WAVE_SPEED_MIN)   * res;
-    float breathSpeed = BREATH_SPEED_MIN + (BREATH_SPEED_MAX - BREATH_SPEED_MIN) * res;
-    float waveAmp     = WAVE_AMP_MAX     * res * (1.0f - steadiness); // weight calms the wave
-    float breathDepth = BREATH_DEPTH_MAX * res;
+    // RESONANCE -> pulse rate and depth (brighter resonance = faster + deeper).
+    float pulseSpeed = PULSE_SPEED_MIN + (PULSE_SPEED_MAX - PULSE_SPEED_MIN) * res;
+    float pulseDepth = (PULSE_DEPTH_MIN + (PULSE_DEPTH_MAX - PULSE_DEPTH_MIN) * res) * (1.0f - steadiness);
 
-    // Global breath (same for every pixel) — computed once per frame.
-    float breath    = 1.0f + breathDepth * sinf(t * breathSpeed);
-    float wavePhase = t * waveSpeed;
+    // One global pulse for the whole globe (uniform -> maximally diffuser-proof).
+    float s = sinf(t * pulseSpeed) * 0.5f + 0.5f;    // 0..1 raw sine
+    s = powf(s, PULSE_SHAPE);                         // 1 = smooth; >1 = blinkier
+    float pulse = 1.0f - pulseDepth * (1.0f - s);     // dips from baseline toward dim
+
+    float mult = baseline * pulse;
+    if (mult > MULT_CEILING) mult = MULT_CEILING;     // power-safe clamp
+    if (mult < 0.0f) mult = 0.0f;
 
     RgbColor baseColor = adjustColor(targetR, targetG, targetB);
+    RgbColor outColor = RgbColor((uint8_t)(baseColor.R * mult),
+                                 (uint8_t)(baseColor.G * mult),
+                                 (uint8_t)(baseColor.B * mult));
 
     for (int i = 0; i < NUM_LEDS; i++) {
-        // Spatially-COHERENT wave: neighbors differ by only WAVE_SPATIAL_FREQ rad,
-        // so the pattern reads as one moving glow through the frosted globe.
-        float wave = 1.0f + waveAmp * sinf(i * WAVE_SPATIAL_FREQ - wavePhase);
-
-        float mult = baseline * breath * wave;
-        if (mult > MULT_CEILING) mult = MULT_CEILING;   // power-safe clamp
-        if (mult < 0.0f) mult = 0.0f;
-
-        uint8_t fr = (uint8_t)(baseColor.R * mult);
-        uint8_t fg = (uint8_t)(baseColor.G * mult);
-        uint8_t fb = (uint8_t)(baseColor.B * mult);
-
-        strip.SetPixelColor(i, RgbColor(fr, fg, fb));
+        strip.SetPixelColor(i, outColor);
     }
     strip.Show();
 
