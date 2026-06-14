@@ -1,3 +1,14 @@
+// Security enhancement: sanitizes URLs to prevent DOM-based XSS via unsafe protocols (javascript:, data:, vbscript:)
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  const strUrl = String(url);
+  // The ^ anchor strictly evaluates the beginning of the URL
+  if (/^(%20|\s)*(javascript|data|vbscript):/i.test(strUrl)) {
+    return 'about:blank';
+  }
+  return strUrl;
+}
+
 export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
