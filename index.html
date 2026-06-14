@@ -5189,6 +5189,34 @@
       </div>
 
       <div class="settings-group">
+        <span class="settings-label">Perceived-gender cues</span>
+        <div class="settings-row">
+          <label for="genderCueModalF0">Modal (median) pitch</label>
+          <label class="toggle-switch"><input id="genderCueModalF0" type="checkbox" aria-label="Use modal pitch cue" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <label for="genderCueDispersion">Resonance spacing (vocal-tract size)</label>
+          <label class="toggle-switch"><input id="genderCueDispersion" type="checkbox" aria-label="Use formant dispersion cue" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <label for="genderCueSibilant">/s/ brightness</label>
+          <label class="toggle-switch"><input id="genderCueSibilant" type="checkbox" aria-label="Use sibilant centroid cue" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <label for="genderCueCpp">Breathiness</label>
+          <label class="toggle-switch"><input id="genderCueCpp" type="checkbox" aria-label="Use breathiness cue" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <label for="genderCueIntonation">Intonation dynamism <em>(stereotype, not anatomy)</em></label>
+          <label class="toggle-switch"><input id="genderCueIntonation" type="checkbox" aria-label="Use intonation dynamism cue"><span class="toggle-slider"></span></label>
+        </div>
+        <div class="settings-row">
+          <label for="genderCueCalibrated">Adapt to my voice (calibration)</label>
+          <label class="toggle-switch"><input id="genderCueCalibrated" type="checkbox" aria-label="Use per-speaker calibration" checked><span class="toggle-slider"></span></label>
+        </div>
+      </div>
+
+      <div class="settings-group">
         <span class="settings-label">Input Source</span>
         <select id="micDeviceSelect" class="theme-select btn-fill" aria-label="Microphone device selection">
           <option value="default">Microphone: System Default</option>

@@ -161,3 +161,181 @@ export function genderScoreToHue(score, colorblind = false) {
   }
   return 210 + s * 130; // 210 (blue) -> 275 (purple) -> 340 (pink)
 }
+
+// ====== MULTI-CUE PERCEIVED-GENDER MODEL ======
+// Each acoustic cue produces a 0..1 femininity value plus a 0..1 confidence. The combiner
+// blends only ENABLED cues, weighting each by base*confidence. It also reports an uncertainty
+// that rises with low confidence AND with cue disagreement, and shrinks the score toward 0.5
+// (androgynous) as uncertainty rises. Cue anchors below come from voice-science norms
+// (Hillenbrand 1995; Fitch 1997; Gelfer 2000; sibilant CoG literature).
+
+// Base weights per cue id. Resonance + modal pitch dominate (hardest to fake); breathiness
+// and the stereotype-based intonation cue contribute least.
+export const DEFAULT_GENDER_CUE_WEIGHTS = {
+  resonance: 0.30,
+  modalF0: 0.26,
+  dispersion: 0.16,
+  pitch: 0.10,
+  sibilant: 0.10,
+  cpp: 0.08,
+  intonation: 0.08,
+};
+
+// Modal (median) F0 over a voiced window -> femininity. Habitual pitch, not a momentary note.
+// Anchors: male ~110 Hz, androgynous ~165 Hz, female ~220 Hz.
+export function computeModalF0Femininity(medianHz, { min = 110, max = 220 } = {}) {
+  if (!(medianHz > 0)) return 0.5;
+  return normalizeAgainstRange(medianHz, min, max);
+}
+
+// Center-of-gravity (spectral centroid) over a magnitude band, in Hz. Returns 0 if no energy.
+export function computeSpectralCentroid(magnitudes, binHz, loHz = 0, hiHz = Infinity) {
+  if (!magnitudes || magnitudes.length === 0 || !(binHz > 0)) return 0;
+  const startBin = Math.max(0, Math.floor(loHz / binHz));
+  const endBin = Math.min(magnitudes.length - 1, Math.ceil(hiHz / binHz));
+  let num = 0, den = 0;
+  for (let i = startBin; i <= endBin; i++) {
+    const m = magnitudes[i];
+    if (m <= 0) continue;
+    num += i * binHz * m;
+    den += m;
+  }
+  return den > 0 ? num / den : 0;
+}
+
+// Sibilant /s/ centroid -> femininity. Higher CoG = shorter front cavity = feminine.
+// Anchors: male ~5 kHz, female ~8 kHz.
+export function computeSibilantFemininity(centroidHz, { min = 5000, max = 8000 } = {}) {
+  if (!(centroidHz > 0)) return 0.5;
+  return normalizeAgainstRange(centroidHz, min, max);
+}
+
+// Mean adjacent formant spacing (dispersion, ΔF) from F1..Fn. Proxy for vocal-tract length.
+export function computeFormantDispersion(formants) {
+  if (!Array.isArray(formants)) return 0;
+  const f = formants.filter((x) => x > 0);
+  if (f.length < 2) return 0;
+  let sum = 0;
+  for (let i = 1; i < f.length; i++) sum += f[i] - f[i - 1];
+  return sum / (f.length - 1);
+}
+
+// Formant dispersion -> femininity. Wider spacing = shorter tract = feminine.
+// Anchors: male spacing ~900 Hz, female ~1200 Hz.
+export function dispersionToFemininity(meanSpacingHz, { min = 900, max = 1200 } = {}) {
+  if (!(meanSpacingHz > 0)) return 0.5;
+  return normalizeAgainstRange(meanSpacingHz, min, max);
+}
+
+// Apparent vocal-tract length (cm) from mean formant spacing. c ~ 35000 cm/s in vocal tract.
+export function dispersionToVtlCm(meanSpacingHz, c = 35000) {
+  if (!(meanSpacingHz > 0)) return 0;
+  return c / (2 * meanSpacingHz);
+}
+
+// Real cepstrum of a log-magnitude half-spectrum (length M, bins 0..Nyquist) via a type-I DCT.
+// Returns c[q], q=0..maxQuefrency, where quefrency index q is a lag in samples at the original
+// sampleRate. maxQuefrency bounds cost (the full transform is O(M^2)); only quefrencies up to the
+// lowest F0 of interest are needed for CPP, so callers cap it (e.g. sampleRate/55 Hz).
+export function computeCepstrum(logMag, maxQuefrency = logMag.length - 1) {
+  const M = logMag.length;
+  const denom = M - 1;
+  const qMax = Math.min(maxQuefrency, denom);
+  const cep = new Float64Array(qMax + 1);
+  if (denom <= 0) return cep;
+  for (let q = 0; q <= qMax; q++) {
+    let sum = logMag[0] + (q % 2 === 0 ? logMag[denom] : -logMag[denom]);
+    for (let k = 1; k < denom; k++) {
+      sum += 2 * logMag[k] * Math.cos((Math.PI * q * k) / denom);
+    }
+    cep[q] = sum / (2 * denom);
+  }
+  return cep;
+}
+
+// Cepstral Peak Prominence: height of the cepstral peak near quefrency q0 above the
+// least-squares regression line fit across the cepstrum. Higher CPP = more periodic (less breathy).
+export function computeCPP(cepstrum, q0, { minQuefrency = 2, searchRadius = 0 } = {}) {
+  const M = cepstrum.length;
+  if (!(q0 > minQuefrency) || q0 >= M) return 0;
+  // Least-squares line over [minQuefrency, M-1].
+  let n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (let q = minQuefrency; q < M; q++) {
+    const y = cepstrum[q];
+    n++; sx += q; sy += y; sxx += q * q; sxy += q * y;
+  }
+  const denom = n * sxx - sx * sx;
+  const slope = denom !== 0 ? (n * sxy - sx * sy) / denom : 0;
+  const intercept = (sy - slope * sx) / n;
+  // Peak in a window around q0.
+  const radius = searchRadius > 0 ? searchRadius : Math.max(2, Math.round(q0 * 0.1));
+  const lo = Math.max(minQuefrency, Math.floor(q0 - radius));
+  const hi = Math.min(M - 1, Math.ceil(q0 + radius));
+  let peakV = -Infinity, peakQ = lo;
+  for (let q = lo; q <= hi; q++) {
+    if (cepstrum[q] > peakV) { peakV = cepstrum[q]; peakQ = q; }
+  }
+  const baseline = intercept + slope * peakQ;
+  return Math.max(0, peakV - baseline);
+}
+
+// CPP -> femininity. Lower CPP (breathier) reads more feminine, so invert.
+// Anchors: breathy ~6, modal ~14 (in the cepstrum's log-mag units, which track dB).
+export function cppToFemininity(cppDb, { min = 6, max = 14 } = {}) {
+  return 1 - normalizeAgainstRange(cppDb, min, max);
+}
+
+// Re-center a raw 0..1 cue value against a per-speaker neutral baseline so the speaker's own
+// neutral reads 0.5 and deviation scales by their spread.
+export function applyCalibrationOffset(rawValue, neutral, spread) {
+  if (!(spread > 0) || neutral == null) return clamp01(rawValue);
+  return clamp01(0.5 + (rawValue - neutral) / (2 * spread));
+}
+
+// Finalize a collected sample set into a per-speaker {neutral, spread} baseline for a cue.
+export function finalizeCueCalibration(samples, { minSpread = 0.05 } = {}) {
+  if (!samples || samples.length < 4) return { neutral: null, spread: null, isLearned: false };
+  const sorted = [...samples].sort((a, b) => a - b);
+  const at = (p) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(sorted.length * p)))];
+  const neutral = at(0.5);
+  const spread = Math.max(minSpread, (at(0.9) - at(0.1)) / 2);
+  return { neutral, spread, isLearned: true };
+}
+
+// Combine per-cue {value, confidence} into a final 0..1 score plus an uncertainty (0..1).
+// enabledMap[id] must be truthy for a cue to contribute (absent => disabled).
+export function computeGenderScoreMulti({
+  cues = {},
+  weights = DEFAULT_GENDER_CUE_WEIGHTS,
+  enabledMap = {},
+  calibration = null,
+} = {}) {
+  let sumW = 0, sumWV = 0, sumWC = 0;
+  const contribs = [];
+  for (const id of Object.keys(cues)) {
+    if (!enabledMap[id]) continue;
+    const cue = cues[id];
+    if (!cue) continue;
+    let value = clamp01(cue.value);
+    const conf = clamp01(cue.confidence);
+    if (calibration && calibration[id] && calibration[id].spread > 0) {
+      value = applyCalibrationOffset(value, calibration[id].neutral, calibration[id].spread);
+    }
+    const base = weights[id] != null ? weights[id] : 0;
+    const w = base * conf;
+    if (w <= 0) continue;
+    sumW += w;
+    sumWV += w * value;
+    sumWC += w * conf;
+    contribs.push({ w, value });
+  }
+  if (sumW <= 1e-6) return { score: 0.5, uncertainty: 1 };
+  const blended = sumWV / sumW;
+  let varAcc = 0;
+  for (const c of contribs) varAcc += c.w * (c.value - blended) * (c.value - blended);
+  const disagreement = Math.sqrt(varAcc / sumW);
+  const meanConf = sumWC / sumW;
+  const uncertainty = clamp01((1 - meanConf) * 0.9 + disagreement * 1.2);
+  const score = clamp01(0.5 + (blended - 0.5) * (1 - uncertainty));
+  return { score, uncertainty };
+}
