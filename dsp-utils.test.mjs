@@ -10,7 +10,7 @@ test('computeRawProsody applies weighted sum', () => {
 
 test('computeProsodyScore smooths toward target', () => {
   const metrics = { bounce: 1, vowel: 0, articulation: 0 };
-  const score = computeProsodyScore(0, metrics, null, 0.2);
+  const score = computeProsodyScore(0, metrics, 0.2);
   assert.ok(Math.abs(score - 0.10) < 1e-9);
 });
 
