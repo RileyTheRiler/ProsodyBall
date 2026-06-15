@@ -9,7 +9,8 @@ in Settings:
   that **hops on each syllable**; livelier intonation makes the hop taller. A dashed
   **target band** lets you train toward a pitch range (green glow + buzz + on-target %).
 - **Color** — the **whole screen** colours from a metric **you choose** (pitch, brightness,
-  bounce, or loudness), blended between **two colours you pick**. Louder = brighter.
+  bounce, loudness, or **perceived gender**), blended between **two colours you pick**.
+  Louder = brighter. *Gender* blends pitch + vocal-tract resonance (0 = masculine … 1 = feminine).
 
 Everything is **customisable on-device and saved to flash**: mode, the metric that drives
 colour, the two colours, the haptic trigger + threshold, and the target band.
@@ -75,7 +76,7 @@ The band defaults to **145–175 Hz** (the androgynous zone) and keeps a constan
 | Row | Options |
 |-----|---------|
 | **Mode** | Vox Ball / Color |
-| **Color from** | Pitch / Brightness / Bounce / Loudness *(Color mode)* |
+| **Color from** | Pitch / Brightness / Bounce / Loudness / **Gender** *(Color mode)* |
 | **Low color / High color** | Blue, Teal, Green, Purple, Red, Orange, Pink, White |
 | **Haptics** | Off / On-target / Syllables / Bright / Loud |
 | **Haptic thr** | 25 / 50 / 75% (threshold for the Bright/Loud triggers) |
@@ -102,10 +103,14 @@ producer/consumer shape as the orb sketch's `colorQueue`.
 the two stay in sync: YIN pitch detection (`YIN_THRESHOLD`, octave-up guard, parabolic
 interpolation, 7-frame median), the intonation **bounce** metric (`INTONATION_ST_DIVISOR`),
 the syllable-onset state machine (`SYLLABLE_ON_MULT` / `SYLLABLE_OFF_MULT` /
-`SYLLABLE_DEBOUNCE_SECS` / `SYLLABLE_IMPULSE_DECAY`), and a **brightness/resonance** proxy
-from the spectral centroid (radix-2 FFT; `computeSpectralCentroid`). Full formant tracking
-(4096-pt FFT + cepstrum) is still on the roadmap. Change a constant in one place and mirror
-it in the other.
+`SYLLABLE_DEBOUNCE_SECS` / `SYLLABLE_IMPULSE_DECAY`), a **brightness** proxy from the
+spectral centroid, and **harmonic-envelope formant estimation** (F1/F2/F3 via
+`_resonanceHarmonicEnvelope` + `_peakPickFormants`) feeding a **resonance** (formant
+dispersion → vocal-tract length) and a **perceived-gender** blend of pitch + resonance
+(`computeGenderScore`). A single radix-2 FFT per frame is shared by the centroid and formant
+stages. Host-tested on synthetic vowels: masculine → 0.22 (blue), androgynous → 0.57
+(purple), feminine → 0.95 (pink), with F1/F2/F3 within ~50–100 Hz of target. Change a
+constant in one place and mirror it in the other.
 
 ## Tuning & troubleshooting
 
@@ -131,7 +136,7 @@ or a wrist tilt** (BMA423 accelerometer). Tune `DIM_AFTER_MS`, `DIM_LEVEL`, and
 draws; deeper light-sleep is a future addition.
 
 ## Roadmap
-Full formant/gender model (4096-pt FFT + cepstrum/CPP port), more visualisations, an optional
-BLE companion mode (drive the existing orb from the watch), and deeper sleep. *(Done:
-brightness/resonance cue, Color mode, on-device customisation, persistence, auto-dim +
-tilt-wake.)*
+Cepstral/CPP breathiness ("vocal weight") cue, more visualisations, an optional BLE companion
+mode (drive the existing orb from the watch), and deeper sleep. *(Done: brightness/resonance
+cue, harmonic-envelope formants + perceived-gender, Color mode, on-device customisation,
+persistence, auto-dim + tilt-wake.)*

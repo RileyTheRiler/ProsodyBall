@@ -37,6 +37,14 @@
 #define VOX_BRIGHT_LO_HZ  120.0f   // analysis band low edge (skip DC/hum)
 #define VOX_BRIGHT_HI_HZ  5000.0f  // analysis band high edge
 
+// ---- Formant / resonance / perceived-gender cue ----
+// Harmonic-envelope formant estimation (F1/F2/F3) ported from app.js
+// _resonanceHarmonicEnvelope + _peakPickFormants, then resonance from formant dispersion
+// (apparent vocal-tract length) and a perceived-gender blend of pitch + resonance
+// (computeGenderScore in dsp-utils.js). Returns 0=masculine .. 1=feminine.
+#define VOX_GENDER_PITCH_MIN_HZ 110.0f
+#define VOX_GENDER_PITCH_MAX_HZ 220.0f
+
 // Per-frame analysis result.
 struct VoxResult {
   float rms;             // raw RMS energy of the frame (0..~1)
@@ -47,6 +55,11 @@ struct VoxResult {
   float confidence;      // pitch confidence 0..1
   float brightness;      // spectral-centroid resonance proxy 0..1 (smoothed)
   float centroidHz;      // raw spectral centroid in Hz (0 if silent)
+  float f1, f2, f3;      // estimated formants in Hz (0 if unavailable)
+  float resonance;       // dispersion/VTL-based resonance 0..1 (dark..bright)
+  float formantConf;     // formant estimate confidence 0..1
+  float genderScore;     // perceived gender 0..1 (0 masc .. 1 fem), smoothed
+  float genderHue;       // 210 (blue/masc) .. 340 (pink/fem)
   bool  voiced;          // true when a pitch was found this frame
 };
 
@@ -66,10 +79,19 @@ public:
 
 private:
   float detectPitch(const float* buf, size_t n, float rms);
-  float computeBrightness(const float* buf, size_t n, float rms, float* centroidHzOut);
+  void  computeSpectrum(const float* buf, size_t n);  // one windowed FFT -> _mag/_logmag
+  float brightnessFromSpectrum();                      // spectral centroid -> 0..1
+  // Harmonic-envelope formants; fills f1/f2/f3 (Hz) and a 0..1 confidence.
+  void  computeFormants(float f0, float* f1, float* f2, float* f3, float* conf);
 
-  // --- brightness smoothing ---
+  // --- shared per-frame spectrum (linear magnitude + dB), bins 0..N/2 ---
+  float _mag[VOX_FRAME_SAMPLES / 2 + 1];
+  float _logmag[VOX_FRAME_SAMPLES / 2 + 1];
+  bool  _specValid;
+
+  // --- brightness / gender smoothing ---
   float _smoothBright;
+  float _smoothGender;
 
   // --- calibration ---
   static const int CALIB_TARGET_FRAMES = 16; // ~1 s of quiet at ~64 ms/frame

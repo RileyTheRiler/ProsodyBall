@@ -43,7 +43,7 @@ static volatile bool gRecalRequest = false;
 // Persisted settings (NVS) + option tables
 // ====================================================================
 enum Mode      { MODE_BALL = 0, MODE_COLOR = 1 };
-enum HueMetric { SRC_PITCH = 0, SRC_BRIGHT, SRC_BOUNCE, SRC_LOUD };
+enum HueMetric { SRC_PITCH = 0, SRC_BRIGHT, SRC_BOUNCE, SRC_LOUD, SRC_GENDER, SRC_COUNT };
 enum Haptic    { HAP_OFF = 0, HAP_ONTARGET, HAP_SYLLABLE, HAP_BRIGHT, HAP_LOUD };
 
 struct Settings {
@@ -69,7 +69,7 @@ static const Pal PALETTE[] = {
 static const int N_PAL = sizeof(PALETTE) / sizeof(PALETTE[0]);
 
 static const char *MODE_NAMES[]   = { "Vox Ball", "Color" };
-static const char *SRC_NAMES[]    = { "Pitch", "Brightness", "Bounce", "Loudness" };
+static const char *SRC_NAMES[]    = { "Pitch", "Brightness", "Bounce", "Loudness", "Gender" };
 static const char *HAPTIC_NAMES[] = { "Off", "On-target", "Syllables", "Bright", "Loud" };
 
 static void loadSettings() {
@@ -166,6 +166,7 @@ static float metricValue(const VoxResult &r, uint8_t src) {
     case SRC_PITCH:  return r.pitchPos;
     case SRC_BRIGHT: return r.brightness;
     case SRC_BOUNCE: return r.bounce;
+    case SRC_GENDER: return r.genderScore;   // 0 masc .. 1 fem
     default:         return clampf(r.rms * 8.0f, 0.0f, 1.0f); // SRC_LOUD
   }
 }
@@ -351,7 +352,7 @@ static bool handleSettingsTap(int ty) {
   if (i >= N_ROWS) i = N_ROWS - 1;
   switch (i) {
     case 0: gCfg.mode = (gCfg.mode + 1) % 2; break;
-    case 1: gCfg.colorSrc = (gCfg.colorSrc + 1) % 4; break;
+    case 1: gCfg.colorSrc = (gCfg.colorSrc + 1) % SRC_COUNT; break;
     case 2: gCfg.loColor = (gCfg.loColor + 1) % N_PAL; break;
     case 3: gCfg.hiColor = (gCfg.hiColor + 1) % N_PAL; break;
     case 4: gCfg.haptic = (gCfg.haptic + 1) % 5; break;

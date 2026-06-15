@@ -96,25 +96,35 @@ static void fftRadix2(float* re, float* im, int n) {
   }
 }
 
-// Spectral centroid (Hz) over [VOX_BRIGHT_LO_HZ, VOX_BRIGHT_HI_HZ], normalized to a 0..1
-// brightness/resonance proxy. Ported from computeSpectralCentroid() in dsp-utils.js.
-float VoxDsp::computeBrightness(const float* buf, size_t n, float rms, float* centroidHzOut) {
-  *centroidHzOut = 0.0f;
-  float silenceThreshold = calibrating() ? 0.015f : _noiseFloor * 2.5f;
-  if (rms < silenceThreshold) return _smoothBright; // hold last value during silence
+static inline float binToHz(int bin) {
+  return (float)bin * (float)VOX_SAMPLE_RATE / (float)VOX_FRAME_SAMPLES;
+}
 
+// One Hann-windowed FFT per frame -> linear magnitude (_mag) and dB (_logmag), bins 0..N/2.
+// Shared by the brightness (centroid) and formant estimators so we only transform once.
+void VoxDsp::computeSpectrum(const float* buf, size_t n) {
   static float re[VOX_FRAME_SAMPLES];
   static float im[VOX_FRAME_SAMPLES];
   const int N = (int)n;
-  // Hann window to limit spectral leakage, then FFT.
   for (int i = 0; i < N; i++) {
     float w = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * i / (N - 1)));
     re[i] = buf[i] * w;
     im[i] = 0.0f;
   }
   fftRadix2(re, im, N);
+  for (int i = 0; i <= N / 2; i++) {
+    float m = sqrtf(re[i] * re[i] + im[i] * im[i]);
+    _mag[i] = m;
+    _logmag[i] = m > 1e-10f ? 20.0f * log10f(m) : -200.0f;
+  }
+  _specValid = true;
+}
 
-  const float binHz = (float)VOX_SAMPLE_RATE / (float)N;
+// Spectral centroid (Hz) over [VOX_BRIGHT_LO_HZ, VOX_BRIGHT_HI_HZ] -> 0..1 brightness.
+// Ported from computeSpectralCentroid() in dsp-utils.js.
+float VoxDsp::brightnessFromSpectrum() {
+  const int N = VOX_FRAME_SAMPLES;
+  const float binHz = binToHz(1);
   int loBin = (int)(VOX_BRIGHT_LO_HZ / binHz);
   int hiBin = (int)(VOX_BRIGHT_HI_HZ / binHz);
   if (loBin < 1) loBin = 1;
@@ -122,22 +132,156 @@ float VoxDsp::computeBrightness(const float* buf, size_t n, float rms, float* ce
 
   float num = 0.0f, den = 0.0f;
   for (int i = loBin; i <= hiBin; i++) {
-    float mag = sqrtf(re[i] * re[i] + im[i] * im[i]);
-    num += (i * binHz) * mag;
-    den += mag;
+    num += (i * binHz) * _mag[i];
+    den += _mag[i];
   }
   float centroid = den > 0.0f ? num / den : 0.0f;
-  *centroidHzOut = centroid;
-
   float bright = clamp01f((centroid - VOX_BRIGHT_MIN_HZ) /
                           (VOX_BRIGHT_MAX_HZ - VOX_BRIGHT_MIN_HZ));
-  _smoothBright += (bright - _smoothBright) * 0.25f; // light EMA for stability
+  _smoothBright += (bright - _smoothBright) * 0.25f;
   return _smoothBright;
+}
+
+// Harmonic-envelope formant estimation. Ported from app.js _resonanceHarmonicEnvelope +
+// _peakPickFormants: sample the dB spectrum at each harmonic of f0 (with local peak search
+// + parabolic amplitude interp), apply +6 dB/oct tilt compensation, Gaussian-smooth into an
+// envelope over harmonics, then pick F1/F2/F3 as the strongest local maxima within bands.
+void VoxDsp::computeFormants(float f0, float* f1, float* f2, float* f3, float* conf) {
+  *f1 = 0; *f2 = 0; *f3 = 0; *conf = 0;
+  if (!(f0 > 0.0f) || !_specValid) return;
+
+  const float binHz = binToHz(1);
+  const int   nBins = VOX_FRAME_SAMPLES / 2;
+  const float maxHarmonicHz = 5500.0f;
+  int numH = (int)(maxHarmonicHz / f0);
+  if (numH > 40) numH = 40;
+  if (numH < 4) return;
+
+  static float amps[40];
+  static float env[40];
+  const int searchRange = (int)fmaxf(1.0f, floorf(f0 / binHz * 0.3f));
+  for (int h = 0; h < numH; h++) {
+    float hFreq = f0 * (h + 1);
+    int binInt = (int)floorf(hFreq / binHz);
+    if (binInt < 1 || binInt + 1 >= nBins) { amps[h] = -200.0f; continue; }
+    int peakBin = binInt; float peakVal = _logmag[binInt];
+    for (int s = -searchRange; s <= searchRange; s++) {
+      int idx = binInt + s;
+      if (idx >= 0 && idx < nBins && _logmag[idx] > peakVal) { peakVal = _logmag[idx]; peakBin = idx; }
+    }
+    if (peakBin > 0 && peakBin < nBins - 1) {
+      float a = _logmag[peakBin - 1], b = _logmag[peakBin], c = _logmag[peakBin + 1];
+      float denom = a - 2 * b + c;
+      amps[h] = fabsf(denom) > 0.001f ? b - (a - c) * (a - c) / (8 * denom) : b;
+    } else {
+      amps[h] = peakVal;
+    }
+    amps[h] += 6.0f * log2f(hFreq / f0); // +6 dB/oct tilt compensation
+  }
+
+  // 5-point Gaussian smoothing (sigma ~1 harmonic).
+  const float gW[5] = {0.06f, 0.24f, 0.40f, 0.24f, 0.06f};
+  for (int i = 0; i < numH; i++) {
+    float sum = 0, wSum = 0;
+    for (int k = -2; k <= 2; k++) {
+      int j = i + k;
+      if (j >= 0 && j < numH) { sum += amps[j] * gW[k + 2]; wSum += gW[k + 2]; }
+    }
+    env[i] = sum / wSum;
+  }
+
+  // Peak-pick F1/F2/F3 within frequency bands with a minimum separation.
+  const float minF1 = 200, maxF1 = 1100, minF2 = 600, maxF2 = 3500;
+  const float minF3 = 2200, maxF3 = 4200, minSep = 300;
+  float F1 = 0, F2 = 0, F3 = 0, a1 = -1e30f, a2 = -1e30f, a3 = -1e30f;
+  float envMin = env[0], envMax = env[0];
+  for (int i = 1; i < numH; i++) { if (env[i] < envMin) envMin = env[i]; if (env[i] > envMax) envMax = env[i]; }
+
+  for (int i = 1; i < numH - 1; i++) {
+    if (env[i] > env[i - 1] && env[i] > env[i + 1]) {
+      float a = env[i - 1], b = env[i], c = env[i + 1];
+      float denom = a - 2 * b + c;
+      float refinedIdx = i, refinedAmp = b;
+      if (fabsf(denom) > 0.001f) {
+        float delta = 0.5f * (a - c) / denom;
+        if (delta < -0.5f) delta = -0.5f;
+        if (delta > 0.5f) delta = 0.5f;
+        refinedIdx = i + delta;
+        refinedAmp = b - (a - c) * (a - c) / (8 * denom);
+      }
+      float freq = f0 * (refinedIdx + 1);
+      if (freq >= minF1 && freq <= maxF1 && refinedAmp > a1) { a1 = refinedAmp; F1 = freq; }
+    }
+  }
+  float f2Floor = fmaxf(minF2, F1 + minSep);
+  float f3Floor = fmaxf(minF3, 0);
+  for (int i = 1; i < numH - 1; i++) {
+    if (env[i] > env[i - 1] && env[i] > env[i + 1]) {
+      float a = env[i - 1], b = env[i], c = env[i + 1];
+      float denom = a - 2 * b + c;
+      float refinedIdx = i, refinedAmp = b;
+      if (fabsf(denom) > 0.001f) {
+        float delta = 0.5f * (a - c) / denom;
+        if (delta < -0.5f) delta = -0.5f;
+        if (delta > 0.5f) delta = 0.5f;
+        refinedIdx = i + delta;
+        refinedAmp = b - (a - c) * (a - c) / (8 * denom);
+      }
+      float freq = f0 * (refinedIdx + 1);
+      if (freq >= f2Floor && freq <= maxF2 && refinedAmp > a2) { a2 = refinedAmp; F2 = freq; }
+    }
+  }
+  f3Floor = fmaxf(minF3, F2 + minSep);
+  for (int i = 1; i < numH - 1; i++) {
+    if (env[i] > env[i - 1] && env[i] > env[i + 1]) {
+      float a = env[i - 1], b = env[i], c = env[i + 1];
+      float denom = a - 2 * b + c;
+      float refinedAmp = (fabsf(denom) > 0.001f) ? b - (a - c) * (a - c) / (8 * denom) : b;
+      float freq = f0 * (i + 1);
+      if (freq >= f3Floor && freq <= maxF3 && refinedAmp > a3) { a3 = refinedAmp; F3 = freq; }
+    }
+  }
+  if (F1 <= 0) F1 = 500;   // neutral fallbacks
+  if (F2 <= 0) F2 = 1500;
+
+  float envRange = envMax - envMin;
+  float prom = 0;
+  if (envRange > 0) {
+    float p1 = clamp01f((a1 - envMin) / envRange);
+    float p2 = clamp01f((a2 - envMin) / envRange);
+    prom = (p1 + p2) * 0.5f;
+  }
+  *f1 = F1; *f2 = F2; *f3 = F3;
+  *conf = clamp01f(prom * _confidence); // gate by pitch confidence (vowel-like, voiced)
+}
+
+// dispersionToFemininity(meanSpacingHz, 900, 1200) from dsp-utils.js.
+static float dispersionToFemininity(float meanSpacingHz) {
+  if (!(meanSpacingHz > 0)) return 0.5f;
+  return clamp01f((meanSpacingHz - 900.0f) / (1200.0f - 900.0f));
+}
+
+// computeGenderScore(pitch + resonance blend, confidence-weighted) from dsp-utils.js.
+static float computeGenderScore(float pitchHz, float resonance, float pitchConf, float formantConf) {
+  float pitchNorm = pitchHz > 0
+      ? clamp01f((pitchHz - VOX_GENDER_PITCH_MIN_HZ) /
+                 (VOX_GENDER_PITCH_MAX_HZ - VOX_GENDER_PITCH_MIN_HZ))
+      : 0.5f;
+  float resNorm = clamp01f(resonance);
+  float pc = clamp01f(pitchConf), fc = clamp01f(formantConf);
+  float wPitch = 0.5f * (0.35f + 0.65f * pc);
+  float wRes   = 0.5f * (0.35f + 0.65f * fc) * 1.1f; // resonance gets a slight edge
+  float totalW = wPitch + wRes;
+  float blended = totalW > 1e-6f ? (pitchNorm * wPitch + resNorm * wRes) / totalW : 0.5f;
+  float overallConf = fmaxf(pc, fc);
+  return clamp01f(0.5f + (blended - 0.5f) * overallConf);
 }
 
 VoxDsp::VoxDsp() {
   recalibrate();
   _smoothBright = 0.0f;
+  _smoothGender = 0.5f;
+  _specValid = false;
   _pitchMedianLen = 0;
   _confidence = 0.0f;
   _pitchHistLen = 0;
@@ -273,10 +417,29 @@ VoxResult VoxDsp::process(const float* frame, size_t n, float dtSecs) {
   r.confidence = _confidence;
   r.pitchPos = pitchHzToPosition(hz, VOX_PITCH_MIN_HZ, VOX_PITCH_MAX_HZ);
 
-  // --- brightness / resonance proxy (spectral centroid) ---
-  float centroidHz = 0.0f;
-  r.brightness = computeBrightness(frame, n, rms, &centroidHz);
-  r.centroidHz = centroidHz;
+  // --- spectrum-derived cues (one FFT shared by brightness + formants) ---
+  float silenceThreshold = calibrating() ? 0.015f : _noiseFloor * 2.5f;
+  _specValid = false;
+  if (rms >= silenceThreshold) computeSpectrum(frame, n);
+
+  // Brightness (spectral centroid). Holds last value during silence.
+  if (_specValid) { r.brightness = brightnessFromSpectrum(); }
+  else            { r.brightness = _smoothBright; }
+  r.centroidHz = 0.0f; // (centroid Hz no longer surfaced separately)
+
+  // Formants -> resonance (vocal-tract length via formant dispersion) -> perceived gender.
+  computeFormants(hz, &r.f1, &r.f2, &r.f3, &r.formantConf);
+  float meanSpacing = 0.0f;
+  if (r.f1 > 0 && r.f2 > 0 && r.f3 > 0) meanSpacing = (r.f3 - r.f1) * 0.5f;
+  else if (r.f1 > 0 && r.f2 > 0)        meanSpacing = (r.f2 - r.f1);
+  r.resonance = dispersionToFemininity(meanSpacing);
+
+  float genderTarget = computeGenderScore(hz, r.resonance, _confidence, r.formantConf);
+  // Only let confident, voiced frames move the smoothed score; else drift toward neutral.
+  if (r.voiced && r.formantConf > 0.05f) _smoothGender += (genderTarget - _smoothGender) * 0.15f;
+  else                                   _smoothGender += (0.5f - _smoothGender) * 0.02f;
+  r.genderScore = _smoothGender;
+  r.genderHue = 210.0f + clamp01f(_smoothGender) * 130.0f; // genderScoreToHue (blue->pink)
 
   // --- bounce: semitone std-dev of recent voiced pitch vs modal F0 (app.js:1134-1151) ---
   if (r.voiced) {
