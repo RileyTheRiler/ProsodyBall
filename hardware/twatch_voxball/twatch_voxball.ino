@@ -43,7 +43,7 @@ static volatile bool gRecalRequest = false;
 // Persisted settings (NVS) + option tables
 // ====================================================================
 enum Mode      { MODE_BALL = 0, MODE_COLOR = 1 };
-enum HueMetric { SRC_PITCH = 0, SRC_BRIGHT, SRC_BOUNCE, SRC_LOUD, SRC_GENDER, SRC_COUNT };
+enum HueMetric { SRC_PITCH = 0, SRC_BRIGHT, SRC_BOUNCE, SRC_LOUD, SRC_GENDER, SRC_WEIGHT, SRC_COUNT };
 enum Haptic    { HAP_OFF = 0, HAP_ONTARGET, HAP_SYLLABLE, HAP_BRIGHT, HAP_LOUD };
 
 struct Settings {
@@ -53,6 +53,9 @@ struct Settings {
   uint8_t  hiColor   = 6;           // palette index at metric=1
   uint8_t  haptic    = HAP_ONTARGET;
   uint8_t  hapticThr = 50;          // % threshold for the >threshold haptics
+  uint8_t  autoDim   = 1;           // auto-dim + tilt-wake on/off
+  uint8_t  showBand  = 1;           // pitch-target band + glow + score on/off
+  uint8_t  showHud   = 1;           // bottom text readout on/off
   uint16_t targetLoHz = 145;
   uint16_t targetHiHz = 175;
   uint16_t bestPct   = 0;           // best on-target % across sessions
@@ -69,8 +72,9 @@ static const Pal PALETTE[] = {
 static const int N_PAL = sizeof(PALETTE) / sizeof(PALETTE[0]);
 
 static const char *MODE_NAMES[]   = { "Vox Ball", "Color" };
-static const char *SRC_NAMES[]    = { "Pitch", "Brightness", "Bounce", "Loudness", "Gender" };
+static const char *SRC_NAMES[]    = { "Pitch", "Brightness", "Bounce", "Loudness", "Gender", "Weight" };
 static const char *HAPTIC_NAMES[] = { "Off", "On-target", "Syllables", "Bright", "Loud" };
+static const char *ONOFF[]        = { "Off", "On" };
 
 static void loadSettings() {
   gPrefs.begin("voxball", true);
@@ -80,6 +84,9 @@ static void loadSettings() {
   gCfg.hiColor    = gPrefs.getUChar("hi", gCfg.hiColor);
   gCfg.haptic     = gPrefs.getUChar("hap", gCfg.haptic);
   gCfg.hapticThr  = gPrefs.getUChar("hthr", gCfg.hapticThr);
+  gCfg.autoDim    = gPrefs.getUChar("adim", gCfg.autoDim);
+  gCfg.showBand   = gPrefs.getUChar("band", gCfg.showBand);
+  gCfg.showHud    = gPrefs.getUChar("hud", gCfg.showHud);
   gCfg.targetLoHz = gPrefs.getUShort("tlo", gCfg.targetLoHz);
   gCfg.targetHiHz = gPrefs.getUShort("thi", gCfg.targetHiHz);
   gCfg.bestPct    = gPrefs.getUShort("best", gCfg.bestPct);
@@ -93,6 +100,9 @@ static void saveSettings() {
   gPrefs.putUChar("hi", gCfg.hiColor);
   gPrefs.putUChar("hap", gCfg.haptic);
   gPrefs.putUChar("hthr", gCfg.hapticThr);
+  gPrefs.putUChar("adim", gCfg.autoDim);
+  gPrefs.putUChar("band", gCfg.showBand);
+  gPrefs.putUChar("hud", gCfg.showHud);
   gPrefs.putUShort("tlo", gCfg.targetLoHz);
   gPrefs.putUShort("thi", gCfg.targetHiHz);
   gPrefs.putUShort("best", gCfg.bestPct);
@@ -167,6 +177,7 @@ static float metricValue(const VoxResult &r, uint8_t src) {
     case SRC_BRIGHT: return r.brightness;
     case SRC_BOUNCE: return r.bounce;
     case SRC_GENDER: return r.genderScore;   // 0 masc .. 1 fem
+    case SRC_WEIGHT: return r.weight;        // 0 light/breathy .. 1 heavy/pressed
     default:         return clampf(r.rms * 8.0f, 0.0f, 1.0f); // SRC_LOUD
   }
 }
@@ -236,49 +247,54 @@ static void updateBallPhysics(const VoxResult &res, float dt) {
   smoothR += (rTarget - smoothR) * 0.3f;
 }
 
-static void renderBall(const VoxResult &res, bool inTarget) {
+static void renderBall(const VoxResult &res, bool inTarget, bool showBand, bool showHud) {
   TFT_eSPI *tft = ttgo->tft;
+  bool glow = showBand && inTarget;   // target visuals only when the band is enabled
   float renderPos = clampf(ballPos + bounceY, 0.0f, 1.0f);
   int x = SCR_W / 2;
   int y = TOP_MARGIN + (int)((1.0f - renderPos) * USABLE_H);
   int r = (int)smoothR;
 
   float base = res.voiced ? (0.45f + 0.55f * clampf(res.confidence, 0, 1)) : 0.22f;
-  uint16_t color = hsv565(smoothHue, 0.9f, inTarget ? clampf(base + 0.25f, 0, 1) : base);
+  uint16_t color = hsv565(smoothHue, 0.9f, glow ? clampf(base + 0.25f, 0, 1) : base);
 
   if (prevX >= 0) tft->fillCircle(prevX, prevY, prevR + 3, TFT_BLACK);
 
-  static int prevYLo = -1, prevYHi = -1;
-  int yLo = hzToY((float)gCfg.targetLoHz), yHi = hzToY((float)gCfg.targetHiHz);
-  if (prevYLo >= 0 && (prevYLo != yLo || prevYHi != yHi)) {
-    tft->drawFastHLine(0, prevYLo, SCR_W, TFT_BLACK);
-    tft->drawFastHLine(0, prevYHi, SCR_W, TFT_BLACK);
+  if (showBand) {
+    static int prevYLo = -1, prevYHi = -1;
+    int yLo = hzToY((float)gCfg.targetLoHz), yHi = hzToY((float)gCfg.targetHiHz);
+    if (prevYLo >= 0 && (prevYLo != yLo || prevYHi != yHi)) {
+      tft->drawFastHLine(0, prevYLo, SCR_W, TFT_BLACK);
+      tft->drawFastHLine(0, prevYHi, SCR_W, TFT_BLACK);
+    }
+    prevYLo = yLo; prevYHi = yHi;
+    uint16_t bandColor = inTarget ? TFT_GREEN : tft->color565(70, 90, 80);
+    dashedHLine(yHi, bandColor); dashedHLine(yLo, bandColor);
   }
-  prevYLo = yLo; prevYHi = yHi;
-
-  uint16_t bandColor = inTarget ? TFT_GREEN : tft->color565(70, 90, 80);
-  dashedHLine(yHi, bandColor); dashedHLine(yLo, bandColor);
 
   tft->fillCircle(x, y, r, color);
-  if (inTarget) tft->drawCircle(x, y, r + 3, TFT_GREEN);
+  if (glow) tft->drawCircle(x, y, r + 3, TFT_GREEN);
   prevX = x; prevY = y; prevR = r;
 
   tft->fillRect(0, SCR_H - BOT_MARGIN + 6, SCR_W, BOT_MARGIN - 6, TFT_BLACK);
+  if (!showHud) return;
   tft->setTextDatum(MC_DATUM);
-  char line[40];
+  char line[44];
   if (gDsp.calibrating()) {
     tft->setTextColor(TFT_WHITE, TFT_BLACK);
     tft->drawString("Calibrating... stay quiet", SCR_W / 2, SCR_H - 24, 2);
   } else {
     if (res.voiced) snprintf(line, sizeof(line), "%d Hz", (int)(res.pitchHz + 0.5f));
     else            snprintf(line, sizeof(line), "--");
-    tft->setTextColor(inTarget ? TFT_GREEN : TFT_WHITE, TFT_BLACK);
+    tft->setTextColor(glow ? TFT_GREEN : TFT_WHITE, TFT_BLACK);
     tft->drawString(line, SCR_W / 2, SCR_H - 30, 4);
-    int pct = voicedTime > 0.2f ? (int)(100.0f * inTargetTime / voicedTime + 0.5f) : 0;
-    snprintf(line, sizeof(line), "%d-%d Hz  on-target %d%%  best %d%%",
-             gCfg.targetLoHz, gCfg.targetHiHz, pct, gCfg.bestPct);
-    tft->setTextColor(tft->color565(160, 180, 170), TFT_BLACK);
-    tft->drawString(line, SCR_W / 2, SCR_H - 10, 2);
+    if (showBand) {
+      int pct = voicedTime > 0.2f ? (int)(100.0f * inTargetTime / voicedTime + 0.5f) : 0;
+      snprintf(line, sizeof(line), "%d-%d Hz  on-target %d%%  best %d%%",
+               gCfg.targetLoHz, gCfg.targetHiHz, pct, gCfg.bestPct);
+      tft->setTextColor(tft->color565(160, 180, 170), TFT_BLACK);
+      tft->drawString(line, SCR_W / 2, SCR_H - 10, 2);
+    }
   }
 }
 
@@ -294,6 +310,7 @@ static void renderColor(const VoxResult &res) {
 
   tft->fillScreen(col);
 
+  if (!gCfg.showHud) return;
   // Readable HUD strip.
   tft->fillRect(0, SCR_H - 26, SCR_W, 26, TFT_BLACK);
   tft->setTextDatum(MC_DATUM);
@@ -309,8 +326,8 @@ static void renderColor(const VoxResult &res) {
 // ====================================================================
 // SETTINGS screen
 // ====================================================================
-static const int N_ROWS = 7;          // Mode, Color src, Low, High, Haptics, Haptic thr, Done
-static const int ROW_Y0 = 30, ROW_DY = 28;
+static const int N_ROWS = 10;         // see rowText() below
+static const int ROW_Y0 = 24, ROW_DY = 21;
 
 static void rowText(int i, char *out, size_t n) {
   switch (i) {
@@ -320,6 +337,9 @@ static void rowText(int i, char *out, size_t n) {
     case 3: snprintf(out, n, "High color: %s", PALETTE[gCfg.hiColor].name); break;
     case 4: snprintf(out, n, "Haptics: %s", HAPTIC_NAMES[gCfg.haptic]); break;
     case 5: snprintf(out, n, "Haptic thr: %d%%", gCfg.hapticThr); break;
+    case 6: snprintf(out, n, "Auto-dim: %s", ONOFF[gCfg.autoDim ? 1 : 0]); break;
+    case 7: snprintf(out, n, "Target band: %s", ONOFF[gCfg.showBand ? 1 : 0]); break;
+    case 8: snprintf(out, n, "HUD text: %s", ONOFF[gCfg.showHud ? 1 : 0]); break;
     default: snprintf(out, n, "* Done (save) *"); break;
   }
 }
@@ -329,7 +349,7 @@ static void drawSettings() {
   tft->fillScreen(TFT_BLACK);
   tft->setTextDatum(TL_DATUM);
   tft->setTextColor(tft->color565(120, 200, 255), TFT_BLACK);
-  tft->drawString("Settings  (tap a row)", 12, 8, 2);
+  tft->drawString("Settings  (tap a row)", 12, 4, 2);
   char line[40];
   for (int i = 0; i < N_ROWS; i++) {
     rowText(i, line, sizeof(line));
@@ -357,6 +377,9 @@ static bool handleSettingsTap(int ty) {
     case 3: gCfg.hiColor = (gCfg.hiColor + 1) % N_PAL; break;
     case 4: gCfg.haptic = (gCfg.haptic + 1) % 5; break;
     case 5: gCfg.hapticThr = (gCfg.hapticThr >= 75) ? 25 : gCfg.hapticThr + 25; break;
+    case 6: gCfg.autoDim = !gCfg.autoDim; break;
+    case 7: gCfg.showBand = !gCfg.showBand; break;
+    case 8: gCfg.showHud = !gCfg.showHud; break;
     default: return true; // Done
   }
   drawSettings();
@@ -497,7 +520,7 @@ void loop() {
   }
   bool active = touched || motion || (latest.voiced && latest.rms > 0.02f);
   if (active || lastActivityMs == 0) lastActivityMs = now;
-  bool wantDim = (now - lastActivityMs) > DIM_AFTER_MS;
+  bool wantDim = gCfg.autoDim && (now - lastActivityMs) > DIM_AFTER_MS;
   if (wantDim && !dimmed)      { ttgo->setBrightness(DIM_LEVEL);    dimmed = true; }
   else if (!wantDim && dimmed) { ttgo->setBrightness(BRIGHT_LEVEL); dimmed = false; }
 
@@ -526,7 +549,7 @@ void loop() {
     renderColor(latest);
   } else {
     updateBallPhysics(latest, dt);
-    renderBall(latest, inTarget);
+    renderBall(latest, inTarget, gCfg.showBand, gCfg.showHud);
   }
 
   delay(16);

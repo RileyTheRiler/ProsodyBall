@@ -9,8 +9,9 @@ in Settings:
   that **hops on each syllable**; livelier intonation makes the hop taller. A dashed
   **target band** lets you train toward a pitch range (green glow + buzz + on-target %).
 - **Color** — the **whole screen** colours from a metric **you choose** (pitch, brightness,
-  bounce, loudness, or **perceived gender**), blended between **two colours you pick**.
-  Louder = brighter. *Gender* blends pitch + vocal-tract resonance (0 = masculine … 1 = feminine).
+  bounce, loudness, **perceived gender**, or **vocal weight**), blended between **two colours
+  you pick**. Louder = brighter. *Gender* blends pitch + vocal-tract resonance
+  (0 = masculine … 1 = feminine); *Weight* is breathy/light … pressed/heavy (H1–H2).
 
 Everything is **customisable on-device and saved to flash**: mode, the metric that drives
 colour, the two colours, the haptic trigger + threshold, and the target band.
@@ -76,10 +77,17 @@ The band defaults to **145–175 Hz** (the androgynous zone) and keeps a constan
 | Row | Options |
 |-----|---------|
 | **Mode** | Vox Ball / Color |
-| **Color from** | Pitch / Brightness / Bounce / Loudness / **Gender** *(Color mode)* |
+| **Color from** | Pitch / Brightness / Bounce / Loudness / **Gender** / **Weight** *(Color mode)* |
 | **Low color / High color** | Blue, Teal, Green, Purple, Red, Orange, Pink, White |
 | **Haptics** | Off / On-target / Syllables / Bright / Loud |
 | **Haptic thr** | 25 / 50 / 75% (threshold for the Bright/Loud triggers) |
+| **Auto-dim** | On / Off (screen dimming + tilt-wake) |
+| **Target band** | On / Off (training guides, glow, on-target score) |
+| **HUD text** | On / Off (bottom readout — turn off for pure visuals) |
+
+Every feature can be turned **off**: haptics (Off), auto-dim, the target band/training, and
+the HUD text all have toggles, so you can run anything from full-feedback training down to a
+silent, text-free colour field.
 
 ### Haptic feedback
 The vibration motor buzzes once on the chosen trigger: entering the target band
@@ -107,10 +115,12 @@ the syllable-onset state machine (`SYLLABLE_ON_MULT` / `SYLLABLE_OFF_MULT` /
 spectral centroid, and **harmonic-envelope formant estimation** (F1/F2/F3 via
 `_resonanceHarmonicEnvelope` + `_peakPickFormants`) feeding a **resonance** (formant
 dispersion → vocal-tract length) and a **perceived-gender** blend of pitch + resonance
-(`computeGenderScore`). A single radix-2 FFT per frame is shared by the centroid and formant
-stages. Host-tested on synthetic vowels: masculine → 0.22 (blue), androgynous → 0.57
-(purple), feminine → 0.95 (pink), with F1/F2/F3 within ~50–100 Hz of target. Change a
-constant in one place and mirror it in the other.
+(`computeGenderScore`), plus a **vocal-weight** cue from the H1–H2 breathiness measure
+(`computeWeightTarget`'s h1h2Heaviness). A single radix-2 FFT per frame is shared by the
+centroid, formant, and weight stages. Host-tested on synthetic vowels: gender masculine →
+0.22 (blue), androgynous → 0.57 (purple), feminine → 0.95 (pink), F1/F2/F3 within ~50–100 Hz
+of target; weight breathy → 0.01, modal → 0.54, pressed → 0.85. Change a constant in one
+place and mirror it in the other.
 
 ## Tuning & troubleshooting
 
@@ -136,7 +146,7 @@ or a wrist tilt** (BMA423 accelerometer). Tune `DIM_AFTER_MS`, `DIM_LEVEL`, and
 draws; deeper light-sleep is a future addition.
 
 ## Roadmap
-Cepstral/CPP breathiness ("vocal weight") cue, more visualisations, an optional BLE companion
-mode (drive the existing orb from the watch), and deeper sleep. *(Done: brightness/resonance
-cue, harmonic-envelope formants + perceived-gender, Color mode, on-device customisation,
-persistence, auto-dim + tilt-wake.)*
+More visualisations, an optional BLE companion mode (drive the existing orb from the watch),
+and deeper sleep. *(Done: brightness/resonance cue, harmonic-envelope formants +
+perceived-gender, H1–H2 vocal-weight cue, Color mode, on-device customisation, persistence,
+auto-dim + tilt-wake, per-feature on/off toggles.)*
