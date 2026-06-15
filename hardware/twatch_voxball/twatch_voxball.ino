@@ -45,17 +45,20 @@ static volatile bool gRecalRequest = false;
 enum Mode      { MODE_BALL = 0, MODE_COLOR = 1 };
 enum HueMetric { SRC_PITCH = 0, SRC_BRIGHT, SRC_BOUNCE, SRC_LOUD, SRC_GENDER, SRC_WEIGHT, SRC_COUNT };
 enum Haptic    { HAP_OFF = 0, HAP_ONTARGET, HAP_SYLLABLE, HAP_BRIGHT, HAP_LOUD };
+enum Effect    { EFF_NONE = 0, EFF_PULSE, EFF_GRADIENT, EFF_METER, EFF_COUNT };
 
 struct Settings {
   uint8_t  mode      = MODE_BALL;
   uint8_t  colorSrc  = SRC_PITCH;   // which metric drives the colour
   uint8_t  loColor   = 0;           // palette index at metric=0
   uint8_t  hiColor   = 6;           // palette index at metric=1
+  uint8_t  effect    = EFF_NONE;    // Color-mode visual effect
   uint8_t  haptic    = HAP_ONTARGET;
   uint8_t  hapticThr = 50;          // % threshold for the >threshold haptics
   uint8_t  autoDim   = 1;           // auto-dim + tilt-wake on/off
   uint8_t  showBand  = 1;           // pitch-target band + glow + score on/off
   uint8_t  showHud   = 1;           // bottom text readout on/off
+  uint8_t  orb       = 0;           // BLE companion: drive the LED orb on/off
   uint16_t targetLoHz = 145;
   uint16_t targetHiHz = 175;
   uint16_t bestPct   = 0;           // best on-target % across sessions
@@ -63,18 +66,37 @@ struct Settings {
 static Settings    gCfg;
 static Preferences gPrefs;
 
+// Palette of named colours used as the low/high anchors of the colour blend.
 struct Pal { const char *name; uint8_t r, g, b; };
 static const Pal PALETTE[] = {
   {"Blue", 30, 90, 255}, {"Teal", 0, 200, 180}, {"Green", 40, 220, 60},
   {"Purple", 150, 60, 230}, {"Red", 240, 40, 40}, {"Orange", 255, 140, 0},
-  {"Pink", 255, 80, 170}, {"White", 240, 240, 240},
+  {"Pink", 255, 80, 170}, {"White", 240, 240, 240}, {"Cyan", 0, 230, 230},
+  {"Magenta", 230, 0, 200}, {"Yellow", 240, 220, 0}, {"Lime", 170, 240, 40},
+  {"Indigo", 70, 60, 220}, {"Rose", 255, 130, 150},
 };
 static const int N_PAL = sizeof(PALETTE) / sizeof(PALETTE[0]);
+// Palette indices (keep in sync with PALETTE order above) for the gradient presets.
+enum { P_BLUE = 0, P_TEAL, P_GREEN, P_PURPLE, P_RED, P_ORANGE, P_PINK, P_WHITE,
+       P_CYAN, P_MAGENTA, P_YELLOW, P_LIME, P_INDIGO, P_ROSE };
+
+// Named gradient presets: cycling these sets both low and high colours at once.
+// "Custom" (index 0) leaves the current low/high colours untouched.
+struct Preset { const char *name; uint8_t lo, hi; };
+static const Preset PRESETS[] = {
+  {"Custom", P_BLUE, P_PINK}, {"Trans", P_BLUE, P_PINK}, {"Fire", P_RED, P_YELLOW},
+  {"Ocean", P_INDIGO, P_CYAN}, {"Forest", P_GREEN, P_LIME}, {"Sunset", P_PURPLE, P_ORANGE},
+  {"Mono", P_TEAL, P_WHITE}, {"Candy", P_CYAN, P_MAGENTA},
+};
+static const int N_PRESET = sizeof(PRESETS) / sizeof(PRESETS[0]);
+static int gPreset = 0; // runtime only (low/high colours are what persist)
 
 static const char *MODE_NAMES[]   = { "Vox Ball", "Color" };
 static const char *SRC_NAMES[]    = { "Pitch", "Brightness", "Bounce", "Loudness", "Gender", "Weight" };
 static const char *HAPTIC_NAMES[] = { "Off", "On-target", "Syllables", "Bright", "Loud" };
+static const char *EFFECT_NAMES[] = { "None", "Pulse", "Gradient", "Meter" };
 static const char *ONOFF[]        = { "Off", "On" };
+
 
 static void loadSettings() {
   gPrefs.begin("voxball", true);
@@ -82,11 +104,13 @@ static void loadSettings() {
   gCfg.colorSrc   = gPrefs.getUChar("src", gCfg.colorSrc);
   gCfg.loColor    = gPrefs.getUChar("lo", gCfg.loColor);
   gCfg.hiColor    = gPrefs.getUChar("hi", gCfg.hiColor);
+  gCfg.effect     = gPrefs.getUChar("eff", gCfg.effect);
   gCfg.haptic     = gPrefs.getUChar("hap", gCfg.haptic);
   gCfg.hapticThr  = gPrefs.getUChar("hthr", gCfg.hapticThr);
   gCfg.autoDim    = gPrefs.getUChar("adim", gCfg.autoDim);
   gCfg.showBand   = gPrefs.getUChar("band", gCfg.showBand);
   gCfg.showHud    = gPrefs.getUChar("hud", gCfg.showHud);
+  gCfg.orb        = gPrefs.getUChar("orb", gCfg.orb);
   gCfg.targetLoHz = gPrefs.getUShort("tlo", gCfg.targetLoHz);
   gCfg.targetHiHz = gPrefs.getUShort("thi", gCfg.targetHiHz);
   gCfg.bestPct    = gPrefs.getUShort("best", gCfg.bestPct);
@@ -98,11 +122,13 @@ static void saveSettings() {
   gPrefs.putUChar("src", gCfg.colorSrc);
   gPrefs.putUChar("lo", gCfg.loColor);
   gPrefs.putUChar("hi", gCfg.hiColor);
+  gPrefs.putUChar("eff", gCfg.effect);
   gPrefs.putUChar("hap", gCfg.haptic);
   gPrefs.putUChar("hthr", gCfg.hapticThr);
   gPrefs.putUChar("adim", gCfg.autoDim);
   gPrefs.putUChar("band", gCfg.showBand);
   gPrefs.putUChar("hud", gCfg.showHud);
+  gPrefs.putUChar("orb", gCfg.orb);
   gPrefs.putUShort("tlo", gCfg.targetLoHz);
   gPrefs.putUShort("thi", gCfg.targetHiHz);
   gPrefs.putUShort("best", gCfg.bestPct);
@@ -182,8 +208,8 @@ static float metricValue(const VoxResult &r, uint8_t src) {
   }
 }
 
-// HSV (h deg, s/v 0..1) -> RGB565.
-static uint16_t hsv565(float h, float s, float v) {
+// HSV (h deg, s/v 0..1) -> 8-bit RGB.
+static void hsvRGB(float h, float s, float v, uint8_t *R, uint8_t *G, uint8_t *B) {
   h = fmodf(h, 360.0f); if (h < 0) h += 360.0f;
   float c = v * s, x = c * (1 - fabsf(fmodf(h / 60.0f, 2.0f) - 1)), m = v - c;
   float r, g, b;
@@ -193,16 +219,23 @@ static uint16_t hsv565(float h, float s, float v) {
   else if (h < 240) { r = 0; g = x; b = c; }
   else if (h < 300) { r = x; g = 0; b = c; }
   else              { r = c; g = 0; b = x; }
-  return ttgo->tft->color565((uint8_t)((r + m) * 255), (uint8_t)((g + m) * 255), (uint8_t)((b + m) * 255));
+  *R = (uint8_t)((r + m) * 255); *G = (uint8_t)((g + m) * 255); *B = (uint8_t)((b + m) * 255);
+}
+static uint16_t hsv565(float h, float s, float v) {
+  uint8_t R, G, B; hsvRGB(h, s, v, &R, &G, &B);
+  return ttgo->tft->color565(R, G, B);
 }
 
-// Linear blend of two palette entries by t (0..1), scaled by value v (0..1), -> RGB565.
-static uint16_t blendPal565(int loIdx, int hiIdx, float t, float v) {
+// Linear blend of two palette entries by t (0..1), scaled by value v (0..1).
+static void blendPalRGB(int loIdx, int hiIdx, float t, float v, uint8_t *R, uint8_t *G, uint8_t *B) {
   const Pal &a = PALETTE[loIdx], &b = PALETTE[hiIdx];
   t = clampf(t, 0, 1); v = clampf(v, 0, 1);
-  uint8_t R = (uint8_t)((a.r + (b.r - a.r) * t) * v);
-  uint8_t G = (uint8_t)((a.g + (b.g - a.g) * t) * v);
-  uint8_t B = (uint8_t)((a.b + (b.b - a.b) * t) * v);
+  *R = (uint8_t)((a.r + (b.r - a.r) * t) * v);
+  *G = (uint8_t)((a.g + (b.g - a.g) * t) * v);
+  *B = (uint8_t)((a.b + (b.b - a.b) * t) * v);
+}
+static uint16_t blendPal565(int loIdx, int hiIdx, float t, float v) {
+  uint8_t R, G, B; blendPalRGB(loIdx, hiIdx, t, v, &R, &G, &B);
   return ttgo->tft->color565(R, G, B);
 }
 
@@ -303,12 +336,47 @@ static void renderBall(const VoxResult &res, bool inTarget, bool showBand, bool 
 // ====================================================================
 static void renderColor(const VoxResult &res) {
   TFT_eSPI *tft = ttgo->tft;
+  const int lo = gCfg.loColor, hi = gCfg.hiColor;
   float t = metricValue(res, gCfg.colorSrc);              // 0..1 chosen metric
   float loud = clampf(res.rms * 8.0f, 0.0f, 1.0f);
-  float v = res.voiced ? (0.25f + 0.75f * loud) : 0.12f;  // louder = brighter, dim if quiet
-  uint16_t col = blendPal565(gCfg.loColor, gCfg.hiColor, t, v);
 
-  tft->fillScreen(col);
+  switch (gCfg.effect) {
+    case EFF_PULSE: {
+      // Whole-screen brightness pulse; faster/deeper with loudness, flash on each syllable.
+      static float phase = 0.0f;
+      phase += 0.12f + 0.55f * loud;
+      float s = 0.5f + 0.5f * sinf(phase);
+      float v = (res.voiced ? 0.30f : 0.12f) * (0.55f + 0.45f * s) + 0.45f * res.syllableImpulse;
+      tft->fillScreen(blendPal565(lo, hi, t, clampf(v, 0, 1)));
+      break;
+    }
+    case EFF_GRADIENT: {
+      // Vertical lo(bottom) -> hi(top) gradient, brightness from loudness; a white marker
+      // line shows where the chosen metric currently sits.
+      float v = res.voiced ? (0.30f + 0.70f * loud) : 0.15f;
+      const int bands = 30, bandH = (SCR_H + bands - 1) / bands;
+      for (int b = 0; b < bands; b++) {
+        float frac = 1.0f - (float)b / (bands - 1);      // top = hi
+        tft->fillRect(0, b * bandH, SCR_W, bandH, blendPal565(lo, hi, frac, v));
+      }
+      int my = TOP_MARGIN + (int)((1.0f - t) * USABLE_H);
+      tft->drawFastHLine(0, my, SCR_W, TFT_WHITE);
+      break;
+    }
+    case EFF_METER: {
+      // Bottom-up level bar: fill height = chosen metric, in the high colour over a dim base.
+      float v = res.voiced ? (0.40f + 0.60f * loud) : 0.20f;
+      int top = SCR_H - (int)(clampf(t, 0, 1) * SCR_H);
+      tft->fillRect(0, 0, SCR_W, top, blendPal565(lo, hi, 0.0f, 0.15f));
+      tft->fillRect(0, top, SCR_W, SCR_H - top, blendPal565(lo, hi, 1.0f, v));
+      break;
+    }
+    default: { // EFF_NONE
+      float v = res.voiced ? (0.25f + 0.75f * loud) : 0.12f;
+      tft->fillScreen(blendPal565(lo, hi, t, v));
+      break;
+    }
+  }
 
   if (!gCfg.showHud) return;
   // Readable HUD strip.
@@ -324,23 +392,37 @@ static void renderColor(const VoxResult &res) {
 }
 
 // ====================================================================
-// SETTINGS screen
+// SETTINGS screen (paginated, item-based so it scales as options grow)
 // ====================================================================
-static const int N_ROWS = 10;         // see rowText() below
-static const int ROW_Y0 = 24, ROW_DY = 21;
+enum ItemId {
+  IT_MODE, IT_SRC, IT_PRESET, IT_LO, IT_HI, IT_EFFECT,
+  IT_HAPTIC, IT_HTHR, IT_AUTODIM, IT_BAND, IT_HUD, IT_ORB,
+  IT_PAGE, IT_DONE
+};
+// Two pages of ~8 rows each.
+static const uint8_t PAGE0[] = { IT_MODE, IT_SRC, IT_PRESET, IT_LO, IT_HI, IT_EFFECT, IT_PAGE, IT_DONE };
+static const uint8_t PAGE1[] = { IT_HAPTIC, IT_HTHR, IT_AUTODIM, IT_BAND, IT_HUD, IT_ORB, IT_PAGE, IT_DONE };
+static const uint8_t *PAGES[2] = { PAGE0, PAGE1 };
+static const int PAGE_LEN[2] = { (int)(sizeof(PAGE0)), (int)(sizeof(PAGE1)) };
+static int gPage = 0;
+static const int ROW_Y0 = 30, ROW_DY = 24;
 
-static void rowText(int i, char *out, size_t n) {
-  switch (i) {
-    case 0: snprintf(out, n, "Mode: %s", MODE_NAMES[gCfg.mode]); break;
-    case 1: snprintf(out, n, "Color from: %s", SRC_NAMES[gCfg.colorSrc]); break;
-    case 2: snprintf(out, n, "Low color: %s", PALETTE[gCfg.loColor].name); break;
-    case 3: snprintf(out, n, "High color: %s", PALETTE[gCfg.hiColor].name); break;
-    case 4: snprintf(out, n, "Haptics: %s", HAPTIC_NAMES[gCfg.haptic]); break;
-    case 5: snprintf(out, n, "Haptic thr: %d%%", gCfg.hapticThr); break;
-    case 6: snprintf(out, n, "Auto-dim: %s", ONOFF[gCfg.autoDim ? 1 : 0]); break;
-    case 7: snprintf(out, n, "Target band: %s", ONOFF[gCfg.showBand ? 1 : 0]); break;
-    case 8: snprintf(out, n, "HUD text: %s", ONOFF[gCfg.showHud ? 1 : 0]); break;
-    default: snprintf(out, n, "* Done (save) *"); break;
+static void itemText(uint8_t id, char *out, size_t n) {
+  switch (id) {
+    case IT_MODE:    snprintf(out, n, "Mode: %s", MODE_NAMES[gCfg.mode]); break;
+    case IT_SRC:     snprintf(out, n, "Color from: %s", SRC_NAMES[gCfg.colorSrc]); break;
+    case IT_PRESET:  snprintf(out, n, "Preset: %s", PRESETS[gPreset].name); break;
+    case IT_LO:      snprintf(out, n, "Low color: %s", PALETTE[gCfg.loColor].name); break;
+    case IT_HI:      snprintf(out, n, "High color: %s", PALETTE[gCfg.hiColor].name); break;
+    case IT_EFFECT:  snprintf(out, n, "Effect: %s", EFFECT_NAMES[gCfg.effect]); break;
+    case IT_HAPTIC:  snprintf(out, n, "Haptics: %s", HAPTIC_NAMES[gCfg.haptic]); break;
+    case IT_HTHR:    snprintf(out, n, "Haptic thr: %d%%", gCfg.hapticThr); break;
+    case IT_AUTODIM: snprintf(out, n, "Auto-dim: %s", ONOFF[gCfg.autoDim ? 1 : 0]); break;
+    case IT_BAND:    snprintf(out, n, "Target band: %s", ONOFF[gCfg.showBand ? 1 : 0]); break;
+    case IT_HUD:     snprintf(out, n, "HUD text: %s", ONOFF[gCfg.showHud ? 1 : 0]); break;
+    case IT_ORB:     snprintf(out, n, "Orb (BLE): %s", ONOFF[gCfg.orb ? 1 : 0]); break;
+    case IT_PAGE:    snprintf(out, n, "%s", gPage == 0 ? "More settings >" : "< Back"); break;
+    default:         snprintf(out, n, "* Done (save) *"); break;
   }
 }
 
@@ -349,14 +431,17 @@ static void drawSettings() {
   tft->fillScreen(TFT_BLACK);
   tft->setTextDatum(TL_DATUM);
   tft->setTextColor(tft->color565(120, 200, 255), TFT_BLACK);
-  tft->drawString("Settings  (tap a row)", 12, 4, 2);
+  char title[28];
+  snprintf(title, sizeof(title), "Settings  %d/2", gPage + 1);
+  tft->drawString(title, 12, 6, 2);
   char line[40];
-  for (int i = 0; i < N_ROWS; i++) {
-    rowText(i, line, sizeof(line));
-    uint16_t c = (i == N_ROWS - 1) ? TFT_GREEN : TFT_WHITE;
-    // Show a colour swatch next to the colour rows.
-    if (i == 2 || i == 3) {
-      int idx = (i == 2) ? gCfg.loColor : gCfg.hiColor;
+  const uint8_t *items = PAGES[gPage];
+  for (int i = 0; i < PAGE_LEN[gPage]; i++) {
+    uint8_t id = items[i];
+    itemText(id, line, sizeof(line));
+    uint16_t c = (id == IT_DONE) ? TFT_GREEN : (id == IT_PAGE ? tft->color565(120, 200, 255) : TFT_WHITE);
+    if (id == IT_LO || id == IT_HI) {
+      int idx = (id == IT_LO) ? gCfg.loColor : gCfg.hiColor;
       tft->fillRect(SCR_W - 28, ROW_Y0 + i * ROW_DY + 2, 16, 14,
                     tft->color565(PALETTE[idx].r, PALETTE[idx].g, PALETTE[idx].b));
     }
@@ -369,18 +454,25 @@ static void drawSettings() {
 static bool handleSettingsTap(int ty) {
   int i = (ty - ROW_Y0 + ROW_DY / 2) / ROW_DY;
   if (i < 0) i = 0;
-  if (i >= N_ROWS) i = N_ROWS - 1;
-  switch (i) {
-    case 0: gCfg.mode = (gCfg.mode + 1) % 2; break;
-    case 1: gCfg.colorSrc = (gCfg.colorSrc + 1) % SRC_COUNT; break;
-    case 2: gCfg.loColor = (gCfg.loColor + 1) % N_PAL; break;
-    case 3: gCfg.hiColor = (gCfg.hiColor + 1) % N_PAL; break;
-    case 4: gCfg.haptic = (gCfg.haptic + 1) % 5; break;
-    case 5: gCfg.hapticThr = (gCfg.hapticThr >= 75) ? 25 : gCfg.hapticThr + 25; break;
-    case 6: gCfg.autoDim = !gCfg.autoDim; break;
-    case 7: gCfg.showBand = !gCfg.showBand; break;
-    case 8: gCfg.showHud = !gCfg.showHud; break;
-    default: return true; // Done
+  if (i >= PAGE_LEN[gPage]) i = PAGE_LEN[gPage] - 1;
+  switch (PAGES[gPage][i]) {
+    case IT_MODE:    gCfg.mode = (gCfg.mode + 1) % 2; break;
+    case IT_SRC:     gCfg.colorSrc = (gCfg.colorSrc + 1) % SRC_COUNT; break;
+    case IT_PRESET:
+      gPreset = (gPreset + 1) % N_PRESET;
+      if (gPreset > 0) { gCfg.loColor = PRESETS[gPreset].lo; gCfg.hiColor = PRESETS[gPreset].hi; }
+      break;
+    case IT_LO:      gCfg.loColor = (gCfg.loColor + 1) % N_PAL; gPreset = 0; break;
+    case IT_HI:      gCfg.hiColor = (gCfg.hiColor + 1) % N_PAL; gPreset = 0; break;
+    case IT_EFFECT:  gCfg.effect = (gCfg.effect + 1) % EFF_COUNT; break;
+    case IT_HAPTIC:  gCfg.haptic = (gCfg.haptic + 1) % 5; break;
+    case IT_HTHR:    gCfg.hapticThr = (gCfg.hapticThr >= 75) ? 25 : gCfg.hapticThr + 25; break;
+    case IT_AUTODIM: gCfg.autoDim = !gCfg.autoDim; break;
+    case IT_BAND:    gCfg.showBand = !gCfg.showBand; break;
+    case IT_HUD:     gCfg.showHud = !gCfg.showHud; break;
+    case IT_ORB:     gCfg.orb = !gCfg.orb; break;
+    case IT_PAGE:    gPage ^= 1; break;
+    default:         return true; // Done
   }
   drawSettings();
   return false;
@@ -450,6 +542,7 @@ static void enterSettings() {
 static void exitSettings() {
   saveSettings();
   gState = RUNNING;
+  gPage = 0;                  // reopen at page 1 next time
   prevX = -1;                 // force a clean ball redraw
   ttgo->tft->fillScreen(TFT_BLACK);
 }

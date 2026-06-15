@@ -71,19 +71,28 @@ On boot the screen flashes **soft teal** (mirroring the orb sketch's self-test),
 
 The band defaults to **145–175 Hz** (the androgynous zone) and keeps a constant width.
 
-**Long press** (hold ~0.8 s) opens **Settings**. Tap a row to cycle its value; tap
-**Done** to save and exit (settings persist across reboots via flash/NVS):
+**Long press** (hold ~0.8 s) opens **Settings** (two pages — tap *More settings ›* / *‹ Back*
+to switch). Tap a row to cycle its value; tap **Done** to save and exit (settings persist
+across reboots via flash/NVS):
 
 | Row | Options |
 |-----|---------|
 | **Mode** | Vox Ball / Color |
 | **Color from** | Pitch / Brightness / Bounce / Loudness / **Gender** / **Weight** *(Color mode)* |
-| **Low color / High color** | Blue, Teal, Green, Purple, Red, Orange, Pink, White |
+| **Preset** | Gradient presets — Trans, Fire, Ocean, Forest, Sunset, Mono, Candy (sets both colours) |
+| **Low color / High color** | 14 colours: Blue, Teal, Green, Purple, Red, Orange, Pink, White, Cyan, Magenta, Yellow, Lime, Indigo, Rose |
+| **Effect** | None / Pulse / Gradient / Meter *(Color mode visual effect)* |
 | **Haptics** | Off / On-target / Syllables / Bright / Loud |
 | **Haptic thr** | 25 / 50 / 75% (threshold for the Bright/Loud triggers) |
 | **Auto-dim** | On / Off (screen dimming + tilt-wake) |
 | **Target band** | On / Off (training guides, glow, on-target score) |
 | **HUD text** | On / Off (bottom readout — turn off for pure visuals) |
+| **Orb (BLE)** | On / Off (drive the LED orb — see *BLE companion* below) |
+
+### Color-mode effects
+*None* — flat fill. *Pulse* — whole-screen brightness pulse that quickens with loudness and
+flashes on each syllable. *Gradient* — vertical low→high colour gradient with a white marker
+line at the current metric. *Meter* — a bottom-up level bar whose height tracks the metric.
 
 Every feature can be turned **off**: haptics (Off), auto-dim, the target band/training, and
 the HUD text all have toggles, so you can run anything from full-feedback training down to a
