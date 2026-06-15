@@ -99,6 +99,28 @@ static const char *EFFECT_NAMES[] = { "None", "Pulse", "Gradient", "Meter" };
 static const char *ONOFF[]        = { "Off", "On" };
 
 
+// Clamp every persisted field to its valid range. NVS can return stale/corrupt values
+// (e.g. after a firmware change), and several of these index into name/colour tables.
+static void sanitizeSettings() {
+  if (gCfg.mode > MODE_COLOR) gCfg.mode = MODE_BALL;
+  if (gCfg.colorSrc >= SRC_COUNT) gCfg.colorSrc = SRC_PITCH;
+  if (gCfg.loColor >= N_PAL) gCfg.loColor = 0;
+  if (gCfg.hiColor >= N_PAL) gCfg.hiColor = 6;
+  if (gCfg.effect >= EFF_COUNT) gCfg.effect = EFF_NONE;
+  if (gCfg.haptic > HAP_LOUD) gCfg.haptic = HAP_OFF;
+  if (gCfg.hapticThr > 100) gCfg.hapticThr = 50;
+  gCfg.autoDim = gCfg.autoDim ? 1 : 0;
+  gCfg.showBand = gCfg.showBand ? 1 : 0;
+  gCfg.showHud = gCfg.showHud ? 1 : 0;
+  gCfg.orb = gCfg.orb ? 1 : 0;
+  if (gCfg.bestPct > 100) gCfg.bestPct = 100;
+
+  const uint16_t minHz = (uint16_t)VOX_PITCH_MIN_HZ, maxHz = (uint16_t)VOX_PITCH_MAX_HZ;
+  if (gCfg.targetLoHz < minHz || gCfg.targetLoHz > maxHz - 10) gCfg.targetLoHz = 145;
+  if (gCfg.targetHiHz < minHz + 10 || gCfg.targetHiHz > maxHz) gCfg.targetHiHz = 175;
+  if (gCfg.targetHiHz < gCfg.targetLoHz + 10) gCfg.targetHiHz = gCfg.targetLoHz + 10;
+}
+
 static void loadSettings() {
   gPrefs.begin("voxball", true);
   gCfg.mode       = gPrefs.getUChar("mode", gCfg.mode);
@@ -116,6 +138,7 @@ static void loadSettings() {
   gCfg.targetHiHz = gPrefs.getUShort("thi", gCfg.targetHiHz);
   gCfg.bestPct    = gPrefs.getUShort("best", gCfg.bestPct);
   gPrefs.end();
+  sanitizeSettings();
 }
 static void saveSettings() {
   gPrefs.begin("voxball", false);
@@ -139,7 +162,7 @@ static void saveSettings() {
 // ====================================================================
 // Audio capture + DSP — runs on core 0
 // ====================================================================
-static void initMic() {
+static bool initMic() {
   i2s_config_t i2s_config = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_PDM),
     .sample_rate = VOX_SAMPLE_RATE,
@@ -156,9 +179,11 @@ static void initMic() {
   pin_cfg.data_out_num = I2S_PIN_NO_CHANGE;
   pin_cfg.data_in_num  = MIC_DATA;
 
-  i2s_driver_install(MIC_PORT, &i2s_config, 0, NULL);
-  i2s_set_pin(MIC_PORT, &pin_cfg);
-  i2s_set_clk(MIC_PORT, VOX_SAMPLE_RATE, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
+  if (i2s_driver_install(MIC_PORT, &i2s_config, 0, NULL) != ESP_OK) return false;
+  if (i2s_set_pin(MIC_PORT, &pin_cfg) != ESP_OK) return false;
+  if (i2s_set_clk(MIC_PORT, VOX_SAMPLE_RATE, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO) != ESP_OK)
+    return false;
+  return true;
 }
 
 static void audioTask(void *) {
@@ -170,11 +195,14 @@ static void audioTask(void *) {
     if (gRecalRequest) { gDsp.recalibrate(); gRecalRequest = false; }
 
     size_t bytesRead = 0;
-    i2s_read(MIC_PORT, (char *)raw, sizeof(raw), &bytesRead, portMAX_DELAY);
-    int got = bytesRead / sizeof(int16_t);
-    for (int i = 0; i < got; i++) frame[i] = raw[i] / 32768.0f;  // int16 -> [-1, 1)
+    esp_err_t err = i2s_read(MIC_PORT, (char *)raw, sizeof(raw), &bytesRead, portMAX_DELAY);
+    if (err != ESP_OK || bytesRead != sizeof(raw)) {  // keep the fixed DSP frame contract
+      vTaskDelay(pdMS_TO_TICKS(1));
+      continue;
+    }
+    for (int i = 0; i < VOX_FRAME_SAMPLES; i++) frame[i] = raw[i] / 32768.0f; // int16 -> [-1,1)
 
-    VoxResult res = gDsp.process(frame, got, dt);
+    VoxResult res = gDsp.process(frame, VOX_FRAME_SAMPLES, dt);
     xQueueOverwrite(gResultQueue, &res);  // keep only the freshest frame
   }
 }
@@ -624,10 +652,19 @@ void setup() {
   tft->drawString("ProsodyBall", SCR_W / 2, SCR_H / 2 - 12, 4);
   tft->drawString("calibrating mic...", SCR_W / 2, SCR_H / 2 + 16, 2);
 
-  initMic();
+  // Bring up audio + worker tasks; halt with a message if any critical step fails so we
+  // never run the audio task against an uninitialised I2S port or a NULL queue.
+  bool micOk = initMic();
   gResultQueue = xQueueCreate(1, sizeof(VoxResult));
-  xTaskCreatePinnedToCore(audioTask, "audio", 8192, NULL, 2, NULL, 0); // core 0
-  xTaskCreatePinnedToCore(bleTask, "ble", 8192, NULL, 1, NULL, 1);     // core 1, low prio
+  BaseType_t audioOk = (micOk && gResultQueue)
+      ? xTaskCreatePinnedToCore(audioTask, "audio", 8192, NULL, 2, NULL, 0) // core 0
+      : pdFAIL;
+  BaseType_t bleOk = xTaskCreatePinnedToCore(bleTask, "ble", 8192, NULL, 1, NULL, 1); // core 1
+  if (!micOk || !gResultQueue || audioOk != pdPASS || bleOk != pdPASS) {
+    tft->fillScreen(TFT_BLACK);
+    tft->drawString("Startup failed", SCR_W / 2, SCR_H / 2, 4);
+    for (;;) delay(1000);
+  }
 
   tft->fillScreen(TFT_BLACK);
 }
@@ -647,6 +684,7 @@ static void exitSettings() {
 void loop() {
   static VoxResult latest = {};
   static uint32_t lastMs = 0, lastSaveMs = 0;
+  static bool bestDirty = false;
   static bool touchedPrev = false, longFired = false;
   static int pressTy = 0;
   static uint32_t touchStartMs = 0;
@@ -714,8 +752,9 @@ void loop() {
   if (wantDim && !dimmed)      { ttgo->setBrightness(DIM_LEVEL);    dimmed = true; }
   else if (!wantDim && dimmed) { ttgo->setBrightness(BRIGHT_LEVEL); dimmed = false; }
 
-  // While in settings, don't run the visualisation.
-  if (gState == SETTINGS) { delay(20); return; }
+  // While in settings, don't run the visualisation. Reset the clock so the time spent in
+  // Settings isn't counted as training time on the next frame.
+  if (gState == SETTINGS) { lastMs = now; delay(20); return; }
 
   float dt = lastMs ? (now - lastMs) / 1000.0f : 0.016f;
   lastMs = now;
@@ -724,13 +763,12 @@ void loop() {
                   latest.pitchHz >= gCfg.targetLoHz && latest.pitchHz <= gCfg.targetHiHz;
   if (latest.voiced) { voicedTime += dt; if (inTarget) inTargetTime += dt; }
 
-  // Track + lazily persist the best on-target score.
+  // Track + lazily persist the best on-target score. Keep it dirty until actually saved so
+  // an improvement during the throttle window isn't lost.
   if (voicedTime > 3.0f) {
     int pct = (int)(100.0f * inTargetTime / voicedTime + 0.5f);
-    if (pct > gCfg.bestPct) {
-      gCfg.bestPct = (uint16_t)pct;
-      if (now - lastSaveMs > 15000) { saveSettings(); lastSaveMs = now; }
-    }
+    if (pct > gCfg.bestPct) { gCfg.bestPct = (uint16_t)pct; bestDirty = true; }
+    if (bestDirty && now - lastSaveMs > 15000) { saveSettings(); lastSaveMs = now; bestDirty = false; }
   }
 
   if (evalHaptic(latest, inTarget)) ttgo->motor->onec();
