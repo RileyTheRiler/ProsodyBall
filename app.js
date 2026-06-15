@@ -237,6 +237,9 @@ export class VoiceAnalyzer {
         this.source = this.audioCtx.createMediaElementSource(this.audioElement);
         // Connect to destination so user can hear it
         this.source.connect(this.audioCtx.destination);
+      } else if (inputOptions.stream) {
+        this.stream = inputOptions.stream;
+        this.source = this.audioCtx.createMediaStreamSource(this.stream);
       } else {
         // Handle microphone input
         const requestedConstraints = {
@@ -3595,6 +3598,8 @@ class VoxBallGame {
       if (noiseSuppressToggle) noiseSuppressToggle.checked = this.micInputPreferences.noiseSuppression;
       if (autoGainToggle) autoGainToggle.checked = this.micInputPreferences.autoGainControl;
       if (micDeviceSelect) micDeviceSelect.value = this.micInputPreferences.deviceId || 'default';
+      const phoneMicPanel = document.getElementById('phoneMicPanel');
+      if (phoneMicPanel) phoneMicPanel.style.display = this.micInputPreferences.deviceId === 'phone-mic' ? '' : 'none';
       if (colorModeSelect) colorModeSelect.value = this.colorMode || 'pitch';
       for (const [cue, input] of Object.entries(genderCueInputs)) {
         if (input) input.checked = !!this.genderCues[cue];
@@ -3611,6 +3616,10 @@ class VoxBallGame {
         defaultOption.value = 'default';
         defaultOption.textContent = 'Microphone: System Default';
         micDeviceSelect.appendChild(defaultOption);
+        const phoneOption = document.createElement('option');
+        phoneOption.value = 'phone-mic';
+        phoneOption.textContent = 'Phone Microphone (link via browser)';
+        micDeviceSelect.appendChild(phoneOption);
         mics.forEach((mic, idx) => {
           const option = document.createElement('option');
           option.value = mic.deviceId;
@@ -3618,6 +3627,7 @@ class VoxBallGame {
           micDeviceSelect.appendChild(option);
         });
         const hasStoredDevice = this.micInputPreferences.deviceId === 'default'
+          || this.micInputPreferences.deviceId === 'phone-mic'
           || mics.some((mic) => mic.deviceId === this.micInputPreferences.deviceId);
         if (!hasStoredDevice) {
           this.micInputPreferences.deviceId = 'default';
@@ -3767,6 +3777,37 @@ class VoxBallGame {
       });
     };
 
+    const startPhoneMicSession = (onStatus) => new Promise((resolve, reject) => {
+      function initPeer() {
+        const code = Math.random().toString(36).slice(2, 8).toUpperCase();
+        const peerId = 'vox-' + code.toLowerCase();
+        let settled = false;
+        const peer = new window.Peer(peerId);
+        peer.on('open', () => onStatus('waiting', code));
+        peer.on('call', (call) => {
+          call.answer();
+          call.on('stream', (stream) => {
+            if (!settled) {
+              settled = true;
+              onStatus('connected', code);
+              resolve({ stream, cleanup: () => peer.destroy() });
+            }
+          });
+          call.on('error', (err) => { if (!settled) { settled = true; reject(err); } });
+        });
+        peer.on('error', (err) => { if (!settled) { settled = true; reject(err); } });
+      }
+      if (window.Peer) {
+        initPeer();
+      } else {
+        const s = document.createElement('script');
+        s.src = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
+        s.onload = initPeer;
+        s.onerror = () => reject(new Error('Could not load PeerJS. Check your internet connection.'));
+        document.head.appendChild(s);
+      }
+    });
+
     const startGame = async () => {
       if (this._isStarting) return; // prevent concurrent start/stop race
       this._isStarting = true;
@@ -3823,19 +3864,47 @@ class VoxBallGame {
       }
 
       const buildInputOptions = () => ({
-        deviceId: this.micInputPreferences.deviceId !== 'default' ? this.micInputPreferences.deviceId : undefined,
+        deviceId: this.micInputPreferences.deviceId !== 'default' && this.micInputPreferences.deviceId !== 'phone-mic'
+          ? this.micInputPreferences.deviceId : undefined,
         echoCancellation: this.micInputPreferences.echoCancellation,
         noiseSuppression: this.micInputPreferences.noiseSuppression,
         autoGainControl: this.micInputPreferences.autoGainControl,
       });
 
-      let result = await this.analyzer.start(selectedAudioFile, buildInputOptions());
-      // Recover automatically if a previously saved device is no longer available.
-      if (!selectedAudioFile && !result.ok && result.error === 'NotFoundError' && this.micInputPreferences.deviceId !== 'default') {
-        this.micInputPreferences.deviceId = 'default';
-        localStorage.setItem('vox:micDeviceId', 'default');
-        syncMicSettingsUi();
+      let result;
+      if (!selectedAudioFile && this.micInputPreferences.deviceId === 'phone-mic') {
+        const phoneMicUrlEl = document.getElementById('phoneMicUrl');
+        const phoneMicCodeEl = document.getElementById('phoneMicCode');
+        const phoneMicStatusEl = document.getElementById('phoneMicStatus');
+        try {
+          const { stream, cleanup } = await startPhoneMicSession((status, code) => {
+            if (status === 'waiting') {
+              const url = `${location.origin}/phone.html?room=${code}`;
+              if (phoneMicUrlEl) { phoneMicUrlEl.href = url; phoneMicUrlEl.textContent = url; phoneMicUrlEl.style.display = ''; }
+              if (phoneMicCodeEl) { phoneMicCodeEl.style.display = ''; phoneMicCodeEl.querySelector('strong').textContent = code; }
+              if (phoneMicStatusEl) { phoneMicStatusEl.style.display = ''; phoneMicStatusEl.textContent = 'Waiting for phone to connect...'; }
+              showError(`📱 Open on your phone: ${location.origin}/phone.html?room=${code}`);
+            } else if (status === 'connected') {
+              if (phoneMicStatusEl) phoneMicStatusEl.textContent = '✅ Phone connected!';
+              clearError();
+            }
+          });
+          this._phoneMicCleanup = cleanup;
+          result = await this.analyzer.start(null, { stream });
+        } catch (err) {
+          showError('📱 Phone mic failed: ' + (err.message || 'Connection error'));
+          this.drawIdleScene();
+          return;
+        }
+      } else {
         result = await this.analyzer.start(selectedAudioFile, buildInputOptions());
+        // Recover automatically if a previously saved device is no longer available.
+        if (!selectedAudioFile && !result.ok && result.error === 'NotFoundError' && this.micInputPreferences.deviceId !== 'default') {
+          this.micInputPreferences.deviceId = 'default';
+          localStorage.setItem('vox:micDeviceId', 'default');
+          syncMicSettingsUi();
+          result = await this.analyzer.start(selectedAudioFile, buildInputOptions());
+        }
       }
 
       // Clear the selected file after starting so it doesn't persistently start with the file
@@ -4116,6 +4185,16 @@ class VoxBallGame {
       const hud = document.getElementById('creatureStyleHud');
       if (hud) hud.style.display = 'none';
       this.analyzer.stop();
+      if (this._phoneMicCleanup) {
+        this._phoneMicCleanup();
+        this._phoneMicCleanup = null;
+      }
+      const phoneMicUrlEl = document.getElementById('phoneMicUrl');
+      const phoneMicCodeEl = document.getElementById('phoneMicCode');
+      const phoneMicStatusEl = document.getElementById('phoneMicStatus');
+      if (phoneMicUrlEl) phoneMicUrlEl.style.display = 'none';
+      if (phoneMicCodeEl) phoneMicCodeEl.style.display = 'none';
+      if (phoneMicStatusEl) phoneMicStatusEl.style.display = 'none';
       // Hide prism overlay on stop
       const prismOvl = document.getElementById('prismOverlay');
       if (prismOvl) prismOvl.classList.remove('show');
@@ -4477,6 +4556,8 @@ class VoxBallGame {
     micDeviceSelect?.addEventListener('change', (e) => {
       this.micInputPreferences.deviceId = e.target.value || 'default';
       localStorage.setItem('vox:micDeviceId', this.micInputPreferences.deviceId);
+      const phoneMicPanel = document.getElementById('phoneMicPanel');
+      if (phoneMicPanel) phoneMicPanel.style.display = this.micInputPreferences.deviceId === 'phone-mic' ? '' : 'none';
     });
 
     colorModeSelect?.addEventListener('change', (e) => {
