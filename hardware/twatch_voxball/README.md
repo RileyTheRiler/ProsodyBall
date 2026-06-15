@@ -94,6 +94,17 @@ across reboots via flash/NVS):
 flashes on each syllable. *Gradient* — vertical low→high colour gradient with a white marker
 line at the current metric. *Meter* — a bottom-up level bar whose height tracks the metric.
 
+### BLE companion (drive the LED orb)
+Turn **Orb (BLE)** on (Settings, page 2) to have the watch also drive the DIY LED orb in
+[`../prosodyball_orb`](../prosodyball_orb) — no phone needed. The watch acts as a BLE
+**client**: it scans for `ProsodyBall-Orb`, connects, and streams 5-byte `[R,G,B,Res,Weight]`
+packets at ~20 Hz from its own DSP — the orb's colour, its **pulse** (from brightness), and
+its **body** (from vocal weight) all follow your live voice. A small dot at the top-right
+shows link status (grey = searching, green = connected). The protocol matches
+`prosodyball_orb.ino` exactly, so the same orb works from either the browser or the watch
+(one at a time). *Note:* enabling BLE brings up the Bluetooth stack (extra RAM); leave it
+**Off** if you don't use the orb.
+
 Every feature can be turned **off**: haptics (Off), auto-dim, the target band/training, and
 the HUD text all have toggles, so you can run anything from full-feedback training down to a
 silent, text-free colour field.
@@ -108,9 +119,10 @@ The vibration motor buzzes once on the chosen trigger: entering the target band
 | Layer | File | Notes |
 |-------|------|-------|
 | Mic capture + DSP (core 0) | `twatch_voxball.ino` `audioTask` | I2S PDM @ 16 kHz, 1024-sample frames |
-| DSP (pitch/energy/bounce/syllable/brightness) | `dsp.cpp` / `dsp.h` | port of `app.js` / `dsp-utils.js` |
+| DSP (pitch/energy/bounce/syllable/brightness/formants/gender/weight) | `dsp.cpp` / `dsp.h` | port of `app.js` / `dsp-utils.js` |
 | Settings + persistence (NVS) | `twatch_voxball.ino` `Settings` | `Preferences` namespace `voxball` |
 | Visualisation + input (core 1) | `twatch_voxball.ino` `loop` | Vox Ball / Color, touch + long-press |
+| BLE companion (core 1) | `twatch_voxball.ino` `bleTask` | client → orb, 5-byte `[R,G,B,Res,Weight]` |
 
 The two cores hand off through a 1-slot queue (`xQueueOverwrite`) — the same
 producer/consumer shape as the orb sketch's `colorQueue`.
@@ -155,7 +167,7 @@ or a wrist tilt** (BMA423 accelerometer). Tune `DIM_AFTER_MS`, `DIM_LEVEL`, and
 draws; deeper light-sleep is a future addition.
 
 ## Roadmap
-More visualisations, an optional BLE companion mode (drive the existing orb from the watch),
-and deeper sleep. *(Done: brightness/resonance cue, harmonic-envelope formants +
-perceived-gender, H1–H2 vocal-weight cue, Color mode, on-device customisation, persistence,
-auto-dim + tilt-wake, per-feature on/off toggles.)*
+More visualisations and deeper sleep. *(Done: brightness/resonance cue, harmonic-envelope
+formants + perceived-gender, H1–H2 vocal-weight cue, Color mode with palettes/presets/effects,
+on-device customisation, persistence, auto-dim + tilt-wake, per-feature on/off toggles, and a
+BLE companion mode that drives the LED orb.)*

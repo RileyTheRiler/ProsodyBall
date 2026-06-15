@@ -25,6 +25,7 @@
 #include "config.h"          // selects LILYGO_WATCH_2020_V3 then includes <LilyGoWatch.h>
 #include <driver/i2s.h>
 #include <Preferences.h>
+#include <BLEDevice.h>       // BLE client for the optional orb companion mode
 #include "dsp.h"
 
 // --- PDM microphone pins / port (from the library's TwatcV3Special/Microphone example) ---
@@ -497,6 +498,101 @@ static bool evalHaptic(const VoxResult &res, bool inTarget) {
 }
 
 // ====================================================================
+// BLE companion — the watch acts as a CLIENT and drives the LED orb
+// (hardware/prosodyball_orb). Protocol must match prosodyball_orb.ino:
+// service 5b1e0001-..., characteristic 5b1e0002-..., 5-byte [R,G,B,Res,Weight].
+// ====================================================================
+static BLEUUID ORB_SVC_UUID("5b1e0001-8a0e-4f1b-9c5a-2f3d4e5a6b7c");
+static BLEUUID ORB_CHR_UUID("5b1e0002-8a0e-4f1b-9c5a-2f3d4e5a6b7c");
+
+// Packet bytes recomputed each frame on core 1; read by the BLE task. Byte reads/writes are
+// atomic on the ESP32, so an occasional torn frame just means one stale LED colour — harmless.
+static volatile uint8_t gOrbR = 0, gOrbG = 0, gOrbB = 0, gOrbRes = 0, gOrbWgt = 128;
+static volatile bool gOrbConnected = false;
+
+static BLEClient *gClient = nullptr;
+static BLERemoteCharacteristic *gOrbChr = nullptr;
+static BLEAdvertisedDevice *gFound = nullptr;
+static volatile bool gFoundFlag = false;
+
+class OrbScanCB : public BLEAdvertisedDeviceCallbacks {
+  void onResult(BLEAdvertisedDevice dev) override {
+    if (dev.haveServiceUUID() && dev.isAdvertisingService(ORB_SVC_UUID)) {
+      if (gFound) delete gFound;
+      gFound = new BLEAdvertisedDevice(dev);
+      gFoundFlag = true;
+      BLEDevice::getScan()->stop();
+    }
+  }
+};
+class OrbClientCB : public BLEClientCallbacks {
+  void onConnect(BLEClient *) override {}
+  void onDisconnect(BLEClient *) override { gOrbConnected = false; }
+};
+
+static bool orbConnect() {
+  if (!gFound) return false;
+  if (!gClient) {
+    gClient = BLEDevice::createClient();
+    gClient->setClientCallbacks(new OrbClientCB());
+  }
+  if (!gClient->connect(gFound)) return false;
+  BLERemoteService *svc = gClient->getService(ORB_SVC_UUID);
+  if (!svc) { gClient->disconnect(); return false; }
+  gOrbChr = svc->getCharacteristic(ORB_CHR_UUID);
+  if (!gOrbChr) { gClient->disconnect(); return false; }
+  return true;
+}
+
+static void bleTask(void *) {
+  bool inited = false;
+  for (;;) {
+    if (!gCfg.orb) {                              // companion disabled -> idle
+      if (gOrbConnected && gClient) { gClient->disconnect(); gOrbConnected = false; }
+      vTaskDelay(pdMS_TO_TICKS(300));
+      continue;
+    }
+    if (!inited) {                               // lazy BT init: no cost unless used
+      BLEDevice::init("ProsodyBall-Watch");
+      BLEScan *scan = BLEDevice::getScan();
+      static OrbScanCB cb;
+      scan->setAdvertisedDeviceCallbacks(&cb, false);
+      scan->setActiveScan(true);
+      scan->setInterval(100);
+      scan->setWindow(99);
+      inited = true;
+    }
+    if (!gOrbConnected) {                         // scan, then connect
+      gFoundFlag = false;
+      BLEDevice::getScan()->start(4, false);     // blocks ~4 s
+      BLEDevice::getScan()->clearResults();
+      if (gFoundFlag && orbConnect()) gOrbConnected = true;
+      vTaskDelay(pdMS_TO_TICKS(200));
+      continue;
+    }
+    if (gClient && gClient->isConnected() && gOrbChr) {   // stream the latest colour
+      uint8_t pkt[5] = { gOrbR, gOrbG, gOrbB, gOrbRes, gOrbWgt };
+      gOrbChr->writeValue(pkt, 5, false);
+    } else {
+      gOrbConnected = false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(50));               // ~20 Hz
+  }
+}
+
+// Recompute the orb packet from the latest analysis + on-screen colour.
+static void updateOrbPacket(const VoxResult &res) {
+  uint8_t R, G, B;
+  if (gCfg.mode == MODE_COLOR)
+    blendPalRGB(gCfg.loColor, gCfg.hiColor, metricValue(res, gCfg.colorSrc), 1.0f, &R, &G, &B);
+  else
+    hsvRGB(smoothHue, 0.9f, 1.0f, &R, &G, &B);
+  gOrbR = R; gOrbG = G; gOrbB = B;
+  gOrbRes = (uint8_t)(clampf(res.brightness, 0, 1) * 255);  // -> orb pulse rate/depth
+  gOrbWgt = (uint8_t)(clampf(res.weight, 0, 1) * 255);      // -> orb body/baseline
+}
+
+// ====================================================================
 void setup() {
   Serial.begin(115200);
   loadSettings();
@@ -531,6 +627,7 @@ void setup() {
   initMic();
   gResultQueue = xQueueCreate(1, sizeof(VoxResult));
   xTaskCreatePinnedToCore(audioTask, "audio", 8192, NULL, 2, NULL, 0); // core 0
+  xTaskCreatePinnedToCore(bleTask, "ble", 8192, NULL, 1, NULL, 1);     // core 1, low prio
 
   tft->fillScreen(TFT_BLACK);
 }
@@ -643,6 +740,12 @@ void loop() {
   } else {
     updateBallPhysics(latest, dt);
     renderBall(latest, inTarget, gCfg.showBand, gCfg.showHud);
+  }
+
+  // BLE companion: feed the orb the latest colour + a connection dot (top-right).
+  if (gCfg.orb) {
+    updateOrbPacket(latest);
+    ttgo->tft->fillCircle(SCR_W - 9, 9, 5, gOrbConnected ? TFT_GREEN : ttgo->tft->color565(90, 90, 90));
   }
 
   delay(16);
