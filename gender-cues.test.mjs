@@ -95,12 +95,12 @@ test('empty enabled set returns neutral with max uncertainty', () => {
 });
 test('cue disagreement raises uncertainty and pulls score toward center', () => {
   const agree = computeGenderScoreMulti({
-    cues: { resonance: { value: 0.9, confidence: 1 }, modalF0: { value: 0.9, confidence: 1 } },
-    enabledMap: { resonance: true, modalF0: true },
+    cues: { resonance: { value: 0.9, confidence: 1 }, pitchZone: { value: 0.9, confidence: 1 } },
+    enabledMap: { resonance: true, pitchZone: true },
   });
   const disagree = computeGenderScoreMulti({
-    cues: { resonance: { value: 0.9, confidence: 1 }, modalF0: { value: 0.1, confidence: 1 } },
-    enabledMap: { resonance: true, modalF0: true },
+    cues: { resonance: { value: 0.9, confidence: 1 }, pitchZone: { value: 0.1, confidence: 1 } },
+    enabledMap: { resonance: true, pitchZone: true },
   });
   assert.ok(disagree.uncertainty > agree.uncertainty);
   assert.ok(Math.abs(disagree.score - 0.5) < Math.abs(agree.score - 0.5));
@@ -165,8 +165,8 @@ test('modal F0 + dispersion keep a deep singer masculine despite high instantane
   assert.ok(score < 0.4, `expected masculine, got ${score}`);
 });
 
-test('DEFAULT_GENDER_CUE_WEIGHTS has resonance and modalF0 as top cues', () => {
+test('DEFAULT_GENDER_CUE_WEIGHTS has resonance and pitchZone as top cues', () => {
   const w = DEFAULT_GENDER_CUE_WEIGHTS;
-  assert.ok(w.resonance >= w.modalF0);
-  assert.ok(w.modalF0 > w.cpp);
+  assert.ok(w.resonance >= w.pitchZone);
+  assert.ok(w.pitchZone > w.weight);
 });
