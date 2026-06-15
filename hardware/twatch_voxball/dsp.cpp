@@ -255,6 +255,35 @@ void VoxDsp::computeFormants(float f0, float* f1, float* f2, float* f3, float* c
   *conf = clamp01f(prom * _confidence); // gate by pitch confidence (vowel-like, voiced)
 }
 
+// Peak dB of the spectrum near a target frequency (local search, like the formant sampler).
+static float harmonicPeakDb(const float* logmag, int nBins, float freq) {
+  const float binHz = binToHz(1);
+  int bin = (int)floorf(freq / binHz);
+  if (bin < 1 || bin >= nBins) return -200.0f;
+  int range = (int)fmaxf(1.0f, floorf(freq / binHz * 0.15f));
+  float peak = logmag[bin];
+  for (int s = -range; s <= range; s++) {
+    int idx = bin + s;
+    if (idx >= 0 && idx < nBins && logmag[idx] > peak) peak = logmag[idx];
+  }
+  return peak;
+}
+
+// Vocal weight from the H1-H2 measure (amplitude of the 1st vs 2nd harmonic, dB). Breathy
+// voices have H1 >> H2 (large H1-H2 -> light); pressed/modal voices have small H1-H2 -> heavy.
+// This is the breathiness cue behind computeWeightTarget's h1h2Heaviness in dsp-utils.js.
+float VoxDsp::computeWeight(float f0) {
+  if (!(f0 > 0.0f) || !_specValid) return _smoothWeight;
+  const int nBins = VOX_FRAME_SAMPLES / 2;
+  float h1 = harmonicPeakDb(_logmag, nBins, f0);
+  float h2 = harmonicPeakDb(_logmag, nBins, 2.0f * f0);
+  if (h1 <= -199.0f || h2 <= -199.0f) return _smoothWeight;
+  float h1h2 = h1 - h2;                                  // dB
+  float heaviness = clamp01f((15.0f - h1h2) / 20.0f);    // +15 dB -> 0 light, -5 dB -> 1 heavy
+  _smoothWeight += (heaviness - _smoothWeight) * 0.15f;
+  return _smoothWeight;
+}
+
 // dispersionToFemininity(meanSpacingHz, 900, 1200) from dsp-utils.js.
 static float dispersionToFemininity(float meanSpacingHz) {
   if (!(meanSpacingHz > 0)) return 0.5f;
@@ -281,6 +310,7 @@ VoxDsp::VoxDsp() {
   recalibrate();
   _smoothBright = 0.0f;
   _smoothGender = 0.5f;
+  _smoothWeight = 0.5f;
   _specValid = false;
   _pitchMedianLen = 0;
   _confidence = 0.0f;
@@ -433,6 +463,9 @@ VoxResult VoxDsp::process(const float* frame, size_t n, float dtSecs) {
   if (r.f1 > 0 && r.f2 > 0 && r.f3 > 0) meanSpacing = (r.f3 - r.f1) * 0.5f;
   else if (r.f1 > 0 && r.f2 > 0)        meanSpacing = (r.f2 - r.f1);
   r.resonance = dispersionToFemininity(meanSpacing);
+
+  // Vocal weight (breathy/light .. pressed/heavy) from H1-H2.
+  r.weight = computeWeight(hz);
 
   float genderTarget = computeGenderScore(hz, r.resonance, _confidence, r.formantConf);
   // Only let confident, voiced frames move the smoothed score; else drift toward neutral.

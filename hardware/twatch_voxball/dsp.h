@@ -58,6 +58,7 @@ struct VoxResult {
   float f1, f2, f3;      // estimated formants in Hz (0 if unavailable)
   float resonance;       // dispersion/VTL-based resonance 0..1 (dark..bright)
   float formantConf;     // formant estimate confidence 0..1
+  float weight;          // vocal weight 0..1 (0 light/breathy .. 1 heavy/pressed), H1-H2
   float genderScore;     // perceived gender 0..1 (0 masc .. 1 fem), smoothed
   float genderHue;       // 210 (blue/masc) .. 340 (pink/fem)
   bool  voiced;          // true when a pitch was found this frame
@@ -83,15 +84,18 @@ private:
   float brightnessFromSpectrum();                      // spectral centroid -> 0..1
   // Harmonic-envelope formants; fills f1/f2/f3 (Hz) and a 0..1 confidence.
   void  computeFormants(float f0, float* f1, float* f2, float* f3, float* conf);
+  // Vocal weight (heaviness) from the H1-H2 breathiness measure, 0 light .. 1 heavy.
+  float computeWeight(float f0);
 
   // --- shared per-frame spectrum (linear magnitude + dB), bins 0..N/2 ---
   float _mag[VOX_FRAME_SAMPLES / 2 + 1];
   float _logmag[VOX_FRAME_SAMPLES / 2 + 1];
   bool  _specValid;
 
-  // --- brightness / gender smoothing ---
+  // --- brightness / gender / weight smoothing ---
   float _smoothBright;
   float _smoothGender;
+  float _smoothWeight;
 
   // --- calibration ---
   static const int CALIB_TARGET_FRAMES = 16; // ~1 s of quiet at ~64 ms/frame
