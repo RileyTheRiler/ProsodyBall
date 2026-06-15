@@ -1049,6 +1049,12 @@
       flex-shrink: 0;
     }
 
+    /* Mobile thumb-zone dock — hidden by default; only shown on phones once JS
+       relocates .hud-primary into it (body.has-mobile-dock). */
+    .mobile-dock {
+      display: none;
+    }
+
     .meters-bar {
       display: flex;
       flex-wrap: wrap;
@@ -2306,6 +2312,57 @@
       .meters-bar #resMethodSelect,
       .meters-bar #pitchDisplaySelect {
         display: none;
+      }
+
+      /* === CANVAS-FIRST: primary controls dock to a bottom thumb zone === */
+      body.has-mobile-dock .mobile-dock {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 10px;
+        padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+        background: linear-gradient(0deg, rgba(12, 12, 22, 0.98) 0%, rgba(18, 18, 31, 0.92) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.4);
+        flex: 0 0 auto;
+        z-index: 15;
+      }
+
+      /* The relocated primary cluster fills the dock; Start is the hero. */
+      body.has-mobile-dock .mobile-dock .hud-primary {
+        display: flex;
+        width: 100%;
+        flex: 1;
+        gap: 6px;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        justify-content: flex-start;
+      }
+
+      body.has-mobile-dock .mobile-dock .hud-primary::-webkit-scrollbar {
+        display: none;
+      }
+
+      body.has-mobile-dock .mobile-dock .btn-start {
+        flex: 1 1 auto;
+        min-height: 48px;
+        font-size: 0.98rem;
+        font-weight: 700;
+      }
+
+      body.has-mobile-dock .mobile-dock .hud-primary .btn {
+        flex: 0 0 auto;
+        min-height: 48px;
+      }
+
+      /* Dock owns the bottom safe-area, so the meters strip above it doesn't
+         also reserve it (avoids a double gap). */
+      body.has-mobile-dock .meters-bar {
+        padding-bottom: 8px;
       }
 
       .hud-secondary .btn {
@@ -6170,6 +6227,11 @@
         </div>
       </div>
     </div>
+
+    <!-- Mobile thumb-zone dock: the primary control cluster (.hud-primary) is
+         relocated here by JS on phones, leaving a minimal top bar. Empty/hidden
+         on desktop & tablet. -->
+    <div id="mobileDock" class="mobile-dock" aria-label="Primary controls" hidden></div>
   </div>
 
   <!-- Metric Focus Popup -->
@@ -6216,19 +6278,47 @@
       var mqPhone = window.matchMedia('(max-width: 600px)');
       var mqTablet = window.matchMedia('(min-width: 601px) and (max-width: 1024px)');
       var mqCoarse = window.matchMedia('(pointer: coarse)');
+
+      // Canvas-first: on phones, relocate the primary control cluster into a
+      // bottom thumb-zone dock (and back into the HUD on larger screens).
+      // Moving the existing node keeps all its event listeners intact, so the
+      // controls remain a single source of truth — no duplication.
+      var dockOrigin = null; // { parent, before } captured once for restoration
+      function syncMobileDock(isPhone) {
+        var dock = document.getElementById('mobileDock');
+        var primary = document.querySelector('.hud .hud-primary, #mobileDock .hud-primary');
+        if (!dock || !primary) return;
+        if (!dockOrigin) {
+          dockOrigin = { parent: primary.parentNode, before: primary.nextElementSibling };
+        }
+        if (isPhone) {
+          if (primary.parentNode !== dock) {
+            dock.appendChild(primary);
+            dock.hidden = false;
+            document.body.classList.add('has-mobile-dock');
+          }
+        } else if (primary.parentNode === dock) {
+          dockOrigin.parent.insertBefore(primary, dockOrigin.before);
+          dock.hidden = true;
+          document.body.classList.remove('has-mobile-dock');
+        }
+      }
+
       function detectDevice() {
-        var cls = mqPhone.matches
+        var b = document.body;
+        if (!b) return;
+        var isPhone = mqPhone.matches;
+        var cls = isPhone
           ? 'device-phone'
           : (mqTablet.matches && mqCoarse.matches) ? 'device-tablet'
           : 'device-desktop';
-        var b = document.body;
-        if (!b) return;
         if (!b.classList.contains(cls)) {
           b.classList.remove('device-phone', 'device-tablet', 'device-desktop');
           b.classList.add(cls);
           b.classList.toggle('device-touch', mqCoarse.matches);
           window.dispatchEvent(new CustomEvent('devicechange', { detail: { device: cls } }));
         }
+        syncMobileDock(isPhone);
       }
       window.voxDetectDevice = detectDevice;
       detectDevice();
