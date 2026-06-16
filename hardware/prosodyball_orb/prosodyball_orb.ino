@@ -5,7 +5,7 @@
 
 // --- HARDWARE CONFIG ---
 #define DATA_PIN    4
-#define NUM_LEDS    160
+#define NUM_LEDS    320
 
 NeoPixelBus<NeoGrbFeature, NeoEsp32Rmt0Ws2812xMethod> strip(NUM_LEDS, DATA_PIN);
 
