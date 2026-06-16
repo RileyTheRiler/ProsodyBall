@@ -68,6 +68,9 @@
     const params = new URLSearchParams(location.search);
     const room = (params.get('room') || '').trim();
     const ROOM_CODE_RE = /^[a-z0-9]{6}$/i;
+    const wantEcho = params.get('ec') === '1';
+    const wantNoise = params.get('ns') === '1';
+    const wantGain = params.get('ag') === '1';
     const statusIcon = document.getElementById('statusIcon');
     const msg = document.getElementById('msg');
     const connectBtn = document.getElementById('connectBtn');
@@ -90,7 +93,14 @@
 
       let stream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: wantEcho,
+            noiseSuppression: wantNoise,
+            autoGainControl: wantGain,
+          },
+          video: false,
+        });
       } catch (err) {
         statusIcon.textContent = '❌';
         msg.textContent = 'Microphone access denied. Please allow microphone permission in your browser settings and try again.';
@@ -121,7 +131,18 @@
         call.on('stream', () => {
           statusIcon.classList.remove('pulse');
           statusIcon.textContent = '✅';
-          msg.textContent = 'Connected! Keep this page open while you use the app on your desktop. You can lock your screen.';
+
+          const track = stream.getAudioTracks()[0];
+          const settings = track && track.getSettings ? track.getSettings() : {};
+          const mismatches = [];
+          if (settings.echoCancellation !== undefined && settings.echoCancellation !== wantEcho) mismatches.push('echo cancellation');
+          if (settings.noiseSuppression !== undefined && settings.noiseSuppression !== wantNoise) mismatches.push('noise suppression');
+          if (settings.autoGainControl !== undefined && settings.autoGainControl !== wantGain) mismatches.push('auto gain');
+
+          const baseMsg = 'Connected! Keep this page open while you use the app on your desktop. You can lock your screen.';
+          msg.textContent = mismatches.length
+            ? `${baseMsg} Note: your phone forced on ${mismatches.join(', ')} — capture may not be fully raw.`
+            : `${baseMsg} Raw mic capture (no processing applied).`;
         });
 
         call.on('close', () => {

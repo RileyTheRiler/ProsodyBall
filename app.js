@@ -3911,6 +3911,9 @@ class VoxBallGame {
             if (status === 'waiting') {
               const url = new URL('phone.html', window.location.href);
               url.searchParams.set('room', code);
+              url.searchParams.set('ec', this.micInputPreferences.echoCancellation ? '1' : '0');
+              url.searchParams.set('ns', this.micInputPreferences.noiseSuppression ? '1' : '0');
+              url.searchParams.set('ag', this.micInputPreferences.autoGainControl ? '1' : '0');
               if (phoneMicUrlEl) { phoneMicUrlEl.href = url.href; phoneMicUrlEl.textContent = url.href; phoneMicUrlEl.style.display = ''; }
               if (phoneMicCodeEl) { phoneMicCodeEl.style.display = ''; phoneMicCodeEl.querySelector('strong').textContent = code; }
               if (phoneMicStatusEl) { phoneMicStatusEl.style.display = ''; phoneMicStatusEl.textContent = 'Waiting for phone to connect...'; }
