@@ -3817,7 +3817,7 @@ class VoxBallGame {
       } else {
         const s = document.createElement('script');
         s.src = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
-        s.integrity = 'sha384-lLlVqm2R8d/G8lmXfKOhjr3m5DQfXAMsgzF3l3L8s7OLwQfzaW4x/2cTqUL6FO3u';
+        s.integrity = 'sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR';
         s.crossOrigin = 'anonymous';
         s.onload = initPeer;
         s.onerror = () => reject(new Error('Could not load PeerJS. Check your internet connection.'));
