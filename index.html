@@ -5240,6 +5240,14 @@
         </div>
       </div>
 
+      <div id="phoneMicPanel" class="settings-group" style="display:none" aria-live="polite">
+        <span class="settings-label">Phone Mic Pairing</span>
+        <p class="settings-hint" style="margin:4px 0">Press <strong>Start</strong> to get a pairing code, then open the link on your phone's browser.</p>
+        <a id="phoneMicUrl" class="settings-hint" style="display:none;word-break:break-all;font-size:0.8em;color:var(--accent,#7af)" target="_blank" rel="noopener noreferrer"></a>
+        <p id="phoneMicCode" class="settings-hint" style="display:none;margin:4px 0">Room: <strong style="font-family:monospace;letter-spacing:2px"></strong></p>
+        <p id="phoneMicStatus" class="settings-hint" style="display:none;margin:4px 0;font-style:italic"></p>
+      </div>
+
       <div class="settings-group">
         <span class="settings-label">Performance</span>
         <button class="btn btn-help btn-fill" id="motionToggle" aria-label="Toggle low motion mode"

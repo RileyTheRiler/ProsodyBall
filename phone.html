@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>ProsodyBall — Phone Mic</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0a0a12;
+      color: #e0e0f0;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+    }
+    h1 { font-size: 1.4rem; font-weight: 700; margin-bottom: 8px; color: #7af; }
+    .subtitle { font-size: 0.9rem; opacity: 0.6; margin-bottom: 32px; }
+    #statusIcon { font-size: 3rem; margin-bottom: 16px; }
+    #msg { font-size: 1rem; line-height: 1.5; max-width: 320px; }
+    #connectBtn {
+      margin-top: 32px;
+      padding: 16px 40px;
+      font-size: 1.1rem;
+      font-weight: 700;
+      background: #7af;
+      color: #0a0a12;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    #connectBtn:active { opacity: 0.8; }
+    #connectBtn[hidden] { display: none; }
+    .room-code {
+      margin-top: 16px;
+      font-family: monospace;
+      font-size: 0.85rem;
+      opacity: 0.4;
+      letter-spacing: 2px;
+    }
+    .pulse {
+      animation: pulse 1.8s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+  </style>
+</head>
+<body>
+  <h1>ProsodyBall</h1>
+  <p class="subtitle">Phone Microphone</p>
+  <div id="statusIcon">🎙</div>
+  <p id="msg">Checking connection code...</p>
+  <button id="connectBtn" hidden>Allow Mic &amp; Connect</button>
+  <p class="room-code" id="roomDisplay"></p>
+
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"
+    integrity="sha384-lLlVqm2R8d/G8lmXfKOhjr3m5DQfXAMsgzF3l3L8s7OLwQfzaW4x/2cTqUL6FO3u"
+    crossorigin="anonymous"></script>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const room = (params.get('room') || '').trim();
+    const ROOM_CODE_RE = /^[a-z0-9]{6}$/i;
+    const statusIcon = document.getElementById('statusIcon');
+    const msg = document.getElementById('msg');
+    const connectBtn = document.getElementById('connectBtn');
+    const roomDisplay = document.getElementById('roomDisplay');
+
+    if (!ROOM_CODE_RE.test(room)) {
+      statusIcon.textContent = '❌';
+      msg.textContent = 'Invalid room code. Open this page from the desktop app — go to Settings → Input Source → Phone Microphone, then press Start.';
+    } else {
+      roomDisplay.textContent = `Room: ${room.toUpperCase()}`;
+      msg.textContent = 'Tap the button below to allow your microphone and connect to the desktop.';
+      connectBtn.hidden = false;
+      connectBtn.addEventListener('click', connect);
+    }
+
+    async function connect() {
+      connectBtn.hidden = true;
+      statusIcon.textContent = '⏳';
+      msg.textContent = 'Requesting microphone permission...';
+
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      } catch (err) {
+        statusIcon.textContent = '❌';
+        msg.textContent = 'Microphone access denied. Please allow microphone permission in your browser settings and try again.';
+        connectBtn.hidden = false;
+        return;
+      }
+
+      msg.textContent = 'Connecting to desktop...';
+      statusIcon.classList.add('pulse');
+
+      let peer;
+      let call;
+      const teardown = ({ icon, text, showReconnect = false } = {}) => {
+        statusIcon.classList.remove('pulse');
+        if (icon) statusIcon.textContent = icon;
+        if (text) msg.textContent = text;
+        if (stream) stream.getTracks().forEach(t => t.stop());
+        if (call && call.open) call.close();
+        if (peer && !peer.destroyed) peer.destroy();
+        connectBtn.hidden = !showReconnect;
+      };
+
+      peer = new Peer();
+
+      peer.on('open', () => {
+        call = peer.call('vox-' + room.toLowerCase(), stream);
+
+        call.on('stream', () => {
+          statusIcon.classList.remove('pulse');
+          statusIcon.textContent = '✅';
+          msg.textContent = 'Connected! Keep this page open while you use the app on your desktop. You can lock your screen.';
+        });
+
+        call.on('close', () => {
+          teardown({
+            icon: '🔌',
+            text: 'Disconnected from desktop. Press Start again on the desktop to reconnect.',
+            showReconnect: true,
+          });
+        });
+
+        call.on('error', (err) => {
+          teardown({
+            icon: '❌',
+            text: 'Connection error: ' + (err.message || String(err)),
+            showReconnect: true,
+          });
+        });
+      });
+
+      peer.on('error', (err) => {
+        const text = err.type === 'peer-unavailable'
+          ? 'Desktop not found. Make sure the desktop app is running and you pressed Start. Then try again.'
+          : 'Error: ' + (err.message || err.type || String(err));
+        teardown({ icon: err.type === 'peer-unavailable' ? '⏰' : '❌', text, showReconnect: true });
+      });
+    }
+  </script>
+</body>
+</html>
