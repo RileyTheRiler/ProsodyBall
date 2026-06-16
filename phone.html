@@ -61,20 +61,23 @@
   <button id="connectBtn" hidden>Allow Mic &amp; Connect</button>
   <p class="room-code" id="roomDisplay"></p>
 
-  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"
+    integrity="sha384-lLlVqm2R8d/G8lmXfKOhjr3m5DQfXAMsgzF3l3L8s7OLwQfzaW4x/2cTqUL6FO3u"
+    crossorigin="anonymous"></script>
   <script>
     const params = new URLSearchParams(location.search);
-    const room = params.get('room');
+    const room = (params.get('room') || '').trim();
+    const ROOM_CODE_RE = /^[a-z0-9]{6}$/i;
     const statusIcon = document.getElementById('statusIcon');
     const msg = document.getElementById('msg');
     const connectBtn = document.getElementById('connectBtn');
     const roomDisplay = document.getElementById('roomDisplay');
 
-    if (!room) {
+    if (!ROOM_CODE_RE.test(room)) {
       statusIcon.textContent = '❌';
-      msg.textContent = 'No room code found. Open this page from the desktop app — go to Settings → Input Source → Phone Microphone, then press Start.';
+      msg.textContent = 'Invalid room code. Open this page from the desktop app — go to Settings → Input Source → Phone Microphone, then press Start.';
     } else {
-      roomDisplay.textContent = `Room: ${room}`;
+      roomDisplay.textContent = `Room: ${room.toUpperCase()}`;
       msg.textContent = 'Tap the button below to allow your microphone and connect to the desktop.';
       connectBtn.hidden = false;
       connectBtn.addEventListener('click', connect);
@@ -98,10 +101,22 @@
       msg.textContent = 'Connecting to desktop...';
       statusIcon.classList.add('pulse');
 
-      const peer = new Peer();
+      let peer;
+      let call;
+      const teardown = ({ icon, text, showReconnect = false } = {}) => {
+        statusIcon.classList.remove('pulse');
+        if (icon) statusIcon.textContent = icon;
+        if (text) msg.textContent = text;
+        if (stream) stream.getTracks().forEach(t => t.stop());
+        if (call && call.open) call.close();
+        if (peer && !peer.destroyed) peer.destroy();
+        connectBtn.hidden = !showReconnect;
+      };
+
+      peer = new Peer();
 
       peer.on('open', () => {
-        const call = peer.call('vox-' + room.toLowerCase(), stream);
+        call = peer.call('vox-' + room.toLowerCase(), stream);
 
         call.on('stream', () => {
           statusIcon.classList.remove('pulse');
@@ -110,30 +125,27 @@
         });
 
         call.on('close', () => {
-          statusIcon.textContent = '🔌';
-          msg.textContent = 'Disconnected from desktop. Press Start again on the desktop to reconnect.';
-          stream.getTracks().forEach(t => t.stop());
+          teardown({
+            icon: '🔌',
+            text: 'Disconnected from desktop. Press Start again on the desktop to reconnect.',
+            showReconnect: true,
+          });
         });
 
         call.on('error', (err) => {
-          statusIcon.classList.remove('pulse');
-          statusIcon.textContent = '❌';
-          msg.textContent = 'Connection error: ' + (err.message || String(err));
-          stream.getTracks().forEach(t => t.stop());
+          teardown({
+            icon: '❌',
+            text: 'Connection error: ' + (err.message || String(err)),
+            showReconnect: true,
+          });
         });
       });
 
       peer.on('error', (err) => {
-        statusIcon.classList.remove('pulse');
-        if (err.type === 'peer-unavailable') {
-          statusIcon.textContent = '⏰';
-          msg.textContent = 'Desktop not found. Make sure the desktop app is running and you pressed Start. Then try again.';
-        } else {
-          statusIcon.textContent = '❌';
-          msg.textContent = 'Error: ' + (err.message || err.type || String(err));
-        }
-        stream.getTracks().forEach(t => t.stop());
-        connectBtn.hidden = false;
+        const text = err.type === 'peer-unavailable'
+          ? 'Desktop not found. Make sure the desktop app is running and you pressed Start. Then try again.'
+          : 'Error: ' + (err.message || err.type || String(err));
+        teardown({ icon: err.type === 'peer-unavailable' ? '⏰' : '❌', text, showReconnect: true });
       });
     }
   </script>

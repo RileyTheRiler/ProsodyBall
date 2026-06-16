@@ -3779,34 +3779,64 @@ class VoxBallGame {
 
     const startPhoneMicSession = (onStatus) => new Promise((resolve, reject) => {
       function initPeer() {
-        const code = Math.random().toString(36).slice(2, 8).toUpperCase();
+        const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        const bytes = new Uint8Array(6);
+        crypto.getRandomValues(bytes);
+        const code = Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('');
         const peerId = 'vox-' + code.toLowerCase();
         let settled = false;
-        const peer = new window.Peer(peerId);
+        let timeoutId;
+        let peer;
+        const fail = (err) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+          try { peer?.destroy(); } catch (_) {}
+          reject(err);
+        };
+        peer = new window.Peer(peerId);
+        timeoutId = setTimeout(() => fail(new Error('Phone mic pairing timed out. Try pressing Start again.')), 120_000);
         peer.on('open', () => onStatus('waiting', code));
         peer.on('call', (call) => {
+          if (settled) { call.close?.(); return; }
           call.answer();
           call.on('stream', (stream) => {
             if (!settled) {
               settled = true;
+              clearTimeout(timeoutId);
               onStatus('connected', code);
               resolve({ stream, cleanup: () => peer.destroy() });
             }
           });
-          call.on('error', (err) => { if (!settled) { settled = true; reject(err); } });
+          call.on('error', fail);
         });
-        peer.on('error', (err) => { if (!settled) { settled = true; reject(err); } });
+        peer.on('error', fail);
       }
       if (window.Peer) {
         initPeer();
       } else {
         const s = document.createElement('script');
         s.src = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
+        s.integrity = 'sha384-lLlVqm2R8d/G8lmXfKOhjr3m5DQfXAMsgzF3l3L8s7OLwQfzaW4x/2cTqUL6FO3u';
+        s.crossOrigin = 'anonymous';
         s.onload = initPeer;
         s.onerror = () => reject(new Error('Could not load PeerJS. Check your internet connection.'));
         document.head.appendChild(s);
       }
     });
+
+    const cleanupPhoneMic = () => {
+      if (this._phoneMicCleanup) {
+        try { this._phoneMicCleanup(); } catch (err) { console.warn('Phone mic cleanup failed:', err); }
+        this._phoneMicCleanup = null;
+      }
+      const phoneMicUrlEl = document.getElementById('phoneMicUrl');
+      const phoneMicCodeEl = document.getElementById('phoneMicCode');
+      const phoneMicStatusEl = document.getElementById('phoneMicStatus');
+      if (phoneMicUrlEl) phoneMicUrlEl.style.display = 'none';
+      if (phoneMicCodeEl) phoneMicCodeEl.style.display = 'none';
+      if (phoneMicStatusEl) phoneMicStatusEl.style.display = 'none';
+    };
 
     const startGame = async () => {
       if (this._isStarting) return; // prevent concurrent start/stop race
@@ -3879,11 +3909,12 @@ class VoxBallGame {
         try {
           const { stream, cleanup } = await startPhoneMicSession((status, code) => {
             if (status === 'waiting') {
-              const url = `${location.origin}/phone.html?room=${code}`;
-              if (phoneMicUrlEl) { phoneMicUrlEl.href = url; phoneMicUrlEl.textContent = url; phoneMicUrlEl.style.display = ''; }
+              const url = new URL('phone.html', window.location.href);
+              url.searchParams.set('room', code);
+              if (phoneMicUrlEl) { phoneMicUrlEl.href = url.href; phoneMicUrlEl.textContent = url.href; phoneMicUrlEl.style.display = ''; }
               if (phoneMicCodeEl) { phoneMicCodeEl.style.display = ''; phoneMicCodeEl.querySelector('strong').textContent = code; }
               if (phoneMicStatusEl) { phoneMicStatusEl.style.display = ''; phoneMicStatusEl.textContent = 'Waiting for phone to connect...'; }
-              showError(`📱 Open on your phone: ${location.origin}/phone.html?room=${code}`);
+              showError(`📱 Open on your phone: ${url.href}`);
             } else if (status === 'connected') {
               if (phoneMicStatusEl) phoneMicStatusEl.textContent = '✅ Phone connected!';
               clearError();
@@ -3891,7 +3922,9 @@ class VoxBallGame {
           });
           this._phoneMicCleanup = cleanup;
           result = await this.analyzer.start(null, { stream });
+          if (!result.ok) { cleanupPhoneMic(); }
         } catch (err) {
+          cleanupPhoneMic();
           showError('📱 Phone mic failed: ' + (err.message || 'Connection error'));
           this.drawIdleScene();
           return;
@@ -4185,16 +4218,7 @@ class VoxBallGame {
       const hud = document.getElementById('creatureStyleHud');
       if (hud) hud.style.display = 'none';
       this.analyzer.stop();
-      if (this._phoneMicCleanup) {
-        this._phoneMicCleanup();
-        this._phoneMicCleanup = null;
-      }
-      const phoneMicUrlEl = document.getElementById('phoneMicUrl');
-      const phoneMicCodeEl = document.getElementById('phoneMicCode');
-      const phoneMicStatusEl = document.getElementById('phoneMicStatus');
-      if (phoneMicUrlEl) phoneMicUrlEl.style.display = 'none';
-      if (phoneMicCodeEl) phoneMicCodeEl.style.display = 'none';
-      if (phoneMicStatusEl) phoneMicStatusEl.style.display = 'none';
+      cleanupPhoneMic();
       // Hide prism overlay on stop
       const prismOvl = document.getElementById('prismOverlay');
       if (prismOvl) prismOvl.classList.remove('show');
@@ -4254,6 +4278,7 @@ class VoxBallGame {
         const hud = document.getElementById('creatureStyleHud');
         if (hud) hud.style.display = 'none';
         this.analyzer.stop();
+        cleanupPhoneMic();
         const prismOvl = document.getElementById('prismOverlay');
         if (prismOvl) prismOvl.classList.remove('show');
         startBtn.textContent = '🎙 Start';
