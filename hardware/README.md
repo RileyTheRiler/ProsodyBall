@@ -42,8 +42,43 @@ full brightness, power the strip from a dedicated **5V/3A+** USB brick or supply
    `https://espressif.github.io/arduino-esp32/package_esp32_index.json`, then
    *Boards Manager → install "esp32"*.
 3. *Library Manager → install "NeoPixelBus" by Makuna*.
-4. Open `prosodyball_orb/prosodyball_orb.ino`. Set `NUM_LEDS` / `DATA_PIN` to your
-   build if different. Select your board + port, click **Upload**.
+4. Open `prosodyball_orb/prosodyball_orb.ino`. Keep `ota.h` and `secrets.h.example` in the
+   same folder — the sketch includes `ota.h` unconditionally (see *Wireless OTA updates*
+   below; it's a no-op until you opt in). Set `NUM_LEDS` / `DATA_PIN` to your build if
+   different. Select your board + port, click **Upload**.
+
+## Wireless OTA updates (flash from your phone, no cable)
+
+Once this firmware is on the board once (via USB), every later update can go over Wi-Fi —
+including straight from your Android phone's browser, no app and no computer.
+
+1. Copy `prosodyball_orb/secrets.h.example` to `prosodyball_orb/secrets.h` and fill in your
+   `WIFI_SSID` / `WIFI_PASSWORD`. (`secrets.h` is gitignored — your credentials never get
+   committed.)
+2. Re-flash once over USB with `secrets.h` in place. On boot the orb joins your Wi-Fi and the
+   Serial Monitor prints something like `OTA ready: browse to http://192.168.1.42/`.
+3. From then on: in Arduino IDE, *Sketch → Export Compiled Binary* to get a `.bin`, then on
+   your phone (same Wi-Fi network) open Chrome, go to that IP address, pick the `.bin`, and
+   tap **Upload & Flash** — the orb reboots running it. No USB, no laptop.
+4. Arduino IDE users on a computer can instead pick *Tools → Port → "prosodyball-orb at
+   <ip>"* and **Upload** as normal — same OTA path, IDE-driven.
+
+Leave `WIFI_SSID` blank (or skip `secrets.h` entirely) to keep the orb Wi-Fi-off and
+BLE-only, exactly as before — OTA is fully opt-in.
+
+## Flash via USB-OTG from an Android phone (no computer)
+
+For the very first flash (or if you'd rather skip Wi-Fi setup), you can program the ESP32
+directly from an Android phone over a USB-OTG cable:
+
+- **Easiest — browser flashing, pre-built binary:** export a `.bin` from Arduino IDE
+  (*Sketch → Export Compiled Binary*), plug the ESP32 into your phone via a USB-OTG adapter,
+  open **Chrome on Android**, and use an [ESP Web Tools](https://esphome.github.io/esp-web-tools/)
+  page — Chrome's WebSerial support works over the OTG cable, so it flashes just like it would
+  from a desktop.
+- **Compile on-device:** install **ArduinoDroid** from the Play Store to edit, compile, and
+  upload the `.ino` directly on your phone over the same OTG cable. Slower, and NeoPixelBus
+  can be fussier to get building than on desktop Arduino IDE, but no PC is involved at all.
 
 ## Power-on self-test
 

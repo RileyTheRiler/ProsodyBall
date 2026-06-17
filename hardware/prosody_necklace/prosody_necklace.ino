@@ -36,6 +36,9 @@
 #include <Adafruit_NeoPixel.h>
 #include "dsp.h"
 
+#define OTA_HOSTNAME "prosodyball-necklace"
+#include "ota.h"
+
 // --- cross-core handoff ---
 static QueueHandle_t gResultQueue;      // length 1, overwritten with the latest frame
 static VoxDsp        gDsp;              // owned by the audio task (core 0)
@@ -309,9 +312,13 @@ void setup() {
   statusLed.setPixelColor(0, statusLed.Color(20, 20, 20)); // dim white: idle/running
   statusLed.show();
   Serial.println("ProsodyBall Necklace ready.");
+
+  otaSetup();
 }
 
 void loop() {
+  otaLoop();
+
   static VoxResult latest = {};
   static uint32_t lastMs = 0, lastStatusMs = 0;
   static float voicedTime = 0.0f, inTargetTime = 0.0f;
