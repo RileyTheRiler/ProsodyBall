@@ -2,6 +2,7 @@ import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagno
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { BulbController } from './bulb-controller.js';
+import { NecklaceController, HapticSrc } from './necklace-controller.js';
 
 function escapeHtml(text) {
   if (!text) return text;
@@ -2379,6 +2380,7 @@ class VoxBallGame {
     this.perfMonitor = new PerformanceMonitor({ panelId: 'perfPanel' });
     this.calibrationWizard = new CalibrationWizard();
     this.bulbController = new BulbController({ swatchId: 'bulbSimSwatch', statusId: 'bulbStatus' });
+    this.necklaceController = new NecklaceController({ onStatus: (s) => this._onNecklaceStatus(s) });
     this.hasCompletedCalibration = false;
     this.guidedStartTs = 0;
     this.guidedDurationSec = 5;
@@ -3468,6 +3470,84 @@ class VoxBallGame {
     testBtn?.addEventListener('click', () => ctrl.test());
     // Bluetooth needs an explicit connect from a user gesture (this click).
     connectBtn?.addEventListener('click', () => ctrl.connect());
+  }
+
+  // Wire the Necklace section of the settings panel to the NecklaceController.
+  // Unlike the Smart Bulb section, the necklace decides on its own when to buzz —
+  // this UI only pushes a one-time calibration packet and shows the live status
+  // notifications the necklace sends back (~1 Hz) while connected.
+  _setupNecklaceUI() {
+    const ctrl = this.necklaceController;
+    if (!ctrl) return;
+    const connectBtn = document.getElementById('necklaceConnectBtn');
+    const pushBtn = document.getElementById('necklacePushBtn');
+    const hapticSrcSel = document.getElementById('necklaceHapticSrcSelect');
+    const loInput = document.getElementById('necklaceTargetLoHz');
+    const hiInput = document.getElementById('necklaceTargetHiHz');
+    const thrInput = document.getElementById('necklaceHapticThr');
+    const pitchFields = document.getElementById('necklacePitchFields');
+    const thrFields = document.getElementById('necklaceThrFields');
+    const statusEl = document.getElementById('necklaceStatus');
+    const liveEl = document.getElementById('necklaceLive');
+
+    if (loInput && !loInput.value) loInput.value = 145;
+    if (hiInput && !hiInput.value) hiInput.value = 175;
+    if (thrInput && !thrInput.value) thrInput.value = 50;
+
+    const setStatus = (text, kind) => {
+      if (!statusEl) return;
+      statusEl.textContent = text;
+      statusEl.dataset.kind = kind || '';
+    };
+
+    const syncFieldVisibility = () => {
+      const isPitch = hapticSrcSel?.value === String(HapticSrc.PITCH);
+      if (pitchFields) pitchFields.style.display = isPitch ? '' : 'none';
+      if (thrFields) thrFields.style.display = isPitch ? 'none' : '';
+    };
+    syncFieldVisibility();
+    hapticSrcSel?.addEventListener('change', syncFieldVisibility);
+
+    connectBtn?.addEventListener('click', async () => {
+      setStatus('Opening device picker…', '');
+      try {
+        await ctrl.connect();
+        setStatus('Necklace connected.', 'ok');
+      } catch (err) {
+        setStatus(`Connect failed: ${err && err.message ? err.message : err}`, 'err');
+      }
+    });
+
+    pushBtn?.addEventListener('click', async () => {
+      try {
+        await ctrl.sendCalibration({
+          hapticSrc: Number(hapticSrcSel?.value ?? HapticSrc.PITCH),
+          hapticThrPct: Number(thrInput?.value ?? 50),
+          targetLoHz: Number(loInput?.value ?? 145),
+          targetHiHz: Number(hiInput?.value ?? 175),
+        });
+        setStatus('Calibration pushed.', 'ok');
+      } catch (err) {
+        setStatus(`Push failed: ${err && err.message ? err.message : err}`, 'err');
+      }
+    });
+
+    if (liveEl) liveEl.textContent = '';
+  }
+
+  // Live readout from the necklace's ~1 Hz status notification (see
+  // NecklaceController._onStatusPacket). Purely informational — the necklace has
+  // already decided on its own whether to buzz by the time this arrives.
+  _onNecklaceStatus(status) {
+    const liveEl = document.getElementById('necklaceLive');
+    if (!liveEl) return;
+    const mins = Math.floor(status.voicedSeconds / 60);
+    const secs = status.voicedSeconds % 60;
+    const time = `${mins}:${String(secs).padStart(2, '0')}`;
+    const battery = status.batteryPct == null ? '' : ` · battery ${status.batteryPct}%`;
+    liveEl.textContent = status.calibrating
+      ? 'Calibrating…'
+      : `On target ${status.onTargetPct}% · ${time} voiced${battery}`;
   }
 
   setupUI() {
@@ -4906,6 +4986,7 @@ class VoxBallGame {
 
     // ---- Smart Bulb UI ----
     this._setupBulbUI();
+    this._setupNecklaceUI();
 
 
     // ---- Vibration alert UI ----

@@ -5300,6 +5300,30 @@
         <div id="bulbStatus" class="bulb-status" aria-live="polite"></div>
       </div>
 
+      <div class="settings-group">
+        <span class="settings-label">Necklace</span>
+        <p class="settings-hint" style="margin:4px 0">Standalone haptic trainer — it buzzes on its
+          own when your voice drifts outside the target below. Connect just to push calibration.</p>
+        <button class="btn btn-help btn-fill" id="necklaceConnectBtn" aria-label="Connect to the ProsodyBall necklace" title="Pair the necklace over Bluetooth">Connect necklace (Bluetooth)</button>
+        <div class="bulb-fields" style="margin-top:6px">
+          <select id="necklaceHapticSrcSelect" class="theme-select btn-fill" aria-label="Necklace haptic trigger metric">
+            <option value="0" selected>Train: Pitch</option>
+            <option value="1">Train: Resonance</option>
+            <option value="2">Train: Vocal weight</option>
+          </select>
+          <div id="necklacePitchFields" class="bulb-fields">
+            <input id="necklaceTargetLoHz" class="bulb-input" type="number" min="50" max="500" step="5" placeholder="Target low (Hz)" aria-label="Necklace pitch target low (Hz)">
+            <input id="necklaceTargetHiHz" class="bulb-input" type="number" min="50" max="500" step="5" placeholder="Target high (Hz)" aria-label="Necklace pitch target high (Hz)">
+          </div>
+          <div id="necklaceThrFields" class="bulb-fields" style="display:none">
+            <input id="necklaceHapticThr" class="bulb-input" type="number" min="0" max="100" step="5" placeholder="Threshold (%, don't exceed)" aria-label="Necklace resonance/weight threshold percent">
+          </div>
+        </div>
+        <button class="btn btn-help btn-fill" id="necklacePushBtn" aria-label="Push calibration to necklace" title="Send the settings above to the necklace" style="margin-top:6px">Push to necklace</button>
+        <div id="necklaceLive" class="bulb-status" aria-live="polite"></div>
+        <div id="necklaceStatus" class="bulb-status" aria-live="polite"></div>
+      </div>
+
       <button class="btn btn-close-settings" id="closeSettingsBtn">Close</button>
     </div>
 
