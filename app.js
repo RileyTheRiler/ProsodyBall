@@ -1929,6 +1929,7 @@ class VoxBallGame {
     this.targetCameraY = 0; // smooth target
     this.cameraZoom = 1.4;  // current zoom level
     this.targetZoom = 1.4;  // target zoom (computed from ball height)
+    this.userZoomMultiplier = 1; // manual zoom in/out, applied on top of the dynamic zoom
     this.prosodyScore = 0;  // smoothed composite prosody signal (0=monotone, 1=expressive)
     this.particles = [];
     this.trailPoints = [];
@@ -4497,6 +4498,7 @@ class VoxBallGame {
     const modeCards = modePicker ? modePicker.querySelectorAll('.mode-card') : [];
 
     document.querySelectorAll('.canvas-only').forEach(el => el.classList.toggle('show', this.gameMode === 'canvas' || this.gameMode === 'keyboard'));
+    document.querySelectorAll('.ball-only').forEach(el => el.classList.toggle('show', this.gameMode === 'ball'));
     if (canvasContextBar) canvasContextBar.classList.remove('expanded');
     if (contextToggleBtn) {
       contextToggleBtn.setAttribute('aria-expanded', 'false');
@@ -4536,6 +4538,7 @@ class VoxBallGame {
       document.querySelector('.hud-title').textContent = titles[mode] || 'VOX ARCADE';
       const canvasOnly = document.querySelectorAll('.canvas-only');
       canvasOnly.forEach(el => el.classList.toggle('show', mode === 'canvas' || mode === 'keyboard'));
+      document.querySelectorAll('.ball-only').forEach(el => el.classList.toggle('show', mode === 'ball'));
       if (canvasContextBar && mode !== 'canvas' && mode !== 'keyboard') {
         canvasContextBar.classList.remove('expanded');
       }
@@ -4939,6 +4942,7 @@ class VoxBallGame {
       metersPanel.classList.toggle('expanded', this.metersExpanded);
       appEl.classList.toggle('meters-open', this.metersExpanded);
       metersExpandToggle.setAttribute('aria-expanded', this.metersExpanded ? 'true' : 'false');
+      metersExpandToggle.setAttribute('aria-label', this.metersExpanded ? 'Collapse metrics' : 'Expand metrics');
       // Reflow the game canvas after panel height changes so the ball/ground stay in view.
       requestAnimationFrame(() => this.resize());
       // Expansion animation shifts layout over ~300ms; run one more resize after it settles.
@@ -4947,6 +4951,19 @@ class VoxBallGame {
       if (this.metersExpanded) {
         requestAnimationFrame(() => this._sizeExpandedCanvases());
       }
+    });
+
+    // ====== BALL CAMERA ZOOM CONTROLS ======
+    const zoomInBtn = document.getElementById('zoomInBtn');
+    const zoomOutBtn = document.getElementById('zoomOutBtn');
+    const ZOOM_STEP = 0.15;
+    const ZOOM_MIN = 0.55;
+    const ZOOM_MAX = 2.2;
+    zoomInBtn?.addEventListener('click', () => {
+      this.userZoomMultiplier = Math.min(ZOOM_MAX, this.userZoomMultiplier + ZOOM_STEP);
+    });
+    zoomOutBtn?.addEventListener('click', () => {
+      this.userZoomMultiplier = Math.max(ZOOM_MIN, this.userZoomMultiplier - ZOOM_STEP);
     });
 
     // Metric card click → open popup
@@ -6136,7 +6153,7 @@ class VoxBallGame {
     const heightAboveGround = Math.max(0, localGround - this.ball.radius - this.ball.y);
     const heightRatio = Math.min(1, heightAboveGround / (this.height * 0.5));
     const scrollSpeedFactor = Math.min(1, this.scrollSpeed / 300);
-    this.targetZoom = 1.48 - heightRatio * 0.3 - scrollSpeedFactor * 0.08; // 1.48 → 1.10
+    this.targetZoom = (1.48 - heightRatio * 0.3 - scrollSpeedFactor * 0.08) * this.userZoomMultiplier; // 1.48 → 1.10, scaled by manual zoom
     this.cameraZoom += (this.targetZoom - this.cameraZoom) * 0.04;
 
     // ==========================================================
