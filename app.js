@@ -1940,7 +1940,8 @@ class VoxBallGame {
     this.colorMode = localStorage.getItem('vox:colorMode') || 'pitch';
     this.dafEnabled = localStorage.getItem('vox:daf:enabled') === 'true';
     this.dafDelayMs = parseInt(localStorage.getItem('vox:daf:delayMs') || '75');
-    this.dafBassFilter = localStorage.getItem('vox:daf:bassFilter') !== 'false';
+    // Default OFF so DAF plays back the full raw voice band instead of cutting bass.
+    this.dafBassFilter = localStorage.getItem('vox:daf:bassFilter') === 'true';
     this._dafBuffer = [];
     this._dafNextPlayTime = 0;
     this._dafInterval = null;
@@ -2360,9 +2361,13 @@ class VoxBallGame {
     this.userMotionPreference = localStorage.getItem('vox:motionPreference') || 'auto';
     this.micInputPreferences = {
       deviceId: localStorage.getItem('vox:micDeviceId') || 'default',
-      echoCancellation: localStorage.getItem('vox:echoCancellation') !== 'false',
-      noiseSuppression: localStorage.getItem('vox:noiseSuppression') !== 'false',
-      autoGainControl: localStorage.getItem('vox:autoGainControl') !== 'false',
+      // Default OFF: phones route echo cancellation / noise suppression / AGC through a
+      // telephony-style voice processing pipeline that band-limits the signal (cutting
+      // both low and high frequencies), which is what makes captured/played-back voice
+      // sound duller and "deeper" than the raw mic input.
+      echoCancellation: localStorage.getItem('vox:echoCancellation') === 'true',
+      noiseSuppression: localStorage.getItem('vox:noiseSuppression') === 'true',
+      autoGainControl: localStorage.getItem('vox:autoGainControl') === 'true',
     };
     this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     this.baseParticleScale = 1;
