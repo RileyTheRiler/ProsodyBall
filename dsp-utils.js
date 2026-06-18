@@ -84,6 +84,15 @@ export async function getMicDiagnostics(ctx) {
   };
 }
 
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  const strUrl = String(url);
+  if (/^(%20|\s)*(javascript|data|vbscript):/i.test(strUrl)) {
+    return 'about:blank';
+  }
+  return strUrl;
+}
+
 export function clamp01(v) {
   return Math.max(0, Math.min(1, v));
 }
