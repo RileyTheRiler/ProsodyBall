@@ -217,6 +217,44 @@
       display: inline-flex;
     }
 
+    .ball-only {
+      display: none;
+    }
+
+    .ball-only.show {
+      display: flex;
+    }
+
+    .zoom-controls {
+      position: absolute;
+      right: 12px;
+      bottom: 12px;
+      flex-direction: column;
+      gap: 6px;
+      z-index: var(--z-hud);
+    }
+
+    .zoom-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: rgba(18, 18, 31, 0.75);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: rgba(255, 255, 255, 0.8);
+      font-size: 1.1rem;
+      line-height: 1;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.2s, background 0.2s;
+    }
+
+    .zoom-btn:hover {
+      color: #fff;
+      background: rgba(30, 30, 50, 0.9);
+    }
+
     /* Positioning container: stacks the teleprompter card and the advance-hint pill in a
        column with a gap, so the hint always sits below the card's actual height — no overlap
        however many lines the sentence wraps to. */
@@ -1298,11 +1336,12 @@
       transform: rotate(180deg);
     }
 
-    /* When expanded, the meters panel sizes to fit its visualizations */
+    /* When expanded, the meters panel sizes to fit its visualizations.
+       overflow stays visible (not hidden) so the expand/collapse toggle,
+       which sits just above the panel's box via negative top, isn't clipped. */
     .meters-panel.expanded {
       flex: 0 1 auto;
       min-height: 0;
-      overflow: hidden;
       max-height: 50vh;
     }
 
@@ -2669,14 +2708,16 @@
         -webkit-overflow-scrolling: touch;
       }
 
-      /* Prevent the whole panel from crushing the game canvas */
+      /* Prevent the whole panel from crushing the game canvas.
+         overflow stays visible so the expand/collapse toggle (top: -18px,
+         outside the panel's own box) doesn't get clipped — same fix as desktop. */
       .meters-panel {
         max-height: 50vh;
-        overflow: hidden;
+        overflow: visible;
       }
 
       .meters-panel.expanded {
-        overflow-y: auto;
+        overflow: visible;
       }
 
       .metric-card-canvas {
@@ -5333,6 +5374,10 @@
     </div>
     <div class="game-area">
       <canvas id="gameCanvas"></canvas>
+      <div class="zoom-controls ball-only" id="zoomControls">
+        <button class="zoom-btn" id="zoomInBtn" type="button" aria-label="Zoom in on ball">+</button>
+        <button class="zoom-btn" id="zoomOutBtn" type="button" aria-label="Zoom out from ball">&minus;</button>
+      </div>
       <div class="prism-overlay" id="prismOverlay">
         <div class="prism-live-stats" id="prismLiveStats">
           <span class="prism-stat" id="prismWpm">0 wpm</span>
