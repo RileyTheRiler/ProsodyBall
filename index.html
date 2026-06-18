@@ -2708,14 +2708,16 @@
         -webkit-overflow-scrolling: touch;
       }
 
-      /* Prevent the whole panel from crushing the game canvas */
+      /* Prevent the whole panel from crushing the game canvas.
+         overflow stays visible so the expand/collapse toggle (top: -18px,
+         outside the panel's own box) doesn't get clipped — same fix as desktop. */
       .meters-panel {
         max-height: 50vh;
-        overflow: hidden;
+        overflow: visible;
       }
 
       .meters-panel.expanded {
-        overflow-y: auto;
+        overflow: visible;
       }
 
       .metric-card-canvas {
