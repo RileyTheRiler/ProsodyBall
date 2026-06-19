@@ -1,18 +1,8 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS } from './dsp-utils.js';
+import { computeProsodyScore, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeSibilantFemininity, correctOctaveError, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS } from './dsp-utils.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { BulbController } from './bulb-controller.js';
 import { NecklaceController, HapticSrc } from './necklace-controller.js';
-
-function escapeHtml(text) {
-  if (!text) return text;
-  return String(text)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
 
 // ============================================================
 // DSP TUNING CONSTANTS
@@ -21,7 +11,6 @@ function escapeHtml(text) {
 const YIN_THRESHOLD = 0.15;               // CMND threshold for pitch detection (lower = stricter)
 const PITCH_CONFIDENCE_FACTOR = 3.3;      // Maps CMND → confidence: conf = 1 - cmnd * factor
 const INTONATION_ST_DIVISOR = 6.0;        // Semitone std-dev mapped to [0,1] bounce (0–1 ST flat, 2–4 conversational, 4–6 expressive)
-const TEMPO_TRANSITION_DIVISOR = 12;      // Energy crossings → [0,1] tempo
 const VOWEL_ONSET_SECS = 0.15;           // Seconds of sustain before vowel metric starts rising (sustain/diagnostic mode)
 const VOWEL_SATURATION_SECS = 0.6;       // Additional seconds to reach vowel = 1.0 (sustain/diagnostic mode)
 const VOWEL_DECAY_RATE = 0.85;           // Per-frame decay multiplier when not vowel-like (sustain mode)
@@ -4539,10 +4528,8 @@ class VoxBallGame {
     // mode while idle) don't stack independent rAF loops.
     if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
     const idleScroll = { x: this.scrollX || 0 };
-    let idleTime = 0;
     const animate = () => {
       if (this.isRunning) return;
-      idleTime += 0.016;
       idleScroll.x += 0.5;
       this.scrollX = idleScroll.x;
       this.ball.x = this.width * 0.45;
@@ -5401,7 +5388,6 @@ class VoxBallGame {
     const m = this.analyzer.metrics;
     const hz = this.analyzer.smoothPitchHz;
     const isSpeaking = m.energy > 0.05;
-    let anyTrippedNow = false;
     let needsRender = false;
     let trippedLabel = '';
 
@@ -5437,7 +5423,6 @@ class VoxBallGame {
       if (wasTripped !== conditionMet) needsRender = true;
 
       if (conditionMet) {
-        anyTrippedNow = true;
         const metricLabels = {
           pitch: 'Pitch', resonance: 'Resonance', energy: 'Energy',
           bounce: 'Pitch Var.', tempo: 'Tempo', vowel: 'Vowels', articulation: 'Articulation'
@@ -5495,7 +5480,6 @@ class VoxBallGame {
     const sess = this.session;
     const overlay = document.getElementById('summaryOverlay');
     const grid = document.getElementById('summaryGrid');
-    const bar = document.getElementById('summaryProsodyBar');
 
     // Format duration
     const mins = Math.floor(sess.duration / 60);
