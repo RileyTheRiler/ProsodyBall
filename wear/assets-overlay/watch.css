@@ -1,0 +1,118 @@
+/*
+ * Watch adaptation layer for ProsodyBall on Wear OS (Galaxy Watch 7, 480x480 round).
+ *
+ * Applied only when watch-boot.js adds the `watch` class to <html>. It reshapes
+ * the existing UI for a tiny round screen WITHOUT editing index.html:
+ *   - hide all menu chrome, HUD controls, and the meters panel
+ *   - make the Vox Ball canvas fill the whole circle
+ *   - add a round-safe inset so nothing important sits under the bezel curve
+ * The canvas renderer is untouched; it auto-resizes via app.js resize().
+ */
+
+:root.watch,
+:root.watch body {
+  margin: 0;
+  padding: 0;
+  background: #0a0a12;
+  overflow: hidden;
+  /* Honour the round display's safe area when the system reports it. */
+  --watch-inset: env(safe-area-inset-top, 0px);
+}
+
+/* Base font is set to 18px on <html>; shrink for the wrist. */
+:root.watch {
+  font-size: 13px;
+}
+
+/* The app shell becomes a single full-screen layer. */
+:root.watch #app {
+  height: 100vh;
+  width: 100vw;
+}
+
+/* Hide all chrome: top HUD, teleprompter, zoom buttons, meters, timers. */
+:root.watch .hud,
+:root.watch .teleprompter-stack,
+:root.watch .zoom-controls,
+:root.watch .meters-panel,
+:root.watch .session-timer,
+:root.watch .btn-rec,
+:root.watch #iframeNotice {
+  display: none !important;
+}
+
+/* The game area takes the entire screen. */
+:root.watch .game-area {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  border: none;
+}
+
+:root.watch #gameCanvas {
+  width: 100vw;
+  height: 100vh;
+}
+
+/* ----- Custom "Tap to start" overlay (created by watch-boot.js) ----- */
+.watch-start {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  background: radial-gradient(circle at 50% 42%, #1b1430 0%, #0a0a12 70%);
+  color: #eceaf4;
+  font-family: 'Outfit', system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+  padding: 14vw;
+  box-sizing: border-box;
+}
+
+.watch-start.hide {
+  display: none;
+}
+
+.watch-start__ball {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffd0c0 0%, #ff8e53 38%, #c084fc 100%);
+  box-shadow: 0 0 28px rgba(192, 132, 252, 0.55), 0 0 10px rgba(255, 142, 83, 0.5);
+  animation: watch-bob 1.8s ease-in-out infinite;
+}
+
+@keyframes watch-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+.watch-start__title {
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  background: linear-gradient(135deg, #ff6b6b, #c084fc, #4d96ff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.watch-start__hint {
+  font-size: 0.95rem;
+  color: rgba(200, 200, 220, 0.7);
+}
+
+/* Error state when the mic can't be reached. */
+.watch-start__hint.error {
+  color: #ff9d9d;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .watch-start__ball { animation: none; }
+}
