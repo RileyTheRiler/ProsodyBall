@@ -46,6 +46,7 @@ const ATTACK_RISE_LEARN_RATE = 0.02;     // EMA rate for the adaptive rise-rate 
 const ATTACK_ABRUPT_BLEND = 0.30;        // Blend weight for onset-abruptness vs amplitude-rise hardness
 const MAX_SPARKLES = 100;                // Maximum sparkle particles in ball mode
 const MAX_NEBULA_FLARES = 10;            // Maximum flare particles for nebula creature
+const CANVAS_PITCH_GUIDES = [100, 150, 200, 250, 300]; // Constant for pitch guides avoiding per-frame allocations
 
 // ============================================================
 // VOICE ANALYZER
@@ -8650,20 +8651,19 @@ class VoxBallGame {
     ctx.font = '500 10px "Space Mono", monospace';
     ctx.fillStyle = this.pitchGridStrength === 'strong' ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.48)';
     ctx.textAlign = 'left';
-    const guides = [100, 150, 200, 250, 300].map((hz) => ({
-      hz,
-      norm: Math.max(0, Math.min(1, (hz - 80) / (300 - 80))),
-    }));
-    for (const guide of guides) {
-      const gy = 40 + (1 - guide.norm) * (h - 80);
+    // ⚡ Bolt Optimization: Use traditional for loops instead of .map() to avoid allocating arrays per-frame
+    for (let i = 0; i < CANVAS_PITCH_GUIDES.length; i++) {
+      const hz = CANVAS_PITCH_GUIDES[i];
+      const norm = Math.max(0, Math.min(1, (hz - 80) / 220)); // 300 - 80 = 220
+      const gy = 40 + (1 - norm) * (h - 80);
       ctx.beginPath();
       ctx.moveTo(margin + 5, gy);
       ctx.lineTo(w - margin - 5, gy);
       ctx.stroke();
       if (this.pitchGuideLabelMode !== 'off') {
         const label = this.pitchGuideLabelMode === 'notes'
-          ? `${this._pitchHzToNoteLabel(guide.hz)} (${guide.hz}Hz)`
-          : `${guide.hz}Hz`;
+          ? `${this._pitchHzToNoteLabel(hz)} (${hz}Hz)`
+          : `${hz}Hz`;
         ctx.fillText(label, margin + 10, gy - 4);
       }
     }
