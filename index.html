@@ -2379,18 +2379,26 @@
         justify-content: center;
       }
 
-      /* Teleprompter: in-flow above game-area on mobile (not an overlay) */
+      /* Teleprompter: in-flow above game-area on mobile (not an overlay).
+         Only reserve the 22svh strip while a teleprompter is actually showing —
+         otherwise it sat there empty and ate ~22% of the viewport on every
+         mobile session, squeezing the game area and toolbar below it. */
       .teleprompter-stack {
         transform: none;
-        height: 22svh;
-        max-height: 22svh;
+        height: 0;
+        max-height: 0;
         overflow: hidden;
-        overflow-y: auto;
-        -webkit-overflow-scrolling: touch;
-        display: flex;
         width: 100%;
         flex-direction: column;
         align-items: stretch;
+      }
+
+      .teleprompter-stack:has(.teleprompter-overlay.show) {
+        height: 22svh;
+        max-height: 22svh;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        display: flex;
         border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       }
 
