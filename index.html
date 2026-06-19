@@ -5,6 +5,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Vox Arcade — Voice Training Game</title>
+  <!-- PWA: installable, standalone, fullscreen -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0a0a12">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="A gamified voice-training suite that turns expressive prosody into real-time interactive games. 100% on-device audio processing.">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Vox Arcade">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Space+Mono:wght@400;700&display=swap">
@@ -1074,6 +1085,12 @@
       border-top: 1px solid rgba(255, 255, 255, 0.08);
       z-index: var(--z-hud);
       flex-shrink: 0;
+    }
+
+    /* Mobile thumb-zone dock — hidden by default; only shown on phones once JS
+       relocates .hud-primary into it (body.has-mobile-dock). */
+    .mobile-dock {
+      display: none;
     }
 
     .meters-bar {
@@ -2336,6 +2353,57 @@
         display: none;
       }
 
+      /* === CANVAS-FIRST: primary controls dock to a bottom thumb zone === */
+      body.has-mobile-dock .mobile-dock {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 10px;
+        padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+        background: linear-gradient(0deg, rgba(12, 12, 22, 0.98) 0%, rgba(18, 18, 31, 0.92) 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.4);
+        flex: 0 0 auto;
+        z-index: 15;
+      }
+
+      /* The relocated primary cluster fills the dock; Start is the hero. */
+      body.has-mobile-dock .mobile-dock .hud-primary {
+        display: flex;
+        width: 100%;
+        flex: 1;
+        gap: 6px;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        justify-content: flex-start;
+      }
+
+      body.has-mobile-dock .mobile-dock .hud-primary::-webkit-scrollbar {
+        display: none;
+      }
+
+      body.has-mobile-dock .mobile-dock .btn-start {
+        flex: 1 1 auto;
+        min-height: 48px;
+        font-size: 0.98rem;
+        font-weight: 700;
+      }
+
+      body.has-mobile-dock .mobile-dock .hud-primary .btn {
+        flex: 0 0 auto;
+        min-height: 48px;
+      }
+
+      /* Dock owns the bottom safe-area, so the meters strip above it doesn't
+         also reserve it (avoids a double gap). */
+      body.has-mobile-dock .meters-bar {
+        padding-bottom: 8px;
+      }
+
       .hud-secondary .btn {
         flex-shrink: 0;
         min-height: 44px;
@@ -2971,6 +3039,57 @@
         font-size: 0.92rem;
         text-align: center;
         border-radius: 10px;
+      }
+
+      /* === MOBILE-FIRST: settings / vibration / DAF panels become
+         thumb-reachable bottom sheets (mirrors the .recordings-drawer pattern).
+         These were previously corner/center-anchored desktop popovers. === */
+      .settings-panel,
+      .vib-panel,
+      .daf-panel {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        top: auto;
+        width: 100%;
+        max-width: 100%;
+        margin: 0;
+        max-height: 88vh;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        border-radius: 18px 18px 0 0;
+        border-bottom: 0;
+        padding-top: 8px;
+        padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+        box-shadow: 0 -14px 44px rgba(0, 0, 0, 0.62);
+        z-index: var(--z-settings);
+      }
+
+      /* settings-panel centers itself via transform by default; the sheet
+         pins to the bottom instead, so neutralise the centering transform. */
+      .settings-panel,
+      .settings-panel.show,
+      .daf-panel {
+        transform: none;
+      }
+
+      .settings-panel.show {
+        opacity: 1;
+      }
+
+      /* Shared drag-handle affordance at the top of every sheet. */
+      .settings-panel::before,
+      .vib-panel::before,
+      .daf-panel::before {
+        content: '';
+        display: block;
+        flex: none;
+        width: 40px;
+        height: 4px;
+        border-radius: 2px;
+        background: rgba(255, 255, 255, 0.22);
+        margin: 2px auto 12px;
       }
 
       /* --- CAMERA MODAL: mobile-optimized --- */
@@ -6193,6 +6312,11 @@
         </div>
       </div>
     </div>
+
+    <!-- Mobile thumb-zone dock: the primary control cluster (.hud-primary) is
+         relocated here by JS on phones, leaving a minimal top bar. Empty/hidden
+         on desktop & tablet. -->
+    <div id="mobileDock" class="mobile-dock" aria-label="Primary controls" hidden></div>
   </div>
 
   <!-- Metric Focus Popup -->
@@ -6230,6 +6354,77 @@
     </div>
   </div>
 
+  <!-- Device-adaptive class + PWA service worker registration -->
+  <script>
+    (function () {
+      // Auto device detection (no manual override). CSS media/pointer queries remain
+      // the source of truth for layout; this body class is for JS-awkward cases
+      // (e.g. bottom-sheet vs centered modal) and is kept in sync on resize/orientation.
+      var mqPhone = window.matchMedia('(max-width: 600px)');
+      var mqTablet = window.matchMedia('(min-width: 601px) and (max-width: 1024px)');
+      var mqCoarse = window.matchMedia('(pointer: coarse)');
+
+      // Canvas-first: on phones, relocate the primary control cluster into a
+      // bottom thumb-zone dock (and back into the HUD on larger screens).
+      // Moving the existing node keeps all its event listeners intact, so the
+      // controls remain a single source of truth — no duplication.
+      var dockOrigin = null; // { parent, before } captured once for restoration
+      function syncMobileDock(isPhone) {
+        var dock = document.getElementById('mobileDock');
+        var primary = document.querySelector('.hud .hud-primary, #mobileDock .hud-primary');
+        if (!dock || !primary) return;
+        if (!dockOrigin) {
+          dockOrigin = { parent: primary.parentNode, before: primary.nextElementSibling };
+        }
+        if (isPhone) {
+          if (primary.parentNode !== dock) {
+            dock.appendChild(primary);
+            dock.hidden = false;
+            document.body.classList.add('has-mobile-dock');
+          }
+        } else if (primary.parentNode === dock) {
+          dockOrigin.parent.insertBefore(primary, dockOrigin.before);
+          dock.hidden = true;
+          document.body.classList.remove('has-mobile-dock');
+        }
+      }
+
+      function detectDevice() {
+        var b = document.body;
+        if (!b) return;
+        var isPhone = mqPhone.matches;
+        var cls = isPhone
+          ? 'device-phone'
+          : (mqTablet.matches && mqCoarse.matches) ? 'device-tablet'
+          : 'device-desktop';
+        if (!b.classList.contains(cls)) {
+          b.classList.remove('device-phone', 'device-tablet', 'device-desktop');
+          b.classList.add(cls);
+          b.classList.toggle('device-touch', mqCoarse.matches);
+          window.dispatchEvent(new CustomEvent('devicechange', { detail: { device: cls } }));
+        }
+        syncMobileDock(isPhone);
+      }
+      window.voxDetectDevice = detectDevice;
+      detectDevice();
+      ['change'].forEach(function (ev) {
+        [mqPhone, mqTablet, mqCoarse].forEach(function (mq) {
+          mq.addEventListener ? mq.addEventListener(ev, detectDevice) : mq.addListener(detectDevice);
+        });
+      });
+      window.addEventListener('orientationchange', detectDevice);
+      window.addEventListener('resize', detectDevice, { passive: true });
+
+      // PWA: register service worker (skips file:// so local module dev still works).
+      if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('/service-worker.js').catch(function (err) {
+            console.warn('SW registration failed:', err);
+          });
+        });
+      }
+    })();
+  </script>
   <script type="module" src="app.js"></script>
 </body>
 
