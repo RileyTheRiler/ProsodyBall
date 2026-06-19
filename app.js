@@ -14,6 +14,12 @@ function escapeHtml(text) {
     .replace(/'/g, "&#039;");
 }
 
+// Precomputed values for voice canvas pitch guides to avoid allocating per-frame
+const STATIC_VOICE_CANVAS_GUIDES = [100, 150, 200, 250, 300].map((hz) => ({
+  hz,
+  norm: Math.max(0, Math.min(1, (hz - 80) / (300 - 80))),
+}));
+
 // ============================================================
 // DSP TUNING CONSTANTS
 // Centralised so they're easy to find, tweak, and document.
@@ -8650,11 +8656,8 @@ class VoxBallGame {
     ctx.font = '500 10px "Space Mono", monospace';
     ctx.fillStyle = this.pitchGridStrength === 'strong' ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.48)';
     ctx.textAlign = 'left';
-    const guides = [100, 150, 200, 250, 300].map((hz) => ({
-      hz,
-      norm: Math.max(0, Math.min(1, (hz - 80) / (300 - 80))),
-    }));
-    for (const guide of guides) {
+    for (let i = 0; i < STATIC_VOICE_CANVAS_GUIDES.length; i++) {
+      const guide = STATIC_VOICE_CANVAS_GUIDES[i];
       const gy = 40 + (1 - guide.norm) * (h - 80);
       ctx.beginPath();
       ctx.moveTo(margin + 5, gy);
