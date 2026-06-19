@@ -2909,10 +2909,6 @@ class VoxBallGame {
     const teleprompterCustomBtn = document.getElementById('teleprompterCustomBtn');
     const recordingsBtn = document.getElementById('recordingsBtn');
     const recordingsDrawer = document.getElementById('recordingsDrawer');
-    // Explicit handle for the in-session Rec button. Previously this relied on the
-    // implicit window.recBtn global the browser creates from the element id, which
-    // is fragile and invisible to tooling.
-    const recBtn = document.getElementById('recBtn');
     const clearAllRecs = document.getElementById('clearAllRecs');
     const perfBtn = document.getElementById('perfBtn');
     const teleprompterOverlay = document.getElementById('teleprompterOverlay');
@@ -3496,7 +3492,6 @@ class VoxBallGame {
       recordingsDrawer.classList.remove('show');
       startBtn.textContent = '⏹ Stop Ball';
       startBtn.classList.add('active');
-      recBtn.classList.add('visible');
       this.isRunning = true;
       if (this.dafEnabled) this.startDAF();
       this.lastTime = performance.now();
@@ -3513,8 +3508,6 @@ class VoxBallGame {
       // Auto-stop recording if active — must await so recorder can
       // flush its final chunk before we kill the mic stream
       if (this.isRecording) {
-        recBtn.classList.remove('recording');
-        recBtn.querySelector('.rec-label').textContent = 'Rec';
         await this.stopRecording();
       }
       this.stopDAF();
@@ -3525,7 +3518,6 @@ class VoxBallGame {
       cleanupPhoneMic();
       startBtn.textContent = '🎙 Start';
       startBtn.classList.remove('active');
-      recBtn.classList.remove('visible');
 
       // Hide session timer
       document.getElementById('sessionTimer').classList.remove('active');
@@ -3580,8 +3572,6 @@ class VoxBallGame {
         cleanupPhoneMic();
         startBtn.textContent = '🎙 Start';
         startBtn.classList.remove('active');
-        const recBtn = document.getElementById('recBtn');
-        if (recBtn) recBtn.classList.remove('visible');
 
         document.getElementById('sessionTimer').classList.remove('active');
         for (const rule of this.vibration.rules) { rule.tripped = false; }
@@ -3663,7 +3653,7 @@ class VoxBallGame {
       }
       if (e.code === 'KeyR' && this.isRunning) {
         e.preventDefault();
-        recBtn.click();
+        document.getElementById('voiceRecBtn')?.click();
       }
       if (e.code === 'Escape') {
         // Close metric popup first if open
@@ -4440,22 +4430,6 @@ class VoxBallGame {
         vibBtn?.setAttribute('aria-expanded', 'false');
       }
     });
-
-    // Recording controls
-    if (recBtn) {
-      recBtn.addEventListener('click', () => {
-        if (this.isRecording) {
-          this.stopRecording();
-          recBtn.classList.remove('recording');
-          recBtn.querySelector('.rec-label').textContent = 'Rec';
-        } else {
-          this.startRecording();
-          recBtn.classList.add('recording');
-          recBtn.querySelector('.rec-label').textContent = 'Stop';
-        }
-      });
-    }
-
 
     document.addEventListener('visibilitychange', async () => {
       if (document.visibilityState !== 'visible' || !this.isRunning) return;
