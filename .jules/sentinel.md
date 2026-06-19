@@ -51,3 +51,8 @@
 **Vulnerability:** Safe DOM construction using `document.createDocumentFragment()` and `.append()` was not consistently applied in `app.js` (e.g. `_showSessionSummary`, `renderTeleprompter`) or `calibration-wizard.js`. This allowed potential injection if dynamic data was ever used within loops with string concatenation, and led to conflicts with `innerHTML`.
 **Learning:** Relying on `innerHTML` for UI construction is inherently risky. Furthermore, manual DOM mocks in tests (like `MockEl`) require robust state initialization (e.g., `this.childNodes`) to correctly support safe DOM traversal methods like `.append()`.
 **Prevention:** Replace all complex `innerHTML` assignments with safe programmatic elements (`DocumentFragment`, `.createElement()`, `.textContent`). Ensure any manual DOM mocks fully implement necessary Node properties.
+
+## 2025-02-28 - [DoS/UI Performance Risk via Unconstrained Text Input]
+**Vulnerability:** Found `window.prompt` and `<textarea>` elements allowing unbounded text input sizes (e.g., pasting massive text payloads) for custom teleprompter text.
+**Learning:** In a performance-sensitive application with per-frame rendering loops that process strings (e.g., splitting into words, calculating metrics), unbounded text input can lead to browser freezing, excessive memory usage, and client-side Denial of Service (DoS) due to CPU saturation during parsing and DOM updates.
+**Prevention:** Always apply length constraints (e.g., `maxlength="5000"` on `<textarea>` and `substring(0, 5000)` on string inputs) to user-provided text, especially when that text drives per-frame operations or complex DOM updates.
