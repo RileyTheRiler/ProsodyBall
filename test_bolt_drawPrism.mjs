@@ -1,42 +1,49 @@
-const iter = 10000;
-const syllables = Array.from({length: 1000}, (_, i) => ({
-  state: i % 2 === 0 ? 'crystallized' : 'pending',
-  hue: Math.random() * 360,
-  glowRadius: Math.random() * 10
-}));
+import { test } from 'node:test';
+import assert from 'node:assert';
 
-console.time('original');
-for (let i = 0; i < iter; i++) {
-  const crystallized = syllables.filter(s => s.state === 'crystallized');
-  const progress = crystallized.length / Math.max(1, syllables.length);
+function unoptimized(syllables) {
+  const crystallized = syllables.filter(s => s.state === 'crystallized' && s.avgF0 > 0);
+  if (crystallized.length < 3) return null;
 
-  if (crystallized.length > 0) {
-    const avgHue = crystallized.reduce((s, c) => s + c.hue, 0) / crystallized.length;
-    const recentHue = crystallized.length > 0 ? crystallized[crystallized.length - 1].hue : avgHue;
+  const pitches = crystallized.map(s => s.avgF0);
+  let minP = pitches[0] || 0, maxP = pitches[0] || 0;
+  for (let i = 1; i < pitches.length; i++) {
+    if (pitches[i] < minP) minP = pitches[i];
+    if (pitches[i] > maxP) maxP = pitches[i];
   }
+  return { minP, maxP, crystallized, pitches };
 }
-console.timeEnd('original');
 
-console.time('bolt');
-for (let i = 0; i < iter; i++) {
-  let crystallizedCount = 0;
-  let hueSum = 0;
-  let lastCrystSyl = null;
-
-  for (let j = 0; j < syllables.length; j++) {
-    const syl = syllables[j];
-    if (syl.state === 'crystallized') {
-      crystallizedCount++;
-      hueSum += syl.hue;
-      lastCrystSyl = syl;
+function optimized(syllables) {
+  const crystallized = [];
+  let minP = Infinity, maxP = -Infinity;
+  for (let i = 0; i < syllables.length; i++) {
+    const s = syllables[i];
+    if (s.state === 'crystallized' && s.avgF0 > 0) {
+      crystallized.push(s);
+      if (s.avgF0 < minP) minP = s.avgF0;
+      if (s.avgF0 > maxP) maxP = s.avgF0;
     }
   }
-
-  const progress = crystallizedCount / Math.max(1, syllables.length);
-
-  if (crystallizedCount > 0) {
-    const avgHue = hueSum / crystallizedCount;
-    const recentHue = lastCrystSyl.hue;
-  }
+  if (crystallized.length < 3) return null;
+  return { minP, maxP, crystallized };
 }
-console.timeEnd('bolt');
+
+test('performance comparison', () => {
+  const syllables = Array.from({length: 1000}, (_, i) => ({
+    state: i % 2 === 0 ? 'crystallized' : 'active',
+    avgF0: Math.random() * 200 + 100
+  }));
+
+  console.time('unoptimized');
+  for (let i = 0; i < 10000; i++) {
+    unoptimized(syllables);
+  }
+  console.timeEnd('unoptimized');
+
+  console.time('optimized');
+  for (let i = 0; i < 10000; i++) {
+    optimized(syllables);
+  }
+  console.timeEnd('optimized');
+});
