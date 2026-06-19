@@ -51,3 +51,7 @@
 **Vulnerability:** Safe DOM construction using `document.createDocumentFragment()` and `.append()` was not consistently applied in `app.js` (e.g. `_showSessionSummary`, `renderTeleprompter`) or `calibration-wizard.js`. This allowed potential injection if dynamic data was ever used within loops with string concatenation, and led to conflicts with `innerHTML`.
 **Learning:** Relying on `innerHTML` for UI construction is inherently risky. Furthermore, manual DOM mocks in tests (like `MockEl`) require robust state initialization (e.g., `this.childNodes`) to correctly support safe DOM traversal methods like `.append()`.
 **Prevention:** Replace all complex `innerHTML` assignments with safe programmatic elements (`DocumentFragment`, `.createElement()`, `.textContent`). Ensure any manual DOM mocks fully implement necessary Node properties.
+## 2026-04-04 - [DoS Risk via Unbounded Window Prompt]
+**Vulnerability:** Found an unbounded `window.prompt` used to accept custom teleprompter text. Without a length limit, users could paste excessively large strings, potentially causing UI lag or client-side DoS.
+**Learning:** Client-side inputs, even from seemingly simple browser APIs like `window.prompt`, should have defensive bounds applied to prevent resource exhaustion, especially when the text is used in performance-sensitive rendering loops.
+**Prevention:** Apply a `.substring(0, MAX_LENGTH)` constraint immediately after reading and trimming the input from `window.prompt` to enforce a hard upper limit.
