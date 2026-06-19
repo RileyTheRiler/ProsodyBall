@@ -28,6 +28,9 @@
 #include <BLEDevice.h>       // BLE client for the optional orb companion mode
 #include "dsp.h"
 
+#define OTA_HOSTNAME "prosodyball-watch"
+#include "ota.h"
+
 // --- PDM microphone pins / port (from the library's TwatcV3Special/Microphone example) ---
 #define MIC_DATA   2
 #define MIC_CLOCK  0
@@ -666,6 +669,8 @@ void setup() {
     for (;;) delay(1000);
   }
 
+  otaSetup();
+
   tft->fillScreen(TFT_BLACK);
 }
 
@@ -682,6 +687,8 @@ static void exitSettings() {
 }
 
 void loop() {
+  otaLoop();
+
   static VoxResult latest = {};
   static uint32_t lastMs = 0, lastSaveMs = 0;
   static bool bestDirty = false;

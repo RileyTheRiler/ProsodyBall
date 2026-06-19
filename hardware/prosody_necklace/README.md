@@ -38,9 +38,45 @@ the chest, a sound port for the PDM mic, an LED light-pipe window, and a switch 
    *Boards Manager → install "esp32"*.
 3. *Boards Manager* (same `esp32` package) → select **"XIAO_ESP32S3"** as the board.
 4. *Library Manager* → install **"Adafruit NeoPixel"**.
-5. Open `prosody_necklace.ino`. Keep all four files in the folder: `prosody_necklace.ino`,
-   `config.h`, `dsp.h`, `dsp.cpp`.
+5. Open `prosody_necklace.ino`. Keep all six files in the folder: `prosody_necklace.ino`,
+   `config.h`, `dsp.h`, `dsp.cpp`, `ota.h`, `secrets.h.example` (the sketch includes `ota.h`
+   unconditionally — see *Wireless OTA updates* below; it's a no-op until you opt in).
 6. Select your board/port and click **Upload**.
+
+## Wireless OTA updates (flash from your phone, no cable)
+
+Once this firmware is on the board once (via USB), every later update can go over Wi-Fi —
+including straight from your Android phone's browser, no app and no computer.
+
+1. Copy `secrets.h.example` to `secrets.h` (same folder) and fill in your `WIFI_SSID` /
+   `WIFI_PASSWORD`. (`secrets.h` is gitignored — your credentials never get committed.)
+2. Re-flash once over USB with `secrets.h` in place. On boot the necklace joins your Wi-Fi
+   and the Serial Monitor prints something like `OTA ready: browse to http://192.168.1.42/`.
+3. From then on: in Arduino IDE, *Sketch → Export Compiled Binary* to get a `.bin`, then on
+   your phone (same Wi-Fi network) open Chrome, go to that IP address, pick the `.bin`, and
+   tap **Upload & Flash** — the necklace reboots running it. No USB, no laptop.
+4. Arduino IDE users on a computer can instead pick *Tools → Port → "prosodyball-necklace at
+   <ip>"* and **Upload** as normal — same OTA path, IDE-driven.
+
+Leave `WIFI_SSID` blank (or skip `secrets.h` entirely) to keep the necklace Wi-Fi-off, exactly
+as before — OTA is fully opt-in. Since this is a battery-powered wearable, keeping Wi-Fi
+joined draws noticeably more power than BLE alone; consider blanking `WIFI_SSID` again (or
+just not refilling `secrets.h`) once you're done updating, for normal day-to-day wear.
+
+## Flash via USB-OTG from an Android phone (no computer)
+
+For the very first flash (or if you'd rather skip Wi-Fi setup), you can program the ESP32-S3
+directly from an Android phone over a USB-OTG cable:
+
+- **Easiest — browser flashing, pre-built binary:** export a `.bin` from Arduino IDE
+  (*Sketch → Export Compiled Binary*), plug the XIAO into your phone via a USB-OTG adapter,
+  open **Chrome on Android**, and use an [ESP Web Tools](https://esphome.github.io/esp-web-tools/)
+  page — Chrome's WebSerial support works over the OTG cable, so it flashes just like it would
+  from a desktop.
+- **Compile on-device:** install **ArduinoDroid** from the Play Store to edit, compile, and
+  upload the `.ino` directly on your phone over the same OTG cable. Slower to set up (board
+  support + the I2S/BLE includes here can be fussier than on desktop Arduino IDE), but no PC
+  is involved at all.
 
 ## Using it
 

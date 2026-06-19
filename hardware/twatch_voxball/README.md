@@ -34,12 +34,51 @@ are all on the watch.
    *Boards Manager → install "esp32"*.
 3. *Library Manager → install **"TTGO TWatch Library"*** (by Lewis He / LilyGo). This wraps
    the display (TFT_eSPI), the AXP202 power chip, touch, and exposes the V3 PDM mic.
-4. Open `twatch_voxball/twatch_voxball.ino`. Keep all four files in the folder:
-   `twatch_voxball.ino`, `config.h`, `dsp.h`, `dsp.cpp`.
+4. Open `twatch_voxball/twatch_voxball.ino`. Keep all six files in the folder:
+   `twatch_voxball.ino`, `config.h`, `dsp.h`, `dsp.cpp`, `ota.h`, `secrets.h.example` (the
+   sketch includes `ota.h` unconditionally — see *Wireless OTA updates* below; it's a no-op
+   until you opt in).
 5. Select board **"TTGO T-Watch"**, choose your port, and click **Upload**.
 
 `config.h` already sets `#define LILYGO_WATCH_2020_V3` before including the library, so the
 correct (V3) pin map and microphone support are compiled in.
+
+## Wireless OTA updates (flash from your phone, no cable)
+
+Once this firmware is on the watch once (via USB), every later update can go over Wi-Fi —
+including straight from your Android phone's browser, no app and no computer.
+
+1. Copy `secrets.h.example` to `secrets.h` (same folder) and fill in your `WIFI_SSID` /
+   `WIFI_PASSWORD`. (`secrets.h` is gitignored — your credentials never get committed.) This
+   is separate from the in-app **Orb (BLE)** toggle — that one drives the LED orb companion,
+   this one is purely for flashing new firmware.
+2. Re-flash once over USB with `secrets.h` in place. On boot the watch joins your Wi-Fi and
+   the Serial Monitor prints something like `OTA ready: browse to http://192.168.1.42/`.
+3. From then on: in Arduino IDE, *Sketch → Export Compiled Binary* to get a `.bin`, then on
+   your phone (same Wi-Fi network) open Chrome, go to that IP address, pick the `.bin`, and
+   tap **Upload & Flash** — the watch reboots running it. No USB, no laptop.
+4. Arduino IDE users on a computer can instead pick *Tools → Port → "prosodyball-watch at
+   <ip>"* and **Upload** as normal — same OTA path, IDE-driven.
+
+Leave `WIFI_SSID` blank (or skip `secrets.h` entirely) to keep the watch Wi-Fi-off, exactly as
+before — OTA is fully opt-in. Since this is a battery-powered wearable, keeping Wi-Fi joined
+draws noticeably more power than BLE alone; consider blanking `WIFI_SSID` again once you're
+done updating, for normal day-to-day wear.
+
+## Flash via USB-OTG from an Android phone (no computer)
+
+For the very first flash (or if you'd rather skip Wi-Fi setup), you can program the watch
+directly from an Android phone over a USB-OTG cable:
+
+- **Easiest — browser flashing, pre-built binary:** export a `.bin` from Arduino IDE
+  (*Sketch → Export Compiled Binary*), plug the watch into your phone via a USB-OTG adapter,
+  open **Chrome on Android**, and use an [ESP Web Tools](https://esphome.github.io/esp-web-tools/)
+  page — Chrome's WebSerial support works over the OTG cable, so it flashes just like it would
+  from a desktop.
+- **Compile on-device:** install **ArduinoDroid** from the Play Store to edit, compile, and
+  upload the `.ino` directly on your phone over the same OTG cable. Slower to set up (the
+  TTGO TWatch Library + TFT_eSPI/BLE stack here can be fussier than on desktop Arduino IDE),
+  but no PC is involved at all.
 
 ## Power-on self-test
 

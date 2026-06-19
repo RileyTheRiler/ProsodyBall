@@ -3,6 +3,9 @@
 #include <BLEServer.h>
 #include <NeoPixelBus.h>
 
+#define OTA_HOSTNAME "prosodyball-orb"
+#include "ota.h"
+
 // --- HARDWARE CONFIG ---
 #define DATA_PIN    4
 #define NUM_LEDS    160
@@ -98,9 +101,13 @@ void setup() {
     pServer->getAdvertising()->start();
 
     Serial.println("BLE Active. Broadcasting as: 'ProsodyBall-Orb'");
+
+    otaSetup();
 }
 
 void loop() {
+    otaLoop();
+
     ColorPacket pkt;
     if (xQueueReceive(colorQueue, &pkt, 0)) {
         targetR = pkt.r;

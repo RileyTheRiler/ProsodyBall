@@ -8,6 +8,9 @@ node_modules/
 # Local Hue helper credentials (never commit)
 .hue-credentials.json
 
+# Wi-Fi OTA credentials for ESP32 firmware (never commit)
+hardware/*/secrets.h
+
 # Temp files
 *.pid
 *out*.txt
