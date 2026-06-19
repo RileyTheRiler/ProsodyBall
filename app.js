@@ -1902,6 +1902,7 @@ class VoxBallGame {
   constructor() {
     this.canvas = document.getElementById('gameCanvas');
     this.ctx = this.canvas.getContext('2d');
+    this.prismScrollContainer = document.getElementById('prismScrollContainer');
     this.analyzer = new VoiceAnalyzer();
     this.isRunning = false;
     this._isStarting = false; // guard for startGame/stopGame race
@@ -10585,7 +10586,7 @@ class VoxBallGame {
     const comp = document.getElementById('prismCompletion');
     if (comp) comp.classList.remove('show');
 
-    const container = document.getElementById('prismScrollContainer');
+    const container = this.prismScrollContainer;
     if (container) {
       container.textContent = '';
       // Build DOM with sentence break markers
@@ -10840,7 +10841,7 @@ class VoxBallGame {
   }
 
   _updatePrismSylDOM(index) {
-    const container = document.getElementById('prismScrollContainer');
+    const container = this.prismScrollContainer;
     if (!container) return;
     const span = container.querySelector(`.prism-syl[data-syl-index="${index}"]`);
     if (!span) return;
@@ -10990,7 +10991,7 @@ class VoxBallGame {
     pr.playbackIndex = 0;
     pr.isPlayingBack = true;
 
-    const container = document.getElementById('prismScrollContainer');
+    const container = this.prismScrollContainer;
     if (container) container.scrollTop = 0;
 
     pr.audioPlayer.currentTime = 0;
@@ -11057,7 +11058,7 @@ class VoxBallGame {
         const startIndex = pr.syllables.length;
         pr.syllables = pr.syllables.concat(newSyllables);
 
-        const container = document.getElementById('prismScrollContainer');
+        const container = this.prismScrollContainer;
         if (container) {
           for (let i = 0; i < newSyllables.length; i++) {
             const globalIndex = startIndex + i;
@@ -11797,7 +11798,7 @@ class VoxBallGame {
     // Smooth adaptive scroll to keep active syllable visible
     const activeIndex = pr.isPlayingBack ? pr.playbackIndex : pr.currentIndex;
     if (activeIndex >= 0) {
-      const container = document.getElementById('prismScrollContainer');
+      const container = this.prismScrollContainer;
       const activeSpan = container?.querySelector(`.prism-syl[data-syl-index="${activeIndex}"]`);
       if (activeSpan && container) {
         const spanTop = activeSpan.offsetTop;
