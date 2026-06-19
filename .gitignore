@@ -21,3 +21,12 @@ voice-analyzer-state.js
 
 # Lockfiles
 pnpm-lock.yaml
+
+# Wear OS (Android) build outputs
+wear/.gradle/
+wear/build/
+wear/app/build/
+wear/local.properties
+wear/.idea/
+# Web app copied into the APK at build time (generated, not source)
+wear/app/src/main/assets/web/
