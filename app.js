@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS } from './dsp-utils.js';
+import { sanitizeUrl, computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS } from './dsp-utils.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { BulbController } from './bulb-controller.js';
@@ -3231,7 +3231,7 @@ class VoxBallGame {
     if (!rec) return;
     const url = URL.createObjectURL(rec.blob);
     const a = document.createElement('a');
-    a.href = url;
+    a.href = sanitizeUrl(url);
     a.download = `${rec.name}.wav`;
     document.body.appendChild(a);
     a.click();
@@ -3635,7 +3635,7 @@ class VoxBallGame {
       iframeNotice.appendChild(document.createTextNode('This app needs microphone access, which may be blocked when embedded.'));
       iframeNotice.appendChild(document.createElement('br'));
       const link = document.createElement('a');
-      link.href = directUrl;
+      link.href = sanitizeUrl(directUrl);
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       link.textContent = 'Open in new tab for full access ↗';
@@ -3966,7 +3966,7 @@ class VoxBallGame {
         errNode.appendChild(document.createTextNode('This requires HTTPS and a modern browser. '));
         if (isInIframe) {
           const link = document.createElement('a');
-          link.href = window.location.href;
+          link.href = sanitizeUrl(window.location.href);
           link.target = '_blank';
           link.rel = 'noopener noreferrer';
           link.textContent = 'Try opening in a new tab ↗';
@@ -4000,7 +4000,7 @@ class VoxBallGame {
               url.searchParams.set('ec', this.micInputPreferences.echoCancellation ? '1' : '0');
               url.searchParams.set('ns', this.micInputPreferences.noiseSuppression ? '1' : '0');
               url.searchParams.set('ag', this.micInputPreferences.autoGainControl ? '1' : '0');
-              if (phoneMicUrlEl) { phoneMicUrlEl.href = url.href; phoneMicUrlEl.textContent = url.href; phoneMicUrlEl.style.display = ''; }
+              if (phoneMicUrlEl) { phoneMicUrlEl.href = sanitizeUrl(url.href); phoneMicUrlEl.textContent = url.href; phoneMicUrlEl.style.display = ''; }
               if (phoneMicCodeEl) { phoneMicCodeEl.style.display = ''; phoneMicCodeEl.querySelector('strong').textContent = code; }
               if (phoneMicStatusEl) { phoneMicStatusEl.style.display = ''; phoneMicStatusEl.textContent = 'Waiting for phone to connect...'; }
               showError(`📱 Open on your phone: ${url.href}`);
@@ -4048,7 +4048,7 @@ class VoxBallGame {
             msg.appendChild(document.createTextNode('🎙 Microphone blocked by browser — this usually happens inside iframes.'));
             msg.appendChild(document.createElement('br'));
             const link = document.createElement('a');
-            link.href = window.location.href;
+            link.href = sanitizeUrl(window.location.href);
             link.target = '_blank';
             link.rel = 'noopener noreferrer';
             link.textContent = 'Open in a new tab for full mic access ↗';
