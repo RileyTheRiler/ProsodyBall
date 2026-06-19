@@ -4861,7 +4861,8 @@ class VoxBallGame {
       const existing = this.teleprompterCustomText || '';
       const input = window.prompt('Paste or type your teleprompter text:', existing);
       if (input === null) return;
-      this.teleprompterCustomText = input.trim();
+      // Prevent client-side DoS by limiting length
+      this.teleprompterCustomText = input.substring(0, 5000).trim();
       if (!this.teleprompterCustomText) {
         this.teleprompterMode = 'rainbow';
       } else {
