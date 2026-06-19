@@ -1,4 +1,4 @@
-# Vox Arcade improvement suggestions
+# Vox Ball improvement suggestions
 
 This is a practical backlog focused on three goals: **better UX**, **more reliable signal accuracy**, and **easier iteration**.
 

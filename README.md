@@ -1,5 +1,5 @@
 ---
-title: Vox Arcade — Voice Training Game
+title: Vox Ball — Voice Training Game
 emoji: 🎙
 colorFrom: red
 colorTo: purple
@@ -7,12 +7,12 @@ sdk: static
 app_file: index.html
 pinned: false
 license: mit
-short_description: 10-mode gamified voice training suite
+short_description: Gamified voice training game — the Prosody Bowl
 ---
 
-# Vox Arcade 🎙
+# Vox Ball 🎙
 
-A gamified voice training suite with 10 interactive modes — train pitch, resonance, articulation, and prosody through real-time voice-driven games. The flagship **Vox Ball** mode teaches the 5 rules of expressive prosody:
+A gamified voice training game — train pitch, resonance, articulation, and prosody through real-time voice control of a bouncing ball. **Vox Ball** (aka the Prosody Bowl) teaches the 5 rules of expressive prosody:
 
 1. **Bounciness** — Pitch variation controls bounce height
 2. **Tempo Variance** — Speech rate changes control ball speed
@@ -31,7 +31,7 @@ A gamified voice training suite with 10 interactive modes — train pitch, reson
 
 ## Usage
 
-Click **Start Speaking** and allow microphone access. Then speak expressively — the active mode responds to your voice in real time!
+Click **Start Speaking** and allow microphone access. Then speak expressively — Vox Ball responds to your voice in real time!
 
 ## Improvement backlog
 
@@ -71,7 +71,7 @@ For a **Static** Hugging Face Space (`sdk: static`), a flat structure works fine
 ## Accessibility and device ergonomics
 
 - Added a **Motion** toggle (Auto / Low / Full) to support reduced-animation sessions.
-- Added keyboard focus-visible styling improvements for controls and mode cards.
+- Added keyboard focus-visible styling improvements for controls.
 - Added voice profile presets (Auto / Deeper / Lighter / Expressive) to reduce false negatives across voice ranges.
 
 ## Test and release confidence

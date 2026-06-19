@@ -52,10 +52,14 @@ try {
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
 
   // Basic smoke tests
-  const titles = await page.$$eval('.mode-card', cards => cards.map(c => c.getAttribute('data-mode')));
-  console.log('Available modes:', titles);
+  const modeCardCount = await page.$$eval('.mode-card', cards => cards.length);
+  if (modeCardCount !== 0) throw new Error(`expected no .mode-card elements, found ${modeCardCount}`);
 
-  if (!titles.includes('creature')) throw new Error('creature mode card missing');
+  const overlayTitle = await page.$eval('.overlay-title', el => el.textContent.trim());
+  if (!overlayTitle.includes('Vox Ball')) throw new Error(`expected overlay title to mention Vox Ball, got "${overlayTitle}"`);
+
+  const playBtn = await page.$('#playBtn');
+  if (!playBtn) throw new Error('Start button (#playBtn) missing');
 
   console.log(`[smoke:${browserName}] PASS`);
 } catch (err) {
