@@ -5148,7 +5148,7 @@
       <div class="hud-controls hud-primary" aria-label="Primary session controls">
         <button class="btn btn-start" id="startBtn">🎙 Start</button>
         <label class="btn btn-help btn-upload" for="audioUploadInput" title="Upload Audio File" aria-label="Upload Audio File">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round" stroke-linejoin="round" style="pointer-events: none;">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
             <polyline points="17 8 12 3 7 8"></polyline>
@@ -5169,7 +5169,7 @@
       </div>
       <div class="hud-controls hud-secondary" aria-label="Secondary settings">
         <button class="btn btn-cb" id="settingsBtn" title="Open Settings" aria-label="Open Settings" aria-expanded="false" aria-controls="settingsPanel">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
             <circle cx="12" cy="12" r="3" />
             <path
@@ -5184,14 +5184,14 @@
         <button class="btn btn-help" id="teleprompterCustomBtn" aria-label="Edit custom teleprompter text" title="Edit custom teleprompter text">Edit Text</button>
 
         <button class="btn btn-cb" id="cbToggle" aria-label="Toggle colorblind mode" title="Colorblind mode">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" />
             <circle cx="12" cy="12" r="3" />
           </svg>
         </button>
         <button class="btn btn-vib hud-setting" hidden id="vibToggle" aria-label="Vibration alerts" title="Vibration alerts" aria-expanded="false" aria-controls="vibPanel">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
             <rect x="8" y="4" width="8" height="16" rx="2" />
             <path d="M4 8v8" />
@@ -5201,7 +5201,7 @@
           </svg>
         </button>
         <button class="btn btn-cb hud-setting" hidden id="cameraBtn" title="Camera Mirror" aria-label="Camera Mirror" aria-expanded="false" aria-controls="cameraModal">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round" stroke-linejoin="round">
             <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
             <circle cx="12" cy="13" r="4"></circle>
@@ -5209,7 +5209,7 @@
         </button>
         <button class="btn btn-help hud-setting" hidden id="helpBtn" aria-expanded="false" aria-controls="helpTooltip">How to Play</button>
         <button class="btn btn-help hud-setting" hidden id="homeBtn" title="Return to Main Menu" aria-label="Return to Main Menu">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
             <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
             <polyline points="9 22 9 12 15 12 15 22" />
@@ -5709,7 +5709,7 @@
                 </div>
                 <div
                   style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
-                  <label>Target Tone
+                  <label for="roadTargetSelect">Target Tone
                     <div class="info-wrapper">
                       <button class="info-trigger" aria-label="More Info">?</button>
                       <div class="info-popup" style="display:none">Pick Bright or Dark posture. The road color palette flips to match your
@@ -5720,14 +5720,14 @@
                       <option value="dark">Target DARK</option>
                     </select>
                   </label>
-                  <label>Passage
+                  <label for="roadPassageSelect">Passage
                     <select id="roadPassageSelect" class="theme-select" aria-label="Resonance Road passage">
                       <option value="balcony">Romeo &amp; Juliet Balcony</option>
                       <option value="news">Professional News Read</option>
                       <option value="custom">Custom passage</option>
                     </select>
                   </label>
-                  <label style="grid-column:1 / -1;">Custom Text
+                  <label style="grid-column:1 / -1;" for="roadCustomText">Custom Text
                     <textarea id="roadCustomText" class="theme-select" rows="3"
                       placeholder="Paste your own script here. Used only when Passage = Custom."></textarea>
                   </label>
@@ -6079,7 +6079,7 @@
     </div>
     <div class="meters-panel" id="metersPanel">
       <button class="meters-expand-toggle" id="metersExpandToggle" aria-label="Expand metrics" aria-expanded="false" aria-controls="metersExpanded">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="18 15 12 9 6 15"></polyline>
         </svg>
       </button>
@@ -6211,7 +6211,7 @@
   <div class="camera-modal" id="cameraModal">
     <div class="camera-header" id="cameraHeader">
       <div class="camera-title">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
           stroke-linecap="round" stroke-linejoin="round">
           <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
           <circle cx="12" cy="13" r="4"></circle>
