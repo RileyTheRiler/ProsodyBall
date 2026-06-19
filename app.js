@@ -4738,7 +4738,7 @@ class VoxBallGame {
     });
 
     roadCustomText?.addEventListener('input', (e) => {
-      this.resonanceRoad.customText = e.target.value;
+      this.resonanceRoad.customText = e.target.value.substring(0, 5000);
     });
 
     prismPacingSelect?.addEventListener('change', (e) => {
@@ -4755,7 +4755,7 @@ class VoxBallGame {
     this._updatePrismPassageMeta();
 
     prismCustomText?.addEventListener('input', (e) => {
-      this.prismReader.customText = e.target.value;
+      this.prismReader.customText = e.target.value.substring(0, 5000);
     });
 
     const prismModeSelect = document.getElementById('prismModeSelect');
