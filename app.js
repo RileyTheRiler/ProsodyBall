@@ -3564,9 +3564,15 @@ class VoxBallGame {
       perfBtn.classList.toggle('active', this.perfMonitor.enabled);
     });
 
-    homeBtn?.addEventListener('click', () => {
+    homeBtn?.addEventListener('click', async () => {
       // If a game is running, stop it and go directly to menu
       if (this.isRunning) {
+        // Auto-stop recording before tearing down the analyzer — otherwise
+        // this.isRecording and _recInterval leak into the next session and
+        // future startRecording() calls no-op. Mirrors stopGame().
+        if (this.isRecording) {
+          await this.stopRecording();
+        }
         this.isRunning = false;
         this.analyzer.stop();
         cleanupPhoneMic();
