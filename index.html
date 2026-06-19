@@ -1294,6 +1294,14 @@
       color: var(--text-primary);
     }
 
+    /* Pitch/resonance mode selects are duplicated into the expanded metric
+       cards for mobile (where the compact meters-bar hides them); on desktop
+       the compact-bar versions already cover this, so hide the duplicates. */
+    #expPitchDisplaySelect,
+    #expResMethodSelect {
+      display: none;
+    }
+
     /* ===== EXPANDABLE METRICS PANEL ===== */
     .meters-panel {
       position: relative;
@@ -2329,11 +2337,16 @@
         grid-column: 1 / -1;
       }
 
-      /* Hide the method select dropdown in the compact bar; it's still
-         accessible in the expanded metrics panel */
+      /* Hide the method select dropdown in the compact bar (no room on a
+         phone screen); shown instead in the expanded metrics panel below. */
       .meters-bar #resMethodSelect,
       .meters-bar #pitchDisplaySelect {
         display: none;
+      }
+
+      #expPitchDisplaySelect,
+      #expResMethodSelect {
+        display: inline-block;
       }
 
       .hud-secondary .btn {
@@ -6137,6 +6150,11 @@
           <div class="metric-card" data-metric="pitch">
             <div class="metric-card-header">
             <span class="metric-card-title">Pitch</span>
+            <select id="expPitchDisplaySelect" class="res-method-select" aria-label="Pitch display">
+              <option value="hz">A: Hz</option>
+              <option value="note">B: Note</option>
+              <option value="range">C: Range (st)</option>
+            </select>
             <span class="metric-card-value" id="expValPitch">— Hz</span>
           </div>
           <canvas class="metric-card-canvas" id="expCanvasPitch"></canvas>
@@ -6145,6 +6163,12 @@
         <div class="metric-card" data-metric="resonance">
           <div class="metric-card-header">
             <span class="metric-card-title">Resonance</span>
+            <select id="expResMethodSelect" class="res-method-select" aria-label="Resonance method">
+              <option value="harmonic">A: Harmonic Env</option>
+              <option value="cepstral">B: Cepstral</option>
+              <option value="lpc">C: LPC</option>
+              <option value="centroid">D: Centroid</option>
+            </select>
             <span class="metric-card-value" id="expValResonance">—</span>
           </div>
           <canvas class="metric-card-canvas" id="expCanvasResonance"></canvas>

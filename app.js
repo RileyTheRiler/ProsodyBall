@@ -4874,8 +4874,24 @@ class VoxBallGame {
       teleprompterCustomBtn.classList.toggle('active', this.teleprompterMode === 'custom');
     });
 
-    document.getElementById('resMethodSelect').addEventListener('change', (e) => {
-      this.analyzer.resonanceMethod = e.target.value;
+    // Readout-display mode selectors. These are display/selection only — they never
+    // change analyzer.metrics.* — and force an immediate cache recompute so the readout
+    // updates on the next frame instead of after the throttle. Some controls (pitch display,
+    // resonance method) are duplicated between the compact meters-bar and the expanded metric
+    // cards — compact is hidden on mobile, expanded is hidden on desktop — so each accepts a
+    // list of mirrored ids and keeps them all in sync regardless of which one is visible.
+    const bindReadoutSelect = (ids, apply) => {
+      const els = (Array.isArray(ids) ? ids : [ids]).map((id) => document.getElementById(id)).filter(Boolean);
+      els.forEach((el) => el.addEventListener('change', (e) => {
+        const v = e.target.value;
+        els.forEach((other) => { if (other !== el) other.value = v; });
+        apply(v);
+        this._avgLastRefresh = 0;
+        this._avgLastFrameId = -1;
+      }));
+    };
+    bindReadoutSelect(['resMethodSelect', 'expResMethodSelect'], (v) => {
+      this.analyzer.resonanceMethod = v;
       // Reset smoothed values when switching methods for clean comparison
       this.analyzer.smoothF1 = 500;
       this.analyzer.smoothF2 = 1500;
@@ -4883,15 +4899,7 @@ class VoxBallGame {
       this.analyzer.smoothResonance = 0.5;
       this.analyzer.formantConfidence = 0;
     });
-
-    // Readout-display mode selectors (mirror the resonance method selector). These are
-    // display/selection only — they never change analyzer.metrics.* — and force an immediate
-    // cache recompute so the readout updates on the next frame instead of after the throttle.
-    const bindReadoutSelect = (id, apply) => {
-      const el = document.getElementById(id);
-      if (el) el.addEventListener('change', (e) => { apply(e.target.value); this._avgLastRefresh = 0; this._avgLastFrameId = -1; });
-    };
-    bindReadoutSelect('pitchDisplaySelect', (v) => { this.pitchDisplayMode = v; });
+    bindReadoutSelect(['pitchDisplaySelect', 'expPitchDisplaySelect'], (v) => { this.pitchDisplayMode = v; });
     bindReadoutSelect('weightModeSelect', (v) => { this.weightMode = v; });
     bindReadoutSelect('attackModeSelect', (v) => { this.attackMode = v; });
     bindReadoutSelect('avgWindowSelect', (v) => { this._avgWindowSecs = parseFloat(v) || 0; });
