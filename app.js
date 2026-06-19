@@ -78,7 +78,7 @@ export class VoiceAnalyzer {
     this.pitchConfidence = 0;  // 0=unreliable, 1=very confident (from YIN CMND)
 
     // Resonance — harmonic envelope formant estimation
-    this.resonanceMethod = 'harmonic'; // 'harmonic' | 'cepstral' | 'lpc' | 'centroid'
+    this.resonanceMethod = 'harmonic'; // 'harmonic' | 'cepstral' | 'lpc'
     this.smoothResonance = 0.5; // 0=low/dark resonance, 1=high/bright resonance
     this.smoothF1 = 500;        // smoothed F1 estimate (Hz)
     this.smoothF2 = 1500;       // smoothed F2 estimate (Hz) — primary resonance correlate
@@ -1041,10 +1041,6 @@ export class VoiceAnalyzer {
           ({ f1: f1Candidate, f2: f2Candidate, f3: f3Candidate, confidence: conf } =
             this._resonanceLPC());
           break;
-        case 'centroid':
-          ({ f1: f1Candidate, f2: f2Candidate, f3: f3Candidate, confidence: conf } =
-            this._resonanceCentroid());
-          break;
         default:
           ({ f1: f1Candidate, f2: f2Candidate, f3: f3Candidate, confidence: conf } =
             this._resonanceHarmonicEnvelope(pitch));
@@ -1058,8 +1054,7 @@ export class VoiceAnalyzer {
       const methodTrustMap = {
         lpc: 1.0,      // precise root-solved values -> low measurement noise
         harmonic: 0.7, // good but harmonic-resolution limited
-        cepstral: 0.5, // smooth but broad
-        centroid: 0.3  // conflates pitch
+        cepstral: 0.5  // smooth but broad
       };
       const methodTrust = methodTrustMap[this.resonanceMethod] || methodTrustMap.harmonic;
       
@@ -1711,59 +1706,6 @@ export class VoiceAnalyzer {
     }
 
     return { rootsRe, rootsIm };
-  }
-
-  // ============================================
-  // RESONANCE METHOD D: Spectral Centroid (Refined Baseline)
-  // Improved control/baseline for comparison.
-  // Improvements:
-  //  - Amplitude clamping prevents extreme dB values from dominating centroid
-  //  - Spectral concentration (kurtosis) as proper confidence measure
-  //  - Third-band centroid for F3 region
-  //  - Noise floor subtraction from linear amplitudes
-  // ============================================
-  _resonanceCentroid() {
-    const fmtData = this.formantFreqData;
-    const binHz = this.audioCtx.sampleRate / this.analyserFormant.fftSize;
-    const numBins = fmtData.length;
-
-    // Convert dB to linear with floor clamping (prevents extreme values)
-    const noiseFloorDb = -80;
-    const linearAmp = (bin) => {
-      const db = Math.max(noiseFloorDb, fmtData[bin]);
-      return Math.pow(10, (db - noiseFloorDb) / 20); // normalized: 0 at noise floor
-    };
-
-    // Helper: weighted centroid + concentration for a band
-    const bandAnalysis = (loHz, hiHz) => {
-      const startBin = Math.max(0, Math.floor(loHz / binHz));
-      const endBin = Math.min(numBins - 1, Math.ceil(hiHz / binHz));
-      let wFreq = 0, wSum = 0, wFreqSq = 0;
-      for (let i = startBin; i <= endBin; i++) {
-        const amp = linearAmp(i);
-        const freq = i * binHz;
-        wFreq += freq * amp;
-        wFreqSq += freq * freq * amp;
-        wSum += amp;
-      }
-      if (wSum < 0.001) return { centroid: (loHz + hiHz) / 2, concentration: 0 };
-      const centroid = wFreq / wSum;
-      const variance = wFreqSq / wSum - centroid * centroid;
-      const bandWidth = hiHz - loHz;
-      // Concentration: 1 when perfectly focused, 0 when spread across band
-      const concentration = Math.max(0, 1 - Math.sqrt(Math.max(0, variance)) / (bandWidth * 0.35));
-      return { centroid, concentration };
-    };
-
-    const b1 = bandAnalysis(200, 1100);
-    const b2 = bandAnalysis(900, 3500);
-    const b3 = bandAnalysis(2200, 4200);
-
-    // Confidence from concentration × voicing quality
-    const avgConcentration = (b1.concentration + b2.concentration) / 2;
-    const conf = Math.min(1, avgConcentration * this.pitchConfidence * (this.vowelLikelihood + 0.3));
-
-    return { f1: b1.centroid, f2: b2.centroid, f3: b3.centroid, confidence: conf };
   }
 
   // Shared formant peak-picking for harmonic envelope methods (A)
@@ -2978,6 +2920,10 @@ class VoxBallGame {
     const teleprompterCustomBtn = document.getElementById('teleprompterCustomBtn');
     const recordingsBtn = document.getElementById('recordingsBtn');
     const recordingsDrawer = document.getElementById('recordingsDrawer');
+    // Explicit handle for the in-session Rec button. Previously this relied on the
+    // implicit window.recBtn global the browser creates from the element id, which
+    // is fragile and invisible to tooling.
+    const recBtn = document.getElementById('recBtn');
     const clearAllRecs = document.getElementById('clearAllRecs');
     const perfBtn = document.getElementById('perfBtn');
     const teleprompterOverlay = document.getElementById('teleprompterOverlay');
@@ -4477,7 +4423,7 @@ class VoxBallGame {
           if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', 'false');
         }
       }
-      if (vibPanel && !vibPanel.contains(e.target) && (!typeof vibBtn === 'undefined' || !vibBtn || !vibBtn.contains(e.target))) {
+      if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || !vibBtn.contains(e.target))) {
         if (vibPanel.classList.contains('show')) {
           vibPanel.classList.remove('show');
           if (typeof vibBtn !== 'undefined' && vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
@@ -4507,7 +4453,7 @@ class VoxBallGame {
     });
 
     // Recording controls
-    if (typeof recBtn !== 'undefined' && recBtn) {
+    if (recBtn) {
       recBtn.addEventListener('click', () => {
         if (this.isRecording) {
           this.stopRecording();

@@ -23,7 +23,7 @@ Consumers should treat the following analyzer fields as quality indicators:
 - `formantConfidence`
 - `spectralTiltConfidence`
 
-Frame reliability is computed with `computeFrameReliability()` in `voice-analyzer-core.js`.
+Frame reliability is computed with `computeFrameReliability()` in `dsp-utils.js`.
 
 ## UI integration rules
 
@@ -31,12 +31,19 @@ Frame reliability is computed with `computeFrameReliability()` in `voice-analyze
 - Do not re-normalize metrics in mode-specific renderers.
 - Feature additions that need raw DSP values should be introduced via explicit analyzer fields and documented here.
 
-## Module boundary (phase 1)
+## Module boundary
 
-`voice-analyzer-core.js` now owns shared normalization/reliability math.
-Future extractions should continue this split:
+`dsp-utils.js` owns the shared, pure normalization/reliability/gender math
+(`computeFrameReliability`, `normalizeAgainstPercentiles`, `computeGenderScore`,
+etc.) and is unit-tested directly (`dsp-utils.test.mjs`,
+`voice-analyzer-core.test.mjs`). The live `VoiceAnalyzer` (WebAudio capture,
+frame extraction, profile learning, and state) currently lives in `app.js` and
+consumes those helpers.
 
-1. `voice-analyzer-core.js`: pure math + gating helpers.
+A future refactor could extract the analyzer out of `app.js` into dedicated
+modules, continuing the split:
+
+1. `dsp-utils.js`: pure math + gating helpers (exists today).
 2. `voice-analyzer-engine.js`: WebAudio capture + frame extraction.
 3. `voice-analyzer-state.js`: profile learning and state transitions.
 4. UI/game modes consume only the stable contract above.

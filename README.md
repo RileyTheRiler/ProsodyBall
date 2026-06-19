@@ -59,7 +59,7 @@ For a **Static** Hugging Face Space (`sdk: static`), a flat structure works fine
 
 ## Analyzer architecture notes
 
-- Shared analyzer normalization and reliability gating helpers now live in `voice-analyzer-core.js`.
+- Shared analyzer normalization and reliability gating helpers live in `dsp-utils.js`.
 - Internal analyzer/UI contract is documented in [`docs/ANALYZER_API.md`](./docs/ANALYZER_API.md).
 
 ## Regression harness
