@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>Vox Arcade — Voice Training Game</title>
+  <title>Vox Ball — Voice Training Game</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Space+Mono:wght@400;700&display=swap">
@@ -43,9 +43,7 @@
       --z-hud: 10;
       --z-hud-mobile: 15;
       --z-overlay: 20;
-      --z-context: 24;
       --z-summary: 25;
-      --z-prism-stats: 25;
       --z-perf: 26;
       --z-calibration: 28;
       --z-tooltip: 30;
@@ -181,11 +179,6 @@
       justify-content: center;
     }
 
-    .btn-canvas-action {
-      padding: 6px 14px;
-      font-weight: 600;
-      border-radius: 8px;
-    }
 
     .hud-setting[hidden] {
       display: none !important;
@@ -209,13 +202,7 @@
       display: inline-flex;
     }
 
-    .canvas-only {
-      display: none;
-    }
 
-    .canvas-only.show {
-      display: inline-flex;
-    }
 
     .ball-only {
       display: none;
@@ -380,8 +367,6 @@
     select:focus-visible,
     input:focus-visible,
     textarea:focus-visible,
-    .mode-card:focus-visible,
-    .style-pill:focus-visible,
     .toggle-switch input:focus-visible + .toggle-slider,
     .help-tab:focus-visible {
       outline: 3px solid rgba(77, 150, 255, 0.9);
@@ -391,8 +376,7 @@
     :root.colorblind button:focus-visible,
     :root.colorblind select:focus-visible,
     :root.colorblind input:focus-visible,
-    :root.colorblind textarea:focus-visible,
-    :root.colorblind .mode-card:focus-visible {
+    :root.colorblind textarea:focus-visible {
       outline-color: rgba(86, 180, 233, 0.9);
     }
 
@@ -869,14 +853,7 @@
         transition: none !important;
       }
 
-      .mode-card:hover .mode-icon {
-        animation: none !important;
-        transform: scale(1.15);
-      }
 
-      .prism-syl.active {
-        animation: none !important;
-      }
 
       .loading-spinner,
       .btn.loading::after {
@@ -1020,37 +997,6 @@
     .summary-actions .btn {
       min-width: 140px;
       text-align: center;
-    }
-
-    /* Pitch Pilot range selection */
-    .range-grid {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      max-width: 400px;
-      width: 100%;
-      margin-top: 10px;
-    }
-
-    .range-btn {
-      width: 100%;
-      padding: 14px;
-      text-align: center;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      color: var(--text-primary);
-      font-size: 1rem;
-    }
-
-    .range-btn:hover {
-      background: rgba(255, 255, 255, 0.12);
-      border-color: var(--accent-artic);
-      transform: translateY(-1px);
-    }
-
-    .range-btn.primary {
-      border-color: var(--accent-bounce);
-      background: rgba(255, 107, 107, 0.1);
     }
 
     .game-area {
@@ -1247,12 +1193,6 @@
         flex-shrink: 0;
       }
 
-      .btn-canvas-action,
-      #prismClearRecBtn,
-      #prismSaveRecBtn {
-        min-width: 88px;
-        padding-inline: 14px;
-      }
 
       .hud-secondary {
         flex: 1 1 100%;
@@ -1587,30 +1527,6 @@
       line-height: 1.5;
     }
 
-    /* Two-column split layout container */
-    .menu-split {
-      display: flex;
-      gap: 16px;
-      width: 100%;
-      max-width: 900px;
-      flex: 1;
-      min-height: 0;
-    }
-
-    /* Left column: scrollable card list */
-    .menu-left {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      width: 200px;
-      flex-shrink: 0;
-      overflow-y: auto;
-      overflow-x: hidden;
-      scrollbar-width: thin;
-      scrollbar-color: rgba(192, 132, 252, 0.3) transparent;
-      padding-right: 4px;
-    }
-
     /* Right column: detail + play button */
     .menu-right {
       flex: 1;
@@ -1622,88 +1538,6 @@
       border-radius: 16px;
       padding: 20px;
       overflow: hidden;
-    }
-
-    /* Left-column card list (kept as real container for Safari/iPad reliability) */
-    .mode-picker {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      width: 100%;
-    }
-
-    .mode-card {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 12px;
-      border-radius: 10px;
-      background: rgba(255, 255, 255, 0.03);
-      border: 2px solid rgba(255, 255, 255, 0.06);
-      cursor: pointer;
-      transition: background 0.2s, border-color 0.2s, box-shadow 0.2s, transform 0.2s;
-      flex-shrink: 0;
-    }
-
-    .mode-card:hover {
-      background: rgba(255, 255, 255, 0.07);
-      border-color: rgba(192, 132, 252, 0.3);
-      transform: translateX(2px);
-    }
-
-    .mode-card.selected {
-      border-color: rgba(255, 142, 83, 0.8);
-      background: linear-gradient(135deg, rgba(255, 107, 107, 0.12), rgba(255, 142, 83, 0.10));
-      box-shadow: 0 0 18px rgba(255, 107, 107, 0.25), 0 0 6px rgba(255, 142, 83, 0.15), inset 0 0 12px rgba(255, 107, 107, 0.06);
-    }
-
-    :root.colorblind .mode-card.selected {
-      border-color: rgba(213, 94, 0, 0.8);
-      background: linear-gradient(135deg, rgba(213, 94, 0, 0.12), rgba(230, 159, 0, 0.10));
-      box-shadow: 0 0 18px rgba(213, 94, 0, 0.25), 0 0 6px rgba(230, 159, 0, 0.15);
-    }
-
-    .mode-icon {
-      font-size: 1.6rem;
-      flex-shrink: 0;
-    }
-
-    .mode-name {
-      font-weight: 700;
-      font-size: 0.92rem;
-      color: var(--text-primary);
-      white-space: nowrap;
-    }
-
-    .mode-desc {
-      display: none;
-      /* description shown in right panel instead */
-    }
-
-    /* Right panel detail area */
-    .mode-details {
-      display: flex;
-      flex-direction: column;
-      flex: 1;
-      min-height: 0;
-      width: 100%;
-    }
-
-    /* Empty state hint - visible initially, hidden once .show added to .mode-details */
-    .mode-details-empty {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      color: rgba(255, 255, 255, 0.25);
-      font-size: 1rem;
-      gap: 8px;
-      text-align: center;
-    }
-
-    .mode-details.show .mode-details-empty {
-      display: none;
     }
 
     .mode-detail-panel {
@@ -1771,13 +1605,7 @@
       75% { transform: scale(1.15); filter: none; }
     }
 
-    .mode-card:hover .mode-icon {
-      animation: iconWiggle 0.5s ease-in-out;
-    }
 
-    .mode-card[data-mode="creature"]:hover .mode-icon {
-      animation: iconGlitch 0.5s ease-in-out;
-    }
 
     .mode-detail-panel.show {
       animation: fadeSlideIn 0.25s ease-out;
@@ -2162,34 +1990,10 @@
       background: linear-gradient(135deg, #56B4E9, #009E73);
     }
 
-    .context-bar {
-      display: none;
-    }
 
-    .context-bar.show {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
-      background: rgba(18, 18, 31, 0.88);
-      border-top: 1px solid rgba(255, 255, 255, 0.08);
-    }
 
-    .context-toggle {
-      display: none;
-    }
 
-    .context-controls {
-      display: flex;
-      gap: 8px;
-      width: 100%;
-      overflow-x: auto;
-      scrollbar-width: none;
-    }
 
-    .context-controls::-webkit-scrollbar {
-      display: none;
-    }
 
     /* ====== MOBILE-ONLY STYLES (phones ≤600px) ====== */
     @media (max-width: 600px) {
@@ -2451,38 +2255,6 @@
         justify-content: flex-start;
       }
 
-      /* Stack the two-column menu vertically on mobile */
-      .menu-split {
-        flex-direction: column;
-        gap: 10px;
-        min-height: 0;
-        flex: none;
-      }
-
-      /* Game card list: compact grid so mode discovery is easier on phones */
-      .menu-left {
-        width: 100%;
-        display: block;
-        overflow-y: auto;
-        overflow-x: hidden;
-        max-height: 220px;
-        flex-shrink: 0;
-        padding: 2px 2px 10px;
-        gap: 8px;
-        scrollbar-width: thin;
-        scrollbar-color: rgba(255, 255, 255, 0.24) transparent;
-      }
-
-      .mode-picker {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 8px;
-      }
-
-      .menu-left::-webkit-scrollbar {
-        display: none;
-      }
-
       /* --- SCROLL FADE INDICATORS: show more content exists --- */
       .mobile-scroll-fade {
         position: relative;
@@ -2490,10 +2262,6 @@
       }
 
       /* Contextual fade colors for different backgrounds */
-      .overlay .mobile-scroll-fade {
-        --fade-color: rgba(10, 10, 18, 0.92);
-      }
-
       .hud .mobile-scroll-fade {
         --fade-color: rgba(18, 18, 31, 0.95);
       }
@@ -2534,36 +2302,6 @@
         opacity: 1;
       }
 
-      /* Cards: larger, easier to tap */
-      .mode-card {
-        flex-direction: column;
-        align-items: center;
-        gap: 5px;
-        padding: 12px 12px 10px;
-        min-width: 0;
-        min-height: 72px;
-        transform: none !important;
-        border-radius: 12px;
-        border-width: 2px;
-      }
-
-      .mode-card.selected {
-        border-width: 2px;
-        box-shadow: 0 0 18px rgba(192, 132, 252, 0.3);
-      }
-
-      .mode-icon {
-        font-size: 1.5rem;
-      }
-
-      .mode-name {
-        font-size: 0.76rem;
-        white-space: normal;
-        text-align: center;
-        line-height: 1.2;
-        max-width: 100%;
-      }
-
       /* Detail panel takes full width with better padding */
       .menu-right {
         padding: 16px 14px;
@@ -2596,12 +2334,6 @@
         max-height: 38vh;
       }
 
-      .mode-detail-panel .btn-big {
-        margin-top: 0;
-        position: sticky;
-        bottom: 0;
-        box-shadow: 0 -8px 20px rgba(18, 18, 31, 0.92), 0 4px 20px rgba(255, 107, 107, 0.32);
-      }
 
       .rule-card {
         padding: 10px 12px;
@@ -2695,16 +2427,6 @@
       }
 
       /* --- CONTEXT BAR: horizontal scroll, larger targets --- */
-      .context-bar {
-        padding: 6px 10px;
-        gap: 8px;
-        overflow-x: auto;
-        flex-wrap: nowrap;
-        scrollbar-width: none;
-        justify-content: flex-start;
-        -webkit-overflow-scrolling: touch;
-        position: relative;
-      }
 
       /* --- EXPANDED METRICS: 2-col on mobile, capped so ball stays visible --- */
       .meters-panel.expanded .meters-expanded {
@@ -2747,54 +2469,10 @@
       }
 
       /* --- CONTEXT BAR: moved to floating expandable panel on mobile --- */
-      .context-bar.show {
-        position: fixed;
-        left: 8px;
-        right: 8px;
-        bottom: calc(78px + env(safe-area-inset-bottom, 0px));
-        z-index: 24;
-        flex-direction: column;
-        align-items: stretch;
-        gap: 0;
-        padding: 6px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px;
-        background: rgba(12, 12, 20, 0.94);
-        box-shadow: 0 12px 26px rgba(0, 0, 0, 0.38);
-      }
 
-      .context-toggle {
-        display: inline-flex;
-        width: 100%;
-        justify-content: center;
-        align-items: center;
-        min-height: 40px;
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        background: rgba(255, 255, 255, 0.05);
-        color: var(--text-primary);
-        font-family: 'Outfit', sans-serif;
-        font-size: 0.82rem;
-        font-weight: 700;
-      }
 
-      .context-controls {
-        display: none;
-        margin-top: 6px;
-      }
 
-      .context-bar.expanded .context-controls {
-        display: flex;
-      }
 
-      .context-bar .theme-select {
-        display: inline-block;
-        min-height: 38px;
-        font-size: 16px;
-        flex-shrink: 0;
-        border-radius: 10px;
-        padding: 8px 12px;
-      }
 
       /* --- RECORDINGS DRAWER: bottom sheet --- */
       .recordings-drawer {
@@ -3089,59 +2767,6 @@
         font-size: 1rem;
       }
 
-      /* --- CREATURE STYLE PICKER: mobile-optimized pills --- */
-      .creature-style-picker {
-        gap: 6px;
-        margin-bottom: 12px;
-        flex-wrap: wrap;
-        justify-content: center;
-      }
-
-      .style-pill {
-        font-size: 0.85rem;
-        padding: 10px 14px;
-        min-height: 44px;
-        border-radius: 10px;
-      }
-
-      .creature-style-hud .style-pill {
-        font-size: 0.82rem;
-        padding: 8px 12px;
-        min-height: 38px;
-      }
-
-      .creature-style-hud {
-        top: 90px;
-        width: calc(100% - 12px);
-        max-width: 360px;
-        justify-content: center;
-        overflow-x: auto;
-      }
-
-      /* --- PRISM SETTINGS: mobile layout --- */
-      .prism-settings-row {
-        grid-template-columns: 1fr;
-        gap: 12px;
-      }
-
-      .prism-label {
-        font-size: 0.82rem;
-      }
-
-      .prism-select {
-        min-height: 44px;
-        font-size: 16px;
-        border-radius: 10px;
-        padding: 8px 12px;
-      }
-
-      .prism-textarea {
-        min-height: 80px;
-        font-size: 16px;
-        border-radius: 10px;
-        padding: 10px 12px;
-      }
-
       /* --- INFO TOOLTIPS: better mobile sizing --- */
       .info-popup {
         max-width: 220px;
@@ -3200,24 +2825,6 @@
         min-height: 44px;
         display: inline-flex;
         align-items: center;
-      }
-
-      /* --- PITCH PILOT RANGE OVERLAY --- */
-      .range-grid {
-        gap: 10px;
-        width: 100%;
-        max-width: 360px;
-      }
-
-      .range-btn {
-        padding: 16px;
-        font-size: 0.95rem;
-        min-height: 52px;
-        border-radius: 12px;
-      }
-
-      .range-btn.primary {
-        font-size: 1rem;
       }
 
       /* --- TOGGLE SWITCHES: larger on mobile --- */
@@ -3288,36 +2895,6 @@
         font-size: 1.1rem;
       }
 
-      /* Mode cards: compact on tiny screens */
-      /* Mode cards: still tappable on tiny screens */
-      .mode-card {
-        min-width: 68px;
-        min-height: 66px;
-      }
-
-      /* Mode cards even more compact on tiny screens */
-      .menu-left {
-        max-height: 210px;
-      }
-
-      .mode-picker {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      .mode-card {
-        min-width: 0;
-        padding: 10px 8px 8px;
-      }
-
-      .mode-icon {
-        font-size: 1.3rem;
-      }
-
-      .mode-name {
-        font-size: 0.68rem;
-        max-width: 64px;
-      }
-
       /* Meters: 2-column grid, pitch spans full width */
       .meters-bar {
         grid-template-columns: 1fr 1fr;
@@ -3357,17 +2934,8 @@
       }
 
       /* Style pills: wrap into 2 rows on tiny screens */
-      .style-pill {
-        padding: 8px 10px;
-        font-size: 0.78rem;
-        min-height: 40px;
-      }
 
       /* Range buttons: full width */
-      .range-btn {
-        font-size: 0.9rem;
-        padding: 14px 12px;
-      }
 
       /* Summary: tighter */
       .summary-title {
@@ -3510,51 +3078,6 @@
         margin-bottom: 4px;
       }
 
-      /* Menu split: side by side in landscape */
-      .menu-split {
-        flex-direction: row;
-        gap: 10px;
-        flex: 1;
-        min-height: 0;
-      }
-
-      .menu-left {
-        width: 110px;
-        overflow-y: auto;
-        overflow-x: hidden;
-        flex-shrink: 0;
-        scrollbar-width: none;
-        padding: 0 4px;
-      }
-
-      .mode-picker {
-        display: grid;
-        grid-auto-rows: minmax(44px, auto);
-        gap: 8px;
-      }
-
-      .menu-left::-webkit-scrollbar {
-        display: none;
-      }
-
-
-      .mode-card {
-        flex-direction: row;
-        padding: 7px 8px;
-        min-width: 0;
-        min-height: 0;
-        gap: 5px;
-      }
-
-      .mode-icon {
-        font-size: 1rem;
-      }
-
-      .mode-name {
-        font-size: 0.68rem;
-        white-space: nowrap;
-      }
-
       .menu-right {
         flex: 1;
         overflow-y: auto;
@@ -3601,14 +3124,7 @@
       }
 
       /* Context bar: compact */
-      .context-bar {
-        padding: 3px 10px;
-        gap: 4px;
-      }
 
-      .context-bar.show {
-        bottom: calc(66px + env(safe-area-inset-bottom, 0px));
-      }
 
       /* Summary: landscape-optimized with horizontal layout */
       .summary-overlay {
@@ -3684,17 +3200,7 @@
       }
 
       /* Range selector: two columns in landscape */
-      .range-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 6px;
-      }
 
-      .range-btn {
-        padding: 10px;
-        font-size: 0.85rem;
-        min-height: 38px;
-      }
 
       /* Teleprompter: very compact in landscape to preserve canvas height */
       .teleprompter-stack {
@@ -3703,13 +3209,6 @@
 
       .teleprompter-overlay {
         font-size: 0.82rem;
-      }
-
-      /* Prism reader: less height */
-      .prism-scroll-container {
-        max-height: 55%;
-        font-size: 0.95rem;
-        line-height: 1.7;
       }
 
       /* Settings: constrain */
@@ -3964,635 +3463,17 @@
       transition: width 0.1s linear;
     }
 
-    /* Creature Style Picker */
-    .creature-style-picker {
-      display: flex;
-      gap: 6px;
-      justify-content: center;
-      flex-wrap: wrap;
-      margin-bottom: 16px;
-    }
-
-    .style-pill {
-      font-family: 'Outfit', sans-serif;
-      font-size: 0.85rem;
-      font-weight: 600;
-      padding: 7px 14px;
-      border-radius: 20px;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      background: rgba(255, 255, 255, 0.04);
-      color: var(--text-muted);
-      cursor: pointer;
-      transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
-      white-space: nowrap;
-    }
-
-    .style-pill:hover {
-      background: rgba(255, 255, 255, 0.1);
-      border-color: rgba(255, 255, 255, 0.2);
-      color: var(--text-primary);
-    }
-
-    .style-pill.selected {
-      background: rgba(138, 100, 255, 0.2);
-      border-color: rgba(138, 100, 255, 0.5);
-      color: #c8b4ff;
-      box-shadow: 0 0 12px rgba(138, 100, 255, 0.15);
-    }
-
-    .prism-keep-reading,
-    .prism-idle-prompt {
-      position: absolute;
-      bottom: 25px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(0, 0, 0, 0.7);
-      backdrop-filter: blur(8px);
-      padding: 6px 14px;
-      border-radius: 12px;
-      color: rgba(255, 255, 255, 0.8);
-      font-size: 0.9rem;
-      pointer-events: none;
-      opacity: 0;
-      transition: opacity 0.3s;
-    }
-
-    .prism-keep-reading.show,
-    .prism-idle-prompt.show {
-      opacity: 1;
-    }
-
-    .prism-idle-prompt {
-      bottom: 60px;
-      /* Position slightly above the keep reading prompt */
-      color: rgba(180, 220, 255, 0.9);
-      border: 1px solid rgba(180, 220, 255, 0.15);
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-    }
-
-    .creature-style-hud {
-      position: absolute;
-      top: 52px;
-      left: 50%;
-      transform: translateX(-50%);
-      display: none;
-      gap: 4px;
-      z-index: 20;
-      padding: 4px 8px;
-      border-radius: 24px;
-      background: rgba(0, 0, 0, 0.5);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-    }
-
-    .creature-style-hud.visible {
-      display: flex;
-    }
-
-    .creature-style-hud .style-pill {
-      font-size: 0.75rem;
-      padding: 4px 10px;
-    }
-
-    /* ====== PRISM READER SETTINGS PANEL ====== */
-    .prism-settings {
-      margin-top: 14px;
-      position: relative;
-      background: rgba(255, 255, 255, 0.035);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 12px;
-      padding: 18px 16px 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      overflow: hidden;
-    }
-
-    .prism-settings::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 2px;
-      background: linear-gradient(90deg, hsl(260, 70%, 65%), hsl(320, 70%, 65%), hsl(40, 90%, 65%));
-    }
-
-    .prism-settings-row {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 12px;
-    }
-
-    .prism-settings-field {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .prism-settings-full {
-      width: 100%;
-    }
-
-    .prism-label {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: 0.07em;
-      text-transform: uppercase;
-      color: rgba(255, 255, 255, 0.55);
-    }
-
-    .prism-label-icon {
-      font-size: 0.9rem;
-      line-height: 1;
-    }
-
-    .prism-label-hint {
-      margin-left: auto;
-      font-size: 0.65rem;
-      font-weight: 400;
-      letter-spacing: 0.02em;
-      text-transform: none;
-      color: rgba(255, 255, 255, 0.28);
-      font-style: italic;
-    }
-
-    .prism-select {
-      width: 100%;
-      cursor: pointer;
-      transition: border-color 0.2s, box-shadow 0.2s;
-    }
-
-    .prism-select:hover {
-      border-color: rgba(180, 130, 255, 0.45);
-      box-shadow: 0 0 0 3px rgba(160, 100, 255, 0.1);
-    }
-
-    .prism-select:focus {
-      outline: none;
-      border-color: hsl(260, 70%, 65%);
-      box-shadow: 0 0 0 3px rgba(160, 100, 255, 0.2);
-    }
-
-    .prism-textarea {
-      width: 100%;
-      resize: vertical;
-      min-height: 72px;
-      transition: border-color 0.2s, box-shadow 0.2s;
-      box-sizing: border-box;
-      line-height: 1.55;
-    }
-
-    .prism-textarea:hover {
-      border-color: rgba(180, 130, 255, 0.45);
-      box-shadow: 0 0 0 3px rgba(160, 100, 255, 0.1);
-    }
-
-    .prism-textarea:focus {
-      outline: none;
-      border-color: hsl(260, 70%, 65%);
-      box-shadow: 0 0 0 3px rgba(160, 100, 255, 0.2);
-    }
-
-    /* ====== PRISM READER ====== */
-    .prism-overlay {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      z-index: 20;
-      pointer-events: none;
-      opacity: 0;
-      transition: opacity 0.3s ease;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      overflow: hidden;
-    }
-
-    .prism-overlay.show {
-      opacity: 1;
-      pointer-events: auto;
-    }
-
-    .prism-scroll-container {
-      width: min(860px, calc(100% - 40px));
-      max-height: 70%;
-      margin-top: 60px;
-      padding: 24px 28px;
-      background: rgba(10, 10, 18, 0.82);
-      border: 1px solid rgba(255, 255, 255, 0.10);
-      border-radius: 16px;
-      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      overflow-y: auto;
-      scroll-behavior: smooth;
-      line-height: 2.2;
-      font-size: 1.35rem;
-      text-align: left;
-      word-wrap: break-word;
-    }
-
-    .prism-syl {
-      display: inline;
-      transition: color 0.15s ease, text-shadow 0.15s ease, filter 0.15s ease;
-    }
-
-    .prism-syl.pre-read {
-      color: rgba(255, 255, 255, 0.18);
-    }
-
-    .prism-syl.active {
-      color: rgba(255, 255, 255, 0.85);
-      text-shadow: 0 0 8px rgba(255, 217, 61, 0.5);
-      animation: prism-pulse 0.8s ease-in-out infinite alternate;
-    }
-
-    @keyframes prism-pulse {
-      from {
-        text-shadow: 0 0 6px rgba(255, 217, 61, 0.3);
-      }
-
-      to {
-        text-shadow: 0 0 14px rgba(255, 217, 61, 0.7);
-      }
-    }
-
-    .prism-syl.crystallized {
-      transition: color 0.4s ease, text-shadow 0.4s ease, filter 0.4s ease;
-    }
-
-    .prism-syl.crystallized.pop {
-      animation: prism-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-    }
-
-    @keyframes prism-pop {
-      0% {
-        transform: scale(1);
-      }
-
-      40% {
-        transform: scale(1.22);
-      }
-
-      100% {
-        transform: scale(1);
-      }
-    }
-
-    .prism-syl.strain {
-      text-decoration: underline wavy rgba(255, 80, 80, 0.6);
-      text-underline-offset: 4px;
-    }
-
-    .prism-progress {
-      width: min(400px, calc(100% - 60px));
-      height: 4px;
-      background: rgba(255, 255, 255, 0.1);
-      border-radius: 2px;
-      margin-top: 12px;
-      overflow: hidden;
-    }
-
-    .prism-progress-fill {
-      height: 100%;
-      width: 0%;
-      background: linear-gradient(90deg, hsl(240, 70%, 60%), hsl(280, 70%, 60%), hsl(320, 70%, 60%));
-      border-radius: 2px;
-      transition: width 0.3s ease;
-    }
-
-    .prism-keep-reading {
-      color: rgba(255, 217, 61, 0.5);
-      font-size: 0.85rem;
-      text-align: center;
-      margin-top: 8px;
-      opacity: 0;
-      transition: opacity 0.5s ease;
-    }
-
-    .prism-keep-reading.show {
-      opacity: 1;
-    }
-
-    /* ====== PRISM LIVE STATS HUD ====== */
-    .prism-live-stats {
-      position: absolute;
-      top: 12px;
-      right: 16px;
-      z-index: 25;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 5px 14px;
-      background: rgba(10, 10, 20, 0.75);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 10px;
-      opacity: 0;
-      transition: opacity 0.4s ease;
-      pointer-events: none;
-    }
-
-    .prism-live-stats.show {
-      opacity: 1;
-    }
-
-    .prism-stat {
-      font-size: 0.78rem;
-      font-weight: 600;
-      color: rgba(200, 210, 255, 0.85);
-      letter-spacing: 0.04em;
-      font-variant-numeric: tabular-nums;
-    }
-
-    .prism-stat-sep {
-      width: 1px;
-      height: 12px;
-      background: rgba(255, 255, 255, 0.15);
-    }
-
-    /* ====== PRISM COMPLETION SUMMARY ====== */
-    .prism-completion {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%) scale(0.92);
-      z-index: 30;
-      width: min(480px, calc(100% - 40px));
-      padding: 28px 24px 22px;
-      background: rgba(12, 10, 28, 0.92);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      border: 1px solid rgba(180, 140, 255, 0.18);
-      border-radius: 18px;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 40px rgba(140, 100, 255, 0.08);
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
-    }
-
-    .prism-completion.show {
-      opacity: 1;
-      pointer-events: auto;
-      transform: translate(-50%, -50%) scale(1);
-    }
-
-    .prism-completion-title {
-      text-align: center;
-      font-size: 1.15rem;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      color: rgba(220, 200, 255, 0.95);
-      margin-bottom: 18px;
-      text-transform: uppercase;
-    }
-
-    .prism-completion-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-bottom: 18px;
-    }
-
-    .prism-comp-card {
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.07);
-      border-radius: 10px;
-      padding: 10px 12px;
-      text-align: center;
-    }
-
-    .prism-comp-label {
-      font-size: 0.65rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: rgba(255, 255, 255, 0.4);
-      margin-bottom: 4px;
-    }
-
-    .prism-comp-value {
-      font-size: 1.15rem;
-      font-weight: 700;
-      color: rgba(200, 180, 255, 0.95);
-    }
-
-    .prism-comp-sub {
-      font-size: 0.68rem;
-      color: rgba(255, 255, 255, 0.35);
-      margin-top: 2px;
-    }
-
-    .prism-restart-btn {
-      display: block;
-      margin: 0 auto;
-      padding: 8px 28px;
-      font-size: 0.85rem;
-    }
-
-    /* ====== PRISM COLOR LEGEND ====== */
-    .prism-legend {
-      position: absolute;
-      top: 12px;
-      left: 16px;
-      z-index: 25;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      padding: 7px 12px;
-      background: rgba(10, 10, 20, 0.75);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 10px;
-      opacity: 0;
-      transition: opacity 0.4s ease;
-      pointer-events: none;
-    }
-
-    .prism-legend.show {
-      opacity: 1;
-    }
-
-    .prism-legend-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 0.62rem;
-      font-weight: 600;
-      color: rgba(200, 210, 255, 0.7);
-      letter-spacing: 0.03em;
-      white-space: nowrap;
-    }
-
-    .prism-legend-swatch {
-      width: 14px;
-      height: 8px;
-      border-radius: 3px;
-      flex-shrink: 0;
-    }
-
-    /* ====== PRISM KEYBOARD HINTS ====== */
-    .prism-kbd-hints {
-      position: absolute;
-      bottom: 10px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 25;
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      padding: 5px 16px;
-      background: rgba(10, 10, 20, 0.65);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      border-radius: 10px;
-      opacity: 0;
-      transition: opacity 0.4s ease;
-      pointer-events: none;
-    }
-
-    .prism-kbd-hints.show {
-      opacity: 1;
-    }
-
-    .prism-kbd-hint {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      font-size: 0.65rem;
-      color: rgba(200, 210, 255, 0.55);
-      letter-spacing: 0.03em;
-    }
-
-    .prism-kbd {
+    .kbd-hint {
       display: inline-block;
       padding: 1px 6px;
       font-size: 0.6rem;
-      font-weight: 700;
       font-family: 'Space Mono', monospace;
+      font-weight: 700;
       color: rgba(220, 210, 255, 0.8);
       background: rgba(255, 255, 255, 0.08);
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 4px;
     }
-
-    /* ====== PRISM PASSAGE METADATA ====== */
-    .prism-passage-meta {
-      display: flex;
-      gap: 12px;
-      margin-top: 6px;
-      padding: 0;
-    }
-
-    .prism-passage-meta-item {
-      font-size: 0.65rem;
-      font-weight: 600;
-      color: rgba(255, 255, 255, 0.35);
-      letter-spacing: 0.03em;
-    }
-
-    /* ====== PRISM PITCH SPARKLINE ====== */
-    .prism-sparkline-wrap {
-      grid-column: 1 / -1;
-      background: rgba(255, 255, 255, 0.03);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      border-radius: 10px;
-      padding: 10px 12px 8px;
-      text-align: center;
-    }
-
-    .prism-sparkline-wrap .prism-comp-label {
-      margin-bottom: 6px;
-    }
-
-    .prism-sparkline-canvas {
-      width: 100%;
-      height: 48px;
-      border-radius: 6px;
-    }
-
-    /* ====== PRISM SENTENCE MARKERS ====== */
-    .prism-sentence-break {
-      display: block;
-      height: 8px;
-    }
-
-    @media (max-width: 600px) {
-      .prism-scroll-container {
-        margin-top: 36px;
-        padding: 16px 14px;
-        font-size: 1.05rem;
-        line-height: 1.9;
-        max-height: 65%;
-        width: min(860px, calc(100% - 16px));
-        border-radius: 14px;
-      }
-
-      .prism-progress {
-        width: min(400px, calc(100% - 32px));
-      }
-
-      .prism-keep-reading,
-      .prism-idle-prompt {
-        font-size: 0.85rem;
-        padding: 8px 16px;
-      }
-
-      .prism-live-stats {
-        top: 8px;
-        right: 8px;
-        padding: 4px 10px;
-        gap: 6px;
-      }
-
-      .prism-stat {
-        font-size: 0.7rem;
-      }
-
-      .prism-legend {
-        top: 8px;
-        left: 8px;
-        padding: 5px 8px;
-        max-width: 48vw;
-      }
-
-      .prism-legend-row {
-        font-size: 0.55rem;
-      }
-
-      .prism-kbd-hints {
-        gap: 10px;
-        padding: 4px 12px;
-      }
-
-      .prism-kbd-hint {
-        font-size: 0.58rem;
-      }
-
-      .prism-live-stats {
-        max-width: 50vw;
-      }
-
-      .prism-completion-grid {
-        grid-template-columns: 1fr 1fr;
-        gap: 8px;
-      }
-
-      .prism-sparkline-canvas {
-        height: 36px;
-      }
-    }
-
     /* Informational Tooltips */
     .info-wrapper {
       position: relative;
@@ -4708,36 +3589,6 @@
       transform: translateX(0) translateY(0);
     }
 
-    .prism-settings-field .info-popup {
-      bottom: auto;
-      top: calc(100% + 8px);
-      transform: translateX(-50%) translateY(-4px);
-    }
-
-    .prism-settings-field .info-popup::after {
-      top: auto;
-      bottom: 100%;
-      border-color: transparent transparent #1a1a2e transparent;
-    }
-
-    .prism-settings-field .info-popup::before {
-      top: auto;
-      bottom: 100%;
-      border-color: transparent transparent rgba(192, 132, 252, 0.4) transparent;
-    }
-
-    .prism-settings-field .info-wrapper:hover .info-popup,
-    .prism-settings-field .info-trigger:focus+.info-popup {
-      transform: translateX(-50%) translateY(0);
-    }
-  
-
-
-    /* Colorblind: prism legend swatch overrides */
-    :root.colorblind .prism-legend-swatch {
-      filter: none;
-    }
-
     :root.colorblind .btn-big {
       background: linear-gradient(135deg, #D55E00, #E69F00);
       box-shadow: 0 4px 24px rgba(213, 94, 0, 0.4), 0 0 40px rgba(213, 94, 0, 0.15);
@@ -4751,16 +3602,7 @@
       box-shadow: 0 4px 20px rgba(213, 94, 0, 0.4);
     }
 
-    :root.colorblind .mode-card:hover {
-      border-color: rgba(204, 121, 167, 0.3);
-    }
 
-    :root.colorblind .style-pill.selected {
-      background: rgba(0, 158, 115, 0.2);
-      border-color: rgba(0, 158, 115, 0.5);
-      color: #009E73;
-      box-shadow: 0 0 12px rgba(0, 158, 115, 0.15);
-    }
 
     :root.colorblind .rec-btn.playing {
       background: rgba(86, 180, 233, 0.2);
@@ -5142,7 +3984,7 @@
   <div id="app">
     <div class="hud">
       <div class="hud-left">
-        <div class="hud-title">VOX ARCADE</div>
+        <div class="hud-title">VOX BALL</div>
         <span class="session-timer" id="sessionTimer">0:00</span>
       </div>
       <div class="hud-controls hud-primary" aria-label="Primary session controls">
@@ -5160,11 +4002,6 @@
         <button class="btn btn-voice-play" id="voicePlayBtn" disabled title="Play your last recording"><span aria-hidden="true">▶</span><span class="voice-play-label">&nbsp;Play</span></button>
         <button class="btn btn-daf" id="dafBtn" title="Delayed Auditory Feedback" aria-label="Open Delayed Auditory Feedback settings" aria-expanded="false" aria-controls="dafPanel">DAF</button>
         <button class="btn btn-rec" id="recBtn"><span class="rec-dot"></span><span class="rec-label">Rec</span></button>
-        <button class="btn btn-help" id="prismClearRecBtn" aria-label="Clear Prism Recording"
-          style="display: none; opacity: 0; transform: scale(0.95); transition: opacity 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28), transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);">Clear</button>
-        <button class="btn btn-help" id="prismSaveRecBtn" aria-label="Save Prism Recording"
-          style="display: none; opacity: 0; transform: scale(0.95); transition: opacity 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28), transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);">Save
-          Clip</button>
         <button class="btn btn-recordings" id="recordingsBtn" aria-expanded="false" aria-controls="recordingsDrawer"><span>Clips&nbsp;</span><span class="badge" id="recBadge">0</span></button>
       </div>
       <div class="hud-controls hud-secondary" aria-label="Secondary settings">
@@ -5378,7 +4215,7 @@
 
     <div class="teleprompter-stack" id="teleprompterStack">
       <div class="teleprompter-overlay" id="teleprompterOverlay"></div>
-      <div class="teleprompter-hint" id="teleprompterHint"><span class="prism-kbd">Space</span> / <span class="prism-kbd">Tap</span> advance sentence</div>
+      <div class="teleprompter-hint" id="teleprompterHint"><span class="kbd-hint">Space</span> / <span class="kbd-hint">Tap</span> advance sentence</div>
     </div>
     <div class="game-area">
       <canvas id="gameCanvas"></canvas>
@@ -5386,119 +4223,12 @@
         <button class="zoom-btn" id="zoomInBtn" type="button" aria-label="Zoom in on ball">+</button>
         <button class="zoom-btn" id="zoomOutBtn" type="button" aria-label="Zoom out from ball">&minus;</button>
       </div>
-      <div class="prism-overlay" id="prismOverlay">
-        <div class="prism-live-stats" id="prismLiveStats">
-          <span class="prism-stat" id="prismWpm">0 wpm</span>
-          <span class="prism-stat-sep"></span>
-          <span class="prism-stat" id="prismElapsed">0:00</span>
-          <span class="prism-stat-sep"></span>
-          <span class="prism-stat" id="prismSylCount">0 / 0</span>
-        </div>
-        <div class="prism-legend" id="prismLegend">
-          <div class="prism-legend-row">
-            <span class="prism-legend-swatch" style="background: linear-gradient(90deg, hsl(240,65%,60%), hsl(280,65%,60%), hsl(320,65%,60%))"></span>
-            Pitch &rarr; Hue
-          </div>
-          <div class="prism-legend-row">
-            <span class="prism-legend-swatch" style="background: radial-gradient(circle, rgba(200,180,255,0.8), rgba(200,180,255,0.15))"></span>
-            Resonance &rarr; Glow
-          </div>
-          <div class="prism-legend-row">
-            <span class="prism-legend-swatch" style="background: rgba(200,180,255,0.5); border: 1.5px solid rgba(200,160,255,0.6)"></span>
-            Weight &rarr; Edge
-          </div>
-          <div class="prism-legend-row">
-            <span class="prism-legend-swatch" style="background: linear-gradient(90deg, rgba(255,255,255,0.15) 30%, hsl(260,50%,60%) 100%)"></span>
-            Vowel &rarr; Saturation
-          </div>
-        </div>
-        <div class="prism-scroll-container" id="prismScrollContainer"></div>
-        <div class="prism-idle-prompt" id="prismIdlePrompt">Press Rec to start reading</div>
-        <div class="prism-keep-reading" id="prismKeepReading">Keep reading...</div>
-        <div class="prism-progress" id="prismProgress">
-          <div class="prism-progress-fill" id="prismProgressFill"></div>
-        </div>
-        <div class="prism-kbd-hints" id="prismKbdHints">
-          <div class="prism-kbd-hint"><span class="prism-kbd">Space</span> Advance syllable</div>
-          <div class="prism-kbd-hint"><span class="prism-kbd">Click</span> Tap to advance</div>
-        </div>
-        <div class="prism-completion" id="prismCompletion">
-          <div class="prism-completion-title">Reading Complete</div>
-          <div class="prism-completion-grid" id="prismCompletionGrid"></div>
-          <button class="btn btn-start prism-restart-btn" id="prismRestartBtn">Read Again</button>
-        </div>
-      </div>
-
-      <div class="creature-style-hud" id="creatureStyleHud">
-        <button class="style-pill selected" data-style="jellyfish" aria-label="Jellyfish style"
-          title="Jellyfish">🦑</button>
-        <button class="style-pill" data-style="phoenix" aria-label="Phoenix style" title="Phoenix">🔥</button>
-        <button class="style-pill" data-style="nebula" aria-label="Nebula style" title="Nebula">🌌</button>
-        <button class="style-pill" data-style="spirit" aria-label="Spirit style" title="Spirit">👻</button>
-        <button class="style-pill" data-style="koi" aria-label="Koi style" title="Koi">🐟</button>
-        <button class="style-pill" data-style="blob" aria-label="Classic Blob style" title="Classic Blob">🫧</button>
-      </div>
-
       <div class="overlay" id="welcomeOverlay">
-        <div class="overlay-title">Vox Arcade</div>
-        <div class="overlay-subtitle">Choose a training mode below, then press Start.</div>
+        <div class="overlay-title">Vox Ball</div>
+        <div class="overlay-subtitle">Speak to control the ball, then press Start.</div>
 
-        <div class="menu-split">
-          <!-- Left: game card list -->
-          <div class="menu-left">
-            <div class="mode-picker" id="modePicker">
-              <div class="mode-card" data-mode="ball">
-                <div class="mode-icon">⚽</div>
-                <div class="mode-name">Vox Ball</div>
-              </div>
-              <div class="mode-card" data-mode="pilot" style="display:none">
-                <div class="mode-icon">✨</div>
-                <div class="mode-name">Pitch Pilot</div>
-              </div>
-              <div class="mode-card" data-mode="road" style="display:none">
-                <div class="mode-icon">🏍️</div>
-                <div class="mode-name">Resonance Road</div>
-              </div>
-              <div class="mode-card" data-mode="ascent" style="display:none">
-                <div class="mode-icon">🎈</div>
-                <div class="mode-name">Spectral Ascent</div>
-              </div>
-              <div class="mode-card" data-mode="prism" style="display:none">
-                <div class="mode-icon">🔮</div>
-                <div class="mode-name">Prism Reader</div>
-              </div>
-              <div class="mode-card" data-mode="keyboard" style="display:none">
-                <div class="mode-icon">🎹</div>
-                <div class="mode-name">Vocal Keyboard</div>
-              </div>
-              <div class="mode-card" data-mode="vowelvalley" style="display:none">
-                <div class="mode-icon">⛰️</div>
-                <div class="mode-name">Vowel Valley</div>
-              </div>
-              <div class="mode-card" data-mode="creature" style="display:none">
-                <div class="mode-icon">🐉</div>
-                <div class="mode-name">Voice Creature</div>
-              </div>
-              <div class="mode-card" data-mode="garden" style="display:none">
-                <div class="mode-icon">🌱</div>
-                <div class="mode-name">Voice Garden</div>
-              </div>
-              <div class="mode-card" data-mode="canvas" style="display:none">
-                <div class="mode-icon">🎨</div>
-                <div class="mode-name">Voice Canvas</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Right: detail panel + play button -->
-          <div class="menu-right">
-            <div class="mode-details" id="modeDetails">
-              <div class="mode-details-empty">
-                <span style="font-size:1.5rem">🎮</span>
-                <span>Select a game mode to see how it works</span>
-              </div>
-
-              <div class="mode-detail-panel" id="ballDetails">
+        <div class="menu-right">
+          <div class="mode-detail-panel" id="ballDetails">
                 <div class="detail-header">
                   <div class="detail-title">⚽ Vox Ball</div>
                   <div class="detail-blurb">Control a bouncing ball with your voice. Pitch variance controls bounce height, vowels grow the ball and leave trails, and crisp consonants sparkle.</div>
@@ -5515,389 +4245,6 @@
                   <div class="rule-card rule-artic">
                     <div class="rule-name">③ Articulation</div>
                     <div class="rule-desc">Crisp consonants create sparkle effects. Pronounce clearly!</div>
-                  </div>
-                </div>
-              </div>
-              <div class="mode-detail-panel" id="creatureDetails">
-                <div class="detail-header">
-                  <div class="detail-title">🐉 Voice Creature</div>
-                  <div class="detail-blurb">Your voice becomes a living being. Resonance shapes its body, prosody
-                    transforms it.</div>
-                </div>
-                <div class="creature-style-picker" id="creatureStylePicker">
-                  <button class="style-pill selected" data-style="jellyfish">🦑 Jellyfish</button>
-                  <button class="style-pill" data-style="phoenix">🔥 Phoenix</button>
-                  <button class="style-pill" data-style="nebula">🌌 Nebula</button>
-                  <button class="style-pill" data-style="spirit">👻 Spirit</button>
-                  <button class="style-pill" data-style="koi">🐟 Koi</button>
-                  <button class="style-pill" data-style="blob">🫧 Classic</button>
-                </div>
-                <div class="rules-grid">
-                  <div class="rule-card rule-bounce">
-                    <div class="rule-name">Pitch → Float</div>
-                    <div class="rule-desc">Higher pitch lifts the creature. It floats when your voice rises.</div>
-                  </div>
-                  <div class="rule-card rule-tempo">
-                    <div class="rule-name">Resonance → Form</div>
-                    <div class="rule-desc">Resonance shapes its body — dark/compact to bright/tall. It IS your vocal
-                      tract.
-                    </div>
-                  </div>
-                  <div class="rule-card rule-vowel">
-                    <div class="rule-name">Vowels → Tendrils</div>
-                    <div class="rule-desc">Sustained sounds grow flowing tendrils. The longer you hold, the more they
-                      extend.</div>
-                  </div>
-                  <div class="rule-card rule-artic">
-                    <div class="rule-name">Articulation → Spark</div>
-                    <div class="rule-desc">Sharp consonants make the surface crackle with light. Be crisp!</div>
-                  </div>
-                  <div class="rule-card rule-syllable">
-                    <div class="rule-name">Prosody → Transform</div>
-                    <div class="rule-desc">Sustained expressiveness unlocks wings, glow, and luminous patterns.</div>
-                  </div>
-                </div>
-              </div>
-              <div class="mode-detail-panel" id="gardenDetails">
-                <div class="detail-header">
-                  <div class="detail-title">🌱 Voice Garden</div>
-                  <div class="detail-blurb">Grow a living ecosystem with your voice. Every session adds plants that
-                    accumulate.</div>
-                </div>
-                <div class="rules-grid">
-                  <div class="rule-card rule-bounce">
-                    <div class="rule-name">Pitch → Species</div>
-                    <div class="rule-desc">Low pitch grows mushrooms, mid grows flowers, high grows tall trees. Vary to
-                      diversify!</div>
-                  </div>
-                  <div class="rule-card rule-vowel">
-                    <div class="rule-name">Vowels → Sunlight</div>
-                    <div class="rule-desc">Sustained sounds are photosynthesis — they accelerate growth. Hold vowels to
-                      watch plants surge.</div>
-                  </div>
-                  <div class="rule-card rule-artic">
-                    <div class="rule-name">Articulation → Pollen</div>
-                    <div class="rule-desc">Crisp consonants scatter pollen and firefly particles through the garden.
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div class="mode-detail-panel" id="canvasDetails">
-                <div class="detail-header">
-                  <div class="detail-title">🎨 Voice Canvas</div>
-                  <div class="detail-blurb">Paint generative art with your voice. Each session creates a unique piece
-                    you can save.</div>
-                </div>
-                <div class="rules-grid">
-                  <div class="rule-card rule-bounce">
-                    <div class="rule-name">Pitch → Y Position</div>
-                    <div class="rule-desc">Your pitch paints vertically — low voice at the bottom, high voice sweeps to
-                      the
-                      top.</div>
-                  </div>
-                  <div class="rule-card rule-vowel">
-                    <div class="rule-name">Vowels → Curves</div>
-                    <div class="rule-desc">Sustained sounds create smooth flowing brushstrokes. Hold vowels for long,
-                      graceful lines.</div>
-                  </div>
-                  <div class="rule-card rule-artic">
-                    <div class="rule-name">Articulation → Texture</div>
-                    <div class="rule-desc">Sharp consonants <span id="mapSplatter" class="map-term">splatter</span>
-                      paint
-                      droplets and add texture to the canvas.</div>
-                  </div>
-                </div>
-              </div>
-              <div class="mode-detail-panel" id="keyboardDetails">
-                <div class="detail-header">
-                  <div class="detail-title">🎹 Vocal Keyboard</div>
-                  <div class="detail-blurb">A neon vocal synth keyboard for pitch exploration and target-note training.
-                  </div>
-                </div>
-                <div class="rules-grid">
-                  <div class="rule-card rule-bounce">
-                    <div class="rule-name">Mirror Mode</div>
-                    <div class="rule-desc">The keyboard reflects your voice in real time. Use it to explore your
-                      speaking
-                      and singing range.</div>
-                  </div>
-                  <div class="rule-card rule-tempo">
-                    <div class="rule-name">Target Practice</div>
-                    <div class="rule-desc">Hit and hold the highlighted key for 1 second to score and advance to a new
-                      note.
-                    </div>
-                  </div>
-                  <div class="rule-card rule-artic">
-                    <div class="rule-name">Pitch Plasma</div>
-                    <div class="rule-desc">The glowing plasma orb tracks micro-pitch continuously as your voice slides
-                      between notes.</div>
-                  </div>
-                  <div class="rule-card rule-syllable">
-                    <div class="rule-name">Neon Keyboard Range</div>
-                    <div class="rule-desc">Expanded key range from C2 to C6 with octave labels for orientation.</div>
-                  </div>
-                </div>
-              </div>
-              <div class="mode-detail-panel" id="pilotDetails">
-                <div class="detail-header">
-                  <div class="detail-title">✨ Pitch Pilot</div>
-                  <div class="detail-blurb">Navigate the resonance cavern with your voice, steering a luminous vocal
-                    spark through crystal barriers.</div>
-                </div>
-                <div class="rules-grid">
-                  <div class="rule-card rule-bounce">
-                    <div class="rule-name">Pitch → Altitude</div>
-                    <div class="rule-desc">The vocal spark maps to your absolute pitch, so stable notes hold altitude
-                      precisely.</div>
-                  </div>
-                  <div class="rule-card rule-tempo">
-                    <div class="rule-name">Quick Calibration</div>
-                    <div class="rule-desc">At run start, glide from low to high so the cavern adapts to your personal
-                      vocal
-                      range.</div>
-                  </div>
-                  <div class="rule-card rule-vowel">
-                    <div class="rule-name">Silence = Gravity</div>
-                    <div class="rule-desc">If you stop voicing, the spark slowly descends until you sing or speak again.
-                    </div>
-                  </div>
-                  <div class="rule-card rule-artic">
-                    <div class="rule-name">Discord Barriers</div>
-                    <div class="rule-desc">Crystal barriers leave glowing safe gaps with note-center guide lines for
-                      accuracy.</div>
-                  </div>
-                  <div class="rule-card rule-syllable">
-                    <div class="rule-name">Phase Progression</div>
-                    <div class="rule-desc">Warm-up starts wide and slow, then Steps and Slalom push interval jumps and
-                      smooth glides.</div>
-                  </div>
-                </div>
-              </div>
-              <div class="mode-detail-panel" id="roadDetails">
-                <div class="detail-header">
-                  <div class="detail-title">🏍️ Resonance Road</div>
-                  <div class="detail-blurb">Steer a sonic speeder with vocal timbre while reading a teleprompter. Stay
-                    on-tone or skid into the hazard lane.</div>
-                </div>
-                <div class="rules-grid">
-                  <div class="rule-card rule-bounce">
-                    <div class="rule-name">Target Resonance</div>
-                    <div class="rule-desc">Pick Bright or Dark posture. The road color palette flips to match your
-                      training
-                      goal.</div>
-                  </div>
-                  <div class="rule-card rule-tempo">
-                    <div class="rule-name">Voice = Engine</div>
-                    <div class="rule-desc">Speaking drives forward speed. Confidence increases pace and scoring
-                      potential.
-                    </div>
-                  </div>
-                  <div class="rule-card rule-vowel">
-                    <div class="rule-name">Timbre = Steering</div>
-                    <div class="rule-desc">Maintain target tone color to stay centered. Drift in timbre and the speeder
-                      veers off-road.</div>
-                  </div>
-                  <div class="rule-card rule-artic">
-                    <div class="rule-name">Hazard Feedback</div>
-                    <div class="rule-desc">Off-road creates messy hazard trails, speed drag, and multiplier loss.</div>
-                  </div>
-                  <div class="rule-card rule-syllable">
-                    <div class="rule-name">Session Replay</div>
-                    <div class="rule-desc">Your trail records control through the passage, making weak words easy to
-                      identify.</div>
-                  </div>
-                </div>
-                <div
-                  style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
-                  <label>Target Tone
-                    <div class="info-wrapper">
-                      <button class="info-trigger" aria-label="More Info">?</button>
-                      <div class="info-popup" style="display:none">Pick Bright or Dark posture. The road color palette flips to match your
-                        training goal.</div>
-                    </div>
-                    <select id="roadTargetSelect" class="theme-select" aria-label="Resonance Road target tone">
-                      <option value="bright">Target BRIGHT</option>
-                      <option value="dark">Target DARK</option>
-                    </select>
-                  </label>
-                  <label>Passage
-                    <select id="roadPassageSelect" class="theme-select" aria-label="Resonance Road passage">
-                      <option value="balcony">Romeo &amp; Juliet Balcony</option>
-                      <option value="news">Professional News Read</option>
-                      <option value="custom">Custom passage</option>
-                    </select>
-                  </label>
-                  <label style="grid-column:1 / -1;">Custom Text
-                    <textarea id="roadCustomText" class="theme-select" rows="3"
-                      placeholder="Paste your own script here. Used only when Passage = Custom."></textarea>
-                  </label>
-                </div>
-              </div>
-              <div class="mode-detail-panel" id="ascentDetails">
-                <div class="detail-header">
-                  <div class="detail-title">🎈 Spectral Ascent</div>
-                  <div class="detail-blurb">Vocal weight directly drives altitude. A live tilt gauge shows exactly how light or heavy your phonation is in real time.</div>
-                </div>
-                <div class="rules-grid">
-                  <div class="rule-card rule-bounce">
-                    <div class="rule-name">Spectral Weight → Altitude</div>
-                    <div class="rule-desc">Light/breathy phonation lifts the balloon, heavy/buzzy phonation sinks it
-                      with
-                      direct 1-to-1 mapping.</div>
-                  </div>
-                  <div class="rule-card rule-tempo">
-                    <div class="rule-name">Live Tilt Gauge</div>
-                    <div class="rule-desc">A vertical gauge shows MAX LIGHT, NEUTRAL, and MAX HEAVY with a tethered
-                      marker
-                      linked to the balloon.</div>
-                  </div>
-                  <div class="rule-card rule-vowel">
-                    <div class="rule-name">Single Vowel Constraint</div>
-                    <div class="rule-desc">Hold a neutral vowel ("Ah" or "Uh") and vary only vocal weight — isolating one variable gives the clearest feedback.</div>
-                  </div>
-                  <div class="rule-card rule-artic">
-                    <div class="rule-name">Spectral Gates</div>
-                    <div class="rule-desc">Fly through high, low, neutral, and staircase gate patterns to stress-test
-                      calibration, drift, and response speed.</div>
-                  </div>
-                  <div class="rule-card rule-syllable">
-                    <div class="rule-name">Post-Flight Diagnostics</div>
-                    <div class="rule-desc">Run reports Spectral Latency, Stability, and Dynamic Range so users can
-                      inspect
-                      algorithm behavior directly.</div>
-                  </div>
-                </div>
-              </div>
-              <div class="mode-detail-panel" id="prismDetails">
-                <div class="detail-header">
-                  <div class="detail-title">🔮 Prism Reader</div>
-                  <div class="detail-blurb">Read text aloud and watch each syllable crystallize with color, glow, and
-                    texture from your voice.</div>
-                </div>
-                <div class="rules-grid">
-                  <div class="rule-card rule-bounce">
-                    <div class="rule-name">Pitch → Hue</div>
-                    <div class="rule-desc">Low pitch crystallizes blue. High pitch crystallizes pink. Each syllable gets
-                      a
-                      permanent color from your voice.</div>
-                  </div>
-                  <div class="rule-card rule-tempo">
-                    <div class="rule-name">Resonance → Glow</div>
-                    <div class="rule-desc">Forward, bright resonance creates luminous text glow. Dark resonance stays
-                      flat
-                      and matte.</div>
-                  </div>
-                  <div class="rule-card rule-vowel">
-                    <div class="rule-name">Weight → Edge</div>
-                    <div class="rule-desc">Heavy vocal weight gives sharp, crisp text edges. Breathy voice creates soft,
-                      fuzzy syllable outlines.</div>
-                  </div>
-                  <div class="rule-card rule-artic">
-                    <div class="rule-name">Onset Stepping</div>
-                    <div class="rule-desc">Each syllable onset in your speech advances the reader. Speak naturally to
-                      progress through the text.</div>
-                  </div>
-                  <div class="rule-card rule-syllable">
-                    <div class="rule-name">Manual Mode</div>
-                    <div class="rule-desc">Press spacebar or tap to manually advance syllables. Use this if onset
-                      detection
-                      misaligns.</div>
-                  </div>
-                  <div class="rule-card rule-vowel">
-                    <div class="rule-name">Vowels → Saturation</div>
-                    <div class="rule-desc">Sustained vowel sounds increase color richness. Clipped or unstressed syllables appear more washed out.</div>
-                  </div>
-                </div>
-                <div class="prism-settings">
-                  <div class="prism-settings-row">
-                    <div class="prism-settings-field">
-                      <label class="prism-label" for="prismModeSelect">
-                        <span class="prism-label-icon">🎙️</span>Mode
-                        <div class="info-wrapper">
-                          <button class="info-trigger" aria-label="More Info">?</button>
-                          <div class="info-popup" style="display:none">'Real-Time' animates as you speak. 'Record & Process' analyzes a whole
-                            clip for higher accuracy playback.</div>
-                        </div>
-                      </label>
-                      <select id="prismModeSelect" class="theme-select prism-select"
-                        aria-label="Prism Reader process mode">
-                        <option value="realtime">Real-Time</option>
-                        <option value="record">Record & Process</option>
-                      </select>
-                    </div>
-                    <div class="prism-settings-field">
-                      <label class="prism-label" for="prismPacingSelect">
-                        <span class="prism-label-icon">⏱</span>Advance Mode
-                        <div class="info-wrapper">
-                          <button class="info-trigger" aria-label="More Info">?</button>
-                          <div class="info-popup" style="display:none">Choose how text advances. 'Auto' detects your speech rhythm. 'Manual'
-                            lets you control the pace with Spacebar or Taps.</div>
-                        </div>
-                      </label>
-                      <select id="prismPacingSelect" class="theme-select prism-select"
-                        aria-label="Prism Reader pacing mode">
-                        <option value="auto">Auto (Onset Detection)</option>
-                        <option value="manual">Manual (Spacebar / Tap)</option>
-                      </select>
-                    </div>
-                    <div class="prism-settings-field">
-                      <label class="prism-label" for="prismPassageSelect">
-                        <span class="prism-label-icon">📖</span>Passage
-                      </label>
-                      <select id="prismPassageSelect" class="theme-select prism-select"
-                        aria-label="Prism Reader passage">
-                        <option value="rainbow">Rainbow Passage</option>
-                        <option value="grandfather">Grandfather Passage</option>
-                        <option value="caterpillar">Caterpillar Passage</option>
-                        <option value="stella">Stella Passage</option>
-                        <option value="northwind">The North Wind & the Sun</option>
-                        <option value="custom">Custom Text</option>
-                        <option value="freestyle">Free Speech (Dictation)</option>
-                      </select>
-                      <div class="prism-passage-meta" id="prismPassageMeta"></div>
-                    </div>
-                  </div>
-                  <div class="prism-settings-field prism-settings-full">
-                    <label class="prism-label" for="prismCustomText">
-                      <span class="prism-label-icon">✏️</span>Custom Text
-                      <span class="prism-label-hint">Used only when Passage = Custom</span>
-                    </label>
-                    <textarea id="prismCustomText" class="theme-input prism-textarea"
-                      placeholder="Type or paste your custom reading passage here..."
-                      aria-label="Custom passage text"></textarea>
-                  </div>
-                </div>
-              </div>
-              <div class="mode-detail-panel" id="vowelvalleyDetails">
-                <div class="detail-header">
-                  <div class="detail-title">⛰️ Vowel Valley</div>
-                  <div class="detail-blurb">Navigate a 2D space using your vocal formants. Train precise vowel shaping
-                    by visiting target zones.</div>
-                </div>
-                <div class="rules-grid">
-                  <div class="rule-card rule-bounce">
-                    <div class="rule-name">F2 → Horizontal (Left/Right)</div>
-                    <div class="rule-desc">Front vs Back vowels. Making an "EE" sound moves you right, while "OO" moves
-                      you left.</div>
-                  </div>
-                  <div class="rule-card rule-tempo">
-                    <div class="rule-name">F1 → Vertical (Up/Down)</div>
-                    <div class="rule-desc">High vs Low vowels. Lowering your jaw ("AH") moves you down; raising it
-                      ("EE"/"OO") moves you up.</div>
-                  </div>
-                  <div class="rule-card rule-vowel">
-                    <div class="rule-name">Target Zones</div>
-                    <div class="rule-desc">Navigate to the "EE", "AH", and "OO" zones to score. Maintain the vowel to
-                      charge the zone.</div>
-                  </div>
-                  <div class="rule-card rule-artic">
-                    <div class="rule-name">Vocal Tract Feedback</div>
-                    <div class="rule-desc">The visual position reflects your actual vocal tract configuration in
-                      real-time.</div>
-                  </div>
-                  <div class="rule-card rule-syllable">
-                    <div class="rule-name">Flow Scoring</div>
-                    <div class="rule-desc">Smoothly transitioning between target vowels earns "Flow" bonuses.</div>
                   </div>
                 </div>
               </div>
@@ -5922,7 +4269,6 @@
               </div>
             </div>
             <div class="perf-panel" id="perfPanel"></div>
-          </div>
 
           <!-- Session summary overlay (shown on stop) -->
           <div class="summary-overlay" id="summaryOverlay">
@@ -5940,25 +4286,7 @@
             </div>
           </div>
 
-          <!-- Pitch Pilot range selection overlay -->
-          <div class="summary-overlay" id="pilotRangeOverlay">
-            <div class="summary-title" id="pilotRangeTitle">Pitch Pilot Range</div>
-            <div class="summary-duration" id="pilotRangeDesc">Choose a pitch range before starting:</div>
-            <div class="range-grid">
-              <button class="btn range-btn primary" data-type="auto">✨ Auto (Glide Calibration)</button>
-              <button class="btn range-btn" data-type="preset" data-low="82.41" data-high="246.94">Low / Bass
-                (E2–B3)</button>
-              <button class="btn range-btn" data-type="preset" data-low="110.0" data-high="349.23">Mid / Baritone–Alto
-                (A2–F4)</button>
-              <button class="btn range-btn" data-type="preset" data-low="164.81" data-high="523.25">High / Tenor–Soprano
-                (E3–C5)</button>
-              <button class="btn range-btn" id="pilotContinueBtn" style="display:none" data-type="same">Continue Same
-                Range</button>
-            </div>
-          </div>
-
         </div>
-      </div>
 
       <div class="tooltip" id="helpTooltip">
         <div class="help-tabs">
@@ -6053,30 +4381,6 @@
       </div>
     </div>
 
-    <div class="context-bar canvas-only" id="canvasContextBar">
-      <button class="context-toggle" id="contextToggleBtn" type="button" aria-expanded="false" aria-controls="contextControls">Canvas Controls</button>
-      <div class="context-controls" id="contextControls">
-      <select id="visualStyleSelect" class="theme-select canvas-only" aria-label="Visual style mode">
-        <option value="artistic">🖌️ Artistic</option>
-        <option value="analysis">📈 Analysis</option>
-      </select>
-      <select id="canvasModeSelect" class="theme-select canvas-only" aria-label="Canvas mode">
-        <option value="paint">Canvas Mode: Paint</option>
-        <option value="freepaint">Canvas Mode: Free Paint</option>
-        <option value="keyboard">Canvas Mode: Keyboard</option>
-      </select>
-      <select id="keyboardGameSelect" class="theme-select canvas-only" aria-label="Keyboard game mode">
-        <option value="mirror">Keyboard Game: Mirror Mode</option>
-        <option value="target">Keyboard Game: Target Practice</option>
-        <option value="hero">Keyboard Game: Vocal Hero</option>
-      </select>
-      <select id="pitchLabelsSelect" class="theme-select canvas-only" aria-label="Pitch guide labels">
-        <option value="off">Labels: Off</option>
-        <option value="hz" selected>Labels: Hz</option>
-        <option value="notes">Labels: Notes</option>
-      </select>
-      </div>
-    </div>
     <div class="meters-panel" id="metersPanel">
       <button class="meters-expand-toggle" id="metersExpandToggle" aria-label="Expand metrics" aria-expanded="false" aria-controls="metersExpanded">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
