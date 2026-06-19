@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ProsodyWear</string>
+    <string name="monitor_channel_name">Voice monitoring session</string>
+    <string name="monitor_notification_title">Voice monitor active</string>
+    <string name="monitor_notification_text">Listening for prosody feedback</string>
+</resources>
