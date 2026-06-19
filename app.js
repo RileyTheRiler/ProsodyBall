@@ -47,6 +47,12 @@ const ATTACK_ABRUPT_BLEND = 0.30;        // Blend weight for onset-abruptness vs
 const MAX_SPARKLES = 100;                // Maximum sparkle particles in ball mode
 const MAX_NEBULA_FLARES = 10;            // Maximum flare particles for nebula creature
 
+// ⚡ Bolt: Pre-calculate pitch guides to prevent GC spikes in hot per-frame render path
+const PITCH_GUIDES = [100, 150, 200, 250, 300].map((hz) => ({
+  hz,
+  norm: Math.max(0, Math.min(1, (hz - 80) / (300 - 80))),
+}));
+
 // ============================================================
 // VOICE ANALYZER
 // ============================================================
@@ -8650,11 +8656,10 @@ class VoxBallGame {
     ctx.font = '500 10px "Space Mono", monospace';
     ctx.fillStyle = this.pitchGridStrength === 'strong' ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.48)';
     ctx.textAlign = 'left';
-    const guides = [100, 150, 200, 250, 300].map((hz) => ({
-      hz,
-      norm: Math.max(0, Math.min(1, (hz - 80) / (300 - 80))),
-    }));
-    for (const guide of guides) {
+
+    // ⚡ Bolt: Prevent GC spikes by using pre-calculated guides and standard loop
+    for (let i = 0; i < PITCH_GUIDES.length; i++) {
+      const guide = PITCH_GUIDES[i];
       const gy = 40 + (1 - guide.norm) * (h - 80);
       ctx.beginPath();
       ctx.moveTo(margin + 5, gy);
