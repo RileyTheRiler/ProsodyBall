@@ -13011,3 +13011,8 @@ class VoxBallGame {
 
 // Initialize if in main UI, export for testing harness
 export const game = document.getElementById('app') ? new VoxBallGame() : null;
+
+// Expose the live instance for host integrations (e.g. the Wear OS watch
+// shell, which seeds vibration rules and reads alert state). Additive only —
+// has no effect on the standalone web app.
+if (typeof window !== 'undefined' && game) window.voxGame = game;
