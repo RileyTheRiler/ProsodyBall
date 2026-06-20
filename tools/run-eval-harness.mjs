@@ -1,7 +1,59 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import wav from 'node-wav';
+
+// Minimal WAV decoder (replaces the deprecated node-wav dep). Handles PCM
+// integer (8/16/24/32-bit) and IEEE float32, returning channel 0 as Float32.
+function decodeWav(buffer) {
+  if (buffer.toString('ascii', 0, 4) !== 'RIFF' || buffer.toString('ascii', 8, 12) !== 'WAVE') {
+    return null;
+  }
+  let fmt = null;
+  let dataOffset = -1;
+  let dataSize = 0;
+  let o = 12;
+  while (o + 8 <= buffer.length) {
+    const id = buffer.toString('ascii', o, o + 4);
+    const size = buffer.readUInt32LE(o + 4);
+    if (id === 'fmt ') {
+      fmt = {
+        audioFormat: buffer.readUInt16LE(o + 8),
+        channels: buffer.readUInt16LE(o + 10),
+        sampleRate: buffer.readUInt32LE(o + 12),
+        bitsPerSample: buffer.readUInt16LE(o + 22)
+      };
+    } else if (id === 'data') {
+      dataOffset = o + 8;
+      dataSize = size;
+      break;
+    }
+    o += 8 + size + (size & 1); // chunks are word-aligned
+  }
+  if (!fmt || dataOffset < 0) return null;
+
+  const { audioFormat, channels, bitsPerSample } = fmt;
+  const bytesPerSample = bitsPerSample / 8;
+  const frameCount = Math.floor(dataSize / (bytesPerSample * channels));
+  const ch0 = new Float32Array(frameCount);
+  const stride = bytesPerSample * channels;
+
+  for (let i = 0; i < frameCount; i++) {
+    const p = dataOffset + i * stride; // channel 0 sample
+    if (audioFormat === 3) {
+      ch0[i] = bitsPerSample === 64 ? buffer.readDoubleLE(p) : buffer.readFloatLE(p);
+    } else if (bitsPerSample === 16) {
+      ch0[i] = buffer.readInt16LE(p) / 32768;
+    } else if (bitsPerSample === 8) {
+      ch0[i] = (buffer.readUInt8(p) - 128) / 128;
+    } else if (bitsPerSample === 24) {
+      const v = buffer.readUIntLE(p, 3);
+      ch0[i] = (v >= 0x800000 ? v - 0x1000000 : v) / 0x800000;
+    } else if (bitsPerSample === 32) {
+      ch0[i] = buffer.readInt32LE(p) / 2147483648;
+    }
+  }
+  return { sampleRate: fmt.sampleRate, channelData: [ch0] };
+}
 
 class MockAudioContext {
   constructor() {
@@ -52,7 +104,7 @@ async function runEval() {
   }
 
   const buffer = fs.readFileSync(wavPath);
-  const result = wav.decode(buffer);
+  const result = decodeWav(buffer);
   
   if (!result || !result.channelData || !result.channelData[0]) {
     console.error('Failed to decode WAV file');
@@ -63,7 +115,8 @@ async function runEval() {
   const sampleRate = result.sampleRate;
   console.log(`Loaded ${wavPath} (${audioData.length} samples at ${sampleRate}Hz)`);
 
-  const { VoiceAnalyzer } = await import('../app.js');
+  // Import the analyzer core directly — no need to load the game/UI in app.js.
+  const { VoiceAnalyzer } = await import('../voice-analyzer.js');
   const analyzer = new VoiceAnalyzer();
   await analyzer.start(null, { deviceId: 'mock' });
   analyzer.audioCtx.sampleRate = sampleRate;

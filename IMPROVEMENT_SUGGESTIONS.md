@@ -50,9 +50,13 @@ This is a practical backlog focused on three goals: **better UX**, **more reliab
    - Examples: "Presentation", "Storytelling", "Call-center clarity".
    - Each preset can tune rule weights and feedback language.
 
-3. **Reduce maintenance risk from dual app entrypoints.**
-   - There is a compatibility shim at `js/app.js` that also contains duplicated app logic.
-   - Consolidate to a single source of truth to avoid divergence bugs.
+3. **Continue de-risking the large `app.js` entrypoint.**
+   - The `VoiceAnalyzer` DSP core has been extracted to `voice-analyzer.js` (now headlessly
+     testable via `voice-analyzer.test.mjs`). The remaining `app.js` still bundles the game
+     engine, UI/DOM wiring, and controller glue.
+   - Some game code relies on the browser's implicit named-element globals (e.g. `recBtn` from
+     `id="recBtn"`) instead of explicit `getElementById` lookups — a fragile pattern worth
+     cleaning up as those areas are touched.
 
 4. **Instrument privacy-safe analytics for UX funnels.**
    - Track only event counts (e.g., calibration started/completed, average session length).
