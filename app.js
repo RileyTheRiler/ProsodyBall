@@ -6,6 +6,7 @@ import { NecklaceController, HapticSrc } from './necklace-controller.js';
 import { VoiceAnalyzer, H1H2_HEAVY_DB, H1H2_LIGHT_DB } from "./voice-analyzer.js";
 import { Particle } from "./particle.js";
 import { Teleprompter } from "./teleprompter.js";
+import { VibrationAlerts } from "./vibration-alerts.js";
 
 // Re-export so existing importers of VoiceAnalyzer from app.js keep working.
 export { VoiceAnalyzer };
@@ -122,16 +123,7 @@ class VoxBallGame {
     this.stars = [];
 
     // ====== VIBRATION ALERT STATE ======
-    this.vibration = {
-      enabled: false,
-      rules: [],
-      nextId: 1,
-      shakeTimer: 0,
-      hasHaptic: typeof navigator !== 'undefined' && 'vibrate' in navigator,
-      globalCooldown: 0,
-      flashAlpha: 0,       // on-canvas alert flash opacity
-      flashMetric: '',     // which metric tripped (for display)
-    };
+    this.vibration = new VibrationAlerts();
 
     // ====== SESSION STATS ======
     this.session = {
@@ -2420,7 +2412,10 @@ class VoxBallGame {
     };
 
     document.getElementById('vibTestBtn').addEventListener('click', () => {
-      this._triggerVibration('Test');
+      this.vibration.trigger('Test', {
+        gameArea: this._gameArea,
+        reducedMotion: this.reducedMotion,
+      });
     });
 
     // Preset configurations
@@ -2779,7 +2774,15 @@ class VoxBallGame {
     this.updateMeters();
     this._updateExpandedMetrics();
     this.teleprompter.render(dt, this.isRunning);
-    this.checkVibrationAlerts(dt);
+    this.vibration.check(dt, {
+      metrics: this.analyzer.metrics,
+      pitchHz: this.analyzer.smoothPitchHz,
+      resonance: this.analyzer.smoothResonance,
+      syllableSpeedFactor: this.syllableSpeedFactor || 0,
+      gameArea: this._gameArea,
+      reducedMotion: this.reducedMotion,
+      onLiveUpdate: this._updateVibLiveUI,
+    });
     this.perfMonitor.render(`Particles: ${this.particles.length} · Trail: ${this.trailPoints.length}`);
 
     // ---- Session stats accumulation ----
@@ -3558,116 +3561,6 @@ class VoxBallGame {
     }
     this.metricExtremeLatch[metric] = isExtreme;
   }
-  // ============================================================
-  // VIBRATION ALERT ENGINE
-  // ============================================================
-  checkVibrationAlerts(dt) {
-    const vib = this.vibration;
-
-    // Decay flash alpha always (even when disabled, to fade out)
-    vib.flashAlpha = Math.max(0, vib.flashAlpha - dt * 3);
-
-    if (!vib.enabled || vib.rules.length === 0) return;
-
-    vib.globalCooldown = Math.max(0, vib.globalCooldown - dt);
-
-    if (vib.shakeTimer > 0) {
-      vib.shakeTimer -= dt;
-      if (vib.shakeTimer <= 0 && this._gameArea) {
-        this._gameArea.classList.remove('vib-shake');
-      }
-    }
-
-    const m = this.analyzer.metrics;
-    const hz = this.analyzer.smoothPitchHz;
-    const isSpeaking = m.energy > 0.05;
-    let anyTrippedNow = false;
-    let needsRender = false;
-    let trippedLabel = '';
-
-    for (const rule of vib.rules) {
-      if (!rule.enabled) {
-        if (rule.tripped) { rule.tripped = false; needsRender = true; }
-        continue;
-      }
-
-      rule.cooldownTimer = Math.max(0, rule.cooldownTimer - dt);
-
-      let currentVal;
-      switch (rule.metric) {
-        case 'pitch': currentVal = hz; break;
-        case 'resonance': currentVal = this.analyzer.smoothResonance * 100; break;
-        case 'energy': currentVal = m.energy * 100; break;
-        case 'bounce': currentVal = m.bounce * 100; break;
-        case 'tempo': currentVal = (this.syllableSpeedFactor || 0) * 100; break;
-        case 'vowel': currentVal = m.vowel * 100; break;
-        case 'articulation': currentVal = m.articulation * 100; break;
-        default: currentVal = 0;
-      }
-
-      let conditionMet = false;
-      if (isSpeaking) {
-        conditionMet = rule.direction === 'below'
-          ? currentVal < rule.threshold
-          : currentVal > rule.threshold;
-      }
-
-      const wasTripped = rule.tripped;
-      rule.tripped = conditionMet;
-      if (wasTripped !== conditionMet) needsRender = true;
-
-      if (conditionMet) {
-        anyTrippedNow = true;
-        const metricLabels = {
-          pitch: 'Pitch', resonance: 'Resonance', energy: 'Energy',
-          bounce: 'Pitch Var.', tempo: 'Tempo', vowel: 'Vowels', articulation: 'Articulation'
-        };
-        trippedLabel = metricLabels[rule.metric] || rule.metric;
-
-        if (rule.cooldownTimer <= 0 && vib.globalCooldown <= 0) {
-          this._triggerVibration(trippedLabel);
-          rule.cooldownTimer = 0.5;
-          vib.globalCooldown = 0.25;
-        }
-      }
-    }
-
-    // Update live values when vib panel is visible (throttled to ~10fps)
-    if (this._updateVibLiveUI) {
-      vib._liveUpdateTimer = (vib._liveUpdateTimer || 0) + dt;
-      if (vib._liveUpdateTimer > 0.1) {
-        vib._liveUpdateTimer = 0;
-        const vibPanelEl = document.getElementById('vibPanel');
-        if (vibPanelEl && vibPanelEl.classList.contains('show')) {
-          this._updateVibLiveUI();
-        } else if (needsRender) {
-          // Even if panel closed, update tripped state for next open
-          this._updateVibLiveUI();
-        }
-      }
-    }
-  }
-
-  _triggerVibration(metricLabel) {
-    const vib = this.vibration;
-
-    if (vib.hasHaptic) {
-      try { navigator.vibrate([40, 30, 40]); } catch (e) { }
-    }
-
-    // Screen shake (skip if reduced motion)
-    if (this._gameArea && !this.reducedMotion) {
-      this._gameArea.classList.remove('vib-shake');
-      void this._gameArea.offsetWidth;
-      this._gameArea.classList.add('vib-shake');
-      vib.shakeTimer = 0.15;
-    }
-
-    // On-canvas flash (always show — it's a brief opacity change, not motion)
-    vib.flashAlpha = 1;
-    vib.flashMetric = metricLabel || '';
-  }
-
   // ============================================================
   // SESSION SUMMARY
   // ============================================================
