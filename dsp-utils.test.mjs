@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError } from './dsp-utils.js';
+import { computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError, sanitizeUrl } from './dsp-utils.js';
 
 test('computeRawProsody applies weighted sum', () => {
   const metrics = { bounce: 1, vowel: 0.5, articulation: 0.5 };
@@ -56,4 +56,38 @@ test('correctOctaveError ignores a clearly shallower longer-period dip', () => {
 test('correctOctaveError is safe on invalid input', () => {
   assert.equal(correctOctaveError(null, 50, { maxPeriod: 100 }), 50);
   assert.equal(correctOctaveError(makeCmnd(10, {}), 0, { maxPeriod: 5 }), 0);
+});
+
+// ---------- sanitizeUrl ----------
+
+test('sanitizeUrl handles missing or empty inputs', () => {
+  assert.equal(sanitizeUrl(null), 'about:blank');
+  assert.equal(sanitizeUrl(undefined), 'about:blank');
+  assert.equal(sanitizeUrl(''), 'about:blank');
+});
+
+test('sanitizeUrl allows safe protocols', () => {
+  assert.equal(sanitizeUrl('http://example.com'), 'http://example.com');
+  assert.equal(sanitizeUrl('https://example.com'), 'https://example.com');
+  assert.equal(sanitizeUrl('mailto:test@example.com'), 'mailto:test@example.com');
+  assert.equal(sanitizeUrl('blob:http://localhost/1234'), 'blob:http://localhost/1234');
+});
+
+test('sanitizeUrl blocks dangerous protocols', () => {
+  assert.equal(sanitizeUrl('javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('JAVASCRIPT:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('data:text/html,<script>alert(1)</script>'), 'about:blank');
+  assert.equal(sanitizeUrl('vbscript:msgbox("test")'), 'about:blank');
+});
+
+test('sanitizeUrl blocks dangerous protocols with leading spaces or encoding', () => {
+  assert.equal(sanitizeUrl('  javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('%20javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl(' %20 javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('\tjavascript:alert(1)'), 'about:blank');
+});
+
+test('sanitizeUrl does not block safe urls containing dangerous keywords', () => {
+  assert.equal(sanitizeUrl('https://example.com/?q=javascript:alert(1)'), 'https://example.com/?q=javascript:alert(1)');
+  assert.equal(sanitizeUrl('http://javascript.com'), 'http://javascript.com');
 });

@@ -88,6 +88,17 @@ export function clamp01(v) {
   return Math.max(0, Math.min(1, v));
 }
 
+// Sanitizes a URL to prevent DOM-based XSS via dangerous protocols.
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  const urlStr = String(url);
+  // Match dangerous protocols, ignoring leading spaces or URL-encoded spaces.
+  if (/^(%20|\s)*(javascript|data|vbscript):/i.test(urlStr)) {
+    return 'about:blank';
+  }
+  return urlStr;
+}
+
 export function normalizeAgainstRange(value, min, max) {
   const denom = Math.max(1e-6, max - min);
   return clamp01((value - min) / denom);
