@@ -14,7 +14,6 @@ node_modules/
 temp_*.js
 verify_*.png
 old_analyzer.js
-voice-analyzer.js
 voice-analyzer-core.js
 voice-analyzer-engine.js
 voice-analyzer-state.js

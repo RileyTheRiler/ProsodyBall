@@ -19,9 +19,6 @@ class MockEl {
     this.nodeType = 1;
     this.children = [];
   }
-  appendChild(child) {
-    this.children.push(child);
-  }
   getContext() {
     return {
       clearRect: () => {},

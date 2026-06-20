@@ -5,9 +5,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Vox Ball — Voice Training Game</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Space+Mono:wght@400;700&display=swap">
+  <!-- Inline-safe SVG favicon (no external requests); avoids the /favicon.ico 404. -->
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <!-- Fonts are self-hosted (no third-party requests) so the app stays private and offline-capable. -->
+  <link rel="stylesheet" href="fonts/fonts.css">
   <style>
     /* Critical resets: ensure hidden-by-default elements stay hidden until JS toggles them */
     .settings-panel,
@@ -1228,6 +1229,12 @@
     .res-method-select:focus {
       border-color: rgba(192, 132, 252, 0.5);
     }
+
+    /* Diagnostic-only controls (e.g. the A/B/C/D formant-method picker). The
+       analyzer defaults to the empirically-best method (LPC); this picker is a
+       research affordance, hidden unless the page is opened with ?dev=1. */
+    .res-method-select.dev-only { display: none; }
+    body.dev-mode .res-method-select.dev-only { display: inline-block; }
 
     .res-method-select option {
       background: var(--bg-surface);
@@ -4413,10 +4420,10 @@
             <div class="info-popup">Your vocal tone quality. High resonance sounds 'forward' or 'bright'; low resonance
               sounds 'deep' or 'hollow'.</div>
           </div>
-          <select id="resMethodSelect" class="res-method-select" aria-label="Resonance method">
+          <select id="resMethodSelect" class="res-method-select dev-only" aria-label="Resonance method (diagnostic)">
+            <option value="lpc" selected>C: LPC</option>
             <option value="harmonic">A: Harmonic Env</option>
             <option value="cepstral">B: Cepstral</option>
-            <option value="lpc">C: LPC</option>
             <option value="centroid">D: Centroid</option>
           </select>
         </div>

@@ -8,21 +8,25 @@
     "start": "npx serve .",
     "hue": "node hue-bridge.mjs",
     "test:audio-fixtures": "node tools/eval-audio-fixtures.mjs",
+    "eval:formants": "node tools/eval-formant-methods.mjs",
     "test:all": "npm run lint && npm run test:unit && npm run test:audio-fixtures",
     "test:unit": "node --test *.test.mjs",
     "test:browser-smoke": "node tools/browser-smoke.mjs",
+    "test:onset-worklet": "node tools/onset-worklet-smoke.mjs",
+    "test:game-loop": "node tools/game-loop-smoke.mjs",
     "test:browser-matrix": "npm run test:browser-smoke && BROWSER=firefox npm run test:browser-smoke",
-    "lint": "node --check app.js && node --check calibration-wizard.js && node --check bulb-controller.js && node --check necklace-controller.js && node --check hue-bridge.mjs && node --check tools/browser-smoke.mjs",
+    "syntax-check": "node --check app.js && node --check voice-analyzer.js && node --check dsp-utils.js && node --check calibration-wizard.js && node --check bulb-controller.js && node --check necklace-controller.js && node --check performance-monitor.js && node --check particle.js && node --check teleprompter.js && node --check vibration-alerts.js && node --check recording-system.js && node --check metrics-hud.js && node --check game-renderer.js && node --check audio/onset-worklet.js && node --check hue-bridge.mjs && node --check tools/browser-smoke.mjs",
+    "lint": "npm run syntax-check && eslint .",
+    "format": "prettier --check .",
+    "format:write": "prettier --write .",
     "typecheck": "npm run lint"
   },
   "devDependencies": {
-    "node-wav": "^0.0.2",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.4",
     "puppeteer": "^24.40.0",
     "serve": "^14.2.0"
-  },
-  "pnpm": {
-    "ignoredBuiltDependencies": [
-      "puppeteer"
-    ]
   }
 }
