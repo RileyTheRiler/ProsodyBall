@@ -4,6 +4,7 @@ import { CalibrationWizard } from './calibration-wizard.js';
 import { BulbController } from './bulb-controller.js';
 import { NecklaceController, HapticSrc } from './necklace-controller.js';
 import { VoiceAnalyzer, H1H2_HEAVY_DB, H1H2_LIGHT_DB } from "./voice-analyzer.js";
+import { Particle } from "./particle.js";
 
 // Re-export so existing importers of VoiceAnalyzer from app.js keep working.
 export { VoiceAnalyzer };
@@ -20,33 +21,6 @@ function escapeHtml(text) {
 
 // Rendering constant (game-side; not part of the DSP pipeline).
 const MAX_SPARKLES = 100;                // Maximum sparkle particles in ball mode
-
-
-// ============================================================
-// PARTICLE — uses RGB for proper alpha rendering
-// ============================================================
-class Particle {
-  constructor(x, y, r, g, b, vx, vy, life, size) {
-    this.x = x; this.y = y;
-    this.r = r; this.g = g; this.b = b;
-    this.vx = vx; this.vy = vy;
-    this.life = life; this.maxLife = life;
-    this.size = size;
-  }
-  update(dt) {
-    this.x += this.vx * dt;
-    this.y += this.vy * dt;
-    this.vy += 120 * dt;
-    this.life -= dt;
-  }
-  draw(ctx) {
-    const alpha = Math.max(0, this.life / this.maxLife) * 0.8;
-    ctx.fillStyle = `rgba(${this.r},${this.g},${this.b},${alpha})`;
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, this.size * (this.life / this.maxLife), 0, Math.PI * 2);
-    ctx.fill();
-  }
-}
 
 // ============================================================
 // MAIN GAME
