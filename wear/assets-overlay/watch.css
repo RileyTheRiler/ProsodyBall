@@ -68,7 +68,7 @@
   text-align: center;
   background: radial-gradient(circle at 50% 42%, #1b1430 0%, #0a0a12 70%);
   color: #eceaf4;
-  font-family: 'Outfit', system-ui, sans-serif;
+  font-family: Outfit, system-ui, sans-serif;
   -webkit-tap-highlight-color: transparent;
   cursor: pointer;
   padding: 14vw;
@@ -77,6 +77,158 @@
 
 .watch-start.hide {
   display: none;
+}
+
+/* ----- Launch chooser buttons (Vox Ball / Necklace) ----- */
+.watch-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  width: 64vw;
+  max-width: 240px;
+  padding: 12px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: #eceaf4;
+  font-family: Outfit, system-ui, sans-serif;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.watch-choice:active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.watch-choice__icon {
+  font-size: 1.4rem;
+  line-height: 1.1;
+  color: #ff8e53;
+}
+
+.watch-choice__label {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.watch-choice__sub {
+  font-size: 0.72rem;
+  color: rgba(200, 200, 220, 0.6);
+}
+
+/* =====================================================================
+   NECKLACE MODE — eyes-free, worn against the chest. Pure black (OLED
+   pixels off = minimal power), feedback is haptic. Big tap target.
+   ===================================================================== */
+:root.necklace-active body {
+  background: #000;
+}
+
+/* Hide the whole web app UI (incl. the rendered ball canvas) behind the
+   necklace screen — analysis still runs; we just don't paint anything. */
+:root.necklace-active #app {
+  visibility: hidden;
+}
+
+.necklace-ui {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: #000;
+  color: #d8d8e0;
+  font-family: Outfit, system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Big circular mic toggle — easy to find and press by feel. */
+.necklace-toggle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 58vw;
+  height: 58vw;
+  max-width: 240px;
+  max-height: 240px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  background: radial-gradient(circle at 50% 45%, #14141f 0%, #000 75%);
+  color: inherit;
+  cursor: pointer;
+}
+
+.necklace-toggle:active {
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.necklace-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #555;                       /* idle / mic off */
+  transition: background 0.15s, box-shadow 0.15s;
+}
+
+.necklace-dot.on {                         /* listening, in range */
+  background: #6bcb77;
+  box-shadow: 0 0 16px rgba(107, 203, 119, 0.7);
+}
+
+.necklace-dot.alert {                      /* out of range — buzzing */
+  background: #ffa03c;
+  box-shadow: 0 0 18px rgba(255, 160, 60, 0.8);
+}
+
+.necklace-toggle__label {
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.necklace-exit {
+  position: fixed;
+  top: 6%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 40px;
+  height: 26px;
+  border-radius: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.necklace-alerts {
+  position: fixed;
+  bottom: 7%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 7px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(220, 220, 235, 0.75);
+  font-family: Outfit, system-ui, sans-serif;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+/* The vibration-rules panel must float above the necklace screen when opened.
+   #app is visibility:hidden in necklace mode and the panel lives inside it, so
+   explicitly make the panel (and its contents) visible again. */
+:root.necklace-active .vib-panel {
+  visibility: visible;
+  z-index: 10001;
 }
 
 .watch-start__ball {
