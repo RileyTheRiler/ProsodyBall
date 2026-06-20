@@ -1,18 +1,15 @@
 package com.voxarcade.wear
 
 import android.Manifest
+import android.content.ComponentName
 import android.content.Context
-import android.content.SharedPreferences
+import android.content.Intent
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
-import android.os.SystemClock
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
-import android.os.Handler
-import android.os.Looper
+import android.os.IBinder
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
@@ -23,227 +20,177 @@ import androidx.core.content.ContextCompat
 import kotlin.math.roundToInt
 
 /**
- * Native eyes-free "necklace" voice-feedback app for the Galaxy Watch 7 (which
- * has no WebView). Wear the watch on a lanyard near your mouth: tap to start
- * listening, and it buzzes when your pitch (or brightness/resonance) drifts out
- * of your target range. All analysis is on-device ([VoiceAnalyzer]); the mic is
- * off until you start it and is released when you stop it.
+ * Thin eyes-free UI for the Galaxy Watch 7 necklace trainer. The actual mic
+ * capture, analysis, alert vibration, and calibration live in [NecklaceService]
+ * (a foreground service) so they keep running with the screen off. This activity
+ * just binds to the service to render live state and forward button taps.
  */
-class MainActivity : ComponentActivity() {
-
-    private val analyzer = VoiceAnalyzer()
-    private val main = Handler(Looper.getMainLooper())
-    private lateinit var prefs: SharedPreferences
+class MainActivity : ComponentActivity(), NecklaceService.Listener {
 
     private lateinit var dot: View
     private lateinit var label: TextView
     private lateinit var pitchText: TextView
     private lateinit var brightText: TextView
     private lateinit var rangeText: TextView
-    private lateinit var calibrateBtn: Button
 
-    private var listening = false
+    private var service: NecklaceService? = null
+    private var bound = false
+    private var pendingCalibrate = false
 
-    // Alert config (persisted).
-    private var pitchLo = 150f
-    private var pitchHi = 250f
-    private var resLo = 0f
-    private var resHi = 0f
-    private var resEnabled = false
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            val svc = (binder as NecklaceService.LocalBinder).service()
+            service = svc
+            bound = true
+            svc.updateConfig(ConfigStore.load(this@MainActivity)) // pick up any settings changes
+            svc.setListener(this@MainActivity)
+        }
 
-    // Alert cooldowns (ms, monotonic clock).
-    private var lastBuzz = 0L
-
-    // Calibration state.
-    private var calibrating = false
-    private val calPitch = ArrayList<Float>()
-    private val calBright = ArrayList<Float>()
-
-    private val vibrator: Vibrator? by lazy {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        override fun onServiceDisconnected(name: ComponentName?) {
+            service = null
+            bound = false
         }
     }
 
     private val requestMic =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) startListening() else label.text = "Mic permission needed"
+            if (granted) sendStart() else label.text = "Mic permission needed"
         }
+
+    private val requestNotif =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* best effort */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_main)
-        setLowBrightness(true) // worn under a collar — keep it dim
-
-        prefs = getSharedPreferences("necklace", Context.MODE_PRIVATE)
-        loadConfig()
+        setLowBrightness(true)
 
         dot = findViewById(R.id.dot)
         label = findViewById(R.id.label)
         pitchText = findViewById(R.id.pitch)
         brightText = findViewById(R.id.bright)
         rangeText = findViewById(R.id.range)
-        calibrateBtn = findViewById(R.id.calibrate)
 
-        findViewById<View>(R.id.toggle).setOnClickListener { toggleListening() }
-        calibrateBtn.setOnClickListener { startCalibration() }
+        findViewById<View>(R.id.toggle).setOnClickListener { toggle() }
+        findViewById<Button>(R.id.calibrate).setOnClickListener { calibrate() }
+        findViewById<Button>(R.id.settings).setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
 
-        renderRange()
+        renderConfig(ConfigStore.load(this))
         setDot(COLOR_OFF)
+        maybeRequestNotifications()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // BIND_AUTO_CREATE makes the service object available (loads config) without
+        // starting the mic; the mic only runs once we send ACTION_START.
+        bindService(Intent(this, NecklaceService::class.java), connection, Context.BIND_AUTO_CREATE)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        service?.updateConfig(ConfigStore.load(this))
     }
 
     override fun onStop() {
         super.onStop()
-        if (listening) stopListening() // release the mic if the watch is put away
+        if (bound) {
+            service?.setListener(null)
+            unbindService(connection)
+            bound = false
+            service = null
+        }
     }
 
-    // ---- listening ----------------------------------------------------------
+    // ---- actions ------------------------------------------------------------
 
-    private fun toggleListening() {
-        if (listening) {
-            stopListening()
-        } else if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+    private fun toggle() {
+        if (service?.currentMode() == NecklaceService.Mode.OFF || service == null) {
+            startWithPermission()
+        } else {
+            sendStop()
+        }
+    }
+
+    private fun calibrate() {
+        val mode = service?.currentMode()
+        if (mode == NecklaceService.Mode.LISTENING) {
+            service?.startCalibration()
+        } else {
+            pendingCalibrate = true
+            startWithPermission()
+        }
+    }
+
+    private fun startWithPermission() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             == PackageManager.PERMISSION_GRANTED
         ) {
-            startListening()
+            sendStart()
         } else {
             requestMic.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
 
-    private fun startListening() {
-        val ok = analyzer.start { onResult(it) }
-        if (!ok) {
-            label.text = "Mic unavailable"
-            return
-        }
-        listening = true
-        label.text = "Listening"
-        buzz(longArrayOf(0, 90))          // one pulse = on
-        setDot(COLOR_OK)
+    private fun sendStart() {
+        val intent = Intent(this, NecklaceService::class.java).setAction(NecklaceService.ACTION_START)
+        ContextCompat.startForegroundService(this, intent)
     }
 
-    private fun stopListening() {
-        analyzer.stop()
-        listening = false
-        calibrating = false
-        label.text = "Tap to listen"
-        pitchText.text = "—"
-        brightText.text = ""
-        buzz(longArrayOf(0, 55, 45, 55))  // two pulses = off
-        setDot(COLOR_OFF)
+    private fun sendStop() {
+        startService(Intent(this, NecklaceService::class.java).setAction(NecklaceService.ACTION_STOP))
     }
 
-    private fun onResult(r: VoiceAnalyzer.Result) {
-        if (!listening) return
+    // ---- service callbacks (already on the main thread) ---------------------
 
-        pitchText.text = if (r.pitchHz > 0f) "${r.pitchHz.roundToInt()} Hz" else "—"
-        brightText.text = if (resEnabled && r.resonanceHz > 0f) "${r.resonanceHz.roundToInt()} res" else ""
-
-        if (calibrating) {
-            if (r.voiced && r.pitchHz > 0f) {
-                calPitch.add(r.pitchHz)
-                calBright.add(r.resonanceHz)
+    override fun onUpdate(
+        pitchHz: Float,
+        resonanceHz: Float,
+        voiced: Boolean,
+        tripped: Boolean,
+        mode: NecklaceService.Mode,
+    ) {
+        when (mode) {
+            NecklaceService.Mode.OFF -> {
+                label.text = "Tap to listen"
+                pitchText.text = "—"
+                brightText.text = ""
+                setDot(COLOR_OFF)
             }
-            return
-        }
-
-        val pitchOut = r.voiced && (r.pitchHz < pitchLo || r.pitchHz > pitchHi)
-        val resOut = r.voiced && resEnabled &&
-            (r.resonanceHz < resLo || r.resonanceHz > resHi)
-        val tripped = pitchOut || resOut
-
-        when {
-            !r.voiced -> setDot(COLOR_OK_DIM)
-            tripped -> setDot(COLOR_ALERT)
-            else -> setDot(COLOR_OK)
-        }
-
-        if (tripped) {
-            val now = SystemClock.elapsedRealtime()
-            if (now - lastBuzz >= ALERT_COOLDOWN_MS) {
-                buzz(longArrayOf(0, 45, 30, 45))
-                lastBuzz = now
+            NecklaceService.Mode.CALIBRATING -> {
+                label.text = "Speak now…"
+                pitchText.text = if (pitchHz > 0f) "${pitchHz.roundToInt()} Hz" else "—"
+                setDot(COLOR_CAL)
+            }
+            NecklaceService.Mode.LISTENING -> {
+                if (pendingCalibrate) {
+                    pendingCalibrate = false
+                    service?.startCalibration()
+                    return
+                }
+                label.text = if (tripped) "Adjust voice" else "Listening"
+                pitchText.text = if (pitchHz > 0f) "${pitchHz.roundToInt()} Hz" else "—"
+                val cfg = service?.currentConfig()
+                brightText.text =
+                    if (cfg?.resEnabled == true && resonanceHz > 0f) "${resonanceHz.roundToInt()} res" else ""
+                setDot(if (!voiced) COLOR_OK_DIM else if (tripped) COLOR_ALERT else COLOR_OK)
             }
         }
     }
 
-    // ---- calibration --------------------------------------------------------
-
-    /** Speak in your target voice for a few seconds; ranges set to median ± tol. */
-    private fun startCalibration() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestMic.launch(Manifest.permission.RECORD_AUDIO)
-            return
-        }
-        if (!listening) startListening()
-        calibrating = true
-        calPitch.clear()
-        calBright.clear()
-        label.text = "Speak now…"
-        setDot(COLOR_CAL)
-        main.postDelayed({ finishCalibration() }, CALIBRATION_MS)
+    override fun onConfigChanged(config: NecklaceConfig) {
+        renderConfig(config)
     }
 
-    private fun finishCalibration() {
-        calibrating = false
-        if (calPitch.size < 8) {
-            label.text = "Try again — speak"
-            if (listening) setDot(COLOR_OK)
-            return
-        }
-        val p = median(calPitch)
-        pitchLo = p - PITCH_TOL
-        pitchHi = p + PITCH_TOL
+    // ---- helpers ------------------------------------------------------------
 
-        val b = median(calBright)
-        if (b > 0f) {
-            resLo = b - BRIGHT_TOL
-            resHi = b + BRIGHT_TOL
-            resEnabled = true
-        }
-        saveConfig()
-        renderRange()
-        label.text = "Listening"
-        if (listening) setDot(COLOR_OK)
-        buzz(longArrayOf(0, 60, 40, 60, 40, 120)) // distinct "calibrated" pattern
-    }
-
-    private fun median(values: List<Float>): Float {
-        val s = values.sorted()
-        return s[s.size / 2]
-    }
-
-    // ---- config + UI helpers ------------------------------------------------
-
-    private fun loadConfig() {
-        pitchLo = prefs.getFloat("pitchLo", 150f)
-        pitchHi = prefs.getFloat("pitchHi", 250f)
-        resLo = prefs.getFloat("resLo", 0f)
-        resHi = prefs.getFloat("resHi", 0f)
-        resEnabled = prefs.getBoolean("resEnabled", false)
-    }
-
-    private fun saveConfig() {
-        prefs.edit()
-            .putFloat("pitchLo", pitchLo)
-            .putFloat("pitchHi", pitchHi)
-            .putFloat("resLo", resLo)
-            .putFloat("resHi", resHi)
-            .putBoolean("resEnabled", resEnabled)
-            .apply()
-    }
-
-    private fun renderRange() {
-        val pitch = "Pitch ${pitchLo.roundToInt()}–${pitchHi.roundToInt()} Hz"
-        rangeText.text = if (resEnabled) {
-            "$pitch\nRes ${resLo.roundToInt()}–${resHi.roundToInt()} Hz"
+    private fun renderConfig(c: NecklaceConfig) {
+        val pitch = if (c.pitchEnabled) "Pitch ${c.pitchLo.roundToInt()}–${c.pitchHi.roundToInt()} Hz" else "Pitch off"
+        rangeText.text = if (c.resEnabled) {
+            "$pitch\nRes ${c.resLo.roundToInt()}–${c.resHi.roundToInt()} Hz"
         } else {
             pitch
         }
@@ -260,21 +207,16 @@ class MainActivity : ComponentActivity() {
         window.attributes = lp
     }
 
-    private fun buzz(pattern: LongArray) {
-        val v = vibrator ?: return
-        if (!v.hasVibrator()) return
-        try {
-            v.vibrate(VibrationEffect.createWaveform(pattern, -1))
-        } catch (_: Exception) {
+    private fun maybeRequestNotifications() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestNotif.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
     companion object {
-        private const val ALERT_COOLDOWN_MS = 600L
-        private const val CALIBRATION_MS = 4000L
-        private const val PITCH_TOL = 25f       // Hz around your median pitch
-        private const val BRIGHT_TOL = 350f     // Hz around your median brightness
-
         private val COLOR_OFF = Color.parseColor("#555555")
         private val COLOR_OK = Color.parseColor("#6BCB77")
         private val COLOR_OK_DIM = Color.parseColor("#356B3B")

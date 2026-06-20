@@ -31,9 +31,14 @@ watch as **Vox Necklace**.
 - **Pitch range** defaults to **150–250 Hz**.
 - **Calibrate** — tap *Calibrate* and speak in your target voice for ~4 seconds.
   It sets your pitch range to your own median ±25 Hz and enables a
-  brightness/resonance range (±350) from your voice. Saved across launches.
-- The screen stays **dark and dim** (it's under your collar); use the on-screen
-  toggle as your main battery control.
+  resonance range (±350) from your voice. Saved across launches.
+- **⚙ Settings** — turn each alert on/off, nudge the pitch/resonance ranges,
+  and set **buzz strength** and **mic sensitivity** without re-calibrating.
+- **Runs with the screen off:** a foreground microphone service keeps listening
+  and buzzing when the screen sleeps or the app is backgrounded, so it works as a
+  real necklace under your clothes. A persistent "Listening" notification shows
+  while it's active. Tap the circle to stop (which releases the mic).
+- The screen stays **dark and dim** (it's under your collar).
 
 ## How it's built
 
@@ -57,11 +62,16 @@ gradle :app:assembleDebug      # or ./gradlew if you generate a wrapper
 ```
 Or just download the APK artifact from the **Build Wear OS APK** GitHub Actions run.
 
-## Roadmap / known limitations (v1)
+## DSP accuracy
 
-- **Foreground only:** it listens while the app is open with the screen dark, not
-  while the watch fully sleeps. Toggle the mic off when you're not practicing.
-  (A foreground microphone service for true screen-off use is a future step.)
-- **Resonance is a proxy:** "brightness" (spectral centroid) is a simpler stand-in
-  for the web app's formant-based resonance. Calibration makes it personal and
-  useful; a fuller formant analysis could be ported later.
+- **Pitch:** YIN with parabolic interpolation, a 5-tap median filter, an
+  octave-jump guard, and 50% frame overlap for smooth, low-latency tracking.
+- **Resonance:** LPC formant estimation (pre-emphasis → Hamming → autocorrelation
+  → Levinson-Durbin → spectral-envelope peak picking), reported as the mean of F1
+  and F2. Validated against synthetic vowels (formants recovered within ~10–40 Hz).
+
+## Roadmap
+
+- Continuous battery use while listening — toggle off when you're not practicing.
+- Session stats (time on target), directional "too high / too low" haptics, and a
+  tile/complication for one-tap launch are natural next steps.

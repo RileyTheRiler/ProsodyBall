@@ -148,7 +148,12 @@ It's eyes-free, made for wearing on a lanyard with the mic near your mouth:
 - **Status dot:** grey = off, green = listening & in range, orange = out of range.
 - **Calibrate** to your own voice: tap **Calibrate** and speak in your target
   voice for ~4 seconds. It sets the pitch range to your median ±25 Hz and turns on
-  a brightness/resonance range from your voice. Saved for next time.
+  a resonance range from your voice. Saved for next time.
+- **⚙ Settings** (top-right): turn each alert on/off, nudge the ranges, and set
+  buzz strength + mic sensitivity.
+- It **keeps listening with the screen off** (a "Listening" notification shows
+  while active), so it works as a real necklace under your clothes. Tap the circle
+  to stop and release the mic.
 
 The mic is **off until you start it** — that saves battery and means it isn't
 listening to other people in public.
