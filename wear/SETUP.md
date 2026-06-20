@@ -174,6 +174,24 @@ debugging off and on, since the ports change.)
 | `adb devices` is empty | Watch and PC aren't on the same Wi-Fi (watch may be on a guest/5GHz network), or Wireless debugging timed out — reopen it. Then `adb kill-server` and retry. |
 | Windows firewall blocks it | Allow `adb.exe` through the firewall, or disable it briefly, then retry. |
 | Installed but no icon on the watch | **Reboot the watch** — sideloaded apps often appear only after a restart. |
+| App is in the list but **won't open / opens to a black screen** | Usually **Android System WebView** is missing or disabled on the watch. On the watch, open the **Play Store**, search **"Android System WebView"**, and **Enable/Update** it; also update **Chrome**. Then reopen the app. The app now shows an on-screen message if WebView can't start. |
+
+### Capturing a crash log (if it still won't open)
+
+This shows exactly why it failed:
+```
+adb logcat -c
+adb shell am start -n com.voxarcade.wear/.MainActivity
+```
+Wait ~3 seconds, then dump the recent errors:
+```
+adb logcat -d *:E
+```
+On Windows you can filter to the relevant lines:
+```
+adb logcat -d | findstr /i "voxarcade AndroidRuntime WebView FATAL"
+```
+Copy whatever that prints and share it — it pinpoints the failure.
 | "Mic blocked — retry" in the app | Permission denied. On the watch: Settings → Apps → Vox Ball → Permissions → allow Microphone, then reopen. |
 | No buzz in Necklace mode | Make sure the watch isn't in Do-Not-Disturb/Theater mode (mutes vibration), and that you're actually speaking (alerts only fire on voiced sound). |
 | Nothing on your phone | Correct — this is a watch-only app with no phone component. Ignore any phone "Open on watch" buttons; those belong to other apps. |
