@@ -14,6 +14,10 @@ separate logic to maintain. On launch you pick one of two modes:
 - **Target device:** Samsung Galaxy Watch 7 (Wear OS 5). Works on any Wear OS 3+
   watch (`minSdk 30`).
 
+> **📲 Just want to install it on your watch?** See **[SETUP.md](SETUP.md)** for the
+> full step-by-step sideload guide (install ADB → download the APK → pair over
+> Wi-Fi → install → open). The sections below are about how the app is built.
+
 ## Necklace mode (haptic biofeedback)
 
 Wear the watch on a lanyard/pendant so the mic sits closer to your mouth, then pick
