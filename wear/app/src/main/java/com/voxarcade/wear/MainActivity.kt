@@ -142,19 +142,19 @@ class MainActivity : ComponentActivity() {
         if (!listening) return
 
         pitchText.text = if (r.pitchHz > 0f) "${r.pitchHz.roundToInt()} Hz" else "—"
-        brightText.text = if (resEnabled && r.brightnessHz > 0f) "${r.brightnessHz.roundToInt()} br" else ""
+        brightText.text = if (resEnabled && r.resonanceHz > 0f) "${r.resonanceHz.roundToInt()} res" else ""
 
         if (calibrating) {
             if (r.voiced && r.pitchHz > 0f) {
                 calPitch.add(r.pitchHz)
-                calBright.add(r.brightnessHz)
+                calBright.add(r.resonanceHz)
             }
             return
         }
 
         val pitchOut = r.voiced && (r.pitchHz < pitchLo || r.pitchHz > pitchHi)
         val resOut = r.voiced && resEnabled &&
-            (r.brightnessHz < resLo || r.brightnessHz > resHi)
+            (r.resonanceHz < resLo || r.resonanceHz > resHi)
         val tripped = pitchOut || resOut
 
         when {
@@ -243,7 +243,7 @@ class MainActivity : ComponentActivity() {
     private fun renderRange() {
         val pitch = "Pitch ${pitchLo.roundToInt()}–${pitchHi.roundToInt()} Hz"
         rangeText.text = if (resEnabled) {
-            "$pitch\nBright ${resLo.roundToInt()}–${resHi.roundToInt()}"
+            "$pitch\nRes ${resLo.roundToInt()}–${resHi.roundToInt()} Hz"
         } else {
             pitch
         }
