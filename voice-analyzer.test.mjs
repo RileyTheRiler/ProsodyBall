@@ -5,6 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { VoiceAnalyzer } from './voice-analyzer.js';
+import { synthVowel, magnitudeSpectrumDb, VOWELS } from './tools/audio-synth.mjs';
 
 const SAMPLE_RATE = 44100;
 const FRAME = 4096;
@@ -73,4 +74,43 @@ test('detectPitch reports high confidence on a clean tone', () => {
     va.pitchConfidence > 0.5,
     `clean tone should be confident, got ${va.pitchConfidence.toFixed(2)}`
   );
+});
+
+// Ground-truth formant accuracy for the default (LPC) method. Drives the real
+// estimator with synthetic vowels whose F1/F2/F3 are known. This is what makes
+// 'lpc' a defensible default (see tools/eval-formant-methods.mjs for the full
+// cross-method comparison).
+function makeVowelAnalyzer(vowel) {
+  const time = synthVowel({ ...vowel, sampleRate: SAMPLE_RATE, length: FRAME });
+  const va = new VoiceAnalyzer();
+  va.audioCtx = { sampleRate: SAMPLE_RATE };
+  va.analyserFormant = { fftSize: FRAME };
+  va.timeDomainData = time;
+  va.formantFreqData = magnitudeSpectrumDb(time, FRAME);
+  va.pitchConfidence = 1;
+  va.vowelLikelihood = 1;
+  va.isCalibrated = false;
+  va.noiseSpectralProfile = null;
+  return va;
+}
+
+test('LPC recovers known F1/F2 for synthetic vowels within 80 Hz', () => {
+  for (const [name, vowel] of Object.entries(VOWELS)) {
+    const va = makeVowelAnalyzer(vowel);
+    const { f1, f2 } = va._resonanceLPC();
+    const trueF1 = vowel.formants[0].f;
+    const trueF2 = vowel.formants[1].f;
+    assert.ok(
+      Math.abs(f1 - trueF1) < 80,
+      `/${name}/ F1: expected ~${trueF1}Hz, got ${f1.toFixed(0)}Hz`
+    );
+    assert.ok(
+      Math.abs(f2 - trueF2) < 80,
+      `/${name}/ F2: expected ~${trueF2}Hz, got ${f2.toFixed(0)}Hz`
+    );
+  }
+});
+
+test('default resonance method is the empirically-best estimator (lpc)', () => {
+  assert.equal(new VoiceAnalyzer().resonanceMethod, 'lpc');
 });

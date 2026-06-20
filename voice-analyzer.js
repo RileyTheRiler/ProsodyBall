@@ -79,8 +79,13 @@ export class VoiceAnalyzer {
     this._pitchMedianBuf = []; // for octave-jump suppression
     this.pitchConfidence = 0;  // 0=unreliable, 1=very confident (from YIN CMND)
 
-    // Resonance — harmonic envelope formant estimation
-    this.resonanceMethod = 'harmonic'; // 'harmonic' | 'cepstral' | 'lpc' | 'centroid'
+    // Resonance — LPC (Levinson-Durbin + root-solving) formant estimation.
+    // Default chosen empirically: against synthetic vowels with known formants,
+    // LPC has ~14 Hz mean F1/F2 error vs. ~358 Hz for 'harmonic' (see
+    // tools/eval-formant-methods.mjs). It is gated to confident voiced vowels,
+    // so its ~0.13 ms/call cost is negligible. The Kalman stage already trusts
+    // LPC most. Other methods remain available for comparison/diagnostics.
+    this.resonanceMethod = 'lpc'; // 'harmonic' | 'cepstral' | 'lpc' | 'centroid'
     this.smoothResonance = 0.5; // 0=low/dark resonance, 1=high/bright resonance
     this.smoothF1 = 500;        // smoothed F1 estimate (Hz)
     this.smoothF2 = 1500;       // smoothed F2 estimate (Hz) — primary resonance correlate

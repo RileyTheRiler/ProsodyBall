@@ -8,6 +8,7 @@
     "start": "npx serve .",
     "hue": "node hue-bridge.mjs",
     "test:audio-fixtures": "node tools/eval-audio-fixtures.mjs",
+    "eval:formants": "node tools/eval-formant-methods.mjs",
     "test:all": "npm run lint && npm run test:unit && npm run test:audio-fixtures",
     "test:unit": "node --test *.test.mjs",
     "test:browser-smoke": "node tools/browser-smoke.mjs",
