@@ -14,7 +14,7 @@
     "test:browser-smoke": "node tools/browser-smoke.mjs",
     "test:onset-worklet": "node tools/onset-worklet-smoke.mjs",
     "test:browser-matrix": "npm run test:browser-smoke && BROWSER=firefox npm run test:browser-smoke",
-    "syntax-check": "node --check app.js && node --check voice-analyzer.js && node --check dsp-utils.js && node --check calibration-wizard.js && node --check bulb-controller.js && node --check necklace-controller.js && node --check performance-monitor.js && node --check particle.js && node --check teleprompter.js && node --check vibration-alerts.js && node --check recording-system.js && node --check audio/onset-worklet.js && node --check hue-bridge.mjs && node --check tools/browser-smoke.mjs",
+    "syntax-check": "node --check app.js && node --check voice-analyzer.js && node --check dsp-utils.js && node --check calibration-wizard.js && node --check bulb-controller.js && node --check necklace-controller.js && node --check performance-monitor.js && node --check particle.js && node --check teleprompter.js && node --check vibration-alerts.js && node --check recording-system.js && node --check metrics-hud.js && node --check audio/onset-worklet.js && node --check hue-bridge.mjs && node --check tools/browser-smoke.mjs",
     "lint": "npm run syntax-check && eslint .",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
