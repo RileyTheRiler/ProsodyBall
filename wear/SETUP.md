@@ -1,8 +1,9 @@
-# Vox Arcade — Galaxy Watch 7 Setup Guide
+# Vox Necklace — Galaxy Watch 7 Setup Guide
 
-Step-by-step instructions to get the app onto a Samsung Galaxy Watch 7 (or any
-Wear OS 3+ watch). This app is **watch-only** — there is no phone app and it is
-not in the Play Store, so you install it by sideloading the APK over Wi-Fi.
+Step-by-step instructions to get the **Vox Necklace** app onto a Samsung Galaxy
+Watch 7 (or any Wear OS 3+ watch). It's a native, on-device voice-feedback app
+(no WebView, no network). This app is **watch-only** — there is no phone app and
+it is not in the Play Store, so you install it by sideloading the APK over Wi-Fi.
 
 > The Galaxy Watch 7 charges on a wireless puck and has **no USB data port**, so
 > everything here is done **over Wi-Fi**. Your watch and computer must be on the
@@ -129,7 +130,7 @@ The watch should open the app. Tap **Allow** for the **microphone**.
 
 ### Finding it later, on the watch
 It appears in the **watch's app list** (press the watch's lower side button, or
-swipe up, then scroll) as **Vox Ball**. It is **not** on your phone.
+swipe up, then scroll) as **Vox Necklace**. It is **not** on your phone.
 
 > **Don't see the icon even though Step 6 says it's installed?** Sideloaded apps on
 > Galaxy Watch sometimes don't appear in the list until you **reboot the watch**.
@@ -139,14 +140,15 @@ swipe up, then scroll) as **Vox Ball**. It is **not** on your phone.
 
 ## Step 7 — Using the app
 
-On launch you pick a mode:
+It's eyes-free, made for wearing on a lanyard with the mic near your mouth:
 
-- **Necklace** (eyes-free): the screen goes dark. Wear the watch on a lanyard so
-  the mic is near your mouth. Tap the big circle to start listening (**one buzz =
-  on**). It **buzzes when your pitch (150–250 Hz) or resonance (30–70%) drifts out
-  of range**. Tap again to stop (**two buzzes = off**, mic released). **⚙ Alerts**
-  lets you change which metric/threshold triggers.
-- **Vox Ball** (visual): the ball reacts to your voice's pitch and rhythm.
+- **Tap the big circle** to start listening (**one buzz = on**). It **buzzes when
+  your pitch drifts out of range** (default **150–250 Hz**). Tap again to stop
+  (**two buzzes = off**, mic released).
+- **Status dot:** grey = off, green = listening & in range, orange = out of range.
+- **Calibrate** to your own voice: tap **Calibrate** and speak in your target
+  voice for ~4 seconds. It sets the pitch range to your median ±25 Hz and turns on
+  a brightness/resonance range from your voice. Saved for next time.
 
 The mic is **off until you start it** — that saves battery and means it isn't
 listening to other people in public.
@@ -174,24 +176,17 @@ debugging off and on, since the ports change.)
 | `adb devices` is empty | Watch and PC aren't on the same Wi-Fi (watch may be on a guest/5GHz network), or Wireless debugging timed out — reopen it. Then `adb kill-server` and retry. |
 | Windows firewall blocks it | Allow `adb.exe` through the firewall, or disable it briefly, then retry. |
 | Installed but no icon on the watch | **Reboot the watch** — sideloaded apps often appear only after a restart. |
-| App is in the list but **won't open / opens to a black screen** | Usually **Android System WebView** is missing or disabled on the watch. On the watch, open the **Play Store**, search **"Android System WebView"**, and **Enable/Update** it; also update **Chrome**. Then reopen the app. The app now shows an on-screen message if WebView can't start. |
+| "Mic permission needed" / no analysis | On the watch: Settings → Apps → Vox Necklace → Permissions → allow Microphone, then reopen. |
+| No buzz | Make sure the watch isn't in Do-Not-Disturb/Theater mode (which mutes vibration), and that you're actually speaking (it only buzzes on voiced sound while out of range). |
+| Nothing on your phone | Correct — this is a watch-only app with no phone component. Ignore any phone "Open on watch" buttons; those belong to other apps. |
 
 ### Capturing a crash log (if it still won't open)
-
-This shows exactly why it failed:
 ```
 adb logcat -c
 adb shell am start -n com.voxarcade.wear/.MainActivity
 ```
-Wait ~3 seconds, then dump the recent errors:
+Wait ~3 seconds, then:
 ```
-adb logcat -d *:E
-```
-On Windows you can filter to the relevant lines:
-```
-adb logcat -d | findstr /i "voxarcade AndroidRuntime WebView FATAL"
+adb logcat -d | findstr /i "voxarcade AndroidRuntime FATAL"
 ```
 Copy whatever that prints and share it — it pinpoints the failure.
-| "Mic blocked — retry" in the app | Permission denied. On the watch: Settings → Apps → Vox Ball → Permissions → allow Microphone, then reopen. |
-| No buzz in Necklace mode | Make sure the watch isn't in Do-Not-Disturb/Theater mode (mutes vibration), and that you're actually speaking (alerts only fire on voiced sound). |
-| Nothing on your phone | Correct — this is a watch-only app with no phone component. Ignore any phone "Open on watch" buttons; those belong to other apps. |

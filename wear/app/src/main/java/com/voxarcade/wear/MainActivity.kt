@@ -1,273 +1,284 @@
 package com.voxarcade.wear
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.content.Context
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
-import android.util.Log
-import android.view.Gravity
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.view.WindowManager
-import android.webkit.JavascriptInterface
-import android.webkit.PermissionRequest
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.widget.ScrollView
+import android.widget.Button
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
-import org.json.JSONArray
+import kotlin.math.roundToInt
 
 /**
- * The entire native app: a single full-screen [WebView] that hosts the existing
- * ProsodyBall web app (bundled under assets/web/). It adds two things the web
- * app can't get reliably inside a WebView on a watch:
- *
- *   - Strong, reliable haptics via the system Vibrator ([HapticsBridge]). The
- *     page's existing navigator.vibrate(...) calls are routed here, so all
- *     biofeedback buzzes work with no changes to app.js.
- *   - Screen-brightness control for the eyes-free "necklace" mode
- *     ([ScreenBridge]) so the watch can run dark against your chest.
- *
- * The watch adaptation layer (watch.css / watch-boot.js) is injected after the
- * page loads; the navigator.vibrate override is injected earlier (onPageStarted)
- * so the engine detects haptic support at startup.
+ * Native eyes-free "necklace" voice-feedback app for the Galaxy Watch 7 (which
+ * has no WebView). Wear the watch on a lanyard near your mouth: tap to start
+ * listening, and it buzzes when your pitch (or brightness/resonance) drifts out
+ * of your target range. All analysis is on-device ([VoiceAnalyzer]); the mic is
+ * off until you start it and is released when you stop it.
  */
 class MainActivity : ComponentActivity() {
 
-    private lateinit var webView: WebView
+    private val analyzer = VoiceAnalyzer()
     private val main = Handler(Looper.getMainLooper())
+    private lateinit var prefs: SharedPreferences
+
+    private lateinit var dot: View
+    private lateinit var label: TextView
+    private lateinit var pitchText: TextView
+    private lateinit var brightText: TextView
+    private lateinit var rangeText: TextView
+    private lateinit var calibrateBtn: Button
+
+    private var listening = false
+
+    // Alert config (persisted).
+    private var pitchLo = 150f
+    private var pitchHi = 250f
+    private var resLo = 0f
+    private var resHi = 0f
+    private var resEnabled = false
+
+    // Alert cooldowns (ms, monotonic clock).
+    private var lastBuzz = 0L
+
+    // Calibration state.
+    private var calibrating = false
+    private val calPitch = ArrayList<Float>()
+    private val calBright = ArrayList<Float>()
+
+    private val vibrator: Vibrator? by lazy {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        }
+    }
 
     private val requestMic =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
-            loadApp() // load regardless; the page shows its own mic-error UI if denied
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) startListening() else label.text = "Mic permission needed"
         }
 
-    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        setContentView(R.layout.activity_main)
+        setLowBrightness(true) // worn under a collar — keep it dim
 
-        // Creating a WebView throws on devices where Android System WebView is
-        // missing or disabled (seen on some Samsung watches). Catch everything so
-        // the watch shows a readable message instead of silently failing to open.
-        try {
-            webView = WebView(this).apply {
-                systemUiVisibility = (View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                    or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                    or View.SYSTEM_UI_FLAG_FULLSCREEN
-                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION)
+        prefs = getSharedPreferences("necklace", Context.MODE_PRIVATE)
+        loadConfig()
 
-                settings.apply {
-                    javaScriptEnabled = true
-                    domStorageEnabled = true
-                    mediaPlaybackRequiresUserGesture = false
-                    allowFileAccess = true
-                    allowContentAccess = true
-                    @Suppress("DEPRECATION")
-                    allowFileAccessFromFileURLs = true
-                }
+        dot = findViewById(R.id.dot)
+        label = findViewById(R.id.label)
+        pitchText = findViewById(R.id.pitch)
+        brightText = findViewById(R.id.bright)
+        rangeText = findViewById(R.id.range)
+        calibrateBtn = findViewById(R.id.calibrate)
 
-                addJavascriptInterface(HapticsBridge(this@MainActivity), "AndroidHaptics")
-                addJavascriptInterface(ScreenBridge(), "AndroidScreen")
+        findViewById<View>(R.id.toggle).setOnClickListener { toggleListening() }
+        calibrateBtn.setOnClickListener { startCalibration() }
 
-                webViewClient = object : WebViewClient() {
-                    override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
-                        super.onPageStarted(view, url, favicon)
-                        // Route the page's navigator.vibrate(...) to the system vibrator,
-                        // injected before app.js runs so it reports haptic support.
-                        view.evaluateJavascript(VIBRATE_SHIM, null)
-                    }
+        renderRange()
+        setDot(COLOR_OFF)
+    }
 
-                    override fun onPageFinished(view: WebView, url: String?) {
-                        super.onPageFinished(view, url)
-                        injectWatchLayer(view)
-                    }
+    override fun onStop() {
+        super.onStop()
+        if (listening) stopListening() // release the mic if the watch is put away
+    }
 
-                    override fun onReceivedError(
-                        view: WebView,
-                        request: WebResourceRequest,
-                        error: WebResourceError
-                    ) {
-                        super.onReceivedError(view, request, error)
-                        if (request.isForMainFrame) {
-                            showError(
-                                "Couldn't load the app page:\n" +
-                                    "${error.description}\n${request.url}"
-                            )
-                        }
-                    }
-                }
+    // ---- listening ----------------------------------------------------------
 
-                webChromeClient = object : WebChromeClient() {
-                    override fun onPermissionRequest(request: PermissionRequest) {
-                        val wanted = request.resources.filter {
-                            it == PermissionRequest.RESOURCE_AUDIO_CAPTURE
-                        }.toTypedArray()
-                        if (wanted.isNotEmpty()) request.grant(wanted) else request.deny()
-                    }
-                }
-            }
-        } catch (t: Throwable) {
-            Log.e(TAG, "WebView init failed", t)
-            showError(
-                "This watch can't start the app's WebView.\n\n" +
-                    "Android System WebView may be missing or disabled. Check the " +
-                    "Play Store on the watch for \"Android System WebView\" and enable/update it.\n\n" +
-                    Log.getStackTraceString(t)
-            )
-            return
-        }
-
-        setContentView(webView)
-
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+    private fun toggleListening() {
+        if (listening) {
+            stopListening()
+        } else if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             == PackageManager.PERMISSION_GRANTED
         ) {
-            loadApp()
+            startListening()
         } else {
             requestMic.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
 
-    /** Replace the screen with a scrollable error message (no logcat needed). */
-    private fun showError(message: String) {
-        main.post {
-            val text = TextView(this).apply {
-                setText(message)
-                setTextColor(Color.WHITE)
-                setBackgroundColor(Color.BLACK)
-                textSize = 12f
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(24, 24, 24, 24)
+    private fun startListening() {
+        val ok = analyzer.start { onResult(it) }
+        if (!ok) {
+            label.text = "Mic unavailable"
+            return
+        }
+        listening = true
+        label.text = "Listening"
+        buzz(longArrayOf(0, 90))          // one pulse = on
+        setDot(COLOR_OK)
+    }
+
+    private fun stopListening() {
+        analyzer.stop()
+        listening = false
+        calibrating = false
+        label.text = "Tap to listen"
+        pitchText.text = "—"
+        brightText.text = ""
+        buzz(longArrayOf(0, 55, 45, 55))  // two pulses = off
+        setDot(COLOR_OFF)
+    }
+
+    private fun onResult(r: VoiceAnalyzer.Result) {
+        if (!listening) return
+
+        pitchText.text = if (r.pitchHz > 0f) "${r.pitchHz.roundToInt()} Hz" else "—"
+        brightText.text = if (resEnabled && r.brightnessHz > 0f) "${r.brightnessHz.roundToInt()} br" else ""
+
+        if (calibrating) {
+            if (r.voiced && r.pitchHz > 0f) {
+                calPitch.add(r.pitchHz)
+                calBright.add(r.brightnessHz)
             }
-            val scroll = ScrollView(this).apply {
-                setBackgroundColor(Color.BLACK)
-                addView(text)
+            return
+        }
+
+        val pitchOut = r.voiced && (r.pitchHz < pitchLo || r.pitchHz > pitchHi)
+        val resOut = r.voiced && resEnabled &&
+            (r.brightnessHz < resLo || r.brightnessHz > resHi)
+        val tripped = pitchOut || resOut
+
+        when {
+            !r.voiced -> setDot(COLOR_OK_DIM)
+            tripped -> setDot(COLOR_ALERT)
+            else -> setDot(COLOR_OK)
+        }
+
+        if (tripped) {
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastBuzz >= ALERT_COOLDOWN_MS) {
+                buzz(longArrayOf(0, 45, 30, 45))
+                lastBuzz = now
             }
-            setContentView(scroll)
         }
     }
 
-    private fun loadApp() {
-        webView.loadUrl("file:///android_asset/web/index.html?watch=1")
-    }
+    // ---- calibration --------------------------------------------------------
 
-    private fun injectWatchLayer(view: WebView) {
-        val js = """
-            (function() {
-              if (document.getElementById('watch-css')) return;
-              var link = document.createElement('link');
-              link.id = 'watch-css';
-              link.rel = 'stylesheet';
-              link.href = 'watch.css';
-              document.head.appendChild(link);
-              var s = document.createElement('script');
-              s.id = 'watch-boot';
-              s.src = 'watch-boot.js';
-              document.body.appendChild(s);
-            })();
-        """.trimIndent()
-        view.evaluateJavascript(js, null)
-    }
-
-    /** Set a low screen brightness for the eyes-free necklace mode, or restore it. */
-    fun setLowBrightness(low: Boolean) {
-        main.post {
-            val lp = window.attributes
-            lp.screenBrightness =
-                if (low) 0.02f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-            window.attributes = lp
+    /** Speak in your target voice for a few seconds; ranges set to median ± tol. */
+    private fun startCalibration() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestMic.launch(Manifest.permission.RECORD_AUDIO)
+            return
         }
+        if (!listening) startListening()
+        calibrating = true
+        calPitch.clear()
+        calBright.clear()
+        label.text = "Speak now…"
+        setDot(COLOR_CAL)
+        main.postDelayed({ finishCalibration() }, CALIBRATION_MS)
     }
 
-    override fun onDestroy() {
-        if (::webView.isInitialized) webView.destroy()
-        super.onDestroy()
+    private fun finishCalibration() {
+        calibrating = false
+        if (calPitch.size < 8) {
+            label.text = "Try again — speak"
+            if (listening) setDot(COLOR_OK)
+            return
+        }
+        val p = median(calPitch)
+        pitchLo = p - PITCH_TOL
+        pitchHi = p + PITCH_TOL
+
+        val b = median(calBright)
+        if (b > 0f) {
+            resLo = b - BRIGHT_TOL
+            resHi = b + BRIGHT_TOL
+            resEnabled = true
+        }
+        saveConfig()
+        renderRange()
+        label.text = "Listening"
+        if (listening) setDot(COLOR_OK)
+        buzz(longArrayOf(0, 60, 40, 60, 40, 120)) // distinct "calibrated" pattern
     }
 
-    // ---- JS bridges -------------------------------------------------------
+    private fun median(values: List<Float>): Float {
+        val s = values.sorted()
+        return s[s.size / 2]
+    }
 
-    /** Exposed to JS as `AndroidHaptics`. */
-    private class HapticsBridge(context: Context) {
-        private val vibrator: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)
-                ?.defaultVibrator
+    // ---- config + UI helpers ------------------------------------------------
+
+    private fun loadConfig() {
+        pitchLo = prefs.getFloat("pitchLo", 150f)
+        pitchHi = prefs.getFloat("pitchHi", 250f)
+        resLo = prefs.getFloat("resLo", 0f)
+        resHi = prefs.getFloat("resHi", 0f)
+        resEnabled = prefs.getBoolean("resEnabled", false)
+    }
+
+    private fun saveConfig() {
+        prefs.edit()
+            .putFloat("pitchLo", pitchLo)
+            .putFloat("pitchHi", pitchHi)
+            .putFloat("resLo", resLo)
+            .putFloat("resHi", resHi)
+            .putBoolean("resEnabled", resEnabled)
+            .apply()
+    }
+
+    private fun renderRange() {
+        val pitch = "Pitch ${pitchLo.roundToInt()}–${pitchHi.roundToInt()} Hz"
+        rangeText.text = if (resEnabled) {
+            "$pitch\nBright ${resLo.roundToInt()}–${resHi.roundToInt()}"
         } else {
-            @Suppress("DEPRECATION")
-            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-        }
-
-        /** `pattern` is a JSON number or array of millisecond on/off durations. */
-        @JavascriptInterface
-        fun vibrate(pattern: String) {
-            val v = vibrator ?: return
-            if (!v.hasVibrator()) return
-            try {
-                val timings = parseTimings(pattern)
-                if (timings.isEmpty()) return
-                // Waveform timings alternate off/on starting with an initial 0 delay.
-                val waveform = LongArray(timings.size + 1)
-                for (i in timings.indices) waveform[i + 1] = timings[i]
-                v.vibrate(VibrationEffect.createWaveform(waveform, -1))
-            } catch (_: Exception) {
-            }
-        }
-
-        @JavascriptInterface
-        fun cancel() {
-            vibrator?.cancel()
-        }
-
-        private fun parseTimings(pattern: String): LongArray {
-            return try {
-                val arr = JSONArray(pattern)
-                LongArray(arr.length()) { arr.getLong(it).coerceAtLeast(0) }
-            } catch (_: Exception) {
-                // Scalar duration, e.g. navigator.vibrate(200).
-                val ms = pattern.trim().toDoubleOrNull()?.toLong() ?: return LongArray(0)
-                longArrayOf(ms.coerceAtLeast(0))
-            }
+            pitch
         }
     }
 
-    /** Exposed to JS as `AndroidScreen`. */
-    private inner class ScreenBridge {
-        @JavascriptInterface
-        fun setLowBrightness(low: Boolean) = this@MainActivity.setLowBrightness(low)
+    private fun setDot(color: Int) {
+        dot.background?.setTint(color)
+    }
+
+    private fun setLowBrightness(low: Boolean) {
+        val lp = window.attributes
+        lp.screenBrightness =
+            if (low) 0.05f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        window.attributes = lp
+    }
+
+    private fun buzz(pattern: LongArray) {
+        val v = vibrator ?: return
+        if (!v.hasVibrator()) return
+        try {
+            v.vibrate(VibrationEffect.createWaveform(pattern, -1))
+        } catch (_: Exception) {
+        }
     }
 
     companion object {
-        private const val TAG = "VoxArcadeWear"
+        private const val ALERT_COOLDOWN_MS = 600L
+        private const val CALIBRATION_MS = 4000L
+        private const val PITCH_TOL = 25f       // Hz around your median pitch
+        private const val BRIGHT_TOL = 350f     // Hz around your median brightness
 
-        // Defines navigator.vibrate to forward to the native vibrator. Runs before
-        // app.js, so the engine's `'vibrate' in navigator` check passes and every
-        // existing haptic call (alert rules, resonance drift, test) buzzes for real.
-        private const val VIBRATE_SHIM = """
-            (function() {
-              if (!window.AndroidHaptics) return;
-              try {
-                navigator.vibrate = function(pattern) {
-                  try { window.AndroidHaptics.vibrate(JSON.stringify(pattern)); } catch (e) {}
-                  return true;
-                };
-              } catch (e) {}
-            })();
-        """
+        private val COLOR_OFF = Color.parseColor("#555555")
+        private val COLOR_OK = Color.parseColor("#6BCB77")
+        private val COLOR_OK_DIM = Color.parseColor("#356B3B")
+        private val COLOR_ALERT = Color.parseColor("#FFA03C")
+        private val COLOR_CAL = Color.parseColor("#4D96FF")
     }
 }

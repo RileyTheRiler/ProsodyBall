@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- Target range readout, top of the round screen. -->
+    <TextView
+        android:id="@+id/range"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal|top"
+        android:layout_marginTop="34dp"
+        android:textColor="#8A8AA0"
+        android:textSize="12sp"
+        android:gravity="center"
+        android:text="" />
+
+    <!-- Big central mic toggle (tap to start/stop listening). -->
+    <LinearLayout
+        android:id="@+id/toggle"
+        android:layout_width="200dp"
+        android:layout_height="200dp"
+        android:layout_gravity="center"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:clickable="true"
+        android:focusable="true"
+        android:background="@drawable/toggle_bg">
+
+        <View
+            android:id="@+id/dot"
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:background="@drawable/dot"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#E0E0EA"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:text="Tap to listen" />
+
+        <TextView
+            android:id="@+id/pitch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#FFFFFF"
+            android:textSize="22sp"
+            android:fontFamily="monospace"
+            android:layout_marginTop="6dp"
+            android:text="—" />
+
+        <TextView
+            android:id="@+id/bright"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#6A6A80"
+            android:textSize="11sp"
+            android:fontFamily="monospace"
+            android:text="" />
+    </LinearLayout>
+
+    <!-- Calibrate to your own voice. -->
+    <Button
+        android:id="@+id/calibrate"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal|bottom"
+        android:layout_marginBottom="20dp"
+        android:textSize="12sp"
+        android:text="Calibrate" />
+</FrameLayout>

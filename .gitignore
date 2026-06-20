@@ -28,5 +28,3 @@ wear/build/
 wear/app/build/
 wear/local.properties
 wear/.idea/
-# Web app copied into the APK at build time (generated, not source)
-wear/app/src/main/assets/web/

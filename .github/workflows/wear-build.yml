@@ -9,13 +9,6 @@ on:
       - "claude/wear-os-smartwatch-support-**"
     paths:
       - "wear/**"
-      - "index.html"
-      - "app.js"
-      - "dsp-utils.js"
-      - "calibration-wizard.js"
-      - "bulb-controller.js"
-      - "necklace-controller.js"
-      - "performance-monitor.js"
       - ".github/workflows/wear-build.yml"
   workflow_dispatch:
 

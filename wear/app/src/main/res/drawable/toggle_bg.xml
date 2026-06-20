@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Subtle circle behind the central mic toggle so it's easy to find by feel. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <gradient
+        android:type="radial"
+        android:gradientRadius="120dp"
+        android:startColor="#14141F"
+        android:endColor="#000000" />
+    <stroke
+        android:width="2dp"
+        android:color="#2EFFFFFF" />
+</shape>
