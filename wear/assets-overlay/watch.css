@@ -36,7 +36,6 @@
 :root.watch .zoom-controls,
 :root.watch .meters-panel,
 :root.watch .session-timer,
-:root.watch .btn-rec,
 :root.watch #iframeNotice {
   display: none !important;
 }

@@ -1,18 +1,8 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS } from './dsp-utils.js';
+import { computeProsodyScore, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeSibilantFemininity, correctOctaveError, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS } from './dsp-utils.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { BulbController } from './bulb-controller.js';
 import { NecklaceController, HapticSrc } from './necklace-controller.js';
-
-function escapeHtml(text) {
-  if (!text) return text;
-  return String(text)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
 
 // ============================================================
 // DSP TUNING CONSTANTS
@@ -21,7 +11,6 @@ function escapeHtml(text) {
 const YIN_THRESHOLD = 0.15;               // CMND threshold for pitch detection (lower = stricter)
 const PITCH_CONFIDENCE_FACTOR = 3.3;      // Maps CMND → confidence: conf = 1 - cmnd * factor
 const INTONATION_ST_DIVISOR = 6.0;        // Semitone std-dev mapped to [0,1] bounce (0–1 ST flat, 2–4 conversational, 4–6 expressive)
-const TEMPO_TRANSITION_DIVISOR = 12;      // Energy crossings → [0,1] tempo
 const VOWEL_ONSET_SECS = 0.15;           // Seconds of sustain before vowel metric starts rising (sustain/diagnostic mode)
 const VOWEL_SATURATION_SECS = 0.6;       // Additional seconds to reach vowel = 1.0 (sustain/diagnostic mode)
 const VOWEL_DECAY_RATE = 0.85;           // Per-frame decay multiplier when not vowel-like (sustain mode)
@@ -78,7 +67,7 @@ export class VoiceAnalyzer {
     this.pitchConfidence = 0;  // 0=unreliable, 1=very confident (from YIN CMND)
 
     // Resonance — harmonic envelope formant estimation
-    this.resonanceMethod = 'harmonic'; // 'harmonic' | 'cepstral' | 'lpc' | 'centroid'
+    this.resonanceMethod = 'harmonic'; // 'harmonic' | 'cepstral' | 'lpc'
     this.smoothResonance = 0.5; // 0=low/dark resonance, 1=high/bright resonance
     this.smoothF1 = 500;        // smoothed F1 estimate (Hz)
     this.smoothF2 = 1500;       // smoothed F2 estimate (Hz) — primary resonance correlate
@@ -1041,10 +1030,6 @@ export class VoiceAnalyzer {
           ({ f1: f1Candidate, f2: f2Candidate, f3: f3Candidate, confidence: conf } =
             this._resonanceLPC());
           break;
-        case 'centroid':
-          ({ f1: f1Candidate, f2: f2Candidate, f3: f3Candidate, confidence: conf } =
-            this._resonanceCentroid());
-          break;
         default:
           ({ f1: f1Candidate, f2: f2Candidate, f3: f3Candidate, confidence: conf } =
             this._resonanceHarmonicEnvelope(pitch));
@@ -1058,8 +1043,7 @@ export class VoiceAnalyzer {
       const methodTrustMap = {
         lpc: 1.0,      // precise root-solved values -> low measurement noise
         harmonic: 0.7, // good but harmonic-resolution limited
-        cepstral: 0.5, // smooth but broad
-        centroid: 0.3  // conflates pitch
+        cepstral: 0.5  // smooth but broad
       };
       const methodTrust = methodTrustMap[this.resonanceMethod] || methodTrustMap.harmonic;
       
@@ -1711,59 +1695,6 @@ export class VoiceAnalyzer {
     }
 
     return { rootsRe, rootsIm };
-  }
-
-  // ============================================
-  // RESONANCE METHOD D: Spectral Centroid (Refined Baseline)
-  // Improved control/baseline for comparison.
-  // Improvements:
-  //  - Amplitude clamping prevents extreme dB values from dominating centroid
-  //  - Spectral concentration (kurtosis) as proper confidence measure
-  //  - Third-band centroid for F3 region
-  //  - Noise floor subtraction from linear amplitudes
-  // ============================================
-  _resonanceCentroid() {
-    const fmtData = this.formantFreqData;
-    const binHz = this.audioCtx.sampleRate / this.analyserFormant.fftSize;
-    const numBins = fmtData.length;
-
-    // Convert dB to linear with floor clamping (prevents extreme values)
-    const noiseFloorDb = -80;
-    const linearAmp = (bin) => {
-      const db = Math.max(noiseFloorDb, fmtData[bin]);
-      return Math.pow(10, (db - noiseFloorDb) / 20); // normalized: 0 at noise floor
-    };
-
-    // Helper: weighted centroid + concentration for a band
-    const bandAnalysis = (loHz, hiHz) => {
-      const startBin = Math.max(0, Math.floor(loHz / binHz));
-      const endBin = Math.min(numBins - 1, Math.ceil(hiHz / binHz));
-      let wFreq = 0, wSum = 0, wFreqSq = 0;
-      for (let i = startBin; i <= endBin; i++) {
-        const amp = linearAmp(i);
-        const freq = i * binHz;
-        wFreq += freq * amp;
-        wFreqSq += freq * freq * amp;
-        wSum += amp;
-      }
-      if (wSum < 0.001) return { centroid: (loHz + hiHz) / 2, concentration: 0 };
-      const centroid = wFreq / wSum;
-      const variance = wFreqSq / wSum - centroid * centroid;
-      const bandWidth = hiHz - loHz;
-      // Concentration: 1 when perfectly focused, 0 when spread across band
-      const concentration = Math.max(0, 1 - Math.sqrt(Math.max(0, variance)) / (bandWidth * 0.35));
-      return { centroid, concentration };
-    };
-
-    const b1 = bandAnalysis(200, 1100);
-    const b2 = bandAnalysis(900, 3500);
-    const b3 = bandAnalysis(2200, 4200);
-
-    // Confidence from concentration × voicing quality
-    const avgConcentration = (b1.concentration + b2.concentration) / 2;
-    const conf = Math.min(1, avgConcentration * this.pitchConfidence * (this.vowelLikelihood + 0.3));
-
-    return { f1: b1.centroid, f2: b2.centroid, f3: b3.centroid, confidence: conf };
   }
 
   // Shared formant peak-picking for harmonic envelope methods (A)
@@ -3561,7 +3492,6 @@ class VoxBallGame {
       recordingsDrawer.classList.remove('show');
       startBtn.textContent = '⏹ Stop Ball';
       startBtn.classList.add('active');
-      recBtn.classList.add('visible');
       this.isRunning = true;
       if (this.dafEnabled) this.startDAF();
       this.lastTime = performance.now();
@@ -3578,8 +3508,6 @@ class VoxBallGame {
       // Auto-stop recording if active — must await so recorder can
       // flush its final chunk before we kill the mic stream
       if (this.isRecording) {
-        recBtn.classList.remove('recording');
-        recBtn.querySelector('.rec-label').textContent = 'Rec';
         await this.stopRecording();
       }
       this.stopDAF();
@@ -3590,7 +3518,6 @@ class VoxBallGame {
       cleanupPhoneMic();
       startBtn.textContent = '🎙 Start';
       startBtn.classList.remove('active');
-      recBtn.classList.remove('visible');
 
       // Hide session timer
       document.getElementById('sessionTimer').classList.remove('active');
@@ -3637,16 +3564,20 @@ class VoxBallGame {
       perfBtn.classList.toggle('active', this.perfMonitor.enabled);
     });
 
-    homeBtn?.addEventListener('click', () => {
+    homeBtn?.addEventListener('click', async () => {
       // If a game is running, stop it and go directly to menu
       if (this.isRunning) {
+        // Auto-stop recording before tearing down the analyzer — otherwise
+        // this.isRecording and _recInterval leak into the next session and
+        // future startRecording() calls no-op. Mirrors stopGame().
+        if (this.isRecording) {
+          await this.stopRecording();
+        }
         this.isRunning = false;
         this.analyzer.stop();
         cleanupPhoneMic();
         startBtn.textContent = '🎙 Start';
         startBtn.classList.remove('active');
-        const recBtn = document.getElementById('recBtn');
-        if (recBtn) recBtn.classList.remove('visible');
 
         document.getElementById('sessionTimer').classList.remove('active');
         for (const rule of this.vibration.rules) { rule.tripped = false; }
@@ -3728,7 +3659,7 @@ class VoxBallGame {
       }
       if (e.code === 'KeyR' && this.isRunning) {
         e.preventDefault();
-        recBtn.click();
+        document.getElementById('voiceRecBtn')?.click();
       }
       if (e.code === 'Escape') {
         // Close metric popup first if open
@@ -4477,7 +4408,7 @@ class VoxBallGame {
           if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', 'false');
         }
       }
-      if (vibPanel && !vibPanel.contains(e.target) && (!typeof vibBtn === 'undefined' || !vibBtn || !vibBtn.contains(e.target))) {
+      if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || !vibBtn.contains(e.target))) {
         if (vibPanel.classList.contains('show')) {
           vibPanel.classList.remove('show');
           if (typeof vibBtn !== 'undefined' && vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
@@ -4505,22 +4436,6 @@ class VoxBallGame {
         vibBtn?.setAttribute('aria-expanded', 'false');
       }
     });
-
-    // Recording controls
-    if (typeof recBtn !== 'undefined' && recBtn) {
-      recBtn.addEventListener('click', () => {
-        if (this.isRecording) {
-          this.stopRecording();
-          recBtn.classList.remove('recording');
-          recBtn.querySelector('.rec-label').textContent = 'Rec';
-        } else {
-          this.startRecording();
-          recBtn.classList.add('recording');
-          recBtn.querySelector('.rec-label').textContent = 'Stop';
-        }
-      });
-    }
-
 
     document.addEventListener('visibilitychange', async () => {
       if (document.visibilityState !== 'visible' || !this.isRunning) return;
@@ -4593,10 +4508,8 @@ class VoxBallGame {
     // mode while idle) don't stack independent rAF loops.
     if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
     const idleScroll = { x: this.scrollX || 0 };
-    let idleTime = 0;
     const animate = () => {
       if (this.isRunning) return;
-      idleTime += 0.016;
       idleScroll.x += 0.5;
       this.scrollX = idleScroll.x;
       this.ball.x = this.width * 0.45;
@@ -5455,7 +5368,6 @@ class VoxBallGame {
     const m = this.analyzer.metrics;
     const hz = this.analyzer.smoothPitchHz;
     const isSpeaking = m.energy > 0.05;
-    let anyTrippedNow = false;
     let needsRender = false;
     let trippedLabel = '';
 
@@ -5491,7 +5403,6 @@ class VoxBallGame {
       if (wasTripped !== conditionMet) needsRender = true;
 
       if (conditionMet) {
-        anyTrippedNow = true;
         const metricLabels = {
           pitch: 'Pitch', resonance: 'Resonance', energy: 'Energy',
           bounce: 'Pitch Var.', tempo: 'Tempo', vowel: 'Vowels', articulation: 'Articulation'
@@ -5549,7 +5460,6 @@ class VoxBallGame {
     const sess = this.session;
     const overlay = document.getElementById('summaryOverlay');
     const grid = document.getElementById('summaryGrid');
-    const bar = document.getElementById('summaryProsodyBar');
 
     // Format duration
     const mins = Math.floor(sess.duration / 60);
