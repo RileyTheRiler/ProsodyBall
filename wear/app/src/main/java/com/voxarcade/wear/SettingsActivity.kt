@@ -109,7 +109,7 @@ class SettingsActivity : ComponentActivity() {
             textSize = 14f
             gravity = Gravity.CENTER
             minWidth = dp(46)
-            text = get().roundToInt().toString()
+            setText(get().roundToInt().toString())
         }
         val minus = ctrlButton("−")
         val plus = ctrlButton("+")
