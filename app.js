@@ -1424,12 +1424,11 @@ class VoxBallGame {
       if (window.Peer) {
         initPeer();
       } else {
+        // Self-hosted (was unpkg CDN) so no third-party code is fetched at runtime.
         const s = document.createElement('script');
-        s.src = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
-        s.integrity = 'sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR';
-        s.crossOrigin = 'anonymous';
+        s.src = 'vendor/peerjs-1.5.4.min.js';
         s.onload = initPeer;
-        s.onerror = () => reject(new Error('Could not load PeerJS. Check your internet connection.'));
+        s.onerror = () => reject(new Error('Could not load PeerJS (vendor/peerjs-1.5.4.min.js).'));
         document.head.appendChild(s);
       }
     });
@@ -2433,7 +2432,7 @@ class VoxBallGame {
             case 'resonance': val = Math.round(this.analyzer.smoothResonance * 100); break;
             case 'energy': val = Math.round(m.energy * 100); break;
             case 'bounce': val = Math.round(m.bounce * 100); break;
-            case 'tempo': val = 0; break;
+            case 'tempo': val = Math.round((this.syllableSpeedFactor || 0) * 100); break;
             case 'vowel': val = Math.round(m.vowel * 100); break;
             case 'articulation': val = Math.round(m.articulation * 100); break;
             default: val = 0;
@@ -3632,7 +3631,7 @@ class VoxBallGame {
         case 'resonance': currentVal = this.analyzer.smoothResonance * 100; break;
         case 'energy': currentVal = m.energy * 100; break;
         case 'bounce': currentVal = m.bounce * 100; break;
-        case 'tempo': currentVal = 0; break;
+        case 'tempo': currentVal = (this.syllableSpeedFactor || 0) * 100; break;
         case 'vowel': currentVal = m.vowel * 100; break;
         case 'articulation': currentVal = m.articulation * 100; break;
         default: currentVal = 0;
