@@ -5,6 +5,7 @@ import { BulbController } from './bulb-controller.js';
 import { NecklaceController, HapticSrc } from './necklace-controller.js';
 import { VoiceAnalyzer, H1H2_HEAVY_DB, H1H2_LIGHT_DB } from "./voice-analyzer.js";
 import { Particle } from "./particle.js";
+import { Teleprompter } from "./teleprompter.js";
 
 // Re-export so existing importers of VoiceAnalyzer from app.js keep working.
 export { VoiceAnalyzer };
@@ -189,15 +190,8 @@ class VoxBallGame {
       pitchLocked: false,
     };
     this.pitchGridStrength = 'strong';
-    this.teleprompterMode = 'off';
     this.voiceProfilePreset = 'auto';
-    this.teleprompterCustomText = '';
-    this.teleprompterRainbowText = (`When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. ` +
-      `The rainbow is a division of white light into many beautiful colors. These take the shape of a long round arch, ` +
-      `with its path high above, and its two ends apparently beyond the horizon. There is, according to legend, a boiling pot of gold at one end.`);
-
-    this.teleprompterIndex = 0;
-    this.teleprompterSentenceIndex = 0; // current sentence for manual (Space/Tap) advance
+    this.teleprompter = new Teleprompter();
     this.metricHighlightTimers = { bounce: 0, tempo: 0, vowel: 0, articulation: 0, syllable: 0 };
     this.metricExtremeLatch = { bounce: false, tempo: false, vowel: false, articulation: false, syllable: false };
 
@@ -1424,7 +1418,7 @@ class VoxBallGame {
       if (this._isStarting) return; // prevent concurrent start/stop race
       this._isStarting = true;
       try {
-      this.teleprompterSentenceIndex = 0; // start each session at the first sentence
+      this.teleprompter.sentenceIndex = 0; // start each session at the first sentence
       clearError();
       const initialDiag = await getMicDiagnostics(this.analyzer.audioCtx);
       if (diagPanel) {
@@ -1836,8 +1830,8 @@ class VoxBallGame {
 
       if (e.code === 'Space') {
         e.preventDefault();
-        if (this.isRunning && this.teleprompterMode !== 'off') {
-          this._advanceTeleprompterManual();
+        if (this.isRunning && this.teleprompter.mode !== 'off') {
+          this.teleprompter.advanceManual();
           return;
         }
         if (document.getElementById('summaryOverlay').classList.contains('show')) {
@@ -1879,7 +1873,7 @@ class VoxBallGame {
 
     // Single-mode (Vox Ball) setup — runs once during init.
     document.querySelectorAll('.ball-only').forEach(el => el.classList.add('show'));
-    if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
+    if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompter.mode !== 'off');
     document.querySelector('.hud-title').textContent = 'VOX BALL';
     this._updateHelpContent();
     if (this.idleAnimId) { cancelAnimationFrame(this.idleAnimId); this.idleAnimId = null; }
@@ -1948,35 +1942,35 @@ class VoxBallGame {
     // Tap-to-advance for the teleprompter (mobile tap + desktop click)
     if (teleprompterOverlay) {
       teleprompterOverlay.addEventListener('click', () => {
-        if (this.isRunning && this.teleprompterMode !== 'off') {
-          this._advanceTeleprompterManual();
+        if (this.isRunning && this.teleprompter.mode !== 'off') {
+          this.teleprompter.advanceManual();
         }
       });
     }
 
     teleprompterModeSelect?.addEventListener('change', (e) => {
-      this.teleprompterMode = e.target.value;
-      this.teleprompterIndex = 0;
-      this.teleprompterSentenceIndex = 0;
-      if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
-      teleprompterCustomBtn?.classList.toggle('active', this.teleprompterMode === 'custom');
+      this.teleprompter.mode = e.target.value;
+      this.teleprompter.index = 0;
+      this.teleprompter.sentenceIndex = 0;
+      if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompter.mode !== 'off');
+      teleprompterCustomBtn?.classList.toggle('active', this.teleprompter.mode === 'custom');
     });
 
     teleprompterCustomBtn?.addEventListener('click', () => {
-      const existing = this.teleprompterCustomText || '';
+      const existing = this.teleprompter.customText || '';
       const input = window.prompt('Paste or type your teleprompter text:', existing);
       if (input === null) return;
-      this.teleprompterCustomText = input.trim();
-      if (!this.teleprompterCustomText) {
-        this.teleprompterMode = 'rainbow';
+      this.teleprompter.customText = input.trim();
+      if (!this.teleprompter.customText) {
+        this.teleprompter.mode = 'rainbow';
       } else {
-        this.teleprompterMode = 'custom';
+        this.teleprompter.mode = 'custom';
       }
-      if (teleprompterModeSelect) teleprompterModeSelect.value = this.teleprompterMode;
-      this.teleprompterIndex = 0;
-      this.teleprompterSentenceIndex = 0;
-      if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompterMode !== 'off');
-      teleprompterCustomBtn.classList.toggle('active', this.teleprompterMode === 'custom');
+      if (teleprompterModeSelect) teleprompterModeSelect.value = this.teleprompter.mode;
+      this.teleprompter.index = 0;
+      this.teleprompter.sentenceIndex = 0;
+      if (teleprompterOverlay) teleprompterOverlay.classList.toggle('show', this.teleprompter.mode !== 'off');
+      teleprompterCustomBtn.classList.toggle('active', this.teleprompter.mode === 'custom');
     });
 
     // Diagnostic controls (formant-method picker) are revealed only with ?dev=1.
@@ -2784,7 +2778,7 @@ class VoxBallGame {
     this._pushAvgSamples();
     this.updateMeters();
     this._updateExpandedMetrics();
-    this.renderTeleprompter(dt);
+    this.teleprompter.render(dt, this.isRunning);
     this.checkVibrationAlerts(dt);
     this.perfMonitor.render(`Particles: ${this.particles.length} · Trail: ${this.trailPoints.length}`);
 
@@ -3779,67 +3773,6 @@ class VoxBallGame {
     }
 
     overlay.classList.add('show');
-  }
-
-  // Split a passage into sentences, keeping terminal punctuation with each
-  // sentence and capturing any trailing fragment that lacks final punctuation.
-  _splitSentences(text) {
-    if (!text) return [];
-    const parts = text.match(/[^.!?]+[.!?]+(?:["')\]]+)?|\S[^.!?]*$/g);
-    return (parts || [text]).map((s) => s.trim()).filter(Boolean);
-  }
-
-  _teleprompterSourceText() {
-    return this.teleprompterMode === 'custom' ? this.teleprompterCustomText : this.teleprompterRainbowText;
-  }
-
-  // Manual advance: speaker presses Space (desktop) or taps (mobile) to reveal
-  // the next sentence. Wraps back to the start at the end of the passage.
-  _advanceTeleprompterManual() {
-    const enabled = this.teleprompterMode !== 'off';
-    if (!enabled) return;
-    const sentences = this._splitSentences(this._teleprompterSourceText());
-    if (!sentences.length) return;
-    this.teleprompterSentenceIndex = (this.teleprompterSentenceIndex + 1) % sentences.length;
-  }
-
-  renderTeleprompter(dt) {
-    const overlay = document.getElementById('teleprompterOverlay');
-    if (!overlay) return;
-    const hint = document.getElementById('teleprompterHint');
-    const enabled = this.teleprompterMode !== 'off';
-    overlay.classList.toggle('show', enabled);
-    if (hint) hint.classList.toggle('show', enabled && this.isRunning);
-    if (!enabled) { this._tpLastIdx = -1; return; }
-
-    // This runs every frame — only re-split and rebuild the overlay DOM when the
-    // passage text or sentence index actually changed.
-    const sourceText = this._teleprompterSourceText();
-    if (this.teleprompterSentenceIndex === this._tpLastIdx && sourceText === this._tpLastText) return;
-
-    const sentences = this._splitSentences(sourceText);
-    if (!sentences.length) return;
-    if (this.teleprompterSentenceIndex >= sentences.length) {
-      this.teleprompterSentenceIndex = sentences.length - 1;
-    }
-    const idx = this.teleprompterSentenceIndex;
-    this._tpLastIdx = idx;
-    this._tpLastText = sourceText;
-
-    overlay.textContent = '';
-    const frag = document.createDocumentFragment();
-    const cur = document.createElement('span');
-    cur.className = 'active-sentence';
-    cur.textContent = sentences[idx];
-    frag.append(cur);
-    if (idx + 1 < sentences.length) {
-      frag.append(document.createTextNode(' '));
-      const nxt = document.createElement('span');
-      nxt.className = 'next-sentence';
-      nxt.textContent = sentences[idx + 1];
-      frag.append(nxt);
-    }
-    overlay.append(frag);
   }
 
   updateMeters() {
