@@ -1229,6 +1229,12 @@
       border-color: rgba(192, 132, 252, 0.5);
     }
 
+    /* Diagnostic-only controls (e.g. the A/B/C/D formant-method picker). The
+       analyzer defaults to the empirically-best method (LPC); this picker is a
+       research affordance, hidden unless the page is opened with ?dev=1. */
+    .res-method-select.dev-only { display: none; }
+    body.dev-mode .res-method-select.dev-only { display: inline-block; }
+
     .res-method-select option {
       background: var(--bg-surface);
       color: var(--text-primary);
@@ -4413,7 +4419,7 @@
             <div class="info-popup">Your vocal tone quality. High resonance sounds 'forward' or 'bright'; low resonance
               sounds 'deep' or 'hollow'.</div>
           </div>
-          <select id="resMethodSelect" class="res-method-select" aria-label="Resonance method">
+          <select id="resMethodSelect" class="res-method-select dev-only" aria-label="Resonance method (diagnostic)">
             <option value="lpc" selected>C: LPC</option>
             <option value="harmonic">A: Harmonic Env</option>
             <option value="cepstral">B: Cepstral</option>

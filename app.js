@@ -2006,6 +2006,11 @@ class VoxBallGame {
       teleprompterCustomBtn.classList.toggle('active', this.teleprompterMode === 'custom');
     });
 
+    // Diagnostic controls (formant-method picker) are revealed only with ?dev=1.
+    if (new URLSearchParams(window.location.search).has('dev')) {
+      document.body.classList.add('dev-mode');
+    }
+
     document.getElementById('resMethodSelect').addEventListener('change', (e) => {
       this.analyzer.resonanceMethod = e.target.value;
       // Reset smoothed values when switching methods for clean comparison
