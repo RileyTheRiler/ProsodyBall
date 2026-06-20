@@ -38,6 +38,27 @@ export default [
     }
   },
   {
+    // AudioWorklet processors — run in the AudioWorkletGlobalScope, not the
+    // browser window. addModule() loads them as module scripts.
+    files: ['audio/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: {
+        // AudioWorkletGlobalScope built-ins (not in the `globals` package).
+        AudioWorkletProcessor: 'readonly',
+        registerProcessor: 'readonly',
+        sampleRate: 'readonly',
+        currentTime: 'readonly',
+        currentFrame: 'readonly'
+      }
+    },
+    rules: {
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      'no-empty': ['warn', { allowEmptyCatch: true }]
+    }
+  },
+  {
     // CommonJS maintenance/build scripts.
     files: ['**/*.cjs'],
     languageOptions: {

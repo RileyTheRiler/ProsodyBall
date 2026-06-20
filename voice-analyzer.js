@@ -154,6 +154,16 @@ export class VoiceAnalyzer {
     this.lastSyllableTime = 0;
     this.syllableImpulse = 0;
 
+    // Onset-timing AudioWorklet (optional, audio-thread). When it confirms it is
+    // running, it takes over silent→voiced crossing detection so onsets are caught
+    // at audio cadence instead of once per animation frame. Until then (or if the
+    // module fails to load), onset detection stays on the rAF path below — so this
+    // is a pure timing upgrade with a safe fallback.
+    this.useOnsetWorklet = true;     // set false to force the main-thread path
+    this._onsetNode = null;
+    this._onsetWorkletActive = false; // flips true only after the processor responds
+    this._pendingOnsets = 0;          // crossings reported by the worklet since last frame
+
     // Vowel
     this.sustainedDuration = 0;
     this.sustainedThreshold = 0.02;
@@ -293,6 +303,10 @@ export class VoiceAnalyzer {
       this.source.connect(this.analyserRec);
       this.recTimeDomainData = new Float32Array(512);
 
+      // Best-effort: spin up the audio-thread onset-timing worklet. Any failure
+      // here is non-fatal — onset detection just stays on the rAF path.
+      await this._setupOnsetWorklet();
+
       this.isActive = true;
 
       // We must play it to get logic processing
@@ -313,8 +327,58 @@ export class VoiceAnalyzer {
     }
   }
 
+  // Load + wire the onset-timing worklet. Resolves quietly whether or not it
+  // succeeds; `_onsetWorkletActive` only becomes true once the processor posts
+  // back (proving process() is actually running on the audio thread).
+  async _setupOnsetWorklet() {
+    this._onsetNode = null;
+    this._onsetWorkletActive = false;
+    this._pendingOnsets = 0;
+    if (!this.useOnsetWorklet) return;
+    if (!this.audioCtx || !this.audioCtx.audioWorklet || !this.source) return;
+    try {
+      const url = new URL('audio/onset-worklet.js', import.meta.url);
+      await this.audioCtx.audioWorklet.addModule(url);
+      // 1 silent output wired to the destination so the render graph reliably
+      // pulls process() across browsers (Firefox won't run an unconnected node).
+      // The processor never writes to its output, so nothing is audible.
+      const node = new AudioWorkletNode(this.audioCtx, 'onset-processor', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        processorOptions: {
+          windowSize: this.analyser.fftSize,
+          noiseFloor: this.noiseFloor,
+        },
+      });
+      node.port.onmessage = (e) => {
+        const d = e.data;
+        if (!d) return;
+        // First message of any kind proves the processor is live → hand off.
+        this._onsetWorkletActive = true;
+        if (d.type === 'onset') this._pendingOnsets++;
+      };
+      this.source.connect(node);
+      node.connect(this.audioCtx.destination);
+      this._onsetNode = node;
+    } catch (e) {
+      // Older browser, blocked module load, etc. — keep the rAF fallback.
+      console.warn('Onset worklet unavailable, using main-thread detection:', e && e.message);
+      this._onsetNode = null;
+      this._onsetWorkletActive = false;
+    }
+  }
+
   stop() {
     this.isActive = false;
+
+    if (this._onsetNode) {
+      try { this._onsetNode.port.onmessage = null; } catch (e) { /* ignore */ }
+      try { this._onsetNode.disconnect(); } catch (e) { /* ignore */ }
+      this._onsetNode = null;
+    }
+    this._onsetWorkletActive = false;
+    this._pendingOnsets = 0;
 
     if (this.audioElement) {
       this.audioElement.pause();
@@ -770,6 +834,13 @@ export class VoiceAnalyzer {
         }
 
         console.log(`Noise calibrated: floor=${(this.noiseFloor * 1000).toFixed(1)}mRMS, hfFloor=${this.hfNoiseFloor.toFixed(4)}, micTilt=${this.micTiltBaselineDb.toFixed(1)}dB`);
+
+        // Calibration done — arm the onset worklet (if present) and drop any
+        // crossings it queued while we were still measuring the noise floor.
+        this._pendingOnsets = 0;
+        if (this._onsetNode) {
+          this._onsetNode.port.postMessage({ noiseFloor: this.noiseFloor, armed: true });
+        }
       }
       // During calibration, don't trigger any metrics
       return;
@@ -1217,7 +1288,26 @@ export class VoiceAnalyzer {
     const dynamicSyllableOff = this.energyPercentiles.p50 + baseEnergyRange * SYLLABLE_OFF_MULT;
     const syllableOnThreshold = Math.max(0.005, dynamicSyllableOn);
     const syllableOffThreshold = Math.max(0.002, dynamicSyllableOff);
-    if (gatedRms > syllableOnThreshold && this.syllableState === 'silent') {
+    if (this._onsetWorkletActive) {
+      // The worklet owns crossing detection at audio cadence; keep it in sync with
+      // our adapting thresholds and consume any onsets it caught since last frame.
+      this._onsetNode.port.postMessage({
+        noiseFloor: this.noiseFloor,
+        onThreshold: syllableOnThreshold,
+        offThreshold: syllableOffThreshold,
+      });
+      if (this._pendingOnsets > 0) {
+        this._pendingOnsets = 0;
+        if (now - this.lastSyllableTime > SYLLABLE_DEBOUNCE_SECS) {
+          this.lastSyllableTime = now;
+          this.syllableImpulse = 1.0;
+          // Open the vocal-attack capture window at this phonation onset.
+          this.attackWindowTimer = 0;
+          this.attackRisePeak = riseRate;
+          this.attackPeakTime = 0;
+        }
+      }
+    } else if (gatedRms > syllableOnThreshold && this.syllableState === 'silent') {
       if (now - this.lastSyllableTime > SYLLABLE_DEBOUNCE_SECS) {
         this.lastSyllableTime = now;
         this.syllableImpulse = 1.0;
