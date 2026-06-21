@@ -83,7 +83,12 @@ class MicEngine {
 
     fun stop() {
         running = false
+        // Join the capture thread (bounded) so its AudioRecord is fully released
+        // before a subsequent start() opens a new one — avoids overlapping
+        // recorders / ERROR_INVALID_OPERATION on rapid stop→start.
+        val t = thread
         thread = null
+        try { t?.join(400) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
         _level.value = 0f
     }
 }
