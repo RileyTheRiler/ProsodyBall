@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Default disguise shown over the real UI (see MainActivity's mask overlay).
+  Looks like an ordinary analog watch face. Swap this file for your own
+  mask_overlay.png / mask_overlay.jpg (same name, drawable/ folder) to use a
+  custom image instead — see wear/README.md "Mask mode".
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="454dp"
+    android:height="454dp"
+    android:viewportWidth="454"
+    android:viewportHeight="454">
+    <path
+        android:fillColor="#000000"
+        android:pathData="M0,0h454v454h-454z" />
+    <path
+        android:pathData="M227,227m-200,0a200,200 0,1 1,400 0a200,200 0,1 1,-400 0"
+        android:fillColor="#1A1A1A"
+        android:strokeColor="#3A3A3A"
+        android:strokeWidth="3" />
+    <!-- Hour ticks -->
+    <path android:fillColor="#9A9A9A" android:pathData="M219,40h16v40h-16z" />
+    <path android:fillColor="#9A9A9A" android:pathData="M219,374h16v40h-16z" />
+    <path android:fillColor="#9A9A9A" android:pathData="M40,219h40v16h-40z" />
+    <path android:fillColor="#9A9A9A" android:pathData="M374,219h40v16h-40z" />
+    <!-- Hands (resting around 10:10) -->
+    <path
+        android:fillColor="#E0E0E0"
+        android:pathData="M227,227 L150,150 L160,140 L237,217 Z" />
+    <path
+        android:fillColor="#E0E0E0"
+        android:pathData="M227,227 L300,150 L292,138 L219,215 Z" />
+    <path
+        android:pathData="M227,227m-10,0a10,10 0,1 1,20 0a10,10 0,1 1,-20 0"
+        android:fillColor="#E0E0E0" />
+</vector>
