@@ -6,7 +6,11 @@ name: Build Wear OS APK
 on:
   push:
     branches:
-      - "claude/wear-os-smartwatch-support-**"
+      # Build main on every merge so the "latest APK" artifact always matches the
+      # canonical (WebView-overlay) app, plus any claude/* feature branch that
+      # touches the watch files for pre-merge validation.
+      - main
+      - "claude/**"
     paths:
       - "wear/**"
       - "index.html"
