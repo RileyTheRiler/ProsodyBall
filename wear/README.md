@@ -18,6 +18,22 @@ separate logic to maintain. On launch you pick one of two modes:
 > full step-by-step sideload guide (install ADB → download the APK → pair over
 > Wi-Fi → install → open). The sections below are about how the app is built.
 
+## Mask mode (visual discretion)
+
+The screen is always covered by a full-screen mask image (`drawable/mask_overlay.xml`,
+a plain analog watch face by default) so a glance at the watch reads as an ordinary
+watch, not Vox Ball or the necklace UI underneath — useful alongside Necklace mode for
+practicing out in the world.
+
+- **Long-press anywhere** on the screen to dim the mask to a faint 15% so you can see
+  the real UI underneath; taps now reach it instead of the mask. **Long-press again**
+  to snap the mask back to fully opaque and blocking — this is the default state on
+  launch.
+- **Use your own image:** delete `app/src/main/res/drawable/mask_overlay.xml` and drop
+  in a `mask_overlay.png` or `mask_overlay.jpg` (same name, same folder) sized for the
+  round screen (e.g. 454x454 for a Galaxy Watch 7). The code references the drawable
+  by name, so no other changes are needed.
+
 ## Necklace mode (haptic biofeedback)
 
 Wear the watch on a lanyard/pendant so the mic sits closer to your mouth, then pick
@@ -48,7 +64,7 @@ Wear the watch on a lanyard/pendant so the mic sits closer to your mouth, then p
 
 | Piece | Purpose |
 |-------|---------|
-| `app/src/main/java/com/voxarcade/wear/MainActivity.kt` | The native shell: one full-screen `WebView`, mic-permission handling, keep-screen-on, a **native Vibrator bridge** (`AndroidHaptics`) so the page's `navigator.vibrate` produces strong, reliable buzzes, and a **brightness bridge** (`AndroidScreen`) for necklace mode. |
+| `app/src/main/java/com/voxarcade/wear/MainActivity.kt` | The native shell: one full-screen `WebView`, mic-permission handling, keep-screen-on, a **native Vibrator bridge** (`AndroidHaptics`) so the page's `navigator.vibrate` produces strong, reliable buzzes, a **brightness bridge** (`AndroidScreen`) for necklace mode, and the **mask overlay** (long-press to peek) for visual discretion. |
 | `assets-overlay/watch.css` + `watch-boot.js` | Watch adaptation layer injected at runtime: the launch chooser, the Vox Ball layout, and the necklace UI (mic toggle, status dot, alert seeding). The canonical `index.html` is never edited. |
 | `app/build.gradle.kts` (`copyWebApp` task) | Copies the root web app (`index.html`, `app.js`, `dsp-utils.js`, …) + the overlay into the APK's assets at build time. |
 

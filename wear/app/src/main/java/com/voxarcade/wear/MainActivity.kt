@@ -12,13 +12,18 @@ import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import android.widget.ImageView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -34,6 +39,9 @@ import org.json.JSONArray
  *     biofeedback buzzes work with no changes to app.js.
  *   - Screen-brightness control for the eyes-free "necklace" mode
  *     ([ScreenBridge]) so the watch can run dark against your chest.
+ *   - A mask overlay ([R.drawable.mask_overlay]) drawn on top of the WebView so
+ *     the watch face reads as an ordinary watch in public. Long-press anywhere
+ *     to peek through it; taps only reach the real UI while peeking.
  *
  * The watch adaptation layer (watch.css / watch-boot.js) is injected after the
  * page loads; the navigator.vibrate override is injected earlier (onPageStarted)
@@ -42,6 +50,9 @@ import org.json.JSONArray
 class MainActivity : ComponentActivity() {
 
     private lateinit var webView: WebView
+    private lateinit var maskOverlay: ImageView
+    private lateinit var maskGestureDetector: GestureDetector
+    private var maskPeeking = false
     private val main = Handler(Looper.getMainLooper())
 
     private val requestMic =
@@ -98,7 +109,30 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        setContentView(webView)
+
+        maskGestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onLongPress(e: MotionEvent) {
+                setMaskPeeking(!maskPeeking)
+            }
+        })
+        maskOverlay = ImageView(this).apply {
+            setImageResource(R.drawable.mask_overlay)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            isClickable = false
+            isFocusable = false
+            setOnTouchListener { _, event ->
+                maskGestureDetector.onTouchEvent(event)
+                // Block taps while masked so they can't poke the hidden UI by
+                // accident; let them through to the WebView while peeking.
+                !maskPeeking
+            }
+        }
+        val root = FrameLayout(this).apply {
+            addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            addView(maskOverlay, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }
+        setContentView(root)
+        setMaskPeeking(false)
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             == PackageManager.PERMISSION_GRANTED
@@ -129,6 +163,12 @@ class MainActivity : ComponentActivity() {
             })();
         """.trimIndent()
         view.evaluateJavascript(js, null)
+    }
+
+    /** Dim the mask to [PEEK_ALPHA] so the real UI is visible underneath, or restore it. */
+    private fun setMaskPeeking(peeking: Boolean) {
+        maskPeeking = peeking
+        maskOverlay.alpha = if (peeking) PEEK_ALPHA else 1f
     }
 
     /** Set a low screen brightness for the eyes-free necklace mode, or restore it. */
@@ -198,6 +238,10 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        // Mask opacity while peeking — dim enough to read the real UI, not zero,
+        // so a glance at the watch over your shoulder still mostly sees the mask.
+        private const val PEEK_ALPHA = 0.15f
+
         // Defines navigator.vibrate to forward to the native vibrator. Runs before
         // app.js, so the engine's `'vibrate' in navigator` check passes and every
         // existing haptic call (alert rules, resonance drift, test) buzzes for real.
