@@ -8,14 +8,23 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -23,25 +32,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import kotlinx.coroutines.delay
 
-/**
- * Native (no-WebView) entry point for the Wear OS app.
- *
- * The previous build hosted the web app in a [android.webkit.WebView], which the
- * Galaxy Watch 7 cannot instantiate (it throws UnsupportedOperationException — the
- * watch ships no usable WebView), so the app crashed on launch. This is the fresh
- * native rebuild. Milestone 1 just proves the foundation runs on the watch: it
- * requests the mic and shows a live input level. Pitch/resonance + necklace haptics
- * land in the following milestones (MicEngine already captures the audio frames).
- */
+private val ACCENT = Color(0xFF34D6C8)
+private val ALERT = Color(0xFFFFA03C)
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -53,6 +58,7 @@ class MainActivity : ComponentActivity() {
 private fun VoxApp() {
     val context = LocalContext.current
     val engine = remember { MicEngine() }
+    val haptics = remember { Haptics(context) }
 
     var hasMic by remember {
         mutableStateOf(
@@ -61,6 +67,13 @@ private fun VoxApp() {
         )
     }
     var listening by remember { mutableStateOf(false) }
+    var necklace by remember { mutableStateOf(false) }
+
+    // Necklace settings (kept in-session for M3; persistence comes next).
+    var mode by remember { mutableStateOf(HapticMode.DISCREET) }
+    var intensity by remember { mutableStateOf(Intensity.GENTLE) }
+    var lowHz by remember { mutableStateOf(130) }
+    var highHz by remember { mutableStateOf(200) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -73,67 +86,82 @@ private fun VoxApp() {
     val pitchHz by engine.pitchHz.collectAsState()
     val pitchConfidence by engine.pitchConfidence.collectAsState()
 
-    DisposableEffect(Unit) {
-        onDispose { engine.stop() }
-    }
+    DisposableEffect(Unit) { onDispose { engine.stop() } }
 
     val voiced = pitchHz > 0f && pitchConfidence > 0.4f
-    // Map pitch into the detector's range for the ring; fall back to the level meter.
-    val ringProgress = if (voiced) ((pitchHz - 70f) / (400f - 70f)).coerceIn(0f, 1f)
-                       else (level * 6f).coerceIn(0f, 1f)
+    val direction = when {
+        !voiced -> null
+        pitchHz < lowHz -> "below"
+        pitchHz > highHz -> "above"
+        else -> null
+    }
+
+    // Confidence-gated directional alert loop — only active in necklace mode.
+    LaunchedEffect(necklace, listening, mode, intensity, lowHz, highHz) {
+        if (!necklace || !listening) return@LaunchedEffect
+        var lastFire = 0L
+        while (true) {
+            val hz = engine.pitchHz.value
+            val conf = engine.pitchConfidence.value
+            if (hz > 0f && conf > 0.45f) {
+                val dir = if (hz < lowHz) "below" else if (hz > highHz) "above" else null
+                if (dir != null) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastFire >= 600L) {
+                        haptics.buzz(
+                            HapticPatterns.patternFor("pitch", dir, mode),
+                            HapticPatterns.intensityToAmp(intensity, mode)
+                        )
+                        lastFire = now
+                    }
+                }
+            }
+            delay(120)
+        }
+    }
 
     MaterialTheme {
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black),
+            modifier = Modifier.fillMaxSize().background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
             Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                Text(
-                    text = "Vox Native",
-                    color = Color(0xFF34D6C8),
-                    style = MaterialTheme.typography.title3
-                )
-                Text(
-                    text = when {
-                        !listening -> "Tap to listen"
-                        voiced -> "Pitch"
-                        else -> "Listening"
-                    },
-                    color = Color(0xFFB8B8C8),
-                    style = MaterialTheme.typography.caption1
-                )
+                Spacer(Modifier.height(20.dp))
 
-                Box(
-                    modifier = Modifier
-                        .padding(top = 10.dp)
-                        .size(104.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(
-                        progress = ringProgress,
-                        modifier = Modifier.fillMaxSize(),
-                        indicatorColor = if (voiced) Color(0xFF34D6C8) else Color(0xFF3A6E78),
-                        trackColor = Color(0xFF1A2A30)
+                // Mode switch
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Seg("Pitch", !necklace) { necklace = false }
+                    Seg("Necklace", necklace) { necklace = true }
+                }
+                Spacer(Modifier.height(10.dp))
+
+                if (!necklace) {
+                    PitchMeter(voiced, pitchHz, level)
+                } else {
+                    NecklaceControls(
+                        listening = listening,
+                        voiced = voiced,
+                        pitchHz = pitchHz,
+                        direction = direction,
+                        mode = mode, onMode = { mode = it },
+                        intensity = intensity, onIntensity = { intensity = it },
+                        lowHz = lowHz, highHz = highHz,
+                        onLow = { lowHz = (lowHz + it).coerceIn(80, highHz - 10) },
+                        onHigh = { highHz = (highHz + it).coerceIn(lowHz + 10, 350) },
+                        onTest = {
+                            haptics.buzz(
+                                HapticPatterns.patternFor("pitch", "below", mode),
+                                HapticPatterns.intensityToAmp(intensity, mode)
+                            )
+                        }
                     )
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = if (voiced) "${pitchHz.toInt()}" else "—",
-                            color = Color.White,
-                            style = MaterialTheme.typography.title1
-                        )
-                        Text(
-                            text = "Hz",
-                            color = Color(0xFF8C8C9C),
-                            style = MaterialTheme.typography.caption2
-                        )
-                    }
                 }
 
+                Spacer(Modifier.height(12.dp))
                 Button(
                     onClick = {
                         when {
@@ -141,12 +169,127 @@ private fun VoxApp() {
                             listening -> { engine.stop(); listening = false }
                             else -> { engine.start(); listening = true }
                         }
-                    },
-                    modifier = Modifier.padding(top = 12.dp)
-                ) {
-                    Text(if (listening) "Stop" else "Start")
-                }
+                    }
+                ) { Text(if (listening) "Stop" else "Start") }
+
+                Spacer(Modifier.height(20.dp))
             }
         }
+    }
+}
+
+@Composable
+private fun PitchMeter(voiced: Boolean, pitchHz: Float, level: Float) {
+    val ring = if (voiced) ((pitchHz - 70f) / (400f - 70f)).coerceIn(0f, 1f)
+               else (level * 6f).coerceIn(0f, 1f)
+    Box(modifier = Modifier.size(104.dp), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(
+            progress = ring,
+            modifier = Modifier.fillMaxSize(),
+            indicatorColor = if (voiced) ACCENT else Color(0xFF3A6E78),
+            trackColor = Color(0xFF1A2A30)
+        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = if (voiced) "${pitchHz.toInt()}" else "—",
+                color = Color.White,
+                style = MaterialTheme.typography.title1
+            )
+            Text(text = "Hz", color = Color(0xFF8C8C9C), style = MaterialTheme.typography.caption2)
+        }
+    }
+}
+
+@Composable
+private fun NecklaceControls(
+    listening: Boolean,
+    voiced: Boolean,
+    pitchHz: Float,
+    direction: String?,
+    mode: HapticMode, onMode: (HapticMode) -> Unit,
+    intensity: Intensity, onIntensity: (Intensity) -> Unit,
+    lowHz: Int, highHz: Int,
+    onLow: (Int) -> Unit, onHigh: (Int) -> Unit,
+    onTest: () -> Unit
+) {
+    val status = when {
+        !listening -> "Tap Start"
+        !voiced -> "Listening…"
+        direction == "below" -> "${pitchHz.toInt()} Hz · Low ↑"
+        direction == "above" -> "${pitchHz.toInt()} Hz · High ↓"
+        else -> "${pitchHz.toInt()} Hz · In range"
+    }
+    Text(
+        text = status,
+        color = if (direction != null) ALERT else if (voiced) ACCENT else Color(0xFFB8B8C8),
+        style = MaterialTheme.typography.title3,
+        textAlign = TextAlign.Center
+    )
+    Spacer(Modifier.height(10.dp))
+
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Seg("Discreet", mode == HapticMode.DISCREET) { onMode(HapticMode.DISCREET) }
+        Seg("Practice", mode == HapticMode.PRACTICE) { onMode(HapticMode.PRACTICE) }
+    }
+    Spacer(Modifier.height(6.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Seg("Gentle", intensity == Intensity.GENTLE) { onIntensity(Intensity.GENTLE) }
+        Seg("Med", intensity == Intensity.MEDIUM) { onIntensity(Intensity.MEDIUM) }
+        Seg("Strong", intensity == Intensity.STRONG) { onIntensity(Intensity.STRONG) }
+    }
+    Spacer(Modifier.height(8.dp))
+
+    StepperRow("Low", lowHz, { onLow(-5) }, { onLow(5) })
+    StepperRow("High", highHz, { onHigh(-5) }, { onHigh(5) })
+
+    Spacer(Modifier.height(8.dp))
+    Seg("Test buzz", false, onTest)
+}
+
+@Composable
+private fun Seg(text: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) Color(0xFF234A52) else Color(0xFF18181F))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 11.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            color = if (selected) Color.White else Color(0xFF9595A6),
+            style = MaterialTheme.typography.caption1
+        )
+    }
+}
+
+@Composable
+private fun StepperRow(label: String, value: Int, onMinus: () -> Unit, onPlus: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.padding(vertical = 2.dp)
+    ) {
+        Text(label, color = Color(0xFF9595A6), style = MaterialTheme.typography.caption2,
+            modifier = Modifier.width(34.dp))
+        StepBtn("−", onMinus)
+        Text("$value", color = Color.White, style = MaterialTheme.typography.caption1,
+            textAlign = TextAlign.Center, modifier = Modifier.width(38.dp))
+        StepBtn("+", onPlus)
+    }
+}
+
+@Composable
+private fun StepBtn(label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(30.dp)
+            .clip(RoundedCornerShape(15.dp))
+            .background(Color(0xFF20202A))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = Color.White, style = MaterialTheme.typography.title3)
     }
 }
