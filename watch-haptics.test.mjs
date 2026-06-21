@@ -15,11 +15,11 @@ test('patternFor returns distinct contours for pitch directions in practice', ()
 });
 
 test('patternFor resonance feels categorically different from pitch', () => {
-  const resDark = VW.patternFor('resonance', 'below', 'practice');
-  const resBright = VW.patternFor('resonance', 'above', 'practice');
-  assert.deepEqual(resBright, [120]);              // one long sustain
-  assert.ok(resDark.length > 3);                   // fast flutter
-  assert.notDeepEqual(resDark, resBright);
+  const resFlutter = VW.patternFor('resonance', 'below', 'practice'); // signals "brighten"
+  const resSustain = VW.patternFor('resonance', 'above', 'practice'); // signals "darken"
+  assert.deepEqual(resSustain, [120]);             // one long sustain
+  assert.ok(resFlutter.length > 3);                // fast flutter
+  assert.notDeepEqual(resFlutter, resSustain);
 });
 
 test('discreet mode collapses every alert to a single short tap', () => {
