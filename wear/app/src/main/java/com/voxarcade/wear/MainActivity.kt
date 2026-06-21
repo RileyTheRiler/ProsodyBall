@@ -70,10 +70,17 @@ private fun VoxApp() {
     }
 
     val level by engine.level.collectAsState()
+    val pitchHz by engine.pitchHz.collectAsState()
+    val pitchConfidence by engine.pitchConfidence.collectAsState()
 
     DisposableEffect(Unit) {
         onDispose { engine.stop() }
     }
+
+    val voiced = pitchHz > 0f && pitchConfidence > 0.4f
+    // Map pitch into the detector's range for the ring; fall back to the level meter.
+    val ringProgress = if (voiced) ((pitchHz - 70f) / (400f - 70f)).coerceIn(0f, 1f)
+                       else (level * 6f).coerceIn(0f, 1f)
 
     MaterialTheme {
         Box(
@@ -92,7 +99,11 @@ private fun VoxApp() {
                     style = MaterialTheme.typography.title3
                 )
                 Text(
-                    text = if (listening) "Listening" else "Tap to listen",
+                    text = when {
+                        !listening -> "Tap to listen"
+                        voiced -> "Pitch"
+                        else -> "Listening"
+                    },
                     color = Color(0xFFB8B8C8),
                     style = MaterialTheme.typography.caption1
                 )
@@ -100,21 +111,27 @@ private fun VoxApp() {
                 Box(
                     modifier = Modifier
                         .padding(top = 10.dp)
-                        .size(96.dp),
+                        .size(104.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    // Scale the RMS up so quiet speech still moves the ring.
                     CircularProgressIndicator(
-                        progress = (level * 6f).coerceIn(0f, 1f),
+                        progress = ringProgress,
                         modifier = Modifier.fillMaxSize(),
-                        indicatorColor = Color(0xFF34D6C8),
+                        indicatorColor = if (voiced) Color(0xFF34D6C8) else Color(0xFF3A6E78),
                         trackColor = Color(0xFF1A2A30)
                     )
-                    Text(
-                        text = "${(level * 100f).coerceIn(0f, 99f).toInt()}",
-                        color = Color.White,
-                        style = MaterialTheme.typography.title2
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = if (voiced) "${pitchHz.toInt()}" else "—",
+                            color = Color.White,
+                            style = MaterialTheme.typography.title1
+                        )
+                        Text(
+                            text = "Hz",
+                            color = Color(0xFF8C8C9C),
+                            style = MaterialTheme.typography.caption2
+                        )
+                    }
                 }
 
                 Button(

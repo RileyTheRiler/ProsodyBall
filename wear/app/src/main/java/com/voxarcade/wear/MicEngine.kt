@@ -20,8 +20,19 @@ import kotlin.math.sqrt
 class MicEngine {
 
     private val sampleRate = 16_000
+
     private val _level = MutableStateFlow(0f)
     val level: StateFlow<Float> = _level
+
+    /** Median-filtered fundamental in Hz (0 when silent/unvoiced). */
+    private val _pitchHz = MutableStateFlow(0f)
+    val pitchHz: StateFlow<Float> = _pitchHz
+
+    /** Pitch confidence 0..1 from the YIN CMND. */
+    private val _pitchConfidence = MutableStateFlow(0f)
+    val pitchConfidence: StateFlow<Float> = _pitchConfidence
+
+    private val pitch = PitchDetector(sampleRate)
 
     @Volatile private var running = false
     private var thread: Thread? = null
@@ -57,7 +68,9 @@ class MicEngine {
             }
 
             val buf = ShortArray(bufSize / 2)
+            val frame = FloatArray(PITCH_FRAME)
             var smoothed = 0f
+            pitch.reset()
             recorder.startRecording()
             try {
                 while (running) {
@@ -72,6 +85,16 @@ class MicEngine {
                         // Light attack/release smoothing so the meter isn't jittery.
                         smoothed += (rms - smoothed) * 0.35f
                         _level.value = smoothed
+
+                        // YIN on the most recent PITCH_FRAME samples of this read.
+                        if (n >= PITCH_FRAME) {
+                            val start = n - PITCH_FRAME
+                            for (i in 0 until PITCH_FRAME) {
+                                frame[i] = (buf[start + i] / 32768.0).toFloat()
+                            }
+                            _pitchHz.value = pitch.detect(frame, rms)
+                            _pitchConfidence.value = pitch.confidence
+                        }
                     }
                 }
             } finally {
@@ -90,5 +113,12 @@ class MicEngine {
         thread = null
         try { t?.join(400) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
         _level.value = 0f
+        _pitchHz.value = 0f
+        _pitchConfidence.value = 0f
+    }
+
+    private companion object {
+        /** ~64 ms window at 16 kHz — enough for ≥2 periods down to ~30 Hz. */
+        const val PITCH_FRAME = 1024
     }
 }
