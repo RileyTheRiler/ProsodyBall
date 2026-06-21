@@ -1,6 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError } from './dsp-utils.js';
+import { computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError, sanitizeUrl } from './dsp-utils.js';
+
+test('sanitizeUrl allows safe URLs and blob protocols', () => {
+  assert.equal(sanitizeUrl('https://example.com'), 'https://example.com');
+  assert.equal(sanitizeUrl('blob:http://localhost/1234'), 'blob:http://localhost/1234');
+  assert.equal(sanitizeUrl('/path/to/file'), '/path/to/file');
+});
+
+test('sanitizeUrl blocks dangerous protocols', () => {
+  assert.equal(sanitizeUrl('javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('  javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('data:text/html,<html>'), 'about:blank');
+  assert.equal(sanitizeUrl('vbscript:msgbox(1)'), 'about:blank');
+});
+
+test('sanitizeUrl handles empty or null inputs', () => {
+  assert.equal(sanitizeUrl(null), 'about:blank');
+  assert.equal(sanitizeUrl(undefined), 'about:blank');
+  assert.equal(sanitizeUrl(''), 'about:blank');
+});
 
 test('computeRawProsody applies weighted sum', () => {
   const metrics = { bounce: 1, vowel: 0.5, articulation: 0.5 };
