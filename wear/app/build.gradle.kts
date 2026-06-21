@@ -72,7 +72,7 @@ val copyWebApp by tasks.registering(Copy::class) {
     }
     // Watch-specific overlay injected by MainActivity at runtime.
     from(rootProject.projectDir.resolve("assets-overlay")) {
-        include("watch.css", "watch-boot.js")
+        include("watch.css", "watch-boot.js", "watch-haptics.cjs")
     }
 
     into(generatedWebAssets)

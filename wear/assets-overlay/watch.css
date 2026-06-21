@@ -13,15 +13,20 @@
 :root.watch body {
   margin: 0;
   padding: 0;
-  background: #0a0a12;
+  background: var(--watch-bg, #0a0a12);
   overflow: hidden;
   /* Honour the round display's safe area when the system reports it. */
   --watch-inset: env(safe-area-inset-top, 0px);
 }
 
-/* Base font is set to 18px on <html>; shrink for the wrist. */
+/* Base font is set to 18px on <html>; shrink for the wrist.
+   Theme variables are overridden at runtime by watch-boot.js applyTheme(); these
+   are the defaults so the chrome is styled even before the theme is applied. */
 :root.watch {
   font-size: 13px;
+  --watch-accent: #34d6c8;
+  --watch-accent-soft: rgba(52, 214, 200, 0.18);
+  --watch-bg: #0a0a12;
 }
 
 /* The app shell becomes a single full-screen layer. */
@@ -104,7 +109,7 @@
 .watch-choice__icon {
   font-size: 1.4rem;
   line-height: 1.1;
-  color: #ff8e53;
+  color: var(--watch-accent, #ff8e53);
 }
 
 .watch-choice__label {
@@ -177,8 +182,8 @@
 }
 
 .necklace-dot.on {                         /* listening, in range */
-  background: #6bcb77;
-  box-shadow: 0 0 16px rgba(107, 203, 119, 0.7);
+  background: var(--watch-accent, #6bcb77);
+  box-shadow: 0 0 16px var(--watch-accent-soft, rgba(107, 203, 119, 0.7));
 }
 
 .necklace-dot.alert {                      /* out of range — buzzing */
@@ -267,4 +272,276 @@
 
 @media (prefers-reduced-motion: reduce) {
   .watch-start__ball { animation: none; }
+}
+
+/* =====================================================================
+   Settings gear on the launch chooser.
+   ===================================================================== */
+.watch-gear {
+  position: fixed;
+  top: 6%;
+  right: 8%;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(230, 230, 245, 0.85);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.watch-gear:active { background: rgba(255, 255, 255, 0.14); }
+
+/* =====================================================================
+   Practice-mode alert flash ring (suppressed in discreet mode and for
+   reduced-motion users). A brief accent pulse around the screen edge.
+   ===================================================================== */
+.watch-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  pointer-events: none;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0 var(--watch-accent, #34d6c8);
+  opacity: 0;
+}
+:root.mode-practice .watch-flash.show {
+  animation: watch-flash-pulse 0.45s ease-out;
+}
+@keyframes watch-flash-pulse {
+  0%   { opacity: 0;   box-shadow: inset 0 0 0 0   var(--watch-accent, #34d6c8); }
+  35%  { opacity: 0.9; box-shadow: inset 0 0 28px 10px var(--watch-accent, #34d6c8); }
+  100% { opacity: 0;   box-shadow: inset 0 0 0 0   var(--watch-accent, #34d6c8); }
+}
+:root.mode-discreet .watch-flash.show { animation: none; opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .watch-flash.show { animation: none !important; opacity: 0; }
+}
+
+/* =====================================================================
+   Necklace one-tap mode chip (Discreet / Practice).
+   ===================================================================== */
+.necklace-modechip {
+  position: fixed;
+  bottom: 19%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.necklace-modechip__opt {
+  border: none;
+  background: transparent;
+  color: rgba(220, 220, 235, 0.7);
+  font-family: Outfit, system-ui, sans-serif;
+  font-size: 0.74rem;
+  padding: 4px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.necklace-modechip__opt[aria-checked="true"] {
+  background: var(--watch-accent-soft, rgba(255, 255, 255, 0.16));
+  color: #fff;
+}
+
+/* =====================================================================
+   Watch-native settings screen — full-screen, scrollable, round-safe.
+   ===================================================================== */
+.watch-settings {
+  position: fixed;
+  inset: 0;
+  z-index: 10100;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--watch-bg, #0a0a12);
+  color: #eceaf4;
+  font-family: Outfit, system-ui, sans-serif;
+}
+/* Pad content toward the centre so cards clear the round bezel. */
+.watch-settings__inner {
+  box-sizing: border-box;
+  padding: 16% 11% 22%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.watch-settings__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 2px;
+}
+.watch-settings__title {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--watch-accent, #fff);
+}
+.watch-settings__back {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: #eceaf4;
+  font-family: inherit;
+  font-size: 0.8rem;
+  padding: 5px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.watch-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 11px 12px;
+}
+.watch-card__h {
+  font-size: 0.92rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: #f3f1fa;
+}
+.watch-card__h2 {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(200, 200, 220, 0.55);
+  margin: 9px 0 5px;
+}
+.watch-card__hint {
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: rgba(200, 200, 220, 0.55);
+  margin-top: 7px;
+}
+
+/* Segmented control. */
+.watch-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.3);
+}
+.watch-seg__opt {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: rgba(220, 220, 235, 0.65);
+  font-family: inherit;
+  font-size: 0.78rem;
+  padding: 7px 4px;
+  border-radius: 10px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.watch-seg__opt[aria-checked="true"] {
+  background: var(--watch-accent-soft, rgba(255, 255, 255, 0.16));
+  color: #fff;
+  font-weight: 700;
+}
+
+/* Label + control rows. */
+.watch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+.watch-row__label {
+  font-size: 0.8rem;
+  color: rgba(225, 225, 240, 0.85);
+}
+
+/* Numeric stepper. */
+.watch-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.watch-step__btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.watch-step__btn:active { background: var(--watch-accent-soft); }
+.watch-step__val {
+  min-width: 34px;
+  text-align: center;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+/* On/off pill toggle. */
+.watch-toggle {
+  min-width: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(220, 220, 235, 0.7);
+  font-family: inherit;
+  font-size: 0.76rem;
+  padding: 5px 10px;
+  border-radius: 12px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.watch-toggle.on {
+  background: var(--watch-accent-soft);
+  border-color: var(--watch-accent);
+  color: #fff;
+}
+
+/* Test cue grid. */
+.watch-testgrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+.watch-test {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  color: #eceaf4;
+  font-family: inherit;
+  font-size: 0.74rem;
+  padding: 7px 4px;
+  border-radius: 10px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.watch-test:active { background: var(--watch-accent-soft); }
+
+/* Range slider. */
+.watch-slider {
+  width: 52%;
+  accent-color: var(--watch-accent, #34d6c8);
+}
+
+/* Full-width action button. */
+.watch-btn {
+  width: 100%;
+  margin-top: 10px;
+  border: 1px solid var(--watch-accent, rgba(255, 255, 255, 0.2));
+  background: var(--watch-accent-soft, rgba(255, 255, 255, 0.08));
+  color: #fff;
+  font-family: inherit;
+  font-size: 0.84rem;
+  font-weight: 700;
+  padding: 9px;
+  border-radius: 13px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }

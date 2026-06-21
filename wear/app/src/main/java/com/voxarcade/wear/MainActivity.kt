@@ -122,9 +122,17 @@ class MainActivity : ComponentActivity() {
               link.rel = 'stylesheet';
               link.href = 'watch.css';
               document.head.appendChild(link);
+              // Load the pure helpers (window.VoxWatch) before watch-boot.js, in order.
+              // async=false on dynamically-inserted scripts forces insertion-order exec.
+              var h = document.createElement('script');
+              h.id = 'watch-haptics';
+              h.src = 'watch-haptics.cjs';
+              h.async = false;
+              document.body.appendChild(h);
               var s = document.createElement('script');
               s.id = 'watch-boot';
               s.src = 'watch-boot.js';
+              s.async = false;
               document.body.appendChild(s);
             })();
         """.trimIndent()
@@ -174,6 +182,37 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        /**
+         * Like [vibrate] but plays the on-pulses at a fixed [amplitude] (1..255) so the
+         * watch layer can offer gentle (public/discreet) vs strong (private/practice)
+         * haptics. Falls back to the default-amplitude waveform when the motor has no
+         * amplitude control (e.g. a basic ERM). `pattern` is the same JSON form as
+         * [vibrate]; the array alternates on/off starting with an on-pulse.
+         */
+        @JavascriptInterface
+        fun vibrateAmp(pattern: String, amplitude: Int) {
+            val v = vibrator ?: return
+            if (!v.hasVibrator()) return
+            try {
+                val timings = parseTimings(pattern)
+                if (timings.isEmpty()) return
+                // Leading 0 = the initial off-delay slot; thereafter slots alternate
+                // on/off starting with "on" (even index in the original pattern).
+                val waveform = LongArray(timings.size + 1)
+                for (i in timings.indices) waveform[i + 1] = timings[i]
+
+                if (v.hasAmplitudeControl()) {
+                    val amp = amplitude.coerceIn(1, 255)
+                    val amplitudes = IntArray(timings.size + 1)
+                    for (i in timings.indices) amplitudes[i + 1] = if (i % 2 == 0) amp else 0
+                    v.vibrate(VibrationEffect.createWaveform(waveform, amplitudes, -1))
+                } else {
+                    v.vibrate(VibrationEffect.createWaveform(waveform, -1))
+                }
+            } catch (_: Exception) {
+            }
+        }
+
         @JavascriptInterface
         fun cancel() {
             vibrator?.cancel()
@@ -209,6 +248,14 @@ class MainActivity : ComponentActivity() {
                   try { window.AndroidHaptics.vibrate(JSON.stringify(pattern)); } catch (e) {}
                   return true;
                 };
+                // Amplitude-aware buzz for the watch layer's discreet/practice haptics.
+                // Left undefined in a plain browser so the overlay falls back to vibrate().
+                if (window.AndroidHaptics.vibrateAmp) {
+                  navigator.vibrateAmp = function(pattern, amplitude) {
+                    try { window.AndroidHaptics.vibrateAmp(JSON.stringify(pattern), amplitude | 0); } catch (e) {}
+                    return true;
+                  };
+                }
               } catch (e) {}
             })();
         """
