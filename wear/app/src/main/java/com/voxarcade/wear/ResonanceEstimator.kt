@@ -99,16 +99,33 @@ class ResonanceEstimator(private val sampleRate: Int = 16_000) {
         val centroid = if (cDen > 0) (cNum / cDen).toFloat() else 0f
         val centroidScore = norm(centroid, 700f, 2200f)
 
-        // --- Formant peaks (readout only) on a smoothed envelope ---
+        // --- Formant peaks on a smoothed envelope — the actual resonance cue ---
         smoothEnvelope(half)
         f1Hz = peakHzInBand(250f, 1000f, binHz, half)
         f2Hz = peakHzInBand(900f, 2800f, binHz, half)
 
-        val raw = (0.55f * tilt + 0.45f * centroidScore).coerceIn(0f, 1f)
+        // Formant-based score: higher F1/F2 = brighter/more forward resonance. This
+        // mirrors the web engine's F1/F2 weighting (F2 dominant) and is the proper
+        // resonance cue; tilt+centroid stabilize it on a noisy chest mic and stand in
+        // when a formant isn't cleanly found.
+        val f1Found = f1Hz in 250f..1100f
+        val f2Found = f2Hz in 900f..2800f
+        val f1Score = norm(f1Hz, 300f, 900f)
+        val f2Score = norm(f2Hz, 1100f, 2300f)
+        val formantScore = when {
+            f1Found && f2Found -> 0.4f * f1Score + 0.6f * f2Score
+            f2Found -> f2Score
+            f1Found -> f1Score
+            else -> -1f // no reliable formant this frame
+        }
 
-        // Confidence: real high-band SNR and a found F2 → trust the estimate.
+        val brightness = (0.55f * tilt + 0.45f * centroidScore).coerceIn(0f, 1f)
+        val raw = if (formantScore < 0f) brightness
+                  else (0.65f * formantScore + 0.35f * brightness).coerceIn(0f, 1f)
+
+        // Confidence: real high-band SNR AND a clean F2 (the dominant resonance cue).
         val snr = (high / (low + 1e-9)).toFloat()
-        confidence = (min(1f, snr * 1.6f) * (if (f2Hz > 0f) 1f else 0.5f)).coerceIn(0f, 1f)
+        confidence = (min(1f, snr * 1.6f) * (if (f2Found) 1f else 0.4f)).coerceIn(0f, 1f)
 
         resonance += (raw - resonance) * (0.08f + 0.12f * confidence)
         return resonance
