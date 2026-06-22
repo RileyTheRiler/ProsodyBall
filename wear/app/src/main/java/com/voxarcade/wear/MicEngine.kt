@@ -222,11 +222,13 @@ class MicEngine {
                             _f1Hz.value = resonanceEstimator.f1Hz
                             _f2Hz.value = resonanceEstimator.f2Hz
 
-                            // Resonance baseline capture: collect only stable, confidently
-                            // -voiced frames (sustained vowels), then take the median.
+                            // Resonance baseline capture: collect resonance on voiced
+                            // frames (the user is sustaining a vowel), then take the median.
+                            // We gate on voicing (not formant confidence, which is often low
+                            // on a far watch mic) so the capture reliably gathers samples.
                             if (baseFramesLeft > 0) {
                                 if (baseResetPending) { baseSamples.clear(); baseResetPending = false }
-                                if (voiced && resonanceEstimator.confidence > 0.55f) {
+                                if (voiced) {
                                     baseSamples.add(_resonance.value * 100f)
                                 }
                                 baseFramesLeft--

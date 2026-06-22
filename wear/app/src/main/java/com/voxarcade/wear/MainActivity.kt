@@ -191,7 +191,9 @@ private fun VoxApp() {
         var lastAny = 0L
         while (true) {
             val now = System.currentTimeMillis()
-            if (now - lastAny >= 250L) {
+            // Stay silent while a room/baseline calibration is capturing.
+            val isCalibrating = engine.calibrating.value || engine.calibratingBaseline.value
+            if (!isCalibrating && now - lastAny >= 250L) {
                 val hz = engine.pitchHz.value
                 val pConf = engine.pitchConfidence.value
                 val rPct = engine.resonance.value * 100f
