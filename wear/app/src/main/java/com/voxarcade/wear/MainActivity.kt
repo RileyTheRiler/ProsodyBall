@@ -107,8 +107,12 @@ private fun VoxApp() {
     val calibratingBaseline by engine.calibratingBaseline.collectAsState()
     val resonanceBaselineResult by engine.resonanceBaselineResult.collectAsState()
     LaunchedEffect(resonanceBaselineResult) { if (resonanceBaselineResult > 0f) store.setResBaseline(resonanceBaselineResult) }
-    // Tell the capture service whether to emit haptics (eyes-free necklace mode).
-    LaunchedEffect(necklace) { AudioHub.necklaceActive.set(necklace) }
+    // Tell the capture service whether to emit haptics (eyes-free necklace mode), and
+    // lower the DSP cadence there to save battery (the visual meter stays full-rate).
+    LaunchedEffect(necklace) {
+        AudioHub.necklaceActive.set(necklace)
+        AudioHub.engine.analysisDecimation = if (necklace) 2 else 1
+    }
 
     // Start/stop is driven through the foreground service rather than the engine
     // directly, so a tracking session keeps running when the screen turns off.

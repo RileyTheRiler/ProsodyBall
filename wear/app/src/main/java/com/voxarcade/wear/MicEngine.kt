@@ -65,6 +65,15 @@ class MicEngine {
     private val pitch = PitchDetector(sampleRate)
     private val resonanceEstimator = ResonanceEstimator(sampleRate)
 
+    /**
+     * DSP decimation (milestone 12 — battery): 1 = analyse every read (~10 Hz, smooth
+     * for the visual pitch meter), 2 = every other read (~5 Hz) to roughly halve DSP
+     * CPU during eyes-free / screen-off necklace sessions. Audio is still drained every
+     * read; only the YIN+FFT analysis is skipped. Full rate is forced during baseline
+     * capture. The level meter always updates.
+     */
+    @Volatile var analysisDecimation = 1
+
     @Volatile private var running = false
     private var thread: Thread? = null
 
@@ -145,6 +154,7 @@ class MicEngine {
             val buf = ShortArray(bufSize / 2)
             val frame = FloatArray(PITCH_FRAME)
             var smoothed = 0f
+            var analysisTick = 0
             pitch.reset()
             resonanceEstimator.reset()
             recorder.startRecording()
@@ -180,8 +190,13 @@ class MicEngine {
                         // above measured room noise so silence stays silent.
                         val noiseGate = maxOf(BASE_GATE, noiseFloor * 1.5f)
 
-                        // YIN on the most recent PITCH_FRAME samples of this read.
-                        if (n >= PITCH_FRAME) {
+                        // Analysis cadence: decimate the DSP in low-power mode to save
+                        // CPU; full rate during baseline capture and the visual meter.
+                        analysisTick++
+                        val decim = if (analysisDecimation < 1) 1 else analysisDecimation
+                        val runDsp = n >= PITCH_FRAME &&
+                            (analysisTick % decim == 0 || _calibratingBaseline.value)
+                        if (runDsp) {
                             val start = n - PITCH_FRAME
                             var frameSum = 0.0
                             for (i in 0 until PITCH_FRAME) {
