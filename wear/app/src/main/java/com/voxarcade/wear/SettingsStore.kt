@@ -19,7 +19,6 @@ private val Context.necklaceDataStore: DataStore<Preferences> by preferencesData
 
 /** The persisted necklace configuration (mode/intensity + the two metric bands). */
 data class NecklaceSettings(
-    val mode: HapticMode = HapticMode.DISCREET,
     val intensity: Intensity = Intensity.GENTLE,
     val lowHz: Int = 130,
     val highHz: Int = 200,
@@ -46,7 +45,6 @@ data class NecklaceSettings(
 class SettingsStore(private val context: Context) {
 
     private object Keys {
-        val MODE = stringPreferencesKey("mode")
         val INTENSITY = stringPreferencesKey("intensity")
         val LOW_HZ = intPreferencesKey("low_hz")
         val HIGH_HZ = intPreferencesKey("high_hz")
@@ -70,8 +68,6 @@ class SettingsStore(private val context: Context) {
         .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
         .map { p ->
             NecklaceSettings(
-                mode = p[Keys.MODE]?.let { runCatching { HapticMode.valueOf(it) }.getOrNull() }
-                    ?: defaults.mode,
                 intensity = p[Keys.INTENSITY]?.let { runCatching { Intensity.valueOf(it) }.getOrNull() }
                     ?: defaults.intensity,
                 lowHz = p[Keys.LOW_HZ] ?: defaults.lowHz,
@@ -91,7 +87,6 @@ class SettingsStore(private val context: Context) {
             )
         }
 
-    suspend fun setMode(v: HapticMode) = context.necklaceDataStore.edit { it[Keys.MODE] = v.name }
     suspend fun setIntensity(v: Intensity) = context.necklaceDataStore.edit { it[Keys.INTENSITY] = v.name }
     suspend fun setLowHz(v: Int) = context.necklaceDataStore.edit { it[Keys.LOW_HZ] = v }
     suspend fun setHighHz(v: Int) = context.necklaceDataStore.edit { it[Keys.HIGH_HZ] = v }

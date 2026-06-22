@@ -81,7 +81,6 @@ private fun VoxApp() {
     val store = remember { SettingsStore(context) }
     val scope = rememberCoroutineScope()
     val settings by store.flow.collectAsState(initial = NecklaceSettings())
-    val mode = settings.mode
     val intensity = settings.intensity
     val lowHz = settings.lowHz
     val highHz = settings.highHz
@@ -185,7 +184,7 @@ private fun VoxApp() {
     // Confidence-gated, two-metric directional alert loop (necklace mode only). Runs in
     // the Activity for reliable foreground vibration; the foreground service keeps the
     // process + mic + CPU alive so this keeps firing when the screen is off.
-    LaunchedEffect(necklace, listening, mode, intensity, lowHz, highHz, resLow, resHigh) {
+    LaunchedEffect(necklace, listening, intensity, lowHz, highHz, resLow, resHigh) {
         if (!necklace || !listening) return@LaunchedEffect
         var lastPitch = 0L
         var lastRes = 0L
@@ -203,8 +202,8 @@ private fun VoxApp() {
                     val dir = if (hz < lowHz) "below" else if (hz > highHz) "above" else null
                     if (dir != null && now - lastPitch >= 600L) {
                         haptics.buzz(
-                            HapticPatterns.patternFor("pitch", dir, mode),
-                            HapticPatterns.intensityToAmp(intensity, mode)
+                            HapticPatterns.patternFor("pitch", dir),
+                            HapticPatterns.intensityToAmp(intensity)
                         )
                         lastPitch = now; lastAny = now; fired = true
                     }
@@ -213,8 +212,8 @@ private fun VoxApp() {
                     val dir = if (rPct < resLow) "below" else if (rPct > resHigh) "above" else null
                     if (dir != null && now - lastRes >= 600L) {
                         haptics.buzz(
-                            HapticPatterns.patternFor("resonance", dir, mode),
-                            HapticPatterns.intensityToAmp(intensity, mode)
+                            HapticPatterns.patternFor("resonance", dir),
+                            HapticPatterns.intensityToAmp(intensity)
                         )
                         lastRes = now; lastAny = now
                     }
@@ -274,21 +273,20 @@ private fun VoxApp() {
                         noiseFloor = settings.noiseFloor,
                         calibrating = calibrating,
                         onCalibrate = { engine.startCalibration() },
-                        mode = mode, onMode = { scope.launch { store.setMode(it) } },
                         intensity = intensity, onIntensity = { scope.launch { store.setIntensity(it) } },
                         lowHz = lowHz, highHz = highHz,
                         onLow = { scope.launch { store.setLowHz((lowHz + it).coerceIn(80, highHz - 10)) } },
                         onHigh = { scope.launch { store.setHighHz((highHz + it).coerceIn(lowHz + 10, 350)) } },
                         onTestPitch = {
                             haptics.buzz(
-                                HapticPatterns.patternFor("pitch", "below", mode),
-                                HapticPatterns.intensityToAmp(intensity, mode)
+                                HapticPatterns.patternFor("pitch", "below"),
+                                HapticPatterns.intensityToAmp(intensity)
                             )
                         },
                         onTestRes = {
                             haptics.buzz(
-                                HapticPatterns.patternFor("resonance", "below", mode),
-                                HapticPatterns.intensityToAmp(intensity, mode)
+                                HapticPatterns.patternFor("resonance", "below"),
+                                HapticPatterns.intensityToAmp(intensity)
                             )
                         }
                     )
@@ -349,7 +347,6 @@ private fun NecklaceControls(
     resBaseline: Float, calibratingBaseline: Boolean, onSetBaseline: () -> Unit,
     resonanceMethod: ResonanceMethod, onResonanceMethod: (ResonanceMethod) -> Unit,
     noiseFloor: Float, calibrating: Boolean, onCalibrate: () -> Unit,
-    mode: HapticMode, onMode: (HapticMode) -> Unit,
     intensity: Intensity, onIntensity: (Intensity) -> Unit,
     lowHz: Int, highHz: Int,
     onLow: (Int) -> Unit, onHigh: (Int) -> Unit,
@@ -442,11 +439,7 @@ private fun NecklaceControls(
     }
     Spacer(Modifier.height(8.dp))
 
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Seg("Discreet", mode == HapticMode.DISCREET) { onMode(HapticMode.DISCREET) }
-        Seg("Practice", mode == HapticMode.PRACTICE) { onMode(HapticMode.PRACTICE) }
-    }
-    Spacer(Modifier.height(6.dp))
+    Text("Vibration strength", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Seg("Gentle", intensity == Intensity.GENTLE) { onIntensity(Intensity.GENTLE) }
         Seg("Med", intensity == Intensity.MEDIUM) { onIntensity(Intensity.MEDIUM) }
