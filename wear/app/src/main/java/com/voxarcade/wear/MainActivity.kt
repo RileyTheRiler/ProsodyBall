@@ -82,6 +82,11 @@ private fun VoxApp() {
     // Resonance band in % brightness (0 = dark, 100 = bright/forward).
     val resLow = settings.resLow
     val resHigh = settings.resHigh
+    // Readout representation (milestone 6).
+    val pitchDisplay = settings.pitchDisplay
+    val resDisplay = settings.resDisplay
+    val pitchRefHz = if (lowHz > 0 && highHz > 0)
+        kotlin.math.sqrt((lowHz.toFloat() * highHz.toFloat())) else 0f
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -190,6 +195,9 @@ private fun VoxApp() {
                         resPct = resPct,
                         resDirection = resDirection,
                         f1Hz = f1Hz, f2Hz = f2Hz,
+                        pitchDisplay = pitchDisplay, resDisplay = resDisplay, pitchRefHz = pitchRefHz,
+                        onPitchDisplay = { scope.launch { store.setPitchDisplay(it) } },
+                        onResDisplay = { scope.launch { store.setResDisplay(it) } },
                         mode = mode, onMode = { scope.launch { store.setMode(it) } },
                         intensity = intensity, onIntensity = { scope.launch { store.setIntensity(it) } },
                         lowHz = lowHz, highHz = highHz,
@@ -262,6 +270,8 @@ private fun NecklaceControls(
     resPct: Float,
     resDirection: String?,
     f1Hz: Float, f2Hz: Float,
+    pitchDisplay: PitchDisplay, resDisplay: ResDisplay, pitchRefHz: Float,
+    onPitchDisplay: (PitchDisplay) -> Unit, onResDisplay: (ResDisplay) -> Unit,
     mode: HapticMode, onMode: (HapticMode) -> Unit,
     intensity: Intensity, onIntensity: (Intensity) -> Unit,
     lowHz: Int, highHz: Int,
@@ -271,13 +281,14 @@ private fun NecklaceControls(
     onTestPitch: () -> Unit,
     onTestRes: () -> Unit
 ) {
-    // Pitch readout
+    // Pitch readout — value formatted in the user's chosen representation.
+    val pv = Readout.pitch(pitchHz, pitchDisplay, pitchRefHz)
     val pitchStatus = when {
         !listening -> "Tap Start"
         !voiced -> "Listening…"
-        direction == "below" -> "${pitchHz.toInt()} Hz · Low ↑"
-        direction == "above" -> "${pitchHz.toInt()} Hz · High ↓"
-        else -> "${pitchHz.toInt()} Hz · In range"
+        direction == "below" -> "$pv · Low ↑"
+        direction == "above" -> "$pv · High ↓"
+        else -> "$pv · In range"
     }
     Text(
         text = pitchStatus,
@@ -286,12 +297,13 @@ private fun NecklaceControls(
         textAlign = TextAlign.Center
     )
     // Resonance readout — proves the second metric is being measured.
+    val rv = Readout.resonance(resPct, f1Hz, f2Hz, resDisplay)
     val resStatus = when {
         !listening -> ""
         !resVoiced -> "Res —"
-        resDirection == "below" -> "Res ${resPct.toInt()}% · Dark ↑"
-        resDirection == "above" -> "Res ${resPct.toInt()}% · Bright ↓"
-        else -> "Res ${resPct.toInt()}% · In range"
+        resDirection == "below" -> "Res $rv · Dark ↑"
+        resDirection == "above" -> "Res $rv · Bright ↓"
+        else -> "Res $rv · In range"
     }
     Text(
         text = resStatus,
@@ -299,7 +311,8 @@ private fun NecklaceControls(
         style = MaterialTheme.typography.caption1,
         textAlign = TextAlign.Center
     )
-    if (resVoiced && f1Hz > 0f && f2Hz > 0f) {
+    // In % mode, still surface the raw formants beneath; FORMANTS mode already shows them.
+    if (resVoiced && resDisplay == ResDisplay.PERCENT && f1Hz > 0f && f2Hz > 0f) {
         Text(
             text = "F1 ${f1Hz.toInt()} · F2 ${f2Hz.toInt()}",
             color = Color(0xFF6A6A7A),
@@ -308,6 +321,21 @@ private fun NecklaceControls(
         )
     }
     Spacer(Modifier.height(10.dp))
+
+    // Representation toggles (milestone 6).
+    Text("Pitch as", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Seg("Hz", pitchDisplay == PitchDisplay.HZ) { onPitchDisplay(PitchDisplay.HZ) }
+        Seg("Note", pitchDisplay == PitchDisplay.NOTE) { onPitchDisplay(PitchDisplay.NOTE) }
+        Seg("St", pitchDisplay == PitchDisplay.RANGE) { onPitchDisplay(PitchDisplay.RANGE) }
+    }
+    Spacer(Modifier.height(4.dp))
+    Text("Res as", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Seg("%", resDisplay == ResDisplay.PERCENT) { onResDisplay(ResDisplay.PERCENT) }
+        Seg("F1/F2", resDisplay == ResDisplay.FORMANTS) { onResDisplay(ResDisplay.FORMANTS) }
+    }
+    Spacer(Modifier.height(8.dp))
 
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Seg("Discreet", mode == HapticMode.DISCREET) { onMode(HapticMode.DISCREET) }

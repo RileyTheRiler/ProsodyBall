@@ -21,6 +21,8 @@ data class NecklaceSettings(
     val highHz: Int = 200,
     val resLow: Int = 30,
     val resHigh: Int = 70,
+    val pitchDisplay: PitchDisplay = PitchDisplay.HZ,
+    val resDisplay: ResDisplay = ResDisplay.PERCENT,
 )
 
 /**
@@ -39,6 +41,8 @@ class SettingsStore(private val context: Context) {
         val HIGH_HZ = intPreferencesKey("high_hz")
         val RES_LOW = intPreferencesKey("res_low")
         val RES_HIGH = intPreferencesKey("res_high")
+        val PITCH_DISPLAY = stringPreferencesKey("pitch_display")
+        val RES_DISPLAY = stringPreferencesKey("res_display")
     }
 
     val flow: Flow<NecklaceSettings> = context.necklaceDataStore.data.map { p ->
@@ -51,6 +55,10 @@ class SettingsStore(private val context: Context) {
             highHz = p[Keys.HIGH_HZ] ?: 200,
             resLow = p[Keys.RES_LOW] ?: 30,
             resHigh = p[Keys.RES_HIGH] ?: 70,
+            pitchDisplay = p[Keys.PITCH_DISPLAY]?.let { runCatching { PitchDisplay.valueOf(it) }.getOrNull() }
+                ?: PitchDisplay.HZ,
+            resDisplay = p[Keys.RES_DISPLAY]?.let { runCatching { ResDisplay.valueOf(it) }.getOrNull() }
+                ?: ResDisplay.PERCENT,
         )
     }
 
@@ -60,4 +68,6 @@ class SettingsStore(private val context: Context) {
     suspend fun setHighHz(v: Int) = context.necklaceDataStore.edit { it[Keys.HIGH_HZ] = v }
     suspend fun setResLow(v: Int) = context.necklaceDataStore.edit { it[Keys.RES_LOW] = v }
     suspend fun setResHigh(v: Int) = context.necklaceDataStore.edit { it[Keys.RES_HIGH] = v }
+    suspend fun setPitchDisplay(v: PitchDisplay) = context.necklaceDataStore.edit { it[Keys.PITCH_DISPLAY] = v.name }
+    suspend fun setResDisplay(v: ResDisplay) = context.necklaceDataStore.edit { it[Keys.RES_DISPLAY] = v.name }
 }
