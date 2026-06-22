@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -24,6 +25,8 @@ data class NecklaceSettings(
     val pitchDisplay: PitchDisplay = PitchDisplay.HZ,
     val resDisplay: ResDisplay = ResDisplay.PERCENT,
     val resonanceMethod: ResonanceMethod = ResonanceMethod.HARMONIC,
+    // Calibrated ambient noise floor (RMS); 0 = uncalibrated, use built-in defaults.
+    val noiseFloor: Float = 0f,
 )
 
 /**
@@ -45,6 +48,7 @@ class SettingsStore(private val context: Context) {
         val PITCH_DISPLAY = stringPreferencesKey("pitch_display")
         val RES_DISPLAY = stringPreferencesKey("res_display")
         val RES_METHOD = stringPreferencesKey("res_method")
+        val NOISE_FLOOR = floatPreferencesKey("noise_floor")
     }
 
     val flow: Flow<NecklaceSettings> = context.necklaceDataStore.data.map { p ->
@@ -63,6 +67,7 @@ class SettingsStore(private val context: Context) {
                 ?: ResDisplay.PERCENT,
             resonanceMethod = p[Keys.RES_METHOD]?.let { runCatching { ResonanceMethod.valueOf(it) }.getOrNull() }
                 ?: ResonanceMethod.HARMONIC,
+            noiseFloor = p[Keys.NOISE_FLOOR] ?: 0f,
         )
     }
 
@@ -75,4 +80,5 @@ class SettingsStore(private val context: Context) {
     suspend fun setPitchDisplay(v: PitchDisplay) = context.necklaceDataStore.edit { it[Keys.PITCH_DISPLAY] = v.name }
     suspend fun setResDisplay(v: ResDisplay) = context.necklaceDataStore.edit { it[Keys.RES_DISPLAY] = v.name }
     suspend fun setResonanceMethod(v: ResonanceMethod) = context.necklaceDataStore.edit { it[Keys.RES_METHOD] = v.name }
+    suspend fun setNoiseFloor(v: Float) = context.necklaceDataStore.edit { it[Keys.NOISE_FLOOR] = v }
 }

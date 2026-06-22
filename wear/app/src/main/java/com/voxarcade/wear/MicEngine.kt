@@ -46,16 +46,46 @@ class MicEngine {
     private val _f2Hz = MutableStateFlow(0f)
     val f2Hz: StateFlow<Float> = _f2Hz
 
+    /** True while a per-room noise-floor capture is in progress (milestone 8). */
+    private val _calibrating = MutableStateFlow(false)
+    val calibrating: StateFlow<Boolean> = _calibrating
+
+    /** Emits the freshly measured floor (RMS) when a calibration completes; 0 at rest. */
+    private val _calibratedFloor = MutableStateFlow(0f)
+    val calibratedFloor: StateFlow<Float> = _calibratedFloor
+
     private val pitch = PitchDetector(sampleRate)
     private val resonanceEstimator = ResonanceEstimator(sampleRate)
 
     @Volatile private var running = false
     private var thread: Thread? = null
 
+    // Per-room calibration state (milestone 8).
+    @Volatile private var noiseFloor = 0f      // calibrated ambient RMS (0 = uncalibrated)
+    @Volatile private var calFramesLeft = 0    // reads remaining in an active capture
+    private var calSum = 0.0
+    private var calMax = 0f
+    private var calCount = 0
+
     val isRunning: Boolean get() = running
 
     /** Switch the resonance measurement method (safe to call while running). */
     fun setResonanceMethod(m: ResonanceMethod) { resonanceEstimator.method = m }
+
+    /** Apply a persisted/restored noise floor without re-emitting a calibration result. */
+    fun setNoiseFloor(v: Float) { noiseFloor = v.coerceIn(0f, 0.2f) }
+
+    /**
+     * Begin a ~2 s ambient capture; the user should stay quiet. On completion the
+     * measured floor raises the silence/voicing gate (so room noise stops triggering
+     * false alerts) and is emitted via [calibratedFloor] for persistence.
+     */
+    fun startCalibration() {
+        if (!running || _calibrating.value) return
+        calSum = 0.0; calMax = 0f; calCount = 0
+        calFramesLeft = CAL_FRAMES
+        _calibrating.value = true
+    }
 
     /** Caller must hold RECORD_AUDIO permission before invoking. */
     @SuppressLint("MissingPermission")
@@ -105,6 +135,24 @@ class MicEngine {
                         smoothed += (rms - smoothed) * 0.35f
                         _level.value = smoothed
 
+                        // Per-room calibration: while capturing, fold each read's RMS
+                        // into the ambient estimate; finish once enough quiet frames seen.
+                        if (calFramesLeft > 0) {
+                            calSum += rms; if (rms > calMax) calMax = rms; calCount++
+                            calFramesLeft--
+                            if (calFramesLeft == 0 && calCount > 0) {
+                                val mean = (calSum / calCount).toFloat()
+                                val floor = maxOf(mean * 1.8f, calMax * 1.2f)
+                                    .coerceIn(0.004f, 0.08f)
+                                noiseFloor = floor
+                                _calibratedFloor.value = floor
+                                _calibrating.value = false
+                            }
+                        }
+                        // Calibrated gate: never below the built-in floor, raised to sit
+                        // above measured room noise so silence stays silent.
+                        val noiseGate = maxOf(BASE_GATE, noiseFloor * 1.5f)
+
                         // YIN on the most recent PITCH_FRAME samples of this read.
                         if (n >= PITCH_FRAME) {
                             val start = n - PITCH_FRAME
@@ -117,9 +165,12 @@ class MicEngine {
                             // Frame-local RMS so the DSP silence gate matches the exact
                             // samples being analysed (not the whole read buffer).
                             val frameRms = sqrt(frameSum / PITCH_FRAME).toFloat()
-                            val hz = pitch.detect(frame, frameRms)
+                            // Below the calibrated floor (or mid-calibration) → treat as
+                            // silence so room noise can't read as voiced.
+                            val gated = frameRms < noiseGate || _calibrating.value
+                            val hz = if (gated) 0f else pitch.detect(frame, frameRms)
                             _pitchHz.value = hz
-                            _pitchConfidence.value = pitch.confidence
+                            _pitchConfidence.value = if (gated) 0f else pitch.confidence
 
                             // Resonance reuses the same frame; only updates on a
                             // confidently-voiced frame, otherwise coasts + decays.
@@ -146,6 +197,8 @@ class MicEngine {
         val t = thread
         thread = null
         try { t?.join(400) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+        calFramesLeft = 0
+        _calibrating.value = false
         _level.value = 0f
         _pitchHz.value = 0f
         _pitchConfidence.value = 0f
@@ -158,5 +211,11 @@ class MicEngine {
     private companion object {
         /** ~64 ms window at 16 kHz — enough for ≥2 periods down to ~30 Hz. */
         const val PITCH_FRAME = 1024
+
+        /** Built-in silence gate (RMS) used when uncalibrated; matches the DSP floor. */
+        const val BASE_GATE = 0.012f
+
+        /** ~2 s of ~100 ms reads — the quiet-capture window for calibration. */
+        const val CAL_FRAMES = 20
     }
 }

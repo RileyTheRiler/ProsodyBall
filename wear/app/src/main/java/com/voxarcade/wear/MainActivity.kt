@@ -90,6 +90,12 @@ private fun VoxApp() {
     // Resonance measurement method (milestone 7) — pushed to the engine when it changes.
     val resonanceMethod = settings.resonanceMethod
     LaunchedEffect(resonanceMethod) { engine.setResonanceMethod(resonanceMethod) }
+    // Per-room calibration (milestone 8): restore the saved floor, and persist a new
+    // one whenever a capture completes.
+    LaunchedEffect(settings.noiseFloor) { engine.setNoiseFloor(settings.noiseFloor) }
+    val calibrating by engine.calibrating.collectAsState()
+    val calibratedFloor by engine.calibratedFloor.collectAsState()
+    LaunchedEffect(calibratedFloor) { if (calibratedFloor > 0f) store.setNoiseFloor(calibratedFloor) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -203,6 +209,9 @@ private fun VoxApp() {
                         onResDisplay = { scope.launch { store.setResDisplay(it) } },
                         resonanceMethod = resonanceMethod,
                         onResonanceMethod = { scope.launch { store.setResonanceMethod(it) } },
+                        noiseFloor = settings.noiseFloor,
+                        calibrating = calibrating,
+                        onCalibrate = { engine.startCalibration() },
                         mode = mode, onMode = { scope.launch { store.setMode(it) } },
                         intensity = intensity, onIntensity = { scope.launch { store.setIntensity(it) } },
                         lowHz = lowHz, highHz = highHz,
@@ -278,6 +287,7 @@ private fun NecklaceControls(
     pitchDisplay: PitchDisplay, resDisplay: ResDisplay, pitchRefHz: Float,
     onPitchDisplay: (PitchDisplay) -> Unit, onResDisplay: (ResDisplay) -> Unit,
     resonanceMethod: ResonanceMethod, onResonanceMethod: (ResonanceMethod) -> Unit,
+    noiseFloor: Float, calibrating: Boolean, onCalibrate: () -> Unit,
     mode: HapticMode, onMode: (HapticMode) -> Unit,
     intensity: Intensity, onIntensity: (Intensity) -> Unit,
     lowHz: Int, highHz: Int,
@@ -381,6 +391,22 @@ private fun NecklaceControls(
         Seg("Test pitch", false, onTestPitch)
         Seg("Test res", false, onTestRes)
     }
+
+    Spacer(Modifier.height(8.dp))
+    // Per-room calibration (milestone 8): capture the ambient floor so the silence
+    // gate adapts to this room / chest-mic placement.
+    Text(
+        text = when {
+            calibrating -> "Calibrating… stay quiet"
+            noiseFloor > 0f -> "Room set · gate ${(noiseFloor * 1000).toInt()}"
+            else -> "Room: default gate"
+        },
+        color = if (calibrating) ALERT else Color(0xFF6A6A7A),
+        style = MaterialTheme.typography.caption2,
+        textAlign = TextAlign.Center
+    )
+    Spacer(Modifier.height(4.dp))
+    Seg(if (calibrating) "…" else "Calibrate room", false) { if (!calibrating) onCalibrate() }
 }
 
 @Composable
