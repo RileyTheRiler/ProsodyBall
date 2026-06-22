@@ -1,307 +1,458 @@
 package com.voxarcade.wear
 
 import android.Manifest
-import android.annotation.SuppressLint
-import android.content.Context
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
-import android.view.GestureDetector
-import android.view.MotionEvent
-import android.view.View
-import android.view.ViewGroup
-import android.view.WindowManager
-import android.webkit.JavascriptInterface
-import android.webkit.PermissionRequest
-import android.webkit.WebChromeClient
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.widget.FrameLayout
-import android.widget.ImageView
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import org.json.JSONArray
+import androidx.wear.compose.material.Button
+import androidx.wear.compose.material.CircularProgressIndicator
+import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material.Text
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
-/**
- * The entire native app: a single full-screen [WebView] that hosts the existing
- * ProsodyBall web app (bundled under assets/web/). It adds two things the web
- * app can't get reliably inside a WebView on a watch:
- *
- *   - Strong, reliable haptics via the system Vibrator ([HapticsBridge]). The
- *     page's existing navigator.vibrate(...) calls are routed here, so all
- *     biofeedback buzzes work with no changes to app.js.
- *   - Screen-brightness control for the eyes-free "necklace" mode
- *     ([ScreenBridge]) so the watch can run dark against your chest.
- *   - A mask overlay ([R.drawable.mask_overlay]) drawn on top of the WebView so
- *     the watch face reads as an ordinary watch in public. Long-press anywhere
- *     to peek through it; taps only reach the real UI while peeking.
- *
- * The watch adaptation layer (watch.css / watch-boot.js) is injected after the
- * page loads; the navigator.vibrate override is injected earlier (onPageStarted)
- * so the engine detects haptic support at startup.
- */
+private val ACCENT = Color(0xFF34D6C8)
+private val ALERT = Color(0xFFFFA03C)
+
 class MainActivity : ComponentActivity() {
-
-    private lateinit var webView: WebView
-    private lateinit var maskOverlay: ImageView
-    private lateinit var maskGestureDetector: GestureDetector
-    private var maskPeeking = false
-    private val main = Handler(Looper.getMainLooper())
-
-    private val requestMic =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
-            loadApp() // load regardless; the page shows its own mic-error UI if denied
-        }
-
-    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setContent { VoxApp() }
+    }
+}
 
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+@Composable
+private fun VoxApp() {
+    val context = LocalContext.current
+    val engine = remember { MicEngine() }
+    val haptics = remember { Haptics(context) }
 
-        webView = WebView(this).apply {
-            systemUiVisibility = (View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                or View.SYSTEM_UI_FLAG_FULLSCREEN
-                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION)
+    var hasMic by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var listening by remember { mutableStateOf(false) }
+    var necklace by remember { mutableStateOf(false) }
 
-            settings.apply {
-                javaScriptEnabled = true
-                domStorageEnabled = true
-                mediaPlaybackRequiresUserGesture = false
-                allowFileAccess = true
-                allowContentAccess = true
-                @Suppress("DEPRECATION")
-                allowFileAccessFromFileURLs = true
-            }
+    // Necklace settings, persisted across restarts via DataStore (milestone 5).
+    val store = remember { SettingsStore(context) }
+    val scope = rememberCoroutineScope()
+    val settings by store.flow.collectAsState(initial = NecklaceSettings())
+    val mode = settings.mode
+    val intensity = settings.intensity
+    val lowHz = settings.lowHz
+    val highHz = settings.highHz
+    // Resonance band in % brightness (0 = dark, 100 = bright/forward).
+    val resLow = settings.resLow
+    val resHigh = settings.resHigh
+    // Readout representation (milestone 6).
+    val pitchDisplay = settings.pitchDisplay
+    val resDisplay = settings.resDisplay
+    val pitchRefHz = if (lowHz > 0 && highHz > 0)
+        kotlin.math.sqrt((lowHz.toFloat() * highHz.toFloat())) else 0f
+    // Resonance measurement method (milestone 7) — pushed to the engine when it changes.
+    val resonanceMethod = settings.resonanceMethod
+    LaunchedEffect(resonanceMethod) { engine.setResonanceMethod(resonanceMethod) }
+    // Per-room calibration (milestone 8): restore the saved floor, and persist a new
+    // one whenever a capture completes.
+    LaunchedEffect(settings.noiseFloor) { engine.setNoiseFloor(settings.noiseFloor) }
+    val calibrating by engine.calibrating.collectAsState()
+    val calibratedFloor by engine.calibratedFloor.collectAsState()
+    LaunchedEffect(calibratedFloor) { if (calibratedFloor > 0f) store.setNoiseFloor(calibratedFloor) }
 
-            addJavascriptInterface(HapticsBridge(this@MainActivity), "AndroidHaptics")
-            addJavascriptInterface(ScreenBridge(), "AndroidScreen")
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasMic = granted
+        if (granted) { engine.start(); listening = true }
+    }
 
-            webViewClient = object : WebViewClient() {
-                override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
-                    super.onPageStarted(view, url, favicon)
-                    // Route the page's navigator.vibrate(...) to the system vibrator,
-                    // injected before app.js runs so it reports haptic support.
-                    view.evaluateJavascript(VIBRATE_SHIM, null)
+    val level by engine.level.collectAsState()
+    val pitchHz by engine.pitchHz.collectAsState()
+    val pitchConfidence by engine.pitchConfidence.collectAsState()
+    val resonance by engine.resonance.collectAsState()
+    val resonanceConfidence by engine.resonanceConfidence.collectAsState()
+    val f1Hz by engine.f1Hz.collectAsState()
+    val f2Hz by engine.f2Hz.collectAsState()
+
+    DisposableEffect(Unit) { onDispose { engine.stop() } }
+
+    val voiced = pitchHz > 0f && pitchConfidence > 0.4f
+    val direction = when {
+        !voiced -> null
+        pitchHz < lowHz -> "below"
+        pitchHz > highHz -> "above"
+        else -> null
+    }
+
+    val resPct = resonance * 100f
+    val resVoiced = resonanceConfidence > 0.45f
+    val resDirection = when {
+        !resVoiced -> null
+        resPct < resLow -> "below"   // too dark → brighten
+        resPct > resHigh -> "above"  // too bright → soften
+        else -> null
+    }
+
+    // Confidence-gated directional alert loop — only active in necklace mode.
+    // Two metrics: pitch takes priority (fix the fundamental first); resonance fires
+    // when pitch is in range. A short global gap keeps the two buzzes from colliding.
+    LaunchedEffect(necklace, listening, mode, intensity, lowHz, highHz, resLow, resHigh) {
+        if (!necklace || !listening) return@LaunchedEffect
+        var lastPitch = 0L
+        var lastRes = 0L
+        var lastAny = 0L
+        while (true) {
+            val now = System.currentTimeMillis()
+            if (now - lastAny >= 250L) {
+                val hz = engine.pitchHz.value
+                val pConf = engine.pitchConfidence.value
+                val rPct = engine.resonance.value * 100f
+                val rConf = engine.resonanceConfidence.value
+
+                var fired = false
+                if (hz > 0f && pConf > 0.45f) {
+                    val dir = if (hz < lowHz) "below" else if (hz > highHz) "above" else null
+                    if (dir != null && now - lastPitch >= 600L) {
+                        haptics.buzz(
+                            HapticPatterns.patternFor("pitch", dir, mode),
+                            HapticPatterns.intensityToAmp(intensity, mode)
+                        )
+                        lastPitch = now; lastAny = now; fired = true
+                    }
                 }
-
-                override fun onPageFinished(view: WebView, url: String?) {
-                    super.onPageFinished(view, url)
-                    injectWatchLayer(view)
+                if (!fired && rConf > 0.45f) {
+                    val dir = if (rPct < resLow) "below" else if (rPct > resHigh) "above" else null
+                    if (dir != null && now - lastRes >= 600L) {
+                        haptics.buzz(
+                            HapticPatterns.patternFor("resonance", dir, mode),
+                            HapticPatterns.intensityToAmp(intensity, mode)
+                        )
+                        lastRes = now; lastAny = now
+                    }
                 }
             }
-
-            webChromeClient = object : WebChromeClient() {
-                override fun onPermissionRequest(request: PermissionRequest) {
-                    val wanted = request.resources.filter {
-                        it == PermissionRequest.RESOURCE_AUDIO_CAPTURE
-                    }.toTypedArray()
-                    if (wanted.isNotEmpty()) request.grant(wanted) else request.deny()
-                }
-            }
+            delay(120)
         }
+    }
 
-        maskGestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onLongPress(e: MotionEvent) {
-                setMaskPeeking(!maskPeeking)
-            }
-        })
-        maskOverlay = ImageView(this).apply {
-            setImageResource(R.drawable.mask_overlay)
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            isClickable = false
-            isFocusable = false
-            setOnTouchListener { _, event ->
-                maskGestureDetector.onTouchEvent(event)
-                // Block taps while masked so they can't poke the hidden UI by
-                // accident; let them through to the WebView while peeking.
-                !maskPeeking
-            }
-        }
-        val root = FrameLayout(this).apply {
-            addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            addView(maskOverlay, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        }
-        setContentView(root)
-        setMaskPeeking(false)
-
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            == PackageManager.PERMISSION_GRANTED
+    MaterialTheme {
+        Box(
+            modifier = Modifier.fillMaxSize().background(Color.Black),
+            contentAlignment = Alignment.Center
         ) {
-            loadApp()
-        } else {
-            requestMic.launch(Manifest.permission.RECORD_AUDIO)
-        }
-    }
+            Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Spacer(Modifier.height(20.dp))
 
-    private fun loadApp() {
-        webView.loadUrl("file:///android_asset/web/index.html?watch=1")
-    }
+                // Mode switch
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Seg("Pitch", !necklace) { necklace = false }
+                    Seg("Necklace", necklace) { necklace = true }
+                }
+                Spacer(Modifier.height(10.dp))
 
-    private fun injectWatchLayer(view: WebView) {
-        val js = """
-            (function() {
-              if (document.getElementById('watch-css')) return;
-              var link = document.createElement('link');
-              link.id = 'watch-css';
-              link.rel = 'stylesheet';
-              link.href = 'watch.css';
-              document.head.appendChild(link);
-              // Load the pure helpers (window.VoxWatch) before watch-boot.js, in order.
-              // async=false on dynamically-inserted scripts forces insertion-order exec.
-              var h = document.createElement('script');
-              h.id = 'watch-haptics';
-              h.src = 'watch-haptics.cjs';
-              h.async = false;
-              document.body.appendChild(h);
-              var s = document.createElement('script');
-              s.id = 'watch-boot';
-              s.src = 'watch-boot.js';
-              s.async = false;
-              document.body.appendChild(s);
-            })();
-        """.trimIndent()
-        view.evaluateJavascript(js, null)
-    }
-
-    /** Dim the mask to [PEEK_ALPHA] so the real UI is visible underneath, or restore it. */
-    private fun setMaskPeeking(peeking: Boolean) {
-        maskPeeking = peeking
-        maskOverlay.alpha = if (peeking) PEEK_ALPHA else 1f
-    }
-
-    /** Set a low screen brightness for the eyes-free necklace mode, or restore it. */
-    fun setLowBrightness(low: Boolean) {
-        main.post {
-            val lp = window.attributes
-            lp.screenBrightness =
-                if (low) 0.02f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-            window.attributes = lp
-        }
-    }
-
-    override fun onDestroy() {
-        webView.destroy()
-        super.onDestroy()
-    }
-
-    // ---- JS bridges -------------------------------------------------------
-
-    /** Exposed to JS as `AndroidHaptics`. */
-    private class HapticsBridge(context: Context) {
-        private val vibrator: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)
-                ?.defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-        }
-
-        /** `pattern` is a JSON number or array of millisecond on/off durations. */
-        @JavascriptInterface
-        fun vibrate(pattern: String) {
-            val v = vibrator ?: return
-            if (!v.hasVibrator()) return
-            try {
-                val timings = parseTimings(pattern)
-                if (timings.isEmpty()) return
-                // Waveform timings alternate off/on starting with an initial 0 delay.
-                val waveform = LongArray(timings.size + 1)
-                for (i in timings.indices) waveform[i + 1] = timings[i]
-                v.vibrate(VibrationEffect.createWaveform(waveform, -1))
-            } catch (_: Exception) {
-            }
-        }
-
-        /**
-         * Like [vibrate] but plays the on-pulses at a fixed [amplitude] (1..255) so the
-         * watch layer can offer gentle (public/discreet) vs strong (private/practice)
-         * haptics. Falls back to the default-amplitude waveform when the motor has no
-         * amplitude control (e.g. a basic ERM). `pattern` is the same JSON form as
-         * [vibrate]; the array alternates on/off starting with an on-pulse.
-         */
-        @JavascriptInterface
-        fun vibrateAmp(pattern: String, amplitude: Int) {
-            val v = vibrator ?: return
-            if (!v.hasVibrator()) return
-            try {
-                val timings = parseTimings(pattern)
-                if (timings.isEmpty()) return
-                // Leading 0 = the initial off-delay slot; thereafter slots alternate
-                // on/off starting with "on" (even index in the original pattern).
-                val waveform = LongArray(timings.size + 1)
-                for (i in timings.indices) waveform[i + 1] = timings[i]
-
-                if (v.hasAmplitudeControl()) {
-                    val amp = amplitude.coerceIn(1, 255)
-                    val amplitudes = IntArray(timings.size + 1)
-                    for (i in timings.indices) amplitudes[i + 1] = if (i % 2 == 0) amp else 0
-                    v.vibrate(VibrationEffect.createWaveform(waveform, amplitudes, -1))
+                if (!necklace) {
+                    PitchMeter(voiced, pitchHz, level)
                 } else {
-                    v.vibrate(VibrationEffect.createWaveform(waveform, -1))
+                    NecklaceControls(
+                        listening = listening,
+                        voiced = voiced,
+                        pitchHz = pitchHz,
+                        direction = direction,
+                        resVoiced = resVoiced,
+                        resPct = resPct,
+                        resDirection = resDirection,
+                        f1Hz = f1Hz, f2Hz = f2Hz,
+                        pitchDisplay = pitchDisplay, resDisplay = resDisplay, pitchRefHz = pitchRefHz,
+                        onPitchDisplay = { scope.launch { store.setPitchDisplay(it) } },
+                        onResDisplay = { scope.launch { store.setResDisplay(it) } },
+                        resonanceMethod = resonanceMethod,
+                        onResonanceMethod = { scope.launch { store.setResonanceMethod(it) } },
+                        noiseFloor = settings.noiseFloor,
+                        calibrating = calibrating,
+                        onCalibrate = { engine.startCalibration() },
+                        mode = mode, onMode = { scope.launch { store.setMode(it) } },
+                        intensity = intensity, onIntensity = { scope.launch { store.setIntensity(it) } },
+                        lowHz = lowHz, highHz = highHz,
+                        onLow = { scope.launch { store.setLowHz((lowHz + it).coerceIn(80, highHz - 10)) } },
+                        onHigh = { scope.launch { store.setHighHz((highHz + it).coerceIn(lowHz + 10, 350)) } },
+                        resLow = resLow, resHigh = resHigh,
+                        onResLow = { scope.launch { store.setResLow((resLow + it).coerceIn(0, resHigh - 5)) } },
+                        onResHigh = { scope.launch { store.setResHigh((resHigh + it).coerceIn(resLow + 5, 100)) } },
+                        onTestPitch = {
+                            haptics.buzz(
+                                HapticPatterns.patternFor("pitch", "below", mode),
+                                HapticPatterns.intensityToAmp(intensity, mode)
+                            )
+                        },
+                        onTestRes = {
+                            haptics.buzz(
+                                HapticPatterns.patternFor("resonance", "below", mode),
+                                HapticPatterns.intensityToAmp(intensity, mode)
+                            )
+                        }
+                    )
                 }
-            } catch (_: Exception) {
-            }
-        }
 
-        @JavascriptInterface
-        fun cancel() {
-            vibrator?.cancel()
-        }
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        when {
+                            !hasMic -> permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            listening -> { engine.stop(); listening = false }
+                            else -> { engine.start(); listening = true }
+                        }
+                    }
+                ) { Text(if (listening) "Stop" else "Start") }
 
-        private fun parseTimings(pattern: String): LongArray {
-            return try {
-                val arr = JSONArray(pattern)
-                LongArray(arr.length()) { arr.getLong(it).coerceAtLeast(0) }
-            } catch (_: Exception) {
-                // Scalar duration, e.g. navigator.vibrate(200).
-                val ms = pattern.trim().toDoubleOrNull()?.toLong() ?: return LongArray(0)
-                longArrayOf(ms.coerceAtLeast(0))
+                Spacer(Modifier.height(20.dp))
             }
         }
     }
+}
 
-    /** Exposed to JS as `AndroidScreen`. */
-    private inner class ScreenBridge {
-        @JavascriptInterface
-        fun setLowBrightness(low: Boolean) = this@MainActivity.setLowBrightness(low)
+@Composable
+private fun PitchMeter(voiced: Boolean, pitchHz: Float, level: Float) {
+    val ring = if (voiced) ((pitchHz - 70f) / (400f - 70f)).coerceIn(0f, 1f)
+               else (level * 6f).coerceIn(0f, 1f)
+    Box(modifier = Modifier.size(104.dp), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(
+            progress = ring,
+            modifier = Modifier.fillMaxSize(),
+            indicatorColor = if (voiced) ACCENT else Color(0xFF3A6E78),
+            trackColor = Color(0xFF1A2A30)
+        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = if (voiced) "${pitchHz.toInt()}" else "—",
+                color = Color.White,
+                style = MaterialTheme.typography.title1
+            )
+            Text(text = "Hz", color = Color(0xFF8C8C9C), style = MaterialTheme.typography.caption2)
+        }
+    }
+}
+
+@Composable
+private fun NecklaceControls(
+    listening: Boolean,
+    voiced: Boolean,
+    pitchHz: Float,
+    direction: String?,
+    resVoiced: Boolean,
+    resPct: Float,
+    resDirection: String?,
+    f1Hz: Float, f2Hz: Float,
+    pitchDisplay: PitchDisplay, resDisplay: ResDisplay, pitchRefHz: Float,
+    onPitchDisplay: (PitchDisplay) -> Unit, onResDisplay: (ResDisplay) -> Unit,
+    resonanceMethod: ResonanceMethod, onResonanceMethod: (ResonanceMethod) -> Unit,
+    noiseFloor: Float, calibrating: Boolean, onCalibrate: () -> Unit,
+    mode: HapticMode, onMode: (HapticMode) -> Unit,
+    intensity: Intensity, onIntensity: (Intensity) -> Unit,
+    lowHz: Int, highHz: Int,
+    onLow: (Int) -> Unit, onHigh: (Int) -> Unit,
+    resLow: Int, resHigh: Int,
+    onResLow: (Int) -> Unit, onResHigh: (Int) -> Unit,
+    onTestPitch: () -> Unit,
+    onTestRes: () -> Unit
+) {
+    // Pitch readout — value formatted in the user's chosen representation.
+    val pv = Readout.pitch(pitchHz, pitchDisplay, pitchRefHz)
+    val pitchStatus = when {
+        !listening -> "Tap Start"
+        !voiced -> "Listening…"
+        direction == "below" -> "$pv · Low ↑"
+        direction == "above" -> "$pv · High ↓"
+        else -> "$pv · In range"
+    }
+    Text(
+        text = pitchStatus,
+        color = if (direction != null) ALERT else if (voiced) ACCENT else Color(0xFFB8B8C8),
+        style = MaterialTheme.typography.title3,
+        textAlign = TextAlign.Center
+    )
+    // Resonance readout — proves the second metric is being measured.
+    val rv = Readout.resonance(resPct, f1Hz, f2Hz, resDisplay)
+    val resStatus = when {
+        !listening -> ""
+        !resVoiced -> "Res —"
+        resDirection == "below" -> "Res $rv · Dark ↑"
+        resDirection == "above" -> "Res $rv · Bright ↓"
+        else -> "Res $rv · In range"
+    }
+    Text(
+        text = resStatus,
+        color = if (resDirection != null) ALERT else if (resVoiced) ACCENT else Color(0xFF8C8C9C),
+        style = MaterialTheme.typography.caption1,
+        textAlign = TextAlign.Center
+    )
+    // In % mode, still surface the raw formants beneath; FORMANTS mode already shows them.
+    if (resVoiced && resDisplay == ResDisplay.PERCENT && f1Hz > 0f && f2Hz > 0f) {
+        Text(
+            text = "F1 ${f1Hz.toInt()} · F2 ${f2Hz.toInt()}",
+            color = Color(0xFF6A6A7A),
+            style = MaterialTheme.typography.caption2,
+            textAlign = TextAlign.Center
+        )
+    }
+    Spacer(Modifier.height(10.dp))
+
+    // Representation toggles (milestone 6).
+    Text("Pitch as", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Seg("Hz", pitchDisplay == PitchDisplay.HZ) { onPitchDisplay(PitchDisplay.HZ) }
+        Seg("Note", pitchDisplay == PitchDisplay.NOTE) { onPitchDisplay(PitchDisplay.NOTE) }
+        Seg("St", pitchDisplay == PitchDisplay.RANGE) { onPitchDisplay(PitchDisplay.RANGE) }
+    }
+    Spacer(Modifier.height(4.dp))
+    Text("Res as", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Seg("%", resDisplay == ResDisplay.PERCENT) { onResDisplay(ResDisplay.PERCENT) }
+        Seg("F1/F2", resDisplay == ResDisplay.FORMANTS) { onResDisplay(ResDisplay.FORMANTS) }
+    }
+    Spacer(Modifier.height(4.dp))
+    // Resonance measurement method (milestone 7) — how F1/F2 are derived.
+    Text("Res method", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Seg("Harm", resonanceMethod == ResonanceMethod.HARMONIC) { onResonanceMethod(ResonanceMethod.HARMONIC) }
+        Seg("Ceps", resonanceMethod == ResonanceMethod.CEPSTRAL) { onResonanceMethod(ResonanceMethod.CEPSTRAL) }
+    }
+    Spacer(Modifier.height(4.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Seg("LPC", resonanceMethod == ResonanceMethod.LPC) { onResonanceMethod(ResonanceMethod.LPC) }
+        Seg("Centr", resonanceMethod == ResonanceMethod.CENTROID) { onResonanceMethod(ResonanceMethod.CENTROID) }
+    }
+    Spacer(Modifier.height(8.dp))
+
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Seg("Discreet", mode == HapticMode.DISCREET) { onMode(HapticMode.DISCREET) }
+        Seg("Practice", mode == HapticMode.PRACTICE) { onMode(HapticMode.PRACTICE) }
+    }
+    Spacer(Modifier.height(6.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Seg("Gentle", intensity == Intensity.GENTLE) { onIntensity(Intensity.GENTLE) }
+        Seg("Med", intensity == Intensity.MEDIUM) { onIntensity(Intensity.MEDIUM) }
+        Seg("Strong", intensity == Intensity.STRONG) { onIntensity(Intensity.STRONG) }
+    }
+    Spacer(Modifier.height(8.dp))
+
+    Text("Pitch band (Hz)", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
+    StepperRow("Low", lowHz, { onLow(-5) }, { onLow(5) })
+    StepperRow("High", highHz, { onHigh(-5) }, { onHigh(5) })
+
+    Spacer(Modifier.height(6.dp))
+    Text("Resonance band (%)", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
+    StepperRow("Dark", resLow, { onResLow(-5) }, { onResLow(5) })
+    StepperRow("Brt", resHigh, { onResHigh(-5) }, { onResHigh(5) })
+
+    Spacer(Modifier.height(8.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Seg("Test pitch", false, onTestPitch)
+        Seg("Test res", false, onTestRes)
     }
 
-    companion object {
-        // Mask opacity while peeking — dim enough to read the real UI, not zero,
-        // so a glance at the watch over your shoulder still mostly sees the mask.
-        private const val PEEK_ALPHA = 0.15f
+    Spacer(Modifier.height(8.dp))
+    // Per-room calibration (milestone 8): capture the ambient floor so the silence
+    // gate adapts to this room / chest-mic placement.
+    Text(
+        text = when {
+            calibrating -> "Calibrating… stay quiet"
+            noiseFloor > 0f -> "Room set · gate ${(noiseFloor * 1000).toInt()}"
+            else -> "Room: default gate"
+        },
+        color = if (calibrating) ALERT else Color(0xFF6A6A7A),
+        style = MaterialTheme.typography.caption2,
+        textAlign = TextAlign.Center
+    )
+    Spacer(Modifier.height(4.dp))
+    Seg(if (calibrating) "…" else "Calibrate room", false) { if (!calibrating) onCalibrate() }
+}
 
-        // Defines navigator.vibrate to forward to the native vibrator. Runs before
-        // app.js, so the engine's `'vibrate' in navigator` check passes and every
-        // existing haptic call (alert rules, resonance drift, test) buzzes for real.
-        private const val VIBRATE_SHIM = """
-            (function() {
-              if (!window.AndroidHaptics) return;
-              try {
-                navigator.vibrate = function(pattern) {
-                  try { window.AndroidHaptics.vibrate(JSON.stringify(pattern)); } catch (e) {}
-                  return true;
-                };
-                // Amplitude-aware buzz for the watch layer's discreet/practice haptics.
-                // Left undefined in a plain browser so the overlay falls back to vibrate().
-                if (window.AndroidHaptics.vibrateAmp) {
-                  navigator.vibrateAmp = function(pattern, amplitude) {
-                    try { window.AndroidHaptics.vibrateAmp(JSON.stringify(pattern), amplitude | 0); } catch (e) {}
-                    return true;
-                  };
-                }
-              } catch (e) {}
-            })();
-        """
+@Composable
+private fun Seg(text: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) Color(0xFF234A52) else Color(0xFF18181F))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 11.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            color = if (selected) Color.White else Color(0xFF9595A6),
+            style = MaterialTheme.typography.caption1
+        )
+    }
+}
+
+@Composable
+private fun StepperRow(label: String, value: Int, onMinus: () -> Unit, onPlus: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.padding(vertical = 2.dp)
+    ) {
+        Text(label, color = Color(0xFF9595A6), style = MaterialTheme.typography.caption2,
+            modifier = Modifier.width(34.dp))
+        StepBtn("−", onMinus)
+        Text("$value", color = Color.White, style = MaterialTheme.typography.caption1,
+            textAlign = TextAlign.Center, modifier = Modifier.width(38.dp))
+        StepBtn("+", onPlus)
+    }
+}
+
+@Composable
+private fun StepBtn(label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(30.dp)
+            .clip(RoundedCornerShape(15.dp))
+            .background(Color(0xFF20202A))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = Color.White, style = MaterialTheme.typography.title3)
     }
 }
