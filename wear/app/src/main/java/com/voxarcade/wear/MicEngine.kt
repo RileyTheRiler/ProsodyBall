@@ -9,13 +9,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.sqrt
 
 /**
- * Minimal native microphone capture for the no-WebView Wear OS app (milestone 1).
+ * Native microphone capture + DSP for the no-WebView Wear OS app.
  *
- * Reads PCM frames from [AudioRecord] on a background thread and publishes a
- * smoothed input level (0..1) as a [StateFlow] the UI can observe. This exists to
- * prove the native foundation — mic capture + a live signal — runs on the Galaxy
- * Watch 7 where the old WebView shell could not. Pitch/resonance DSP (milestone 2)
- * will consume the same frames; only the level meter is wired up for now.
+ * Reads PCM frames from [AudioRecord] on a background thread and publishes, as
+ * [StateFlow]s the UI observes: input level, YIN [pitchHz]/[pitchConfidence]
+ * (milestone 2), and FFT [resonance]/[resonanceConfidence] with [f1Hz]/[f2Hz]
+ * (milestone 4). All DSP runs on the same capture frame, so pitch and resonance
+ * stay frame-aligned.
  */
 class MicEngine {
 
@@ -32,7 +32,22 @@ class MicEngine {
     private val _pitchConfidence = MutableStateFlow(0f)
     val pitchConfidence: StateFlow<Float> = _pitchConfidence
 
+    /** Resonance / brightness 0..1 (0.5 neutral at rest). */
+    private val _resonance = MutableStateFlow(0.5f)
+    val resonance: StateFlow<Float> = _resonance
+
+    /** Resonance confidence 0..1 (high-band SNR + a found formant). */
+    private val _resonanceConfidence = MutableStateFlow(0f)
+    val resonanceConfidence: StateFlow<Float> = _resonanceConfidence
+
+    /** Latest formant estimates in Hz for the readout (0 when not found). */
+    private val _f1Hz = MutableStateFlow(0f)
+    val f1Hz: StateFlow<Float> = _f1Hz
+    private val _f2Hz = MutableStateFlow(0f)
+    val f2Hz: StateFlow<Float> = _f2Hz
+
     private val pitch = PitchDetector(sampleRate)
+    private val resonanceEstimator = ResonanceEstimator(sampleRate)
 
     @Volatile private var running = false
     private var thread: Thread? = null
@@ -71,6 +86,7 @@ class MicEngine {
             val frame = FloatArray(PITCH_FRAME)
             var smoothed = 0f
             pitch.reset()
+            resonanceEstimator.reset()
             recorder.startRecording()
             try {
                 while (running) {
@@ -92,8 +108,17 @@ class MicEngine {
                             for (i in 0 until PITCH_FRAME) {
                                 frame[i] = (buf[start + i] / 32768.0).toFloat()
                             }
-                            _pitchHz.value = pitch.detect(frame, rms)
+                            val hz = pitch.detect(frame, rms)
+                            _pitchHz.value = hz
                             _pitchConfidence.value = pitch.confidence
+
+                            // Resonance reuses the same frame; only updates on a
+                            // confidently-voiced frame, otherwise coasts + decays.
+                            val voiced = hz > 0f && pitch.confidence > 0.4f
+                            _resonance.value = resonanceEstimator.detect(frame, rms, voiced)
+                            _resonanceConfidence.value = resonanceEstimator.confidence
+                            _f1Hz.value = resonanceEstimator.f1Hz
+                            _f2Hz.value = resonanceEstimator.f2Hz
                         }
                     }
                 }
@@ -115,6 +140,10 @@ class MicEngine {
         _level.value = 0f
         _pitchHz.value = 0f
         _pitchConfidence.value = 0f
+        _resonance.value = 0.5f
+        _resonanceConfidence.value = 0f
+        _f1Hz.value = 0f
+        _f2Hz.value = 0f
     }
 
     private companion object {

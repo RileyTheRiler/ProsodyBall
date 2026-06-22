@@ -69,11 +69,14 @@ private fun VoxApp() {
     var listening by remember { mutableStateOf(false) }
     var necklace by remember { mutableStateOf(false) }
 
-    // Necklace settings (kept in-session for M3; persistence comes next).
+    // Necklace settings (kept in-session for M3/M4; persistence comes next).
     var mode by remember { mutableStateOf(HapticMode.DISCREET) }
     var intensity by remember { mutableStateOf(Intensity.GENTLE) }
     var lowHz by remember { mutableStateOf(130) }
     var highHz by remember { mutableStateOf(200) }
+    // Resonance band in % brightness (0 = dark, 100 = bright/forward).
+    var resLow by remember { mutableStateOf(30) }
+    var resHigh by remember { mutableStateOf(70) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -85,6 +88,10 @@ private fun VoxApp() {
     val level by engine.level.collectAsState()
     val pitchHz by engine.pitchHz.collectAsState()
     val pitchConfidence by engine.pitchConfidence.collectAsState()
+    val resonance by engine.resonance.collectAsState()
+    val resonanceConfidence by engine.resonanceConfidence.collectAsState()
+    val f1Hz by engine.f1Hz.collectAsState()
+    val f2Hz by engine.f2Hz.collectAsState()
 
     DisposableEffect(Unit) { onDispose { engine.stop() } }
 
@@ -96,23 +103,50 @@ private fun VoxApp() {
         else -> null
     }
 
+    val resPct = resonance * 100f
+    val resVoiced = resonanceConfidence > 0.45f
+    val resDirection = when {
+        !resVoiced -> null
+        resPct < resLow -> "below"   // too dark → brighten
+        resPct > resHigh -> "above"  // too bright → soften
+        else -> null
+    }
+
     // Confidence-gated directional alert loop — only active in necklace mode.
-    LaunchedEffect(necklace, listening, mode, intensity, lowHz, highHz) {
+    // Two metrics: pitch takes priority (fix the fundamental first); resonance fires
+    // when pitch is in range. A short global gap keeps the two buzzes from colliding.
+    LaunchedEffect(necklace, listening, mode, intensity, lowHz, highHz, resLow, resHigh) {
         if (!necklace || !listening) return@LaunchedEffect
-        var lastFire = 0L
+        var lastPitch = 0L
+        var lastRes = 0L
+        var lastAny = 0L
         while (true) {
-            val hz = engine.pitchHz.value
-            val conf = engine.pitchConfidence.value
-            if (hz > 0f && conf > 0.45f) {
-                val dir = if (hz < lowHz) "below" else if (hz > highHz) "above" else null
-                if (dir != null) {
-                    val now = System.currentTimeMillis()
-                    if (now - lastFire >= 600L) {
+            val now = System.currentTimeMillis()
+            if (now - lastAny >= 250L) {
+                val hz = engine.pitchHz.value
+                val pConf = engine.pitchConfidence.value
+                val rPct = engine.resonance.value * 100f
+                val rConf = engine.resonanceConfidence.value
+
+                var fired = false
+                if (hz > 0f && pConf > 0.45f) {
+                    val dir = if (hz < lowHz) "below" else if (hz > highHz) "above" else null
+                    if (dir != null && now - lastPitch >= 600L) {
                         haptics.buzz(
                             HapticPatterns.patternFor("pitch", dir, mode),
                             HapticPatterns.intensityToAmp(intensity, mode)
                         )
-                        lastFire = now
+                        lastPitch = now; lastAny = now; fired = true
+                    }
+                }
+                if (!fired && rConf > 0.45f) {
+                    val dir = if (rPct < resLow) "below" else if (rPct > resHigh) "above" else null
+                    if (dir != null && now - lastRes >= 600L) {
+                        haptics.buzz(
+                            HapticPatterns.patternFor("resonance", dir, mode),
+                            HapticPatterns.intensityToAmp(intensity, mode)
+                        )
+                        lastRes = now; lastAny = now
                     }
                 }
             }
@@ -147,14 +181,27 @@ private fun VoxApp() {
                         voiced = voiced,
                         pitchHz = pitchHz,
                         direction = direction,
+                        resVoiced = resVoiced,
+                        resPct = resPct,
+                        resDirection = resDirection,
+                        f1Hz = f1Hz, f2Hz = f2Hz,
                         mode = mode, onMode = { mode = it },
                         intensity = intensity, onIntensity = { intensity = it },
                         lowHz = lowHz, highHz = highHz,
                         onLow = { lowHz = (lowHz + it).coerceIn(80, highHz - 10) },
                         onHigh = { highHz = (highHz + it).coerceIn(lowHz + 10, 350) },
-                        onTest = {
+                        resLow = resLow, resHigh = resHigh,
+                        onResLow = { resLow = (resLow + it).coerceIn(0, resHigh - 5) },
+                        onResHigh = { resHigh = (resHigh + it).coerceIn(resLow + 5, 100) },
+                        onTestPitch = {
                             haptics.buzz(
                                 HapticPatterns.patternFor("pitch", "below", mode),
+                                HapticPatterns.intensityToAmp(intensity, mode)
+                            )
+                        },
+                        onTestRes = {
+                            haptics.buzz(
+                                HapticPatterns.patternFor("resonance", "below", mode),
                                 HapticPatterns.intensityToAmp(intensity, mode)
                             )
                         }
@@ -206,13 +253,21 @@ private fun NecklaceControls(
     voiced: Boolean,
     pitchHz: Float,
     direction: String?,
+    resVoiced: Boolean,
+    resPct: Float,
+    resDirection: String?,
+    f1Hz: Float, f2Hz: Float,
     mode: HapticMode, onMode: (HapticMode) -> Unit,
     intensity: Intensity, onIntensity: (Intensity) -> Unit,
     lowHz: Int, highHz: Int,
     onLow: (Int) -> Unit, onHigh: (Int) -> Unit,
-    onTest: () -> Unit
+    resLow: Int, resHigh: Int,
+    onResLow: (Int) -> Unit, onResHigh: (Int) -> Unit,
+    onTestPitch: () -> Unit,
+    onTestRes: () -> Unit
 ) {
-    val status = when {
+    // Pitch readout
+    val pitchStatus = when {
         !listening -> "Tap Start"
         !voiced -> "Listening…"
         direction == "below" -> "${pitchHz.toInt()} Hz · Low ↑"
@@ -220,11 +275,33 @@ private fun NecklaceControls(
         else -> "${pitchHz.toInt()} Hz · In range"
     }
     Text(
-        text = status,
+        text = pitchStatus,
         color = if (direction != null) ALERT else if (voiced) ACCENT else Color(0xFFB8B8C8),
         style = MaterialTheme.typography.title3,
         textAlign = TextAlign.Center
     )
+    // Resonance readout — proves the second metric is being measured.
+    val resStatus = when {
+        !listening -> ""
+        !resVoiced -> "Res —"
+        resDirection == "below" -> "Res ${resPct.toInt()}% · Dark ↑"
+        resDirection == "above" -> "Res ${resPct.toInt()}% · Bright ↓"
+        else -> "Res ${resPct.toInt()}% · In range"
+    }
+    Text(
+        text = resStatus,
+        color = if (resDirection != null) ALERT else if (resVoiced) ACCENT else Color(0xFF8C8C9C),
+        style = MaterialTheme.typography.caption1,
+        textAlign = TextAlign.Center
+    )
+    if (resVoiced && f1Hz > 0f && f2Hz > 0f) {
+        Text(
+            text = "F1 ${f1Hz.toInt()} · F2 ${f2Hz.toInt()}",
+            color = Color(0xFF6A6A7A),
+            style = MaterialTheme.typography.caption2,
+            textAlign = TextAlign.Center
+        )
+    }
     Spacer(Modifier.height(10.dp))
 
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -239,11 +316,20 @@ private fun NecklaceControls(
     }
     Spacer(Modifier.height(8.dp))
 
+    Text("Pitch band (Hz)", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
     StepperRow("Low", lowHz, { onLow(-5) }, { onLow(5) })
     StepperRow("High", highHz, { onHigh(-5) }, { onHigh(5) })
 
+    Spacer(Modifier.height(6.dp))
+    Text("Resonance band (%)", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
+    StepperRow("Dark", resLow, { onResLow(-5) }, { onResLow(5) })
+    StepperRow("Brt", resHigh, { onResHigh(-5) }, { onResHigh(5) })
+
     Spacer(Modifier.height(8.dp))
-    Seg("Test buzz", false, onTest)
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Seg("Test pitch", false, onTestPitch)
+        Seg("Test res", false, onTestRes)
+    }
 }
 
 @Composable
