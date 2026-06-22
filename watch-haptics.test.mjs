@@ -85,3 +85,49 @@ test('mergeSettings is null-tolerant and deep-copies rules', () => {
   merged.rules[0].threshold = 999;
   assert.equal(VW.DEFAULT_SETTINGS.rules[0].threshold, 150, 'defaults must not be mutated');
 });
+
+test('mergeSettings carries pitch/resonance representation modes', () => {
+  const merged = VW.mergeSettings({ pitchDisplayMode: 'note', resonanceDisplayMode: 'formants' }, VW.DEFAULT_SETTINGS);
+  assert.equal(merged.pitchDisplayMode, 'note');
+  assert.equal(merged.resonanceDisplayMode, 'formants');
+  // unspecified -> defaults
+  const fresh = VW.mergeSettings(null, VW.DEFAULT_SETTINGS);
+  assert.equal(fresh.pitchDisplayMode, 'hz');
+  assert.equal(fresh.resonanceDisplayMode, 'percent');
+});
+
+test('hzToNote maps frequencies to note names', () => {
+  assert.equal(VW.hzToNote(440), 'A4');
+  assert.equal(VW.hzToNote(261.63), 'C4');
+  assert.equal(VW.hzToNote(0), '—');
+  assert.equal(VW.hzToNote(-5), '—');
+});
+
+test('formatPitch honours the representation mode', () => {
+  assert.equal(VW.formatPitch(165, 'hz'), '165 Hz');
+  assert.equal(VW.formatPitch(440, 'note'), 'A4');
+  // range = semitones from the band-centre reference, signed
+  assert.equal(VW.formatPitch(220, 'range', 110), '+12.0 st');
+  assert.ok(VW.formatPitch(110, 'range', 220).startsWith('-12.0'));
+  // range with no reference falls back to Hz
+  assert.equal(VW.formatPitch(165, 'range', 0), '165 Hz');
+  // unvoiced
+  assert.equal(VW.formatPitch(0, 'note'), '—');
+});
+
+test('formatResonance switches between percent and raw formants', () => {
+  assert.equal(VW.formatResonance(58.4, 520, 1480, 'percent'), '58%');
+  assert.equal(VW.formatResonance(58.4, 520, 1480, 'formants'), '520/1480');
+  assert.equal(VW.formatResonance(58.4, 0, 0, 'formants'), '—'); // no formant estimate yet
+});
+
+test('readoutMetric flags confidence and target-band state', () => {
+  const lo = { metric: 'pitch', direction: 'below', threshold: 150, enabled: true };
+  const hi = { metric: 'pitch', direction: 'above', threshold: 250, enabled: true };
+  assert.equal(VW.readoutMetric(180, false, lo, hi).state, 'weak'); // low confidence
+  assert.equal(VW.readoutMetric(120, true, lo, hi).state, 'low');   // below min
+  assert.equal(VW.readoutMetric(300, true, lo, hi).state, 'high');  // above max
+  assert.equal(VW.readoutMetric(200, true, lo, hi).state, 'ok');    // in range
+  // a disabled bound is ignored
+  assert.equal(VW.readoutMetric(120, true, { ...lo, enabled: false }, hi).state, 'ok');
+});

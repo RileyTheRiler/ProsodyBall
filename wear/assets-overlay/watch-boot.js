@@ -7,7 +7,8 @@
  *   2. shows a launch chooser: Vox Ball (visual) or Necklace (eyes-free),
  *   3. Vox Ball  -> launches the flagship visual mode (default game mode),
  *   4. Necklace  -> a dark, eyes-free haptic-biofeedback mode for wearing the
- *      watch as a pendant near the mouth.
+ *      watch as a pendant near the mouth, with a live pitch + resonance readout
+ *      (so both metrics can be seen tracking, in the user's chosen representation).
  *
  * Customization, accuracy, and the public/private haptic behaviour live here, in
  * the overlay, so the canonical engine (index.html / app.js) stays untouched. The
@@ -62,7 +63,7 @@
   var SETTINGS_KEY = 'voxWatch.settings';
   var DEFAULTS = VW ? VW.DEFAULT_SETTINGS : {
     mode: 'discreet', intensity: 'gentle', theme: 'aqua', brightness: 'auto',
-    resonanceMethod: 'harmonic',
+    resonanceMethod: 'harmonic', pitchDisplayMode: 'hz', resonanceDisplayMode: 'percent',
     tuning: { pitchConfMin: 0.4, resConfMin: 0.4, farMic: false },
     rules: [
       { metric: 'pitch', direction: 'below', threshold: 150, enabled: true },
@@ -397,6 +398,10 @@
         '<span class="necklace-dot" id="necklaceDot"></span>' +
         '<span class="necklace-toggle__label" id="necklaceLabel">Tap to listen</span>' +
       '</button>' +
+      '<div class="necklace-readout" id="necklaceReadout" aria-hidden="true">' +
+        '<span class="necklace-readout__metric" id="roPitch"><b>—</b><i>pitch</i></span>' +
+        '<span class="necklace-readout__metric" id="roRes"><b>—</b><i>resonance</i></span>' +
+      '</div>' +
       '<div class="necklace-modechip" id="necklaceModeChip" role="group" aria-label="Mode">' +
         '<button class="necklace-modechip__opt" data-mode="discreet">Discreet</button>' +
         '<button class="necklace-modechip__opt" data-mode="practice">Practice</button>' +
@@ -453,6 +458,46 @@
       label.textContent = tripped ? 'Adjust voice' : 'Listening';
     }
     if (toggle) toggle.setAttribute('aria-pressed', running ? 'true' : 'false');
+    updateReadout(running);
+  }
+
+  // Live pitch + resonance readout so the user can *see* both metrics being measured
+  // (proving resonance tracks, not just buzzes), shown in the representation they chose.
+  function updateReadout(running) {
+    var ro = document.getElementById('necklaceReadout');
+    if (!ro || !VW) return;
+    var g = game();
+    var a = g && g.analyzer;
+    if (!running || !a) { ro.classList.remove('show'); return; }
+    ro.classList.add('show');
+
+    var energy = (a.metrics && a.metrics.energy) || 0;
+    var speaking = energy > 0.05 && a.wasLastFrameReliable === true;
+
+    // Pitch: representation honours pitchDisplayMode; 'range' is relative to the
+    // centre of the active pitch band (between the min/max rules) when both exist.
+    var pHz = a.smoothPitchHz || 0;
+    var pConfOk = speaking && (a.pitchConfidence || 0) >= settings.tuning.pitchConfMin;
+    var lo = getRule('pitch', 'below'), hi = getRule('pitch', 'above');
+    var refHz = (lo && hi) ? Math.sqrt(lo.threshold * hi.threshold)
+              : (lo ? lo.threshold : (hi ? hi.threshold : 0));
+    var pState = VW.readoutMetric(pHz, pConfOk, lo, hi);
+    setMetricEl('roPitch', VW.formatPitch(pHz, settings.pitchDisplayMode, refHz), pState.state);
+
+    // Resonance: 0–100 brightness score, or raw F1/F2 — same value the alerts act on.
+    var rPct = (a.smoothResonance || 0) * 100;
+    var rConfOk = speaking && (a.formantConfidence || 0) >= settings.tuning.resConfMin;
+    var rState = VW.readoutMetric(rPct, rConfOk, getRule('resonance', 'below'), getRule('resonance', 'above'));
+    setMetricEl('roRes', VW.formatResonance(rPct, a.smoothF1, a.smoothF2, settings.resonanceDisplayMode), rState.state);
+  }
+
+  function setMetricEl(id, text, state) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var b = el.querySelector('b');
+    if (b) b.textContent = text;
+    el.classList.remove('weak', 'low', 'high', 'ok');
+    el.classList.add(state || 'ok');
   }
 
   // ---- native settings screen -------------------------------------------
@@ -520,6 +565,14 @@
           stepperRow('Pitch max (Hz)', 'pitch', 'above', 5) +
           stepperRow('Res min (%)', 'resonance', 'below', 5) +
           stepperRow('Res max (%)', 'resonance', 'above', 5) +
+        '</div>' +
+
+        '<div class="watch-card"><div class="watch-card__h">Readout</div>' +
+          '<div class="watch-card__h2">Pitch as</div>' +
+          seg('pitchDisplayMode', [{ v: 'hz', label: 'Hz' }, { v: 'note', label: 'Note' }, { v: 'range', label: 'St' }], settings.pitchDisplayMode) +
+          '<div class="watch-card__h2">Resonance as</div>' +
+          seg('resonanceDisplayMode', [{ v: 'percent', label: '%' }, { v: 'formants', label: 'F1/F2' }], settings.resonanceDisplayMode) +
+          '<div class="watch-card__hint">How the live numbers read. Range (St) = semitones from your pitch band centre; F1/F2 = raw formants (Hz).</div>' +
         '</div>' +
 
         '<div class="watch-card"><div class="watch-card__h">Appearance</div>' +
@@ -656,6 +709,8 @@
     if (name === 'theme') { settings.theme = val; saveSettings(); applyTheme(); return; }
     if (name === 'brightness') { settings.brightness = val; saveSettings(); applyBrightness(); return; }
     if (name === 'resonanceMethod') { setResonanceMethod(val); return; }
+    if (name === 'pitchDisplayMode') { settings.pitchDisplayMode = val; saveSettings(); updateReadout(isRunning()); return; }
+    if (name === 'resonanceDisplayMode') { settings.resonanceDisplayMode = val; saveSettings(); updateReadout(isRunning()); return; }
   }
 
   function syncSeg(scope, name, val) {

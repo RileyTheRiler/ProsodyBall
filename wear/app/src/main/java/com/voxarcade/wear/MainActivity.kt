@@ -1,307 +1,152 @@
 package com.voxarcade.wear
 
 import android.Manifest
-import android.annotation.SuppressLint
-import android.content.Context
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
-import android.view.GestureDetector
-import android.view.MotionEvent
-import android.view.View
-import android.view.ViewGroup
-import android.view.WindowManager
-import android.webkit.JavascriptInterface
-import android.webkit.PermissionRequest
-import android.webkit.WebChromeClient
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.widget.FrameLayout
-import android.widget.ImageView
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import org.json.JSONArray
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material.Text
 
 /**
- * The entire native app: a single full-screen [WebView] that hosts the existing
- * ProsodyBall web app (bundled under assets/web/). It adds two things the web
- * app can't get reliably inside a WebView on a watch:
+ * Native Wear OS entry point (M1).
  *
- *   - Strong, reliable haptics via the system Vibrator ([HapticsBridge]). The
- *     page's existing navigator.vibrate(...) calls are routed here, so all
- *     biofeedback buzzes work with no changes to app.js.
- *   - Screen-brightness control for the eyes-free "necklace" mode
- *     ([ScreenBridge]) so the watch can run dark against your chest.
- *   - A mask overlay ([R.drawable.mask_overlay]) drawn on top of the WebView so
- *     the watch face reads as an ordinary watch in public. Long-press anywhere
- *     to peek through it; taps only reach the real UI while peeking.
- *
- * The watch adaptation layer (watch.css / watch-boot.js) is injected after the
- * page loads; the navigator.vibrate override is injected earlier (onPageStarted)
- * so the engine detects haptic support at startup.
+ * This is the fresh, no-WebView foundation: a Compose-for-Wear app that launches,
+ * requests the mic permission, and shows a live input level straight from
+ * [AudioEngine]. It exists to prove the native shell runs on the Galaxy Watch 7 —
+ * the exact thing the WebView build could not do. Pitch/resonance and the necklace
+ * haptics are layered on this loop in later milestones.
  */
 class MainActivity : ComponentActivity() {
 
-    private lateinit var webView: WebView
-    private lateinit var maskOverlay: ImageView
-    private lateinit var maskGestureDetector: GestureDetector
-    private var maskPeeking = false
-    private val main = Handler(Looper.getMainLooper())
+    private val audio = AudioEngine()
+
+    private var hasMic by mutableStateOf(false)
 
     private val requestMic =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
-            loadApp() // load regardless; the page shows its own mic-error UI if denied
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            hasMic = granted
+            if (granted) audio.start()
         }
 
-    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        hasMic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
 
-        webView = WebView(this).apply {
-            systemUiVisibility = (View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                or View.SYSTEM_UI_FLAG_FULLSCREEN
-                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION)
-
-            settings.apply {
-                javaScriptEnabled = true
-                domStorageEnabled = true
-                mediaPlaybackRequiresUserGesture = false
-                allowFileAccess = true
-                allowContentAccess = true
-                @Suppress("DEPRECATION")
-                allowFileAccessFromFileURLs = true
-            }
-
-            addJavascriptInterface(HapticsBridge(this@MainActivity), "AndroidHaptics")
-            addJavascriptInterface(ScreenBridge(), "AndroidScreen")
-
-            webViewClient = object : WebViewClient() {
-                override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
-                    super.onPageStarted(view, url, favicon)
-                    // Route the page's navigator.vibrate(...) to the system vibrator,
-                    // injected before app.js runs so it reports haptic support.
-                    view.evaluateJavascript(VIBRATE_SHIM, null)
-                }
-
-                override fun onPageFinished(view: WebView, url: String?) {
-                    super.onPageFinished(view, url)
-                    injectWatchLayer(view)
-                }
-            }
-
-            webChromeClient = object : WebChromeClient() {
-                override fun onPermissionRequest(request: PermissionRequest) {
-                    val wanted = request.resources.filter {
-                        it == PermissionRequest.RESOURCE_AUDIO_CAPTURE
-                    }.toTypedArray()
-                    if (wanted.isNotEmpty()) request.grant(wanted) else request.deny()
-                }
+        setContent {
+            MaterialTheme {
+                MicScreen(audio, hasMic) { requestMic.launch(Manifest.permission.RECORD_AUDIO) }
             }
         }
+    }
 
-        maskGestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onLongPress(e: MotionEvent) {
-                setMaskPeeking(!maskPeeking)
-            }
-        })
-        maskOverlay = ImageView(this).apply {
-            setImageResource(R.drawable.mask_overlay)
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            isClickable = false
-            isFocusable = false
-            setOnTouchListener { _, event ->
-                maskGestureDetector.onTouchEvent(event)
-                // Block taps while masked so they can't poke the hidden UI by
-                // accident; let them through to the WebView while peeking.
-                !maskPeeking
-            }
-        }
-        val root = FrameLayout(this).apply {
-            addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            addView(maskOverlay, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        }
-        setContentView(root)
-        setMaskPeeking(false)
+    override fun onStart() {
+        super.onStart()
+        if (hasMic) audio.start()
+    }
 
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            == PackageManager.PERMISSION_GRANTED
+    override fun onStop() {
+        super.onStop()
+        audio.stop()
+    }
+}
+
+@Composable
+private fun MicScreen(audio: AudioEngine, hasMic: Boolean, onRequestMic: () -> Unit) {
+    val level by audio.level.collectAsStateWithLifecycle()
+    val running by audio.running.collectAsStateWithLifecycle()
+    val error by audio.error.collectAsStateWithLifecycle()
+
+    Box(
+        modifier = Modifier.fillMaxSize().background(Color.Black),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            loadApp()
-        } else {
-            requestMic.launch(Manifest.permission.RECORD_AUDIO)
-        }
-    }
+            Text(
+                text = "Vox Ball",
+                color = Color(0xFF34D6C8),
+                style = MaterialTheme.typography.title3
+            )
 
-    private fun loadApp() {
-        webView.loadUrl("file:///android_asset/web/index.html?watch=1")
-    }
-
-    private fun injectWatchLayer(view: WebView) {
-        val js = """
-            (function() {
-              if (document.getElementById('watch-css')) return;
-              var link = document.createElement('link');
-              link.id = 'watch-css';
-              link.rel = 'stylesheet';
-              link.href = 'watch.css';
-              document.head.appendChild(link);
-              // Load the pure helpers (window.VoxWatch) before watch-boot.js, in order.
-              // async=false on dynamically-inserted scripts forces insertion-order exec.
-              var h = document.createElement('script');
-              h.id = 'watch-haptics';
-              h.src = 'watch-haptics.cjs';
-              h.async = false;
-              document.body.appendChild(h);
-              var s = document.createElement('script');
-              s.id = 'watch-boot';
-              s.src = 'watch-boot.js';
-              s.async = false;
-              document.body.appendChild(s);
-            })();
-        """.trimIndent()
-        view.evaluateJavascript(js, null)
-    }
-
-    /** Dim the mask to [PEEK_ALPHA] so the real UI is visible underneath, or restore it. */
-    private fun setMaskPeeking(peeking: Boolean) {
-        maskPeeking = peeking
-        maskOverlay.alpha = if (peeking) PEEK_ALPHA else 1f
-    }
-
-    /** Set a low screen brightness for the eyes-free necklace mode, or restore it. */
-    fun setLowBrightness(low: Boolean) {
-        main.post {
-            val lp = window.attributes
-            lp.screenBrightness =
-                if (low) 0.02f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-            window.attributes = lp
-        }
-    }
-
-    override fun onDestroy() {
-        webView.destroy()
-        super.onDestroy()
-    }
-
-    // ---- JS bridges -------------------------------------------------------
-
-    /** Exposed to JS as `AndroidHaptics`. */
-    private class HapticsBridge(context: Context) {
-        private val vibrator: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)
-                ?.defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-        }
-
-        /** `pattern` is a JSON number or array of millisecond on/off durations. */
-        @JavascriptInterface
-        fun vibrate(pattern: String) {
-            val v = vibrator ?: return
-            if (!v.hasVibrator()) return
-            try {
-                val timings = parseTimings(pattern)
-                if (timings.isEmpty()) return
-                // Waveform timings alternate off/on starting with an initial 0 delay.
-                val waveform = LongArray(timings.size + 1)
-                for (i in timings.indices) waveform[i + 1] = timings[i]
-                v.vibrate(VibrationEffect.createWaveform(waveform, -1))
-            } catch (_: Exception) {
+            // Live level: a dot that grows with input loudness (24..96 dp).
+            val dotSize = (24f + level * 72f).dp
+            Box(
+                modifier = Modifier
+                    .size(96.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(dotSize)
+                        .clip(CircleShape)
+                        .background(levelColor(level))
+                )
             }
-        }
 
-        /**
-         * Like [vibrate] but plays the on-pulses at a fixed [amplitude] (1..255) so the
-         * watch layer can offer gentle (public/discreet) vs strong (private/practice)
-         * haptics. Falls back to the default-amplitude waveform when the motor has no
-         * amplitude control (e.g. a basic ERM). `pattern` is the same JSON form as
-         * [vibrate]; the array alternates on/off starting with an on-pulse.
-         */
-        @JavascriptInterface
-        fun vibrateAmp(pattern: String, amplitude: Int) {
-            val v = vibrator ?: return
-            if (!v.hasVibrator()) return
-            try {
-                val timings = parseTimings(pattern)
-                if (timings.isEmpty()) return
-                // Leading 0 = the initial off-delay slot; thereafter slots alternate
-                // on/off starting with "on" (even index in the original pattern).
-                val waveform = LongArray(timings.size + 1)
-                for (i in timings.indices) waveform[i + 1] = timings[i]
-
-                if (v.hasAmplitudeControl()) {
-                    val amp = amplitude.coerceIn(1, 255)
-                    val amplitudes = IntArray(timings.size + 1)
-                    for (i in timings.indices) amplitudes[i + 1] = if (i % 2 == 0) amp else 0
-                    v.vibrate(VibrationEffect.createWaveform(waveform, amplitudes, -1))
-                } else {
-                    v.vibrate(VibrationEffect.createWaveform(waveform, -1))
-                }
-            } catch (_: Exception) {
+            val status = when {
+                error != null -> error!!
+                !hasMic -> "Tap to allow mic"
+                running -> "Listening — speak"
+                else -> "Starting…"
             }
+            Text(
+                text = status,
+                color = Color(0xFFB8B8C8),
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.caption2,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
         }
 
-        @JavascriptInterface
-        fun cancel() {
-            vibrator?.cancel()
-        }
-
-        private fun parseTimings(pattern: String): LongArray {
-            return try {
-                val arr = JSONArray(pattern)
-                LongArray(arr.length()) { arr.getLong(it).coerceAtLeast(0) }
-            } catch (_: Exception) {
-                // Scalar duration, e.g. navigator.vibrate(200).
-                val ms = pattern.trim().toDoubleOrNull()?.toLong() ?: return LongArray(0)
-                longArrayOf(ms.coerceAtLeast(0))
-            }
+        // Whole-screen tap target to (re)request the mic when it isn't granted.
+        if (!hasMic) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onRequestMic
+                    )
+            )
         }
     }
+}
 
-    /** Exposed to JS as `AndroidScreen`. */
-    private inner class ScreenBridge {
-        @JavascriptInterface
-        fun setLowBrightness(low: Boolean) = this@MainActivity.setLowBrightness(low)
-    }
-
-    companion object {
-        // Mask opacity while peeking — dim enough to read the real UI, not zero,
-        // so a glance at the watch over your shoulder still mostly sees the mask.
-        private const val PEEK_ALPHA = 0.15f
-
-        // Defines navigator.vibrate to forward to the native vibrator. Runs before
-        // app.js, so the engine's `'vibrate' in navigator` check passes and every
-        // existing haptic call (alert rules, resonance drift, test) buzzes for real.
-        private const val VIBRATE_SHIM = """
-            (function() {
-              if (!window.AndroidHaptics) return;
-              try {
-                navigator.vibrate = function(pattern) {
-                  try { window.AndroidHaptics.vibrate(JSON.stringify(pattern)); } catch (e) {}
-                  return true;
-                };
-                // Amplitude-aware buzz for the watch layer's discreet/practice haptics.
-                // Left undefined in a plain browser so the overlay falls back to vibrate().
-                if (window.AndroidHaptics.vibrateAmp) {
-                  navigator.vibrateAmp = function(pattern, amplitude) {
-                    try { window.AndroidHaptics.vibrateAmp(JSON.stringify(pattern), amplitude | 0); } catch (e) {}
-                    return true;
-                  };
-                }
-              } catch (e) {}
-            })();
-        """
-    }
+private fun levelColor(level: Float): Color {
+    // Aqua → amber as the level rises, so loudness reads at a glance.
+    val t = level.coerceIn(0f, 1f)
+    val r = (0x34 + (0xFF - 0x34) * t).toInt()
+    val g = (0xD6 + (0x8E - 0xD6) * t).toInt()
+    val b = (0xC8 + (0x53 - 0xC8) * t).toInt()
+    return Color(r, g, b)
 }

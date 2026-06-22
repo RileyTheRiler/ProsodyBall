@@ -197,6 +197,48 @@
   letter-spacing: 0.01em;
 }
 
+/* Live pitch + resonance readout — proves both metrics are being measured, in the
+   representation the user picked. Tabular figures so the numbers don't jitter. */
+.necklace-readout {
+  display: flex;
+  gap: 22px;
+  align-items: flex-start;
+  opacity: 0;
+  transition: opacity 0.2s;
+  font-variant-numeric: tabular-nums;
+}
+
+.necklace-readout.show { opacity: 1; }
+
+.necklace-readout__metric {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.15;
+}
+
+.necklace-readout__metric b {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #e8e8f0;
+  transition: color 0.15s;
+}
+
+.necklace-readout__metric i {
+  font-size: 0.6rem;
+  font-style: normal;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(220, 220, 235, 0.45);
+}
+
+/* Below the confidence floor (won't trigger an alert) — dimmed so the user learns
+   the cue is gated, while still seeing the value move with their voice. */
+.necklace-readout__metric.weak b { color: rgba(180, 180, 200, 0.4); }
+/* In/out of the target band — mirrors the directional haptics visually. */
+.necklace-readout__metric.low b { color: #ffd24c; }   /* below min → raise */
+.necklace-readout__metric.high b { color: #ff8e53; }  /* above max → ease down */
+
 .necklace-exit {
   position: fixed;
   top: 6%;

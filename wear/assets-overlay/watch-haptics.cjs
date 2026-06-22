@@ -37,7 +37,9 @@
     intensity: 'gentle',       // gentle | medium | strong
     theme: 'aqua',             // aqua | violet | amber | mono
     brightness: 'auto',        // auto | dim | bright
-    resonanceMethod: 'harmonic',
+    resonanceMethod: 'harmonic',       // how resonance is MEASURED: harmonic|cepstral|lpc|centroid
+    pitchDisplayMode: 'hz',            // how pitch is REPRESENTED: hz|note|range
+    resonanceDisplayMode: 'percent',   // how resonance is REPRESENTED: percent|formants
     tuning: { pitchConfMin: 0.4, resConfMin: 0.4, farMic: false },
     rules: [
       { metric: 'pitch',     direction: 'below', threshold: 150, enabled: true },
@@ -49,6 +51,46 @@
   };
 
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  // ---- live-readout value formatting (mirrors the desktop meter selectors) ----
+  // The desktop app lets you choose how pitch and resonance are *represented* (Hz vs
+  // Note, % vs raw formants) independently of how resonance is *measured*
+  // (resonanceMethod). These pure formatters give the watch the same control.
+
+  var NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+  function hzToNote(hz) {
+    if (!hz || !isFinite(hz) || hz <= 0) return '—';
+    var midi = Math.round(69 + 12 * Math.log2(hz / 440));
+    var name = NOTE_NAMES[((midi % 12) + 12) % 12];
+    var octave = Math.floor(midi / 12) - 1;
+    return name + octave;
+  }
+
+  // Format a live pitch value the way the user chose to represent it — mirroring the
+  // desktop Pitch selector (Hz / Note / Range). 'range' shows semitones away from the
+  // centre of the target band (refHz): the per-frame analog of the desktop's semitone
+  // range, doubling as a "how far off, which way" cue for eyes-free practice.
+  function formatPitch(hz, mode, refHz) {
+    if (!hz || !isFinite(hz) || hz <= 0) return '—';
+    if (mode === 'note') return hzToNote(hz);
+    if (mode === 'range') {
+      if (!refHz || refHz <= 0) return Math.round(hz) + ' Hz';
+      var st = 12 * Math.log2(hz / refHz);
+      return (st >= 0 ? '+' : '') + st.toFixed(1) + ' st';
+    }
+    return Math.round(hz) + ' Hz';
+  }
+
+  // Format a live resonance value: 'percent' (the 0–100 brightness score the alerts
+  // act on) or 'formants' (raw F1/F2 Hz, the desktop HUD representation).
+  function formatResonance(pct, f1, f2, mode) {
+    if (mode === 'formants') {
+      if (!f1 || !f2) return '—';
+      return Math.round(f1) + '/' + Math.round(f2);
+    }
+    return Math.round(pct) + '%';
+  }
 
   // Resolve the timing array for a metric+direction in the given mode, falling
   // back metric -> generic so an unknown metric still buzzes something sensible.
@@ -77,6 +119,20 @@
     return conf.frameConfidence >= 0.3;                 // energy + everything else
   }
 
+  // Live-readout state for one metric, so the necklace screen can show that the
+  // value is genuinely being measured (not just buzz or stay silent). `confOk` is
+  // whether the metric is currently on a confidently-measured frame (same gate the
+  // alert loop uses); when false the value is shown but flagged `weak` so the user
+  // learns it won't trigger on low-confidence audio. Otherwise it reports whether
+  // the value sits below the min rule (`low`), above the max rule (`high`), or in
+  // range (`ok`) — the visual mirror of the directional haptics.
+  function readoutMetric(value, confOk, loRule, hiRule) {
+    if (!confOk) return { value: value, state: 'weak' };
+    if (loRule && loRule.enabled && value < loRule.threshold) return { value: value, state: 'low' };
+    if (hiRule && hiRule.enabled && value > hiRule.threshold) return { value: value, state: 'high' };
+    return { value: value, state: 'ok' };
+  }
+
   // Shallow-with-nested merge of stored settings over the defaults. Tolerant of
   // partial/old payloads; `rules` is taken wholesale when present (it's an array).
   function mergeSettings(stored, defaults) {
@@ -84,12 +140,13 @@
     var out = {
       mode: base.mode, intensity: base.intensity, theme: base.theme,
       brightness: base.brightness, resonanceMethod: base.resonanceMethod,
+      pitchDisplayMode: base.pitchDisplayMode, resonanceDisplayMode: base.resonanceDisplayMode,
       tuning: { pitchConfMin: base.tuning.pitchConfMin, resConfMin: base.tuning.resConfMin, farMic: base.tuning.farMic },
       rules: base.rules.map(function (r) { return Object.assign({}, r); }),
       alertsEnabled: base.alertsEnabled
     };
     if (!stored || typeof stored !== 'object') return out;
-    ['mode', 'intensity', 'theme', 'brightness', 'resonanceMethod', 'alertsEnabled'].forEach(function (k) {
+    ['mode', 'intensity', 'theme', 'brightness', 'resonanceMethod', 'pitchDisplayMode', 'resonanceDisplayMode', 'alertsEnabled'].forEach(function (k) {
       if (stored[k] !== undefined) out[k] = stored[k];
     });
     if (stored.tuning && typeof stored.tuning === 'object') {
@@ -109,6 +166,10 @@
     patternFor: patternFor,
     intensityToAmp: intensityToAmp,
     gatePasses: gatePasses,
+    readoutMetric: readoutMetric,
+    hzToNote: hzToNote,
+    formatPitch: formatPitch,
+    formatResonance: formatResonance,
     mergeSettings: mergeSettings
   };
 
