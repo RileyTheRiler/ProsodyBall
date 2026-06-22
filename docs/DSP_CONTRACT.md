@@ -6,6 +6,9 @@ adds per-frame SNR, or touches DSP code. It exists so the **canonical-vs-present
 boundary** is settled first — otherwise the "shared" packet ends up with a platform-
 divergent score baked in, and the golden tests can't assert on it.
 
+Decisions **D1–D4 are resolved** (see [Decisions](#decisions-resolved-2026-06-22)) on the
+product's goals/users/hardware; they remain open to override.
+
 Platforms in scope:
 
 - **Web** — `app.js` / `dsp-utils.js` (desktop **and** mobile; `phone.html` is just a
@@ -68,7 +71,7 @@ not across platforms.
 
 | field | web | Wear OS | hardware |
 |---|---|---|---|
-| `resonanceScore` | VTL/dispersion-primary (see **D1**) | brightness-primary *or* unified (see **D1**) | VTL/dispersion-primary |
+| `resonanceScore` | VTL/dispersion-primary | VTL/dispersion (unified per **D1**); brightness = optional display only | VTL/dispersion-primary |
 | `mode` | private / public | `DISCREET` / `PRACTICE` (`HapticMode`) | (single mode) |
 | output channel | ball hue + opacity, Hue bulb | haptic pattern + intensity | vibration motor + LED |
 | norm ranges (Hz→0..1) | UX-tuned | UX-tuned | UX-tuned |
@@ -81,33 +84,62 @@ not across platforms.
 - **Kotlin** (`ResonanceEstimator.kt:142`): `0.65*formantScore + 0.35*brightness`,
   `brightness = 0.55*tilt + 0.45*centroidScore`.
 
-## Open decisions (need your ratification — recommendations included)
+## Decisions (resolved 2026-06-22)
 
-**D1 — Resonance *meaning*: unify, or diverge on purpose?** This is a product/UX call,
-not a code call, which is why it's yours.
-*Recommendation:* make **VTL/dispersion the canonical resonance meaning** (it's the
-physical correlate of vocal-tract length, the original design guide argued for it, and
-2 of 3 platforms already use it — Kotlin is the lone outlier). Keep Kotlin's
-brightness formula available only as an optional *display* alternative, not the default.
-This makes `resonanceScore` golden-testable cross-platform instead of divergent-by-design.
+Resolved on the app's goals (gender-perception + prosody voice training; privacy- and
+discretion-first), its users (people building muscle memory toward a target voice, often
+practicing discreetly in public), and the per-platform hardware. Open to override, but
+these are the working calls.
 
-**D2 — Canonical formant extractor.**
-*Recommendation:* **downsampled LPC** (web's Praat-style path, `app.js:1535`) is canonical.
-Kotlin downsamples to the same band to match. C++ harmonic-envelope is documented as an
-**approximation tier with a wider golden tolerance** until/unless it gets an LPC port
-(the necklace README already calls full formant tracking "on the roadmap").
+**D1 — Resonance meaning: UNIFY on VTL/dispersion. (was: unify or diverge?)**
+The brightness-vs-VTL split is **drift, not design**: `ResonanceEstimator.kt`'s own
+docstring calls it "a compact Kotlin port of the canonical web DSP's resonance stage,"
+and `MicEngine.kt:12` is the "no-WebView" native re-port — it was *trying* to mirror web's
+VTL stage and diverged. Three product reasons to unify on VTL/dispersion:
+1. It's the metric the app is actually teaching. The code itself treats resonance
+   (formants/VTL) as "the harder-to-fake gender cue" and weights it above pitch in the
+   gender score. VTL is the physical correlate of the vocal-tract change feminization/
+   masculinization training targets; centroid-brightness is a downstream proxy more
+   confounded by mic, loudness (Lombard), and noise.
+2. Cross-surface consistency is load-bearing *for this product*. A user learns a target
+   on desktop (ball + bulb) then practices on the watch/necklace. If "resonance 50%" means
+   VTL on desktop but brightness on the watch, the haptics fire at a different vocal target
+   than the ball taught — actively miscoaching. The necklace default "resonance 30–70%"
+   range is meaningless if the scale differs per device.
+3. It makes `resonanceScore` golden-testable cross-platform instead of divergent-by-design.
 
-**D3 — `tiltDb` definition.**
-*Recommendation:* canonical `tiltDb` = **raw fixed-band ratio** (proposed low `[80,1200]`,
-high `[2500,5000]` Hz), no A-weighting, no mic-baseline. A-weighting and mic-baseline are
-per-device *calibration*; web's pitch-adaptive, baseline-subtracted tilt stays as a
-separate **presentation** signal feeding the *weight/heaviness* axis (which is what it
-already drives), not the canonical feature.
+Brightness stays available only as an optional *secondary display*, never as the gate that
+fires haptics. The low-SNR body-worn case (necklace in a car) is handled by the SNR/
+confidence gate suppressing feedback — **not** by silently switching to a brightness number
+that's computable from noise but wrong (the exact trap the trust-aware design avoids).
 
-**D4 — Confidence gate threshold(s).** The `0.45` haptic gate is duplicated three times in
-one file (`MainActivity.kt:155, 182, 192`) and there's an analogous gate on web.
-*Recommendation:* promote to a single named constant in the spec; same value drives web
-ball vividness tiers and watch haptic tiers.
+**D2 — Canonical formant extractor: downsampled LPC, defined by band ceiling + pole
+density (not a hard 11 kHz).** Web's root-solved, bandwidth-rejected downsampled LPC
+(`app.js:1535`) is the reference. Canonical quantities = **analysis ceiling ≈5–5.5 kHz**
+and **pole-pairs-per-kHz**; each platform reaches them by an integer decimation natural to
+its rate (web 48k÷4≈12k; watch 16k÷2=8k with order trimmed) — don't force an awkward 16→11k
+resample on an MCU/watch. The watch native port currently runs full-band 16 kHz LPC order
+14, wasting ~1 pole pair on the 5.5–8 kHz junk band (the spurious-pole-in-noise risk);
+band-limiting fixes that. The ESP32 necklace uses harmonic-envelope today; it stays a
+**documented approximation tier with wider golden tolerance** (it drives haptics/LED, not a
+numeric readout, so wider tolerance is acceptable) until the LPC port lands ("on the
+roadmap" per its README).
+
+**D3 — `tiltDb` canonical = raw fixed-band ratio; calibrated tilt is the weight axis.**
+Canonical `tiltDb` = `10·log10(E_high/E_low)` over fixed bands (proposed low `[80,1200]`,
+high `[2500,5000]` Hz), no A-weighting, no mic-baseline — device-neutral and golden-
+testable on synthetic tones. Web's A-weighted, baseline-subtracted, pitch-adaptive tilt
+stays platform-side feeding the **weight/heaviness** axis (the bulb's "Weight Body" byte,
+H1–H2), which legitimately wants per-device calibration. Low disruption because, post-D1,
+tilt is off the gender-resonance critical path.
+
+**D4 — One named confidence gate; reconcile the existing split.** There are already two
+near-duplicate magic numbers for "voiced/confident enough": `MicEngine.kt:177`
+(`pitch.confidence > 0.4f`, gates the resonance *update*) and `MainActivity.kt:155,182,192`
+(`> 0.45f`, gates *firing a haptic*), plus web's `reliableFrame`. Promote to **two named
+constants** — `UPDATE_CONF_GATE` and `ALERT_CONF_GATE` (the fire gate can stay stricter) —
+shared across platforms and, once SNR exists (D1), fed by the SNR-inclusive confidence so
+the same threshold drives web ball vividness and watch haptic tiers.
 
 ## Golden-test contract
 
