@@ -87,6 +87,9 @@ private fun VoxApp() {
     val resDisplay = settings.resDisplay
     val pitchRefHz = if (lowHz > 0 && highHz > 0)
         kotlin.math.sqrt((lowHz.toFloat() * highHz.toFloat())) else 0f
+    // Resonance measurement method (milestone 7) — pushed to the engine when it changes.
+    val resonanceMethod = settings.resonanceMethod
+    LaunchedEffect(resonanceMethod) { engine.setResonanceMethod(resonanceMethod) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -198,6 +201,8 @@ private fun VoxApp() {
                         pitchDisplay = pitchDisplay, resDisplay = resDisplay, pitchRefHz = pitchRefHz,
                         onPitchDisplay = { scope.launch { store.setPitchDisplay(it) } },
                         onResDisplay = { scope.launch { store.setResDisplay(it) } },
+                        resonanceMethod = resonanceMethod,
+                        onResonanceMethod = { scope.launch { store.setResonanceMethod(it) } },
                         mode = mode, onMode = { scope.launch { store.setMode(it) } },
                         intensity = intensity, onIntensity = { scope.launch { store.setIntensity(it) } },
                         lowHz = lowHz, highHz = highHz,
@@ -272,6 +277,7 @@ private fun NecklaceControls(
     f1Hz: Float, f2Hz: Float,
     pitchDisplay: PitchDisplay, resDisplay: ResDisplay, pitchRefHz: Float,
     onPitchDisplay: (PitchDisplay) -> Unit, onResDisplay: (ResDisplay) -> Unit,
+    resonanceMethod: ResonanceMethod, onResonanceMethod: (ResonanceMethod) -> Unit,
     mode: HapticMode, onMode: (HapticMode) -> Unit,
     intensity: Intensity, onIntensity: (Intensity) -> Unit,
     lowHz: Int, highHz: Int,
@@ -334,6 +340,18 @@ private fun NecklaceControls(
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Seg("%", resDisplay == ResDisplay.PERCENT) { onResDisplay(ResDisplay.PERCENT) }
         Seg("F1/F2", resDisplay == ResDisplay.FORMANTS) { onResDisplay(ResDisplay.FORMANTS) }
+    }
+    Spacer(Modifier.height(4.dp))
+    // Resonance measurement method (milestone 7) — how F1/F2 are derived.
+    Text("Res method", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Seg("Harm", resonanceMethod == ResonanceMethod.HARMONIC) { onResonanceMethod(ResonanceMethod.HARMONIC) }
+        Seg("Ceps", resonanceMethod == ResonanceMethod.CEPSTRAL) { onResonanceMethod(ResonanceMethod.CEPSTRAL) }
+    }
+    Spacer(Modifier.height(4.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Seg("LPC", resonanceMethod == ResonanceMethod.LPC) { onResonanceMethod(ResonanceMethod.LPC) }
+        Seg("Centr", resonanceMethod == ResonanceMethod.CENTROID) { onResonanceMethod(ResonanceMethod.CENTROID) }
     }
     Spacer(Modifier.height(8.dp))
 

@@ -23,6 +23,7 @@ data class NecklaceSettings(
     val resHigh: Int = 70,
     val pitchDisplay: PitchDisplay = PitchDisplay.HZ,
     val resDisplay: ResDisplay = ResDisplay.PERCENT,
+    val resonanceMethod: ResonanceMethod = ResonanceMethod.HARMONIC,
 )
 
 /**
@@ -43,6 +44,7 @@ class SettingsStore(private val context: Context) {
         val RES_HIGH = intPreferencesKey("res_high")
         val PITCH_DISPLAY = stringPreferencesKey("pitch_display")
         val RES_DISPLAY = stringPreferencesKey("res_display")
+        val RES_METHOD = stringPreferencesKey("res_method")
     }
 
     val flow: Flow<NecklaceSettings> = context.necklaceDataStore.data.map { p ->
@@ -59,6 +61,8 @@ class SettingsStore(private val context: Context) {
                 ?: PitchDisplay.HZ,
             resDisplay = p[Keys.RES_DISPLAY]?.let { runCatching { ResDisplay.valueOf(it) }.getOrNull() }
                 ?: ResDisplay.PERCENT,
+            resonanceMethod = p[Keys.RES_METHOD]?.let { runCatching { ResonanceMethod.valueOf(it) }.getOrNull() }
+                ?: ResonanceMethod.HARMONIC,
         )
     }
 
@@ -70,4 +74,5 @@ class SettingsStore(private val context: Context) {
     suspend fun setResHigh(v: Int) = context.necklaceDataStore.edit { it[Keys.RES_HIGH] = v }
     suspend fun setPitchDisplay(v: PitchDisplay) = context.necklaceDataStore.edit { it[Keys.PITCH_DISPLAY] = v.name }
     suspend fun setResDisplay(v: ResDisplay) = context.necklaceDataStore.edit { it[Keys.RES_DISPLAY] = v.name }
+    suspend fun setResonanceMethod(v: ResonanceMethod) = context.necklaceDataStore.edit { it[Keys.RES_METHOD] = v.name }
 }

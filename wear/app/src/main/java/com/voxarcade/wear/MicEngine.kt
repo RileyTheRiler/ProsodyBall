@@ -54,6 +54,9 @@ class MicEngine {
 
     val isRunning: Boolean get() = running
 
+    /** Switch the resonance measurement method (safe to call while running). */
+    fun setResonanceMethod(m: ResonanceMethod) { resonanceEstimator.method = m }
+
     /** Caller must hold RECORD_AUDIO permission before invoking. */
     @SuppressLint("MissingPermission")
     fun start() {
