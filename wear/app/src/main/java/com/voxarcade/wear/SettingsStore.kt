@@ -27,7 +27,7 @@ data class NecklaceSettings(
     val resHigh: Int = 70,
     val pitchDisplay: PitchDisplay = PitchDisplay.HZ,
     val resDisplay: ResDisplay = ResDisplay.PERCENT,
-    val resonanceMethod: ResonanceMethod = ResonanceMethod.HARMONIC,
+    val resonanceMethod: ResonanceMethod = ResonanceMethod.LPC,
     // Calibrated ambient noise floor (RMS); 0 = uncalibrated, use built-in defaults.
     val noiseFloor: Float = 0f,
 )

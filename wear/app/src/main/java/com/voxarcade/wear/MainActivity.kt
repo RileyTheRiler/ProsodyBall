@@ -49,8 +49,15 @@ import kotlinx.coroutines.launch
 /** Teal used for normal/in-range readouts and the active meter. */
 private val ACCENT = Color(0xFF34D6C8)
 
-/** Amber used to flag an out-of-range pitch/resonance alert. */
+/** Amber used to flag an out-of-range pitch alert. */
 private val ALERT = Color(0xFFFFA03C)
+
+/** Resonance zone colors — fixed thirds of the 0..100% scale, independent of the
+ *  user's configurable alert band, so the readout always shows where you actually
+ *  are (forward/bright, neutral/mid, or backed-off/dark resonance). */
+private val RES_BRIGHT = Color(0xFF34D6C8)
+private val RES_MID = Color(0xFFE0B84A)
+private val RES_DARK = Color(0xFF7C8CFF)
 
 /** Single-activity entry point; hosts the whole UI in one [VoxApp] composable. */
 class MainActivity : ComponentActivity() {
@@ -141,11 +148,13 @@ private fun VoxApp() {
         else -> null
     }
 
-    // Confidence-gated directional alert loop — only active in necklace mode.
-    // Two metrics: pitch takes priority (fix the fundamental first); resonance fires
-    // when pitch is in range. A short global gap keeps the two buzzes from colliding.
-    LaunchedEffect(necklace, listening, mode, intensity, lowHz, highHz, resLow, resHigh) {
-        if (!necklace || !listening) return@LaunchedEffect
+    // Confidence-gated directional alert loop — runs in both the Voice meter and
+    // Necklace panel, since out-of-range feedback shouldn't depend on which view
+    // is on screen. Two metrics: pitch takes priority (fix the fundamental first);
+    // resonance fires when pitch is in range. A short global gap keeps the two
+    // buzzes from colliding.
+    LaunchedEffect(listening, mode, intensity, lowHz, highHz, resLow, resHigh) {
+        if (!listening) return@LaunchedEffect
         var lastPitch = 0L
         var lastRes = 0L
         var lastAny = 0L
@@ -197,7 +206,7 @@ private fun VoxApp() {
 
                 // Mode switch
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Seg("Pitch", !necklace) { necklace = false }
+                    Seg("Voice", !necklace) { necklace = false }
                     Seg("Necklace", necklace) { necklace = true }
                 }
                 Spacer(Modifier.height(10.dp))
@@ -332,18 +341,31 @@ private fun NecklaceControls(
         style = MaterialTheme.typography.title3,
         textAlign = TextAlign.Center
     )
-    // Resonance readout — proves the second metric is being measured.
+    // Resonance readout — proves the second metric is being measured. The zone
+    // (Bright/Mid/Dark) is fixed thirds of the 0..100% scale, so it always reflects
+    // where the voice actually sits; the ↑/↓ arrow layers on top when that's also
+    // outside the user's configured alert band (resLow/resHigh).
     val rv = Readout.resonance(resPct, f1Hz, f2Hz, resDisplay)
+    val resZone = when {
+        resPct >= 66f -> "Bright"
+        resPct < 34f -> "Dark"
+        else -> "Mid"
+    }
+    val resColor = when {
+        resPct >= 66f -> RES_BRIGHT
+        resPct < 34f -> RES_DARK
+        else -> RES_MID
+    }
     val resStatus = when {
         !listening -> ""
         !resVoiced -> "Res —"
-        resDirection == "below" -> "Res $rv · Dark ↑"
-        resDirection == "above" -> "Res $rv · Bright ↓"
-        else -> "Res $rv · In range"
+        resDirection == "below" -> "Res $rv · $resZone ↑"
+        resDirection == "above" -> "Res $rv · $resZone ↓"
+        else -> "Res $rv · $resZone"
     }
     Text(
         text = resStatus,
-        color = if (resDirection != null) ALERT else if (resVoiced) ACCENT else Color(0xFF8C8C9C),
+        color = if (resVoiced) resColor else Color(0xFF8C8C9C),
         style = MaterialTheme.typography.caption1,
         textAlign = TextAlign.Center
     )

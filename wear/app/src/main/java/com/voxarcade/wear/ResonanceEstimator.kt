@@ -29,8 +29,13 @@ enum class ResonanceMethod { HARMONIC, CEPSTRAL, LPC, CENTROID }
  */
 class ResonanceEstimator(private val sampleRate: Int = 16_000) {
 
-    /** Selected measurement method (set from settings; read on the audio thread). */
-    @Volatile var method: ResonanceMethod = ResonanceMethod.HARMONIC
+    /** Selected measurement method (set from settings; read on the audio thread).
+     *  LPC is the default: it derives a true vocal-tract envelope (Levinson-Durbin
+     *  all-pole model) that's independent of the excitation harmonics, whereas
+     *  HARMONIC peak-picks the raw smoothed magnitude — which, at a held/steady
+     *  pitch, tends to lock onto strong F0 harmonics instead of tracking the
+     *  formant shifts from vowel/lip-rounding changes. */
+    @Volatile var method: ResonanceMethod = ResonanceMethod.LPC
 
     /** 0..1 brightness: 0 = dark/low resonance, 1 = bright/forward. Neutral 0.5 at rest. */
     var resonance: Float = 0.5f
