@@ -8,8 +8,12 @@ import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/** How resonance/formants are estimated — mirrors the desktop app's selector. */
-enum class ResonanceMethod { HARMONIC, CEPSTRAL, LPC, CENTROID }
+/**
+ * How resonance/formants are estimated. Two complementary choices:
+ *   - LPC      : Levinson-Durbin all-pole envelope → formant-driven (most "proper").
+ *   - CENTROID : pure spectral-centroid brightness (no formant tracking; most robust).
+ */
+enum class ResonanceMethod { LPC, CENTROID }
 
 /**
  * Native resonance / "brightness" estimator (milestones 4 & 7) — the second
@@ -30,7 +34,7 @@ enum class ResonanceMethod { HARMONIC, CEPSTRAL, LPC, CENTROID }
 class ResonanceEstimator(private val sampleRate: Int = 16_000) {
 
     /** Selected measurement method (set from settings; read on the audio thread). */
-    @Volatile var method: ResonanceMethod = ResonanceMethod.HARMONIC
+    @Volatile var method: ResonanceMethod = ResonanceMethod.LPC
 
     /** 0..1 brightness: 0 = dark/low resonance, 1 = bright/forward. Neutral 0.5 at rest. */
     var resonance: Float = 0.5f
@@ -108,8 +112,7 @@ class ResonanceEstimator(private val sampleRate: Int = 16_000) {
 
         // Build the method's spectral envelope into env[] for formant peak-picking.
         when (m) {
-            ResonanceMethod.HARMONIC, ResonanceMethod.CENTROID -> smoothEnvelope(half)
-            ResonanceMethod.CEPSTRAL -> cepstralEnvelope(n, half)
+            ResonanceMethod.CENTROID -> smoothEnvelope(half)
             ResonanceMethod.LPC -> if (haveLpc) lpcEnvelope(half, binHz) else smoothEnvelope(half)
         }
 

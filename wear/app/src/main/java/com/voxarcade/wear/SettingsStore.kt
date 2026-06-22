@@ -27,7 +27,8 @@ data class NecklaceSettings(
     val resHigh: Int = 70,
     val pitchDisplay: PitchDisplay = PitchDisplay.HZ,
     val resDisplay: ResDisplay = ResDisplay.PERCENT,
-    val resonanceMethod: ResonanceMethod = ResonanceMethod.HARMONIC,
+    val resGoal: ResGoal = ResGoal.MID,
+    val resonanceMethod: ResonanceMethod = ResonanceMethod.LPC,
     // Calibrated ambient noise floor (RMS); 0 = uncalibrated, use built-in defaults.
     val noiseFloor: Float = 0f,
 )
@@ -50,6 +51,7 @@ class SettingsStore(private val context: Context) {
         val RES_HIGH = intPreferencesKey("res_high")
         val PITCH_DISPLAY = stringPreferencesKey("pitch_display")
         val RES_DISPLAY = stringPreferencesKey("res_display")
+        val RES_GOAL = stringPreferencesKey("res_goal")
         val RES_METHOD = stringPreferencesKey("res_method")
         val NOISE_FLOOR = floatPreferencesKey("noise_floor")
     }
@@ -76,6 +78,8 @@ class SettingsStore(private val context: Context) {
                     ?: defaults.pitchDisplay,
                 resDisplay = p[Keys.RES_DISPLAY]?.let { runCatching { ResDisplay.valueOf(it) }.getOrNull() }
                     ?: defaults.resDisplay,
+                resGoal = p[Keys.RES_GOAL]?.let { runCatching { ResGoal.valueOf(it) }.getOrNull() }
+                    ?: defaults.resGoal,
                 resonanceMethod = p[Keys.RES_METHOD]?.let { runCatching { ResonanceMethod.valueOf(it) }.getOrNull() }
                     ?: defaults.resonanceMethod,
                 noiseFloor = p[Keys.NOISE_FLOOR] ?: defaults.noiseFloor,
@@ -90,6 +94,7 @@ class SettingsStore(private val context: Context) {
     suspend fun setResHigh(v: Int) = context.necklaceDataStore.edit { it[Keys.RES_HIGH] = v }
     suspend fun setPitchDisplay(v: PitchDisplay) = context.necklaceDataStore.edit { it[Keys.PITCH_DISPLAY] = v.name }
     suspend fun setResDisplay(v: ResDisplay) = context.necklaceDataStore.edit { it[Keys.RES_DISPLAY] = v.name }
+    suspend fun setResGoal(v: ResGoal) = context.necklaceDataStore.edit { it[Keys.RES_GOAL] = v.name }
     suspend fun setResonanceMethod(v: ResonanceMethod) = context.necklaceDataStore.edit { it[Keys.RES_METHOD] = v.name }
     suspend fun setNoiseFloor(v: Float) = context.necklaceDataStore.edit { it[Keys.NOISE_FLOOR] = v }
 }

@@ -11,6 +11,26 @@ enum class PitchDisplay { HZ, NOTE, RANGE }
 enum class ResDisplay { PERCENT, FORMANTS }
 
 /**
+ * User-chosen resonance *target*, replacing raw % thresholds with a clear, vocal
+ * goal. This is a personalized target range (not an "objective" male/female cutoff):
+ * the user picks the presentation they're working toward and the app gives green
+ * (in range) / yellow (out) feedback against it.
+ *
+ * Ranges are sensible starting defaults over the estimator's 0..1 brightness score
+ * (×100); per-user baseline calibration is the intended refinement.
+ */
+enum class ResGoal {
+    DARK, MID, BRIGHT;
+
+    /** Green band (low..high %) for this goal. Dark = one-sided low, Bright = one-sided high. */
+    fun band(): Pair<Int, Int> = when (this) {
+        DARK -> 0 to 45     // green when dark; alert only when too bright
+        MID -> 35 to 65     // green in the middle; alert either way
+        BRIGHT -> 55 to 100 // green when bright; alert only when too dark
+    }
+}
+
+/**
  * Pure readout formatting (milestone 6) — mirrors the desktop app's per-metric
  * display selectors so the user can choose how pitch and resonance are *shown*
  * (independently of how they're measured). No Android/DSP deps, so it's trivially

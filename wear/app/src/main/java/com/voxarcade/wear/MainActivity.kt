@@ -48,6 +48,10 @@ import kotlinx.coroutines.launch
 
 private val ACCENT = Color(0xFF34D6C8)
 private val ALERT = Color(0xFFFFA03C)
+// Deep, readable backgrounds for the Pitch screen's resonance state (white/cyan
+// foreground stays legible): green = resonance in the chosen goal, yellow = out.
+private val RES_GREEN_BG = Color(0xFF10401E)
+private val RES_YELLOW_BG = Color(0xFF4A3D0A)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -79,9 +83,10 @@ private fun VoxApp() {
     val intensity = settings.intensity
     val lowHz = settings.lowHz
     val highHz = settings.highHz
-    // Resonance band in % brightness (0 = dark, 100 = bright/forward).
-    val resLow = settings.resLow
-    val resHigh = settings.resHigh
+    // Resonance target chosen as Dark / Mid / Bright (clearer than raw %); the goal
+    // maps to a green band that drives both the haptic alerts and the pitch-screen colour.
+    val resGoal = settings.resGoal
+    val (resLow, resHigh) = resGoal.band()
     // Readout representation (milestone 6).
     val pitchDisplay = settings.pitchDisplay
     val resDisplay = settings.resDisplay
@@ -173,9 +178,15 @@ private fun VoxApp() {
         }
     }
 
+    // Pitch screen background reflects resonance vs the chosen goal — green in range,
+    // yellow out — but only while resonance is confidently voiced. Necklace mode = black.
+    val screenBg = if (!necklace && resVoiced) {
+        if (resPct >= resLow && resPct <= resHigh) RES_GREEN_BG else RES_YELLOW_BG
+    } else Color.Black
+
     MaterialTheme {
         Box(
-            modifier = Modifier.fillMaxSize().background(Color.Black),
+            modifier = Modifier.fillMaxSize().background(screenBg),
             contentAlignment = Alignment.Center
         ) {
             Column(
@@ -207,6 +218,8 @@ private fun VoxApp() {
                         pitchDisplay = pitchDisplay, resDisplay = resDisplay, pitchRefHz = pitchRefHz,
                         onPitchDisplay = { scope.launch { store.setPitchDisplay(it) } },
                         onResDisplay = { scope.launch { store.setResDisplay(it) } },
+                        resGoal = resGoal,
+                        onResGoal = { scope.launch { store.setResGoal(it) } },
                         resonanceMethod = resonanceMethod,
                         onResonanceMethod = { scope.launch { store.setResonanceMethod(it) } },
                         noiseFloor = settings.noiseFloor,
@@ -217,9 +230,6 @@ private fun VoxApp() {
                         lowHz = lowHz, highHz = highHz,
                         onLow = { scope.launch { store.setLowHz((lowHz + it).coerceIn(80, highHz - 10)) } },
                         onHigh = { scope.launch { store.setHighHz((highHz + it).coerceIn(lowHz + 10, 350)) } },
-                        resLow = resLow, resHigh = resHigh,
-                        onResLow = { scope.launch { store.setResLow((resLow + it).coerceIn(0, resHigh - 5)) } },
-                        onResHigh = { scope.launch { store.setResHigh((resHigh + it).coerceIn(resLow + 5, 100)) } },
                         onTestPitch = {
                             haptics.buzz(
                                 HapticPatterns.patternFor("pitch", "below", mode),
@@ -286,14 +296,13 @@ private fun NecklaceControls(
     f1Hz: Float, f2Hz: Float,
     pitchDisplay: PitchDisplay, resDisplay: ResDisplay, pitchRefHz: Float,
     onPitchDisplay: (PitchDisplay) -> Unit, onResDisplay: (ResDisplay) -> Unit,
+    resGoal: ResGoal, onResGoal: (ResGoal) -> Unit,
     resonanceMethod: ResonanceMethod, onResonanceMethod: (ResonanceMethod) -> Unit,
     noiseFloor: Float, calibrating: Boolean, onCalibrate: () -> Unit,
     mode: HapticMode, onMode: (HapticMode) -> Unit,
     intensity: Intensity, onIntensity: (Intensity) -> Unit,
     lowHz: Int, highHz: Int,
     onLow: (Int) -> Unit, onHigh: (Int) -> Unit,
-    resLow: Int, resHigh: Int,
-    onResLow: (Int) -> Unit, onResHigh: (Int) -> Unit,
     onTestPitch: () -> Unit,
     onTestRes: () -> Unit
 ) {
@@ -351,17 +360,21 @@ private fun NecklaceControls(
         Seg("%", resDisplay == ResDisplay.PERCENT) { onResDisplay(ResDisplay.PERCENT) }
         Seg("F1/F2", resDisplay == ResDisplay.FORMANTS) { onResDisplay(ResDisplay.FORMANTS) }
     }
+    Spacer(Modifier.height(10.dp))
+    // ---- Resonance Customization ----
+    Text("Resonance Customization", color = ACCENT, style = MaterialTheme.typography.caption1)
     Spacer(Modifier.height(4.dp))
-    // Resonance measurement method (milestone 7) — how F1/F2 are derived.
-    Text("Res method", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
+    Text("Goal resonance range", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Seg("Harm", resonanceMethod == ResonanceMethod.HARMONIC) { onResonanceMethod(ResonanceMethod.HARMONIC) }
-        Seg("Ceps", resonanceMethod == ResonanceMethod.CEPSTRAL) { onResonanceMethod(ResonanceMethod.CEPSTRAL) }
+        Seg("Dark", resGoal == ResGoal.DARK) { onResGoal(ResGoal.DARK) }
+        Seg("Mid", resGoal == ResGoal.MID) { onResGoal(ResGoal.MID) }
+        Seg("Bright", resGoal == ResGoal.BRIGHT) { onResGoal(ResGoal.BRIGHT) }
     }
     Spacer(Modifier.height(4.dp))
+    Text("Method", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Seg("LPC", resonanceMethod == ResonanceMethod.LPC) { onResonanceMethod(ResonanceMethod.LPC) }
-        Seg("Centr", resonanceMethod == ResonanceMethod.CENTROID) { onResonanceMethod(ResonanceMethod.CENTROID) }
+        Seg("Centroid", resonanceMethod == ResonanceMethod.CENTROID) { onResonanceMethod(ResonanceMethod.CENTROID) }
     }
     Spacer(Modifier.height(8.dp))
 
@@ -380,11 +393,6 @@ private fun NecklaceControls(
     Text("Pitch band (Hz)", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
     StepperRow("Low", lowHz, { onLow(-5) }, { onLow(5) })
     StepperRow("High", highHz, { onHigh(-5) }, { onHigh(5) })
-
-    Spacer(Modifier.height(6.dp))
-    Text("Resonance band (%)", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
-    StepperRow("Dark", resLow, { onResLow(-5) }, { onResLow(5) })
-    StepperRow("Brt", resHigh, { onResHigh(-5) }, { onResHigh(5) })
 
     Spacer(Modifier.height(8.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
