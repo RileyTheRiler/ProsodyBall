@@ -29,6 +29,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,6 +44,7 @@ import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private val ACCENT = Color(0xFF34D6C8)
 private val ALERT = Color(0xFFFFA03C)
@@ -69,14 +71,17 @@ private fun VoxApp() {
     var listening by remember { mutableStateOf(false) }
     var necklace by remember { mutableStateOf(false) }
 
-    // Necklace settings (kept in-session for M3/M4; persistence comes next).
-    var mode by remember { mutableStateOf(HapticMode.DISCREET) }
-    var intensity by remember { mutableStateOf(Intensity.GENTLE) }
-    var lowHz by remember { mutableStateOf(130) }
-    var highHz by remember { mutableStateOf(200) }
+    // Necklace settings, persisted across restarts via DataStore (milestone 5).
+    val store = remember { SettingsStore(context) }
+    val scope = rememberCoroutineScope()
+    val settings by store.flow.collectAsState(initial = NecklaceSettings())
+    val mode = settings.mode
+    val intensity = settings.intensity
+    val lowHz = settings.lowHz
+    val highHz = settings.highHz
     // Resonance band in % brightness (0 = dark, 100 = bright/forward).
-    var resLow by remember { mutableStateOf(30) }
-    var resHigh by remember { mutableStateOf(70) }
+    val resLow = settings.resLow
+    val resHigh = settings.resHigh
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -185,14 +190,14 @@ private fun VoxApp() {
                         resPct = resPct,
                         resDirection = resDirection,
                         f1Hz = f1Hz, f2Hz = f2Hz,
-                        mode = mode, onMode = { mode = it },
-                        intensity = intensity, onIntensity = { intensity = it },
+                        mode = mode, onMode = { scope.launch { store.setMode(it) } },
+                        intensity = intensity, onIntensity = { scope.launch { store.setIntensity(it) } },
                         lowHz = lowHz, highHz = highHz,
-                        onLow = { lowHz = (lowHz + it).coerceIn(80, highHz - 10) },
-                        onHigh = { highHz = (highHz + it).coerceIn(lowHz + 10, 350) },
+                        onLow = { scope.launch { store.setLowHz((lowHz + it).coerceIn(80, highHz - 10)) } },
+                        onHigh = { scope.launch { store.setHighHz((highHz + it).coerceIn(lowHz + 10, 350)) } },
                         resLow = resLow, resHigh = resHigh,
-                        onResLow = { resLow = (resLow + it).coerceIn(0, resHigh - 5) },
-                        onResHigh = { resHigh = (resHigh + it).coerceIn(resLow + 5, 100) },
+                        onResLow = { scope.launch { store.setResLow((resLow + it).coerceIn(0, resHigh - 5)) } },
+                        onResHigh = { scope.launch { store.setResHigh((resHigh + it).coerceIn(resLow + 5, 100)) } },
                         onTestPitch = {
                             haptics.buzz(
                                 HapticPatterns.patternFor("pitch", "below", mode),
