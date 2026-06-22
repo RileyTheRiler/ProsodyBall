@@ -44,6 +44,7 @@ import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val ACCENT = Color(0xFF34D6C8)
@@ -117,6 +118,7 @@ private fun VoxApp() {
     // Start/stop is driven through the foreground service rather than the engine
     // directly, so a tracking session keeps running when the screen turns off.
     fun startTrackingService() {
+        engine.start() // start capture directly so it works even if the FGS is restricted
         ContextCompat.startForegroundService(
             context,
             Intent(context, VoiceCaptureService::class.java).apply { action = VoiceCaptureService.ACTION_START }
@@ -127,6 +129,7 @@ private fun VoxApp() {
         context.startService(
             Intent(context, VoiceCaptureService::class.java).apply { action = VoiceCaptureService.ACTION_STOP }
         )
+        engine.stop()
         listening = false
     }
     // M11: request POST_NOTIFICATIONS (Android 13+) so the ongoing service notification
@@ -179,9 +182,47 @@ private fun VoxApp() {
         else -> null
     }
 
-    // The confidence-gated, two-metric directional alert loop now lives in
-    // VoiceCaptureService so haptics continue with the screen off; the UI only
-    // displays live values.
+    // Confidence-gated, two-metric directional alert loop (necklace mode only). Runs in
+    // the Activity for reliable foreground vibration; the foreground service keeps the
+    // process + mic + CPU alive so this keeps firing when the screen is off.
+    LaunchedEffect(necklace, listening, mode, intensity, lowHz, highHz, resLow, resHigh) {
+        if (!necklace || !listening) return@LaunchedEffect
+        var lastPitch = 0L
+        var lastRes = 0L
+        var lastAny = 0L
+        while (true) {
+            val now = System.currentTimeMillis()
+            if (now - lastAny >= 250L) {
+                val hz = engine.pitchHz.value
+                val pConf = engine.pitchConfidence.value
+                val rPct = engine.resonance.value * 100f
+                val rConf = engine.resonanceConfidence.value
+
+                var fired = false
+                if (hz > 0f && pConf > 0.45f) {
+                    val dir = if (hz < lowHz) "below" else if (hz > highHz) "above" else null
+                    if (dir != null && now - lastPitch >= 600L) {
+                        haptics.buzz(
+                            HapticPatterns.patternFor("pitch", dir, mode),
+                            HapticPatterns.intensityToAmp(intensity, mode)
+                        )
+                        lastPitch = now; lastAny = now; fired = true
+                    }
+                }
+                if (!fired && rConf > 0.45f) {
+                    val dir = if (rPct < resLow) "below" else if (rPct > resHigh) "above" else null
+                    if (dir != null && now - lastRes >= 600L) {
+                        haptics.buzz(
+                            HapticPatterns.patternFor("resonance", dir, mode),
+                            HapticPatterns.intensityToAmp(intensity, mode)
+                        )
+                        lastRes = now; lastAny = now
+                    }
+                }
+            }
+            delay(120)
+        }
+    }
 
     // Pitch screen background reflects resonance vs the chosen goal — green in range,
     // yellow out — but only while resonance is confidently voiced. Necklace mode = black.
