@@ -83,8 +83,9 @@ class ResonanceEstimator(private val sampleRate: Int = 16_000) {
         if (total < 1e-6) { confidence *= 0.9f; return resonance }
 
         // --- Spectral tilt: high-band vs low-band energy (forward/bright cue) ---
+        // Contiguous split at 1200 Hz (no gap) so F2-region energy always counts.
         val low = bandEnergy(80f, 1200f, binHz, half)
-        val high = bandEnergy(1500f, 5000f, binHz, half)
+        val high = bandEnergy(1200f, 5000f, binHz, half)
         val tiltDenom = low + high
         val tilt = if (tiltDenom > 1e-9) (high / tiltDenom).toFloat() else 0f
 

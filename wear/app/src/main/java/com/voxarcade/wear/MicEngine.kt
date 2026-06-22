@@ -105,17 +105,23 @@ class MicEngine {
                         // YIN on the most recent PITCH_FRAME samples of this read.
                         if (n >= PITCH_FRAME) {
                             val start = n - PITCH_FRAME
+                            var frameSum = 0.0
                             for (i in 0 until PITCH_FRAME) {
-                                frame[i] = (buf[start + i] / 32768.0).toFloat()
+                                val s = (buf[start + i] / 32768.0).toFloat()
+                                frame[i] = s
+                                frameSum += (s * s).toDouble()
                             }
-                            val hz = pitch.detect(frame, rms)
+                            // Frame-local RMS so the DSP silence gate matches the exact
+                            // samples being analysed (not the whole read buffer).
+                            val frameRms = sqrt(frameSum / PITCH_FRAME).toFloat()
+                            val hz = pitch.detect(frame, frameRms)
                             _pitchHz.value = hz
                             _pitchConfidence.value = pitch.confidence
 
                             // Resonance reuses the same frame; only updates on a
                             // confidently-voiced frame, otherwise coasts + decays.
                             val voiced = hz > 0f && pitch.confidence > 0.4f
-                            _resonance.value = resonanceEstimator.detect(frame, rms, voiced)
+                            _resonance.value = resonanceEstimator.detect(frame, frameRms, voiced)
                             _resonanceConfidence.value = resonanceEstimator.confidence
                             _f1Hz.value = resonanceEstimator.f1Hz
                             _f2Hz.value = resonanceEstimator.f2Hz
