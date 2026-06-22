@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError } from './dsp-utils.js';
+import {
+  computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError,
+  computeFrameReliability, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction,
+  SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX
+} from './dsp-utils.js';
 
 test('computeRawProsody applies weighted sum', () => {
   const metrics = { bounce: 1, vowel: 0.5, articulation: 0.5 };
@@ -56,4 +60,57 @@ test('correctOctaveError ignores a clearly shallower longer-period dip', () => {
 test('correctOctaveError is safe on invalid input', () => {
   assert.equal(correctOctaveError(null, 50, { maxPeriod: 100 }), 50);
   assert.equal(correctOctaveError(makeCmnd(10, {}), 0, { maxPeriod: 5 }), 0);
+});
+
+// ---------- per-frame SNR / noise trust ----------
+
+test('aPosterioriSnrDb is 0 dB when signal equals noise, +10 dB per 10x power', () => {
+  assert.ok(Math.abs(aPosterioriSnrDb(1, 1)) < 1e-6);
+  assert.ok(Math.abs(aPosterioriSnrDb(10, 1) - 10) < 1e-6);
+  assert.ok(Math.abs(aPosterioriSnrDb(100, 1) - 20) < 1e-6);
+});
+
+test('aPosterioriSnrDb does not divide by zero on a silent noise estimate', () => {
+  assert.ok(Number.isFinite(aPosterioriSnrDb(1, 0)));
+});
+
+test('snrToConfidence ramps red→green over the tier window', () => {
+  assert.equal(snrToConfidence(SNR_YELLOW_DB), 0);            // red edge → no trust
+  assert.equal(snrToConfidence(SNR_GREEN_DB), 1);             // green edge → full trust
+  assert.equal(snrToConfidence(0), 0);                        // below red clamps to 0
+  assert.equal(snrToConfidence(40), 1);                       // above green clamps to 1
+  assert.ok(Math.abs(snrToConfidence(15) - 0.5) < 1e-9);      // midpoint
+});
+
+test('snrTier classifies green/yellow/red at the edges', () => {
+  assert.equal(snrTier(25), 'green');
+  assert.equal(snrTier(SNR_GREEN_DB), 'green');
+  assert.equal(snrTier(15), 'yellow');
+  assert.equal(snrTier(SNR_YELLOW_DB), 'yellow');
+  assert.equal(snrTier(5), 'red');
+});
+
+test('adaptiveOverSubtraction is gentle in clean SNR and stronger when noisy', () => {
+  assert.ok(Math.abs(adaptiveOverSubtraction(30) - OVERSUB_MIN) < 1e-9);  // clean → min
+  assert.ok(Math.abs(adaptiveOverSubtraction(0) - OVERSUB_MAX) < 1e-9);   // noisy → max
+  const mid = adaptiveOverSubtraction(15);
+  assert.ok(mid > OVERSUB_MIN && mid < OVERSUB_MAX);                      // monotonic between
+  // Never below the floor that historically worked well, even at the clean end.
+  assert.ok(adaptiveOverSubtraction(50) >= OVERSUB_MIN);
+});
+
+test('computeFrameReliability is unchanged when snrConfidence is omitted (fixture contract)', () => {
+  const inputs = { pitchConfidence: 0.9, formantConfidence: 0.8, voicedStrength: 0.85, spectralTiltConfidence: 0.8 };
+  const withoutSnr = computeFrameReliability(inputs);
+  const withFullSnr = computeFrameReliability({ ...inputs, snrConfidence: 1 });
+  assert.equal(withoutSnr.confidenceGate, withFullSnr.confidenceGate);
+  assert.equal(withoutSnr.voicedGate, withFullSnr.voicedGate);
+});
+
+test('computeFrameReliability lets low SNR pull confidence below the 0.2 floor', () => {
+  const inputs = { pitchConfidence: 0.9, formantConfidence: 0.8, voicedStrength: 0.85, spectralTiltConfidence: 0.8 };
+  const clean = computeFrameReliability({ ...inputs, snrConfidence: 1 });
+  const noisy = computeFrameReliability({ ...inputs, snrConfidence: 0.1 });
+  assert.ok(noisy.confidenceGate < clean.confidenceGate);
+  assert.ok(noisy.confidenceGate < 0.2); // the old hard floor no longer hides noise
 });

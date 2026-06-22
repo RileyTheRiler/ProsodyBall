@@ -14,6 +14,9 @@ This document defines the stable interface between the DSP analyzer and UI/game 
 - `pitch`: user-adaptive pitch position.
 - `energy`: adaptive energy position (P50/P90 normalized).
 - `resonance`: smoothed resonance/formant-derived signal.
+- `snrDb`: smoothed per-frame a-posteriori SNR over the voice band (300–3500 Hz), in dB.
+- `snrTier`: coarse noise-trust tier — `'green'` (≥20 dB), `'yellow'` (10–20 dB), `'red'` (<10 dB).
+- `snrConfidence`: `[0,1]` trust derived from SNR; drives reliability and (later) UI vividness / haptic gating.
 
 ## Confidence contract
 
@@ -22,8 +25,11 @@ Consumers should treat the following analyzer fields as quality indicators:
 - `pitchConfidence`
 - `formantConfidence`
 - `spectralTiltConfidence`
+- `snrConfidence` (noise-relative trust; folds into the frame reliability gate)
 
-Frame reliability is computed with `computeFrameReliability()` in `voice-analyzer-core.js`.
+Frame reliability is computed with `computeFrameReliability()` in `dsp-utils.js`, which now
+accepts an optional `snrConfidence` (defaults to `1` = no-op for callers without an SNR
+estimate). See `docs/DSP_CONTRACT.md` for the canonical feature-packet definition.
 
 ## UI integration rules
 

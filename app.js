@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS } from './dsp-utils.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { BulbController } from './bulb-controller.js';
@@ -192,12 +192,23 @@ export class VoiceAnalyzer {
     this.isCalibrated = false;
     this.noiseAdaptRate = 0.002; // ongoing adaptation for changing environments
 
+    // Per-frame SNR / noise-trust (Layer A feature packet; see docs/DSP_CONTRACT.md).
+    // Start optimistic (assume a quiet room) so the UI doesn't flash red before the
+    // first measurement lands.
+    this.snrDb = 20;            // raw a-posteriori SNR over the voice band this frame
+    this.snrDbSmoothed = 20;    // EMA used for the over-subtraction factor + tiering
+    this.snrConfidence = 1;     // 0..1 trust derived from SNR; folds into the gate
+    this.snrTier = 'green';     // 'green' | 'yellow' | 'red' for UI/haptics
+    this.overSubFactor = 1.5;   // SNR-adaptive spectral over-subtraction (was hardcoded 1.5)
+
     this.metrics = {
       bounce: 0, vowel: 0,
       articulation: 0,
       pitch: 0, pitchEffort: 0, pitchZone: 0.5,
       energy: 0, resonance: 0,
-      attack: 0, weight: 0
+      attack: 0, weight: 0,
+      // Noise-trust surfaced to renderers/haptics (read-only, see docs/DSP_CONTRACT.md)
+      snrDb: 20, snrTier: 'green', snrConfidence: 1
     };
     this.pitchZoneLabel = 'Ambiguous';
     this.frameConfidence = 0; // overall frame confidence for game-level gating
@@ -861,16 +872,47 @@ export class VoiceAnalyzer {
     }
 
     this.analyser.getFloatFrequencyData(this.frequencyData);
+    // --- Spectral subtraction + per-frame voice-band SNR ---
+    // Over-subtraction adapts to the *previous* frame's smoothed SNR (SNR moves slowly
+    // relative to the frame rate, so this frame's factor is known before the loop). On
+    // detected pause frames we also EMA the per-bin noise profile toward the current
+    // spectrum, so a changing room (HVAC cycling, car RPM) re-tracks instead of
+    // mis-subtracting a profile frozen at calibration time.
+    this.overSubFactor = adaptiveOverSubtraction(this.snrDbSmoothed);
+    const snrBinHz = this.audioCtx.sampleRate / this.analyser.fftSize;
+    const SNR_LO_HZ = 300, SNR_HI_HZ = 3500; // voice band for trust; excludes <300 Hz rumble
+    const profileRate = rms < this.noiseFloor * 1.5 ? NOISE_PROFILE_UPDATE_RATE : 0; // pause → update
     if (this.isCalibrated && this.noiseSpectralProfile) {
+      let snrSigPow = 0, snrNoisePow = 0;
       for (let i = 0; i < this.frequencyData.length; i++) {
         let signalMag = Math.pow(10, this.frequencyData[i] / 20);
+        if (profileRate > 0) {
+          // A pause frame is a fresh ambient sample: nudge the per-bin profile toward it.
+          this.noiseSpectralProfile[i] += (signalMag - this.noiseSpectralProfile[i]) * profileRate;
+        }
         let noiseMag = this.noiseSpectralProfile[i] || 0;
-        // Apply subtraction factor (over-subtraction = 1.5, floor = 0.01)
-        let cleanMag = Math.max(0.01 * signalMag, signalMag - 1.5 * noiseMag);
+        const fHz = i * snrBinHz;
+        if (fHz >= SNR_LO_HZ && fHz <= SNR_HI_HZ) {
+          snrSigPow += signalMag * signalMag;
+          snrNoisePow += noiseMag * noiseMag;
+        }
+        // SNR-adaptive over-subtraction (floor 0.01) — replaces the old constant 1.5.
+        let cleanMag = Math.max(0.01 * signalMag, signalMag - this.overSubFactor * noiseMag);
         // Re-convert to dB scale for native compatibility with downstream dsp engines
         this.frequencyData[i] = cleanMag > 1e-10 ? 20 * Math.log10(cleanMag) : -200;
       }
+      this.snrDb = aPosterioriSnrDb(snrSigPow, snrNoisePow);
+    } else {
+      // Pre-calibration / calibration-skipped fallback: broadband amplitude ratio
+      // (rms is amplitude, hence 20·log10) against the scalar noise floor.
+      this.snrDb = 20 * Math.log10(Math.max(rms, 1e-6) / Math.max(this.noiseFloor, 1e-6));
     }
+    this.snrDbSmoothed += (this.snrDb - this.snrDbSmoothed) * 0.2;
+    this.snrConfidence = snrToConfidence(this.snrDbSmoothed);
+    this.snrTier = snrTier(this.snrDbSmoothed);
+    this.metrics.snrDb = this.snrDbSmoothed;
+    this.metrics.snrConfidence = this.snrConfidence;
+    this.metrics.snrTier = this.snrTier;
     const fData = this.frequencyData;
 
     // ====== SPECTRAL TILT (dynamic pitch-aware band ratio) ======
@@ -1017,11 +1059,12 @@ export class VoiceAnalyzer {
     if (pitch > 0 && this.pitchConfidence > 0.4 && this.vowelLikelihood > 0.25) {
       this.analyserFormant.getFloatFrequencyData(this.formantFreqData);
       if (this.isCalibrated && this.noiseSpectralProfile) {
-        // Both analysers use fftSize=4096 so bins match exactly
+        // Both analysers use fftSize=4096 so bins match exactly. Reuse this frame's
+        // SNR-adaptive over-subtraction factor (set in the main spectrum pass above).
         for (let i = 0; i < this.formantFreqData.length; i++) {
           let signalMag = Math.pow(10, this.formantFreqData[i] / 20);
           let noiseMag = this.noiseSpectralProfile[i] || 0;
-          let cleanMag = Math.max(0.01 * signalMag, signalMag - 1.5 * noiseMag);
+          let cleanMag = Math.max(0.01 * signalMag, signalMag - this.overSubFactor * noiseMag);
           this.formantFreqData[i] = cleanMag > 1e-10 ? 20 * Math.log10(cleanMag) : -200;
         }
       }
@@ -1272,6 +1315,7 @@ export class VoiceAnalyzer {
       formantConfidence: this.formantConfidence,
       voicedStrength,
       spectralTiltConfidence: this.spectralTiltConfidence,
+      snrConfidence: this.snrConfidence,
       wasLastFrameReliable: this.wasLastFrameReliable
     });
     this.wasLastFrameReliable = reliableFrame;
