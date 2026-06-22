@@ -71,10 +71,10 @@ necklace panel. The haptic alert loop is unchanged — it still fires when your 
 drifts outside the pitch/resonance ranges configured in Necklace mode, using the
 same intensity and discreet/practice setting.
 
-- **Use your own image:** replace `app/src/main/res/drawable/screen_image.xml` with a
-  `screen_image.png` or `screen_image.jpg` (same name, same folder). The code
-  references the drawable by name, so no other changes are needed. The placeholder
-  shipped here is a simple stand-in graphic.
+- **Use your own image:** replace `app/src/main/res/drawable-nodpi/screen_image.jpg`
+  with your own `screen_image.png` or `screen_image.jpg` (same name, `drawable-nodpi`
+  folder so it isn't density-scaled). The code references the drawable by name, so no
+  other changes are needed. Ships with a stand-in photo by default.
 
 ## How it's put together
 
