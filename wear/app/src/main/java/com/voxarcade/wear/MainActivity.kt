@@ -65,6 +65,12 @@ private val RES_DARK = Color(0xFF7C8CFF)
 /** The three top-level views the watch face can show. */
 private enum class ViewTab { VOICE, NECKLACE, SCREEN }
 
+/** Resonance alert-band presets as (low%, high%) — each targets one third of the
+ *  0..100 brightness scale. Tapping one sets the band; the user can still fine-tune. */
+private val RES_PRESET_DARK = 10 to 35
+private val RES_PRESET_MID = 38 to 62
+private val RES_PRESET_BRIGHT = 65 to 90
+
 /** Single-activity entry point; hosts the whole UI in one [VoxApp] composable. */
 class MainActivity : ComponentActivity() {
     /** Sets the Compose content tree as the activity's view. */
@@ -246,6 +252,7 @@ private fun VoxApp() {
                         resLow = resLow, resHigh = resHigh,
                         onResLow = { scope.launch { store.setResLow((resLow + it).coerceIn(0, resHigh - 5)) } },
                         onResHigh = { scope.launch { store.setResHigh((resHigh + it).coerceIn(resLow + 5, 100)) } },
+                        onResPreset = { lo, hi -> scope.launch { store.setResLow(lo); store.setResHigh(hi) } },
                         onTestPitch = {
                             haptics.buzz(
                                 HapticPatterns.patternFor("pitch", "below", mode),
@@ -347,6 +354,7 @@ private fun NecklaceControls(
     onLow: (Int) -> Unit, onHigh: (Int) -> Unit,
     resLow: Int, resHigh: Int,
     onResLow: (Int) -> Unit, onResHigh: (Int) -> Unit,
+    onResPreset: (Int, Int) -> Unit,
     onTestPitch: () -> Unit,
     onTestRes: () -> Unit
 ) {
@@ -449,6 +457,20 @@ private fun NecklaceControls(
 
     Spacer(Modifier.height(6.dp))
     Text("Resonance band (%)", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
+    // Quick presets that drop the alert band onto the dark / mid / bright third of the
+    // scale; the steppers below still let the user fine-tune from there.
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Seg("Dark", resLow == RES_PRESET_DARK.first && resHigh == RES_PRESET_DARK.second) {
+            onResPreset(RES_PRESET_DARK.first, RES_PRESET_DARK.second)
+        }
+        Seg("Mid", resLow == RES_PRESET_MID.first && resHigh == RES_PRESET_MID.second) {
+            onResPreset(RES_PRESET_MID.first, RES_PRESET_MID.second)
+        }
+        Seg("Bright", resLow == RES_PRESET_BRIGHT.first && resHigh == RES_PRESET_BRIGHT.second) {
+            onResPreset(RES_PRESET_BRIGHT.first, RES_PRESET_BRIGHT.second)
+        }
+    }
+    Spacer(Modifier.height(4.dp))
     StepperRow("Dark", resLow, { onResLow(-5) }, { onResLow(5) })
     StepperRow("Brt", resHigh, { onResHigh(-5) }, { onResHigh(5) })
 
