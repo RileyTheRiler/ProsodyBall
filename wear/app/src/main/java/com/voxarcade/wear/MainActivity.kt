@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +23,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -59,6 +62,9 @@ private val RES_BRIGHT = Color(0xFF34D6C8)
 private val RES_MID = Color(0xFFE0B84A)
 private val RES_DARK = Color(0xFF7C8CFF)
 
+/** The three top-level views the watch face can show. */
+private enum class ViewTab { VOICE, NECKLACE, SCREEN }
+
 /** Single-activity entry point; hosts the whole UI in one [VoxApp] composable. */
 class MainActivity : ComponentActivity() {
     /** Sets the Compose content tree as the activity's view. */
@@ -86,7 +92,7 @@ private fun VoxApp() {
         )
     }
     var listening by remember { mutableStateOf(false) }
-    var necklace by remember { mutableStateOf(false) }
+    var viewTab by remember { mutableStateOf(ViewTab.VOICE) }
 
     // Necklace settings, persisted across restarts via DataStore (milestone 5).
     val store = remember { SettingsStore(context) }
@@ -148,8 +154,8 @@ private fun VoxApp() {
         else -> null
     }
 
-    // Confidence-gated directional alert loop — runs in both the Voice meter and
-    // Necklace panel, since out-of-range feedback shouldn't depend on which view
+    // Confidence-gated directional alert loop — runs across all three views (Voice,
+    // Necklace, Screen), since out-of-range feedback shouldn't depend on which view
     // is on screen. Two metrics: pitch takes priority (fix the fundamental first);
     // resonance fires when pitch is in range. A short global gap keeps the two
     // buzzes from colliding.
@@ -206,15 +212,16 @@ private fun VoxApp() {
 
                 // Mode switch
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Seg("Voice", !necklace) { necklace = false }
-                    Seg("Necklace", necklace) { necklace = true }
+                    Seg("Voice", viewTab == ViewTab.VOICE) { viewTab = ViewTab.VOICE }
+                    Seg("Necklace", viewTab == ViewTab.NECKLACE) { viewTab = ViewTab.NECKLACE }
+                    Seg("Screen", viewTab == ViewTab.SCREEN) { viewTab = ViewTab.SCREEN }
                 }
                 Spacer(Modifier.height(10.dp))
 
-                if (!necklace) {
-                    PitchMeter(voiced, pitchHz, level)
-                } else {
-                    NecklaceControls(
+                when (viewTab) {
+                    ViewTab.VOICE -> PitchMeter(voiced, pitchHz, level)
+                    ViewTab.SCREEN -> ScreenView()
+                    ViewTab.NECKLACE -> NecklaceControls(
                         listening = listening,
                         voiced = voiced,
                         pitchHz = pitchHz,
@@ -295,6 +302,23 @@ private fun PitchMeter(voiced: Boolean, pitchHz: Float, level: Float) {
             Text(text = "Hz", color = Color(0xFF8C8C9C), style = MaterialTheme.typography.caption2)
         }
     }
+}
+
+/**
+ * Screen mode: shows a full-size image instead of the pitch meter or necklace panel —
+ * useful when the watch should display something innocuous while haptic feedback
+ * (driven by the same alert loop as Voice/Necklace, using the user's set ranges) keeps
+ * running in the background. Swap [R.drawable.screen_image] for your own photo; see
+ * the comment in that file for how.
+ */
+@Composable
+private fun ScreenView() {
+    Image(
+        painter = painterResource(id = R.drawable.screen_image),
+        contentDescription = null,
+        modifier = Modifier.size(160.dp).clip(RoundedCornerShape(80.dp)),
+        contentScale = ContentScale.Crop
+    )
 }
 
 /**
