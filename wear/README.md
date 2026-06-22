@@ -2,7 +2,7 @@
 
 A thin Wear OS app that runs the existing ProsodyBall web app full-screen on your
 watch. It reuses the exact same audio/DSP engine as the web app — there is no
-separate logic to maintain. On launch you pick one of two modes:
+separate logic to maintain. On launch you pick one of three modes:
 
 - **Vox Ball** — the visual voice-training game; the ball reacts to the pitch and
   rhythm of your voice picked up by the watch mic.
@@ -10,6 +10,10 @@ separate logic to maintain. On launch you pick one of two modes:
   your mouth**. The screen stays dark and the watch **buzzes when your voice drifts
   out of range** (pitch and/or resonance by default). Built for private practice or
   discreet use out in the world.
+- **Screen** — shows a static image instead of the meter or necklace panel, while the
+  same haptic alerts keep buzzing in the background against your set pitch/resonance
+  ranges. Useful when you'd rather the watch face show something else while you
+  practice. See [Screen mode](#screen-mode) below to swap in your own photo.
 
 - **Target device:** Samsung Galaxy Watch 7 (Wear OS 5). Works on any Wear OS 3+
   watch (`minSdk 30`).
@@ -59,6 +63,18 @@ Wear the watch on a lanyard/pendant so the mic sits closer to your mouth, then p
 > continues with the screen dark but not while the watch goes fully to sleep. Toggle
 > the mic off when you're not practicing. True screen-off background listening is a
 > possible future enhancement (foreground mic service + off-render-loop analysis).
+
+## Screen mode
+
+Pick **Screen** on the launch row to show an image in place of the pitch meter or
+necklace panel. The haptic alert loop is unchanged — it still fires when your voice
+drifts outside the pitch/resonance ranges configured in Necklace mode, using the
+same intensity and discreet/practice setting.
+
+- **Use your own image:** replace `app/src/main/res/drawable-nodpi/screen_image.jpg`
+  with your own `screen_image.png` or `screen_image.jpg` (same name, `drawable-nodpi`
+  folder so it isn't density-scaled). The code references the drawable by name, so no
+  other changes are needed. Ships with a stand-in photo by default.
 
 ## How it's put together
 
