@@ -1,7 +1,9 @@
 package com.voxarcade.wear
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -23,7 +25,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -43,7 +44,6 @@ import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val ACCENT = Color(0xFF34D6C8)
@@ -63,7 +63,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun VoxApp() {
     val context = LocalContext.current
-    val engine = remember { MicEngine() }
+    // Shared engine owned by VoiceCaptureService (so capture/haptics survive screen-off).
+    val engine = AudioHub.engine
     val haptics = remember { Haptics(context) }
 
     var hasMic by remember {
@@ -72,8 +73,8 @@ private fun VoxApp() {
                 == PackageManager.PERMISSION_GRANTED
         )
     }
-    var listening by remember { mutableStateOf(false) }
-    var necklace by remember { mutableStateOf(false) }
+    var listening by remember { mutableStateOf(engine.isRunning) }
+    var necklace by remember { mutableStateOf(AudioHub.necklaceActive.get()) }
 
     // Necklace settings, persisted across restarts via DataStore (milestone 5).
     val store = remember { SettingsStore(context) }
@@ -106,12 +107,44 @@ private fun VoxApp() {
     val calibratingBaseline by engine.calibratingBaseline.collectAsState()
     val resonanceBaselineResult by engine.resonanceBaselineResult.collectAsState()
     LaunchedEffect(resonanceBaselineResult) { if (resonanceBaselineResult > 0f) store.setResBaseline(resonanceBaselineResult) }
+    // Tell the capture service whether to emit haptics (eyes-free necklace mode).
+    LaunchedEffect(necklace) { AudioHub.necklaceActive.set(necklace) }
 
+    // Start/stop is driven through the foreground service rather than the engine
+    // directly, so a tracking session keeps running when the screen turns off.
+    fun startTrackingService() {
+        ContextCompat.startForegroundService(
+            context,
+            Intent(context, VoiceCaptureService::class.java).apply { action = VoiceCaptureService.ACTION_START }
+        )
+        listening = true
+    }
+    fun stopTrackingService() {
+        context.startService(
+            Intent(context, VoiceCaptureService::class.java).apply { action = VoiceCaptureService.ACTION_STOP }
+        )
+        listening = false
+    }
+    // M11: request POST_NOTIFICATIONS (Android 13+) so the ongoing service notification
+    // shows; start tracking regardless of the outcome (the FGS still runs).
+    val notifLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ -> startTrackingService() }
+    fun beginTracking() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            startTrackingService()
+        }
+    }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasMic = granted
-        if (granted) { engine.start(); listening = true }
+        if (granted) beginTracking()
     }
 
     val level by engine.level.collectAsState()
@@ -122,7 +155,8 @@ private fun VoxApp() {
     val f1Hz by engine.f1Hz.collectAsState()
     val f2Hz by engine.f2Hz.collectAsState()
 
-    DisposableEffect(Unit) { onDispose { engine.stop() } }
+    // NB: don't stop the engine on dispose — the service owns the capture lifecycle,
+    // so the session continues when the Activity is backgrounded / screen-off.
 
     val voiced = pitchHz > 0f && pitchConfidence > 0.4f
     val direction = when {
@@ -141,47 +175,9 @@ private fun VoxApp() {
         else -> null
     }
 
-    // Confidence-gated directional alert loop — only active in necklace mode.
-    // Two metrics: pitch takes priority (fix the fundamental first); resonance fires
-    // when pitch is in range. A short global gap keeps the two buzzes from colliding.
-    LaunchedEffect(necklace, listening, mode, intensity, lowHz, highHz, resLow, resHigh) {
-        if (!necklace || !listening) return@LaunchedEffect
-        var lastPitch = 0L
-        var lastRes = 0L
-        var lastAny = 0L
-        while (true) {
-            val now = System.currentTimeMillis()
-            if (now - lastAny >= 250L) {
-                val hz = engine.pitchHz.value
-                val pConf = engine.pitchConfidence.value
-                val rPct = engine.resonance.value * 100f
-                val rConf = engine.resonanceConfidence.value
-
-                var fired = false
-                if (hz > 0f && pConf > 0.45f) {
-                    val dir = if (hz < lowHz) "below" else if (hz > highHz) "above" else null
-                    if (dir != null && now - lastPitch >= 600L) {
-                        haptics.buzz(
-                            HapticPatterns.patternFor("pitch", dir, mode),
-                            HapticPatterns.intensityToAmp(intensity, mode)
-                        )
-                        lastPitch = now; lastAny = now; fired = true
-                    }
-                }
-                if (!fired && rConf > 0.45f) {
-                    val dir = if (rPct < resLow) "below" else if (rPct > resHigh) "above" else null
-                    if (dir != null && now - lastRes >= 600L) {
-                        haptics.buzz(
-                            HapticPatterns.patternFor("resonance", dir, mode),
-                            HapticPatterns.intensityToAmp(intensity, mode)
-                        )
-                        lastRes = now; lastAny = now
-                    }
-                }
-            }
-            delay(120)
-        }
-    }
+    // The confidence-gated, two-metric directional alert loop now lives in
+    // VoiceCaptureService so haptics continue with the screen off; the UI only
+    // displays live values.
 
     // Pitch screen background reflects resonance vs the chosen goal — green in range,
     // yellow out — but only while resonance is confidently voiced. Necklace mode = black.
@@ -258,8 +254,8 @@ private fun VoxApp() {
                     onClick = {
                         when {
                             !hasMic -> permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                            listening -> { engine.stop(); listening = false }
-                            else -> { engine.start(); listening = true }
+                            listening -> stopTrackingService()
+                            else -> beginTracking()
                         }
                     }
                 ) { Text(if (listening) "Stop" else "Start") }
