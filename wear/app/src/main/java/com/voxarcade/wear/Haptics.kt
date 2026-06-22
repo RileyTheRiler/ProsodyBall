@@ -24,6 +24,10 @@ class Haptics(context: Context) {
             context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
         }
 
+    /**
+     * Play a `[on, off, …]` ms [timings] pattern at [amplitude] (1..255). No-ops when
+     * there's no motor or the pattern is empty; vibration exceptions are swallowed.
+     */
     fun buzz(timings: LongArray, amplitude: Int) {
         val v = vibrator ?: return
         if (!v.hasVibrator() || timings.isEmpty()) return

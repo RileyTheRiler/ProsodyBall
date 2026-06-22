@@ -46,16 +46,26 @@ import androidx.wear.compose.material.Text
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+/** Teal used for normal/in-range readouts and the active meter. */
 private val ACCENT = Color(0xFF34D6C8)
+
+/** Amber used to flag an out-of-range pitch/resonance alert. */
 private val ALERT = Color(0xFFFFA03C)
 
+/** Single-activity entry point; hosts the whole UI in one [VoxApp] composable. */
 class MainActivity : ComponentActivity() {
+    /** Sets the Compose content tree as the activity's view. */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent { VoxApp() }
     }
 }
 
+/**
+ * Root composable: owns the [MicEngine] lifecycle and RECORD_AUDIO permission,
+ * collects the live pitch/resonance flows, persists necklace settings, and renders
+ * the meter plus [NecklaceControls]. Stops the engine on teardown.
+ */
 @Composable
 private fun VoxApp() {
     val context = LocalContext.current
@@ -252,6 +262,10 @@ private fun VoxApp() {
     }
 }
 
+/**
+ * Circular progress ring driven by pitch when [voiced] (mapped across the speech
+ * range), otherwise by input [level] — a quick visual that the mic is live.
+ */
 @Composable
 private fun PitchMeter(voiced: Boolean, pitchHz: Float, level: Float) {
     val ring = if (voiced) ((pitchHz - 70f) / (400f - 70f)).coerceIn(0f, 1f)
@@ -274,6 +288,12 @@ private fun PitchMeter(voiced: Boolean, pitchHz: Float, level: Float) {
     }
 }
 
+/**
+ * The necklace-mode control panel: live pitch/resonance readouts (formatted per the
+ * chosen representation), the mode/intensity/band selectors, resonance method and
+ * per-room calibration controls, and test-buzz buttons. All state is hoisted — this
+ * composable only renders and forwards user actions to the supplied callbacks.
+ */
 @Composable
 private fun NecklaceControls(
     listening: Boolean,
@@ -409,6 +429,7 @@ private fun NecklaceControls(
     Seg(if (calibrating) "…" else "Calibrate room", false) { if (!calibrating) onCalibrate() }
 }
 
+/** A compact segmented-button chip; [selected] tints it with the accent colour. */
 @Composable
 private fun Seg(text: String, selected: Boolean, onClick: () -> Unit) {
     Box(
@@ -427,6 +448,7 @@ private fun Seg(text: String, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
+/** Labelled −/value/+ row for nudging an integer band edge up or down. */
 @Composable
 private fun StepperRow(label: String, value: Int, onMinus: () -> Unit, onPlus: () -> Unit) {
     Row(
@@ -443,6 +465,7 @@ private fun StepperRow(label: String, value: Int, onMinus: () -> Unit, onPlus: (
     }
 }
 
+/** Small square +/− button used by [StepperRow]. */
 @Composable
 private fun StepBtn(label: String, onClick: () -> Unit) {
     Box(

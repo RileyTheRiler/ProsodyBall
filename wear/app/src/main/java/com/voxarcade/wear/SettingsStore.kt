@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import java.io.IOException
 
-// One process-wide Preferences DataStore, created via the standard top-level delegate.
+/** One process-wide Preferences DataStore, created via the standard top-level delegate. */
 private val Context.necklaceDataStore: DataStore<Preferences> by preferencesDataStore(name = "vox_necklace")
 
 /** The persisted necklace configuration (mode/intensity + the two metric bands). */
