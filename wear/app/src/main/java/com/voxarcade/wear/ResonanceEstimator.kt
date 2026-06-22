@@ -310,7 +310,7 @@ class ResonanceEstimator(private val sampleRate: Int = 16_000) {
     }
 
     private companion object {
-        const val LPC_ORDER = 14          // ~ 2 + fs/1000 for 16 kHz speech
+        const val LPC_ORDER = 14          // typical range 10–18 for 16 kHz speech
         const val CEPSTRAL_LIFTER = 24    // low-quefrency cutoff for the smooth envelope
     }
 }

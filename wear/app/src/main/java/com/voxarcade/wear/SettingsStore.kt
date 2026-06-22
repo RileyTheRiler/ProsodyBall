@@ -4,12 +4,15 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
+import java.io.IOException
 
 // One process-wide Preferences DataStore, created via the standard top-level delegate.
 private val Context.necklaceDataStore: DataStore<Preferences> by preferencesDataStore(name = "vox_necklace")
@@ -51,25 +54,33 @@ class SettingsStore(private val context: Context) {
         val NOISE_FLOOR = floatPreferencesKey("noise_floor")
     }
 
-    val flow: Flow<NecklaceSettings> = context.necklaceDataStore.data.map { p ->
-        NecklaceSettings(
-            mode = p[Keys.MODE]?.let { runCatching { HapticMode.valueOf(it) }.getOrNull() }
-                ?: HapticMode.DISCREET,
-            intensity = p[Keys.INTENSITY]?.let { runCatching { Intensity.valueOf(it) }.getOrNull() }
-                ?: Intensity.GENTLE,
-            lowHz = p[Keys.LOW_HZ] ?: 130,
-            highHz = p[Keys.HIGH_HZ] ?: 200,
-            resLow = p[Keys.RES_LOW] ?: 30,
-            resHigh = p[Keys.RES_HIGH] ?: 70,
-            pitchDisplay = p[Keys.PITCH_DISPLAY]?.let { runCatching { PitchDisplay.valueOf(it) }.getOrNull() }
-                ?: PitchDisplay.HZ,
-            resDisplay = p[Keys.RES_DISPLAY]?.let { runCatching { ResDisplay.valueOf(it) }.getOrNull() }
-                ?: ResDisplay.PERCENT,
-            resonanceMethod = p[Keys.RES_METHOD]?.let { runCatching { ResonanceMethod.valueOf(it) }.getOrNull() }
-                ?: ResonanceMethod.HARMONIC,
-            noiseFloor = p[Keys.NOISE_FLOOR] ?: 0f,
-        )
-    }
+    // Single source of truth for defaults, referenced below so the fallbacks can't
+    // drift from the NecklaceSettings declaration.
+    private val defaults = NecklaceSettings()
+
+    // .catch keeps a transient DataStore read failure (IOException) from tearing down
+    // the flow — and the UI collecting it — by falling back to empty (= all defaults).
+    val flow: Flow<NecklaceSettings> = context.necklaceDataStore.data
+        .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+        .map { p ->
+            NecklaceSettings(
+                mode = p[Keys.MODE]?.let { runCatching { HapticMode.valueOf(it) }.getOrNull() }
+                    ?: defaults.mode,
+                intensity = p[Keys.INTENSITY]?.let { runCatching { Intensity.valueOf(it) }.getOrNull() }
+                    ?: defaults.intensity,
+                lowHz = p[Keys.LOW_HZ] ?: defaults.lowHz,
+                highHz = p[Keys.HIGH_HZ] ?: defaults.highHz,
+                resLow = p[Keys.RES_LOW] ?: defaults.resLow,
+                resHigh = p[Keys.RES_HIGH] ?: defaults.resHigh,
+                pitchDisplay = p[Keys.PITCH_DISPLAY]?.let { runCatching { PitchDisplay.valueOf(it) }.getOrNull() }
+                    ?: defaults.pitchDisplay,
+                resDisplay = p[Keys.RES_DISPLAY]?.let { runCatching { ResDisplay.valueOf(it) }.getOrNull() }
+                    ?: defaults.resDisplay,
+                resonanceMethod = p[Keys.RES_METHOD]?.let { runCatching { ResonanceMethod.valueOf(it) }.getOrNull() }
+                    ?: defaults.resonanceMethod,
+                noiseFloor = p[Keys.NOISE_FLOOR] ?: defaults.noiseFloor,
+            )
+        }
 
     suspend fun setMode(v: HapticMode) = context.necklaceDataStore.edit { it[Keys.MODE] = v.name }
     suspend fun setIntensity(v: Intensity) = context.necklaceDataStore.edit { it[Keys.INTENSITY] = v.name }
