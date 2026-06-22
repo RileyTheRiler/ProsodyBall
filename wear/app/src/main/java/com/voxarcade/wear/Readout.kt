@@ -22,11 +22,24 @@ enum class ResDisplay { PERCENT, FORMANTS }
 enum class ResGoal {
     DARK, MID, BRIGHT;
 
-    /** Green band (low..high %) for this goal. Dark = one-sided low, Bright = one-sided high. */
-    fun band(): Pair<Int, Int> = when (this) {
-        DARK -> 0 to 45     // green when dark; alert only when too bright
-        MID -> 35 to 65     // green in the middle; alert either way
-        BRIGHT -> 55 to 100 // green when bright; alert only when too dark
+    /**
+     * Green band (low..high %) for this goal. With no baseline ([baselinePct] ≤ 0)
+     * these are fixed defaults; with a measured baseline the bands recenter on the
+     * user's own voice, so the goal becomes a personal target (e.g. Bright = brighter
+     * than your baseline, Dark = darker than it, Mid = around it).
+     */
+    fun band(baselinePct: Float): Pair<Int, Int> {
+        if (baselinePct <= 0f) return when (this) {
+            DARK -> 0 to 45     // green when dark; alert only when too bright
+            MID -> 35 to 65     // green in the middle; alert either way
+            BRIGHT -> 55 to 100 // green when bright; alert only when too dark
+        }
+        val b = baselinePct.roundToInt().coerceIn(10, 90)
+        return when (this) {
+            DARK -> 0 to (b - 8).coerceAtLeast(10)
+            MID -> (b - 12).coerceAtLeast(0) to (b + 12).coerceAtMost(100)
+            BRIGHT -> (b + 8).coerceAtMost(90) to 100
+        }
     }
 }
 

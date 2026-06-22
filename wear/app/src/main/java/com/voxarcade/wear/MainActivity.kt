@@ -84,9 +84,10 @@ private fun VoxApp() {
     val lowHz = settings.lowHz
     val highHz = settings.highHz
     // Resonance target chosen as Dark / Mid / Bright (clearer than raw %); the goal
-    // maps to a green band that drives both the haptic alerts and the pitch-screen colour.
+    // maps to a green band that drives both the haptic alerts and the pitch-screen
+    // colour. With a per-user baseline (M9) the band recenters on the user's own voice.
     val resGoal = settings.resGoal
-    val (resLow, resHigh) = resGoal.band()
+    val (resLow, resHigh) = resGoal.band(settings.resBaseline)
     // Readout representation (milestone 6).
     val pitchDisplay = settings.pitchDisplay
     val resDisplay = settings.resDisplay
@@ -101,6 +102,10 @@ private fun VoxApp() {
     val calibrating by engine.calibrating.collectAsState()
     val calibratedFloor by engine.calibratedFloor.collectAsState()
     LaunchedEffect(calibratedFloor) { if (calibratedFloor > 0f) store.setNoiseFloor(calibratedFloor) }
+    // Per-user resonance baseline (M9): persist a freshly measured baseline.
+    val calibratingBaseline by engine.calibratingBaseline.collectAsState()
+    val resonanceBaselineResult by engine.resonanceBaselineResult.collectAsState()
+    LaunchedEffect(resonanceBaselineResult) { if (resonanceBaselineResult > 0f) store.setResBaseline(resonanceBaselineResult) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -220,6 +225,9 @@ private fun VoxApp() {
                         onResDisplay = { scope.launch { store.setResDisplay(it) } },
                         resGoal = resGoal,
                         onResGoal = { scope.launch { store.setResGoal(it) } },
+                        resBaseline = settings.resBaseline,
+                        calibratingBaseline = calibratingBaseline,
+                        onSetBaseline = { engine.startResonanceBaseline() },
                         resonanceMethod = resonanceMethod,
                         onResonanceMethod = { scope.launch { store.setResonanceMethod(it) } },
                         noiseFloor = settings.noiseFloor,
@@ -297,6 +305,7 @@ private fun NecklaceControls(
     pitchDisplay: PitchDisplay, resDisplay: ResDisplay, pitchRefHz: Float,
     onPitchDisplay: (PitchDisplay) -> Unit, onResDisplay: (ResDisplay) -> Unit,
     resGoal: ResGoal, onResGoal: (ResGoal) -> Unit,
+    resBaseline: Float, calibratingBaseline: Boolean, onSetBaseline: () -> Unit,
     resonanceMethod: ResonanceMethod, onResonanceMethod: (ResonanceMethod) -> Unit,
     noiseFloor: Float, calibrating: Boolean, onCalibrate: () -> Unit,
     mode: HapticMode, onMode: (HapticMode) -> Unit,
@@ -370,6 +379,20 @@ private fun NecklaceControls(
         Seg("Mid", resGoal == ResGoal.MID) { onResGoal(ResGoal.MID) }
         Seg("Bright", resGoal == ResGoal.BRIGHT) { onResGoal(ResGoal.BRIGHT) }
     }
+    Spacer(Modifier.height(6.dp))
+    // Per-user baseline (M9): targets become relative to the user's own voice.
+    Text(
+        text = when {
+            calibratingBaseline -> "Hold a steady vowel…"
+            resBaseline > 0f -> "Baseline ${resBaseline.toInt()}% · targets personalized"
+            else -> "Baseline not set · using defaults"
+        },
+        color = if (calibratingBaseline) ALERT else Color(0xFF6A6A7A),
+        style = MaterialTheme.typography.caption2,
+        textAlign = TextAlign.Center
+    )
+    Spacer(Modifier.height(2.dp))
+    Seg(if (calibratingBaseline) "…" else "Set baseline", false) { if (!calibratingBaseline) onSetBaseline() }
     Spacer(Modifier.height(4.dp))
     Text("Method", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {

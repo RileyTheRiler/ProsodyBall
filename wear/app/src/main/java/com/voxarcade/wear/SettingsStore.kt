@@ -31,6 +31,9 @@ data class NecklaceSettings(
     val resonanceMethod: ResonanceMethod = ResonanceMethod.LPC,
     // Calibrated ambient noise floor (RMS); 0 = uncalibrated, use built-in defaults.
     val noiseFloor: Float = 0f,
+    // Per-user resonance baseline (% brightness) from sustained-vowel calibration;
+    // 0 = not calibrated, so the goal bands fall back to fixed defaults.
+    val resBaseline: Float = 0f,
 )
 
 /**
@@ -54,6 +57,7 @@ class SettingsStore(private val context: Context) {
         val RES_GOAL = stringPreferencesKey("res_goal")
         val RES_METHOD = stringPreferencesKey("res_method")
         val NOISE_FLOOR = floatPreferencesKey("noise_floor")
+        val RES_BASELINE = floatPreferencesKey("res_baseline")
     }
 
     // Single source of truth for defaults, referenced below so the fallbacks can't
@@ -83,6 +87,7 @@ class SettingsStore(private val context: Context) {
                 resonanceMethod = p[Keys.RES_METHOD]?.let { runCatching { ResonanceMethod.valueOf(it) }.getOrNull() }
                     ?: defaults.resonanceMethod,
                 noiseFloor = p[Keys.NOISE_FLOOR] ?: defaults.noiseFloor,
+                resBaseline = p[Keys.RES_BASELINE] ?: defaults.resBaseline,
             )
         }
 
@@ -97,4 +102,5 @@ class SettingsStore(private val context: Context) {
     suspend fun setResGoal(v: ResGoal) = context.necklaceDataStore.edit { it[Keys.RES_GOAL] = v.name }
     suspend fun setResonanceMethod(v: ResonanceMethod) = context.necklaceDataStore.edit { it[Keys.RES_METHOD] = v.name }
     suspend fun setNoiseFloor(v: Float) = context.necklaceDataStore.edit { it[Keys.NOISE_FLOOR] = v }
+    suspend fun setResBaseline(v: Float) = context.necklaceDataStore.edit { it[Keys.RES_BASELINE] = v }
 }

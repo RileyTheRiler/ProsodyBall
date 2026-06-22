@@ -54,6 +54,14 @@ class MicEngine {
     private val _calibratedFloor = MutableStateFlow(0f)
     val calibratedFloor: StateFlow<Float> = _calibratedFloor
 
+    /** True while a resonance-baseline capture (sustained vowels) is in progress (M9). */
+    private val _calibratingBaseline = MutableStateFlow(false)
+    val calibratingBaseline: StateFlow<Boolean> = _calibratingBaseline
+
+    /** Emits the measured baseline resonance % on completion; 0 = failed/too few frames. */
+    private val _resonanceBaselineResult = MutableStateFlow(0f)
+    val resonanceBaselineResult: StateFlow<Float> = _resonanceBaselineResult
+
     private val pitch = PitchDetector(sampleRate)
     private val resonanceEstimator = ResonanceEstimator(sampleRate)
 
@@ -66,6 +74,12 @@ class MicEngine {
     private var calSum = 0.0
     private var calMax = 0f
     private var calCount = 0
+
+    // Resonance-baseline capture state (milestone 9). baseSamples is touched only on
+    // the audio thread; the UI thread just sets the volatile countdown + reset flag.
+    @Volatile private var baseFramesLeft = 0
+    @Volatile private var baseResetPending = false
+    private val baseSamples = ArrayList<Float>()
 
     val isRunning: Boolean get() = running
 
@@ -85,6 +99,19 @@ class MicEngine {
         calSum = 0.0; calMax = 0f; calCount = 0
         calFramesLeft = CAL_FRAMES
         _calibrating.value = true
+    }
+
+    /**
+     * Begin a ~5 s resonance-baseline capture (milestone 9): the user sustains a few
+     * comfortable vowels. Only stable, confidently-voiced frames are collected; the
+     * median becomes the personal baseline used to recenter the Dark/Mid/Bright goal
+     * bands. Emitted via [resonanceBaselineResult] (0 if too few stable frames).
+     */
+    fun startResonanceBaseline() {
+        if (!running || _calibratingBaseline.value) return
+        baseResetPending = true
+        baseFramesLeft = BASELINE_FRAMES
+        _calibratingBaseline.value = true
     }
 
     /** Caller must hold RECORD_AUDIO permission before invoking. */
@@ -179,6 +206,20 @@ class MicEngine {
                             _resonanceConfidence.value = resonanceEstimator.confidence
                             _f1Hz.value = resonanceEstimator.f1Hz
                             _f2Hz.value = resonanceEstimator.f2Hz
+
+                            // Resonance baseline capture: collect only stable, confidently
+                            // -voiced frames (sustained vowels), then take the median.
+                            if (baseFramesLeft > 0) {
+                                if (baseResetPending) { baseSamples.clear(); baseResetPending = false }
+                                if (voiced && resonanceEstimator.confidence > 0.55f) {
+                                    baseSamples.add(_resonance.value * 100f)
+                                }
+                                baseFramesLeft--
+                                if (baseFramesLeft == 0) {
+                                    _resonanceBaselineResult.value = medianOf(baseSamples)
+                                    _calibratingBaseline.value = false
+                                }
+                            }
                         }
                     }
                 }
@@ -199,6 +240,8 @@ class MicEngine {
         try { t?.join(400) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
         calFramesLeft = 0
         _calibrating.value = false
+        baseFramesLeft = 0
+        _calibratingBaseline.value = false
         _level.value = 0f
         _pitchHz.value = 0f
         _pitchConfidence.value = 0f
@@ -206,6 +249,13 @@ class MicEngine {
         _resonanceConfidence.value = 0f
         _f1Hz.value = 0f
         _f2Hz.value = 0f
+    }
+
+    /** Median of collected baseline samples; 0 when too few stable frames were seen. */
+    private fun medianOf(xs: List<Float>): Float {
+        if (xs.size < 8) return 0f
+        val s = xs.sorted()
+        return s[s.size / 2]
     }
 
     private companion object {
@@ -217,5 +267,8 @@ class MicEngine {
 
         /** ~2 s of ~100 ms reads — the quiet-capture window for calibration. */
         const val CAL_FRAMES = 20
+
+        /** ~5 s of reads — enough to sustain a few vowels for a baseline. */
+        const val BASELINE_FRAMES = 50
     }
 }
