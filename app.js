@@ -2104,6 +2104,11 @@ class VoxBallGame {
       voiceDetected: false,
       pitchLocked: false,
     };
+    // Reliability presentation (Layer B; see docs/DSP_CONTRACT.md): a render-side EMA of
+    // the analyzer's snrConfidence drives ball vividness so the user can tell whether
+    // they're changing their voice or just their room. Starts trusted so nothing flashes.
+    this.trustVividness = 1;
+    this._lowTrustSecs = 0; // sustained red-tier time; gates the calm text nudge
     this.pitchGridStrength = 'strong';
     this.teleprompterMode = 'off';
     this.voiceProfilePreset = 'auto';
@@ -5084,6 +5089,20 @@ class VoxBallGame {
     this.ballLit = this.colorblindMode
       ? (40 + ps * 30) + (pitchHue < 100 ? 10 : 0) // extra luminance boost at yellow end
       : 40 + ps * 30;
+
+    // --- Reliability vividness ---
+    // In noise (low SNR trust) desaturate + gently dim the ball, so it visibly reads as
+    // "uncertain" rather than as a confident voice change. We smooth snrConfidence again
+    // here (it is already smoothed in the analyzer) so the ball eases, never strobes, and
+    // we drive saturation + luminance (not hue) so the cue survives colorblind mode.
+    const snrConf = this.analyzer.metrics.snrConfidence;
+    this.trustVividness += (snrConf - this.trustVividness) * Math.min(1, dt * 4); // ~250ms
+    const trust = this.trustVividness;
+    this.ballSat *= 0.30 + 0.70 * trust;
+    this.ballLit *= 0.70 + 0.30 * trust;
+    this._lowTrustSecs = this.analyzer.metrics.snrTier === 'red'
+      ? Math.min(6, this._lowTrustSecs + dt)
+      : Math.max(0, this._lowTrustSecs - dt * 2);
   }
 
   // ==========================================================
@@ -5343,12 +5362,16 @@ class VoxBallGame {
     ctx.translate(this.ball.x, this.ball.y + this.ball.radius * (1 - this.ball.squash) * 0.5);
     ctx.scale(1 + (1 - this.ball.squash) * 0.3, this.ball.squash);
 
-    // Ball glow — boosted for visibility against dark scene
-    const glowSize = this.ball.radius * (2.2 + prosodyGlow * 1.5);
+    // Ball glow — boosted for visibility against dark scene. When SNR trust is low the
+    // glow shrinks and breathes with a calm slow pulse (never a strobe), so an unreliable
+    // reading looks unsettled rather than confidently bright.
+    const trust = this.trustVividness;
+    const glowPulse = trust > 0.85 ? 1 : 0.82 + 0.18 * Math.sin(time * 2.2);
+    const glowSize = this.ball.radius * (2.2 + prosodyGlow * 1.5) * (0.7 + 0.3 * trust);
     const glowGrad = ctx.createRadialGradient(0, 0, this.ball.radius * 0.2, 0, 0, glowSize);
-    glowGrad.addColorStop(0, this.getBallColor(0.35));
-    glowGrad.addColorStop(0.4, this.getBallColor(0.12));
-    glowGrad.addColorStop(0.7, this.getBallColor(0.04));
+    glowGrad.addColorStop(0, this.getBallColor(0.35 * glowPulse));
+    glowGrad.addColorStop(0.4, this.getBallColor(0.12 * glowPulse));
+    glowGrad.addColorStop(0.7, this.getBallColor(0.04 * glowPulse));
     glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = glowGrad;
     ctx.beginPath();
@@ -5437,6 +5460,22 @@ class VoxBallGame {
     ctx.stroke();
     ctx.restore();
     ctx.restore();
+
+    // --- Calm reliability nudge (the non-color channel) ---
+    // After SNR has sat in the red tier for a moment, say it plainly so a noisy room isn't
+    // mistaken for a voice change. Calm amber (never alarm red), fades in, auto-hides as
+    // trust recovers. Pairs with the ball's desaturation so the cue isn't colour-only.
+    if (this._lowTrustSecs > 1.5) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, (this._lowTrustSecs - 1.5) / 0.8) * 0.92;
+      ctx.font = '600 13px "Outfit", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.shadowColor = 'rgba(0,0,0,0.85)';
+      ctx.shadowBlur = 6;
+      ctx.fillStyle = this.colorblindMode ? '#ffd166' : '#ffb86b';
+      ctx.fillText('Room’s a bit noisy — readings may drift (try a closer mic)', w / 2, 34);
+      ctx.restore();
+    }
 
     // Sparkles
     for (const s of this.sparkles) {
