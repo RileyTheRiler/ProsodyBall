@@ -30,6 +30,17 @@ function fft(re, im) {
   }
 }
 
+// Deterministic pseudo-noise (seeded LCG) so the comparative SNR assertions never flake.
+function makeRng(seed) {
+  let s = seed >>> 0;
+  return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+}
+function noiseChunk(n, amp, rng) {
+  const a = new Float32Array(n);
+  for (let i = 0; i < n; i++) a[i] = (rng() * 2 - 1) * amp;
+  return a;
+}
+
 // Mock Web Audio that serves the *real* magnitude spectrum of the current time-domain
 // chunk, so the analyzer's frequency-domain features (centroid, tilt, SNR, the formant
 // gate) get real data instead of a flat -100 dB spectrum. Size-aware: each analyser asks
@@ -97,7 +108,7 @@ Object.defineProperty(global, 'navigator', { value: global.window.navigator, wri
 
 function mean(xs) { return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0; }
 
-export async function runEval({ verbose = false } = {}) {
+export async function runEval({ verbose = false, calibrate = false, calNoiseAmp = 0.02, profileScale = 1 } = {}) {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const wavPath = path.join(__dirname, '..', 'fixtures', 'audio-eval', 'rainbow_passage.wav');
   const result = wav.decode(fs.readFileSync(wavPath));
@@ -109,15 +120,37 @@ export async function runEval({ verbose = false } = {}) {
   await analyzer.start(null, { deviceId: 'mock' });
   analyzer.audioCtx.sampleRate = sampleRate;
 
-  // Pre-calibrate so the start of the file isn't treated as the noise floor.
-  analyzer.isCalibrated = true;
-  analyzer.noiseFloor = 0.01;
-  analyzer.hfNoiseFloor = 0.001;
-  analyzer.micTiltBaselineDb = 0;
-
   const chunkSize = 4096;
   const dt = chunkSize / sampleRate;
-  const voicedPitch = [], f1s = [], f2s = [], snrDbs = [], resonances = [];
+  const rng = makeRng(0x9e3779b9);
+
+  if (calibrate) {
+    // Build a *real* per-bin noise profile by running the analyzer's own calibration on
+    // quiet noise frames — so the calibrated band-limited SNR path runs (not the broadband
+    // fallback), exercising the production code in app.js end-to-end.
+    analyzer.isCalibrated = false;
+    analyzer.noiseCalibrationTimer = 0;
+    let guard = 0;
+    while (!analyzer.isCalibrated && guard++ < 60) {
+      analyzer.audioCtx._currentChunk = noiseChunk(chunkSize, calNoiseAmp, rng);
+      analyzer.update(dt);
+    }
+    // Scale the per-bin profile to simulate a louder room *without* touching the scalar
+    // gate, isolating the band-limited SNR path's response to a higher noise estimate
+    // (speech stays above the silence gate, so formants/pitch are unaffected).
+    if (profileScale !== 1 && analyzer.noiseSpectralProfile) {
+      for (let i = 0; i < analyzer.noiseSpectralProfile.length; i++) analyzer.noiseSpectralProfile[i] *= profileScale;
+    }
+  } else {
+    // Shortcut calibration so the start of the file isn't treated as the noise floor;
+    // leaves noiseSpectralProfile null → the broadband SNR fallback path.
+    analyzer.isCalibrated = true;
+    analyzer.noiseFloor = 0.01;
+    analyzer.hfNoiseFloor = 0.001;
+    analyzer.micTiltBaselineDb = 0;
+  }
+
+  const voicedPitch = [], f1s = [], f2s = [], snrDbs = [], resonances = [], overSubs = [];
   let frames = 0, voicedFrames = 0, formantFrames = 0;
 
   for (let i = 0; i + chunkSize <= audioData.length; i += chunkSize) {
@@ -125,6 +158,7 @@ export async function runEval({ verbose = false } = {}) {
     analyzer.update(dt);
     frames++;
     snrDbs.push(analyzer.snrDbSmoothed);
+    overSubs.push(analyzer.overSubFactor);
     if (analyzer.pitchConfidence > 0.5 && analyzer.lastPitch > 50) {
       voicedFrames++;
       voicedPitch.push(analyzer.lastPitch);
@@ -146,6 +180,8 @@ export async function runEval({ verbose = false } = {}) {
     avgF2: +mean(f2s).toFixed(1),
     avgSnrDb: +mean(snrDbs).toFixed(2),
     avgResonance: +mean(resonances).toFixed(3),
+    avgOverSub: +mean(overSubs).toFixed(3),
+    usedBandPath: !!(analyzer.isCalibrated && analyzer.noiseSpectralProfile),
   };
   if (verbose) console.log(JSON.stringify(stats, null, 2));
   return stats;
@@ -176,16 +212,35 @@ export function checkGolden(stats) {
   return failures;
 }
 
-// CLI: run the pipeline and assert the golden ranges (used by `npm run test:all` / CI).
+// CLI: run the pipeline and assert (used by `npm run test:all` / CI). Three scenarios:
+// baseline (broadband fallback), and two calibrated runs that exercise the production
+// band-limited SNR path with a clean vs a 4× louder per-bin noise profile.
 if (import.meta.url === `file://${process.argv[1]}`) {
-  runEval({ verbose: true })
-    .then((stats) => {
-      const failures = checkGolden(stats);
-      if (failures.length) {
-        console.error(`\nFAIL: pipeline golden out of range:\n - ${failures.join('\n - ')}`);
-        process.exit(1);
-      }
-      console.log('SUCCESS: full-pipeline aggregates within golden ranges.');
-    })
-    .catch((e) => { console.error(e); process.exit(1); });
+  (async () => {
+    const base = await runEval();
+    const clean = await runEval({ calibrate: true, profileScale: 1 });
+    const loud = await runEval({ calibrate: true, profileScale: 4 });
+
+    const fail = [];
+    for (const f of checkGolden(base)) fail.push(`baseline ${f}`);
+    if (!clean.usedBandPath) fail.push('calibClean did not use the band-limited SNR path');
+    if (!loud.usedBandPath) fail.push('calibLoud did not use the band-limited SNR path');
+    // A louder noise floor must drop trust and ramp over-subtraction up — the core
+    // "noisier room → less trust, stronger scrubbing" behavior, through the real pipeline.
+    if (!(clean.avgSnrDb - loud.avgSnrDb >= 5)) {
+      fail.push(`SNR did not drop with a louder noise profile (clean ${clean.avgSnrDb} vs loud ${loud.avgSnrDb})`);
+    }
+    if (!(loud.avgOverSub > clean.avgOverSub)) {
+      fail.push(`over-subtraction did not increase in noise (clean ${clean.avgOverSub} vs loud ${loud.avgOverSub})`);
+    }
+
+    console.log('baseline   ', JSON.stringify(base));
+    console.log('calibClean ', JSON.stringify(clean));
+    console.log('calibLoud  ', JSON.stringify(loud));
+    if (fail.length) {
+      console.error(`\nFAIL:\n - ${fail.join('\n - ')}`);
+      process.exit(1);
+    }
+    console.log('\nSUCCESS: full-pipeline aggregates within golden ranges; band-limited SNR path responds to a louder noise floor.');
+  })().catch((e) => { console.error(e); process.exit(1); });
 }

@@ -148,7 +148,10 @@ for the pure canonical-feature functions (dispersion/VTL, centroid, femininity c
 score, cepstrum/CPP). (2) `tools/run-eval-harness.mjs` — the full audio→packet pipeline run
 through the real `VoiceAnalyzer` over the Rainbow Passage, using a real-FFT mock Web Audio
 context so the frequency-domain features get real data; asserts golden ranges on aggregate
-pitch/F1/F2/SNR/resonance (catches e.g. formants collapsing to defaults). Both run in
+pitch/F1/F2/SNR/resonance (catches e.g. formants collapsing to defaults). It also exercises
+the *calibrated band-limited SNR path* (clean vs a 4× louder per-bin profile) and asserts
+that a louder noise floor drops trust and ramps adaptive over-subtraction up — validating
+the production noise stage end-to-end, not just the broadband fallback. Both run in
 `test:all`/CI. Still to do: the Kotlin/C++ legs that run the same vectors through those ports
 (needs the native toolchains), and per-field tolerance tiers for them.
 
