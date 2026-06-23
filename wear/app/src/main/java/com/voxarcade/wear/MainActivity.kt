@@ -167,6 +167,9 @@ private fun VoxApp() {
     // buzzes from colliding.
     LaunchedEffect(listening, mode, intensity, lowHz, highHz, resLow, resHigh) {
         if (!listening) return@LaunchedEffect
+        val gate = DspConstants.ALERT_CONF_GATE.toFloat()
+        val greenDb = DspConstants.SNR_GREEN_DB.toFloat()
+        val yellowDb = DspConstants.SNR_YELLOW_DB.toFloat()
         var lastPitch = 0L
         var lastRes = 0L
         var lastAny = 0L
@@ -177,24 +180,30 @@ private fun VoxApp() {
                 val pConf = engine.pitchConfidence.value
                 val rPct = engine.resonance.value * 100f
                 val rConf = engine.resonanceConfidence.value
+                // SNR trust gates + grades the cue, so a noisy room or a buried mic can't
+                // fire confident-looking guidance: red → stay silent (don't miscoach),
+                // yellow → one step softer, green → as configured.
+                val snrDb = engine.snrDb.value
+                val trustOk = snrDb >= yellowDb
+                val effIntensity = if (snrDb < greenDb) HapticPatterns.degradeIntensity(intensity) else intensity
 
                 var fired = false
-                if (hz > 0f && pConf > 0.45f) {
+                if (trustOk && hz > 0f && pConf > gate) {
                     val dir = if (hz < lowHz) "below" else if (hz > highHz) "above" else null
                     if (dir != null && now - lastPitch >= 600L) {
                         haptics.buzz(
                             HapticPatterns.patternFor("pitch", dir, mode),
-                            HapticPatterns.intensityToAmp(intensity, mode)
+                            HapticPatterns.intensityToAmp(effIntensity, mode)
                         )
                         lastPitch = now; lastAny = now; fired = true
                     }
                 }
-                if (!fired && rConf > 0.45f) {
+                if (trustOk && !fired && rConf > gate) {
                     val dir = if (rPct < resLow) "below" else if (rPct > resHigh) "above" else null
                     if (dir != null && now - lastRes >= 600L) {
                         haptics.buzz(
                             HapticPatterns.patternFor("resonance", dir, mode),
-                            HapticPatterns.intensityToAmp(intensity, mode)
+                            HapticPatterns.intensityToAmp(effIntensity, mode)
                         )
                         lastRes = now; lastAny = now
                     }

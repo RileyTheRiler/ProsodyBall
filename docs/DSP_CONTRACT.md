@@ -189,9 +189,12 @@ generated outputs.
    hardcoded `1.5` at `app.js:869, 1024`). Fallback for the no-pause case (continuous
    speech / a never-silent car): minimum-statistics tracking, documented as v2.
 4. Feed `snrDb` into `confidence`; surface as green/yellow/red.
-5. Wearable: the haptic gate already exists (`MainActivity.kt:182,192`) — make it
-   **SNR-fed and graded** (high→clear, medium→soft, low→suppress + optional neutral
-   "uncertain" tap), composed with the existing `DISCREET`/`PRACTICE` mode. Not a new gate.
+5. Wearable: **done (review-only; no Android toolchain here to compile).** `MicEngine`
+   now computes a per-frame broadband SNR vs the calibrated floor; the `MainActivity`
+   alert loop gates on the SNR tier (red → silent, don't miscoach) and steps the haptic
+   intensity down one notch in yellow, using `DspConstants` (`ALERT_CONF_GATE`, SNR edges).
+   Composed with the existing `DISCREET`/`PRACTICE` mode. Follow-ups: band-limited SNR
+   (today it's broadband rms/floor, the web's fallback formula) and a screen tier indicator.
 6. Align Kotlin/C++ extractor bands to the canonical one (D2).
 7. Golden-value cross-port tests (extend the fixture above).
 
