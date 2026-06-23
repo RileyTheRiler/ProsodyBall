@@ -143,11 +143,14 @@ the same threshold drives web ball vividness and watch haptic tiers.
 
 ## Golden-test contract
 
-**Status: JS leg landed** (`dsp-golden.test.mjs`) — frozen input→output vectors for the
-pure canonical-feature functions (dispersion/VTL, centroid, femininity cues, gender score,
-cepstrum/CPP), which are the concrete targets the ports must reproduce. Still to do: the
-full audio→packet pipeline leg (needs Web Audio / a worklet harness to run the analyzer
-headlessly) and the Kotlin/C++ legs that run the same vectors through those ports.
+**Status: both JS legs landed.** (1) `dsp-golden.test.mjs` — frozen input→output vectors
+for the pure canonical-feature functions (dispersion/VTL, centroid, femininity cues, gender
+score, cepstrum/CPP). (2) `tools/run-eval-harness.mjs` — the full audio→packet pipeline run
+through the real `VoiceAnalyzer` over the Rainbow Passage, using a real-FFT mock Web Audio
+context so the frequency-domain features get real data; asserts golden ranges on aggregate
+pitch/F1/F2/SNR/resonance (catches e.g. formants collapsing to defaults). Both run in
+`test:all`/CI. Still to do: the Kotlin/C++ legs that run the same vectors through those ports
+(needs the native toolchains), and per-field tolerance tiers for them.
 
 The existing fixture (`fixtures/audio-eval/reference-frames.json`) feeds **pre-computed
 confidence scalars** and asserts **gating** outputs — it does *not* go from audio to
