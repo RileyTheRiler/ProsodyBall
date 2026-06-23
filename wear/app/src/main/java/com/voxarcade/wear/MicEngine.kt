@@ -6,6 +6,7 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlin.math.log10
 import kotlin.math.sqrt
 
 /**
@@ -46,6 +47,14 @@ class MicEngine {
     private val _f2Hz = MutableStateFlow(0f)
     val f2Hz: StateFlow<Float> = _f2Hz
 
+    /** Per-frame broadband a-posteriori SNR (dB) vs the calibrated ambient floor, smoothed.
+     *  Optimistic at rest so nothing reads "noisy" before a floor is measured. */
+    private val _snrDb = MutableStateFlow(DspConstants.SNR_GREEN_DB.toFloat())
+    val snrDb: StateFlow<Float> = _snrDb
+    /** 0..1 noise-relative trust derived from [snrDb]; gates + grades the alert haptics. */
+    private val _snrConfidence = MutableStateFlow(1f)
+    val snrConfidence: StateFlow<Float> = _snrConfidence
+
     /** True while a per-room noise-floor capture is in progress (milestone 8). */
     private val _calibrating = MutableStateFlow(false)
     val calibrating: StateFlow<Boolean> = _calibrating
@@ -66,6 +75,7 @@ class MicEngine {
     private var calSum = 0.0
     private var calMax = 0f
     private var calCount = 0
+    private var snrDbSmoothed = DspConstants.SNR_GREEN_DB.toFloat() // capture-thread SNR EMA
 
     val isRunning: Boolean get() = running
 
@@ -85,6 +95,13 @@ class MicEngine {
         calSum = 0.0; calMax = 0f; calCount = 0
         calFramesLeft = CAL_FRAMES
         _calibrating.value = true
+    }
+
+    /** 0..1 trust from SNR(dB): 0 at/below the yellow edge, 1 at/above the green edge. */
+    private fun trustFromSnrDb(db: Float): Float {
+        val lo = DspConstants.SNR_YELLOW_DB.toFloat()
+        val hi = DspConstants.SNR_GREEN_DB.toFloat()
+        return ((db - lo) / (hi - lo)).coerceIn(0f, 1f)
     }
 
     /** Caller must hold RECORD_AUDIO permission before invoking. */
@@ -120,6 +137,7 @@ class MicEngine {
             var smoothed = 0f
             pitch.reset()
             resonanceEstimator.reset()
+            snrDbSmoothed = DspConstants.SNR_GREEN_DB.toFloat()
             recorder.startRecording()
             try {
                 while (running) {
@@ -165,6 +183,15 @@ class MicEngine {
                             // Frame-local RMS so the DSP silence gate matches the exact
                             // samples being analysed (not the whole read buffer).
                             val frameRms = sqrt(frameSum / PITCH_FRAME).toFloat()
+                            // Per-frame broadband a-posteriori SNR: frame energy vs the
+                            // calibrated ambient floor. Held at the optimistic default until a
+                            // floor exists, so it never flashes "noisy" during calibration.
+                            if (!_calibrating.value && noiseFloor > 0f) {
+                                val snr = (20.0 * log10(maxOf(frameRms, 1e-6f) / maxOf(noiseFloor, BASE_GATE))).toFloat()
+                                snrDbSmoothed += (snr - snrDbSmoothed) * 0.2f
+                                _snrDb.value = snrDbSmoothed
+                                _snrConfidence.value = trustFromSnrDb(snrDbSmoothed)
+                            }
                             // Below the calibrated floor (or mid-calibration) → treat as
                             // silence so room noise can't read as voiced.
                             val gated = frameRms < noiseGate || _calibrating.value
@@ -206,6 +233,9 @@ class MicEngine {
         _resonanceConfidence.value = 0f
         _f1Hz.value = 0f
         _f2Hz.value = 0f
+        _snrDb.value = DspConstants.SNR_GREEN_DB.toFloat()
+        _snrConfidence.value = 1f
+        snrDbSmoothed = DspConstants.SNR_GREEN_DB.toFloat()
     }
 
     private companion object {

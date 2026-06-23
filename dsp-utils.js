@@ -1,3 +1,5 @@
+import * as DSP_CONST from './dsp-constants.generated.js';
+
 export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
@@ -98,8 +100,13 @@ export function normalizeAgainstPercentiles(value, p50, p90, gain = 1) {
   return clamp01(((value - p50) / spread) * gain);
 }
 
-export function computeFrameReliability({ pitchConfidence = 0, formantConfidence = 0, voicedStrength = 0, spectralTiltConfidence = 0, wasLastFrameReliable = false }) {
-  const confidenceGate = clamp01(Math.max(0.2, pitchConfidence * 0.55 + formantConfidence * 0.25 + spectralTiltConfidence * 0.2));
+export function computeFrameReliability({ pitchConfidence = 0, formantConfidence = 0, voicedStrength = 0, spectralTiltConfidence = 0, snrConfidence = 1, wasLastFrameReliable = false }) {
+  const baseGate = clamp01(Math.max(0.2, pitchConfidence * 0.55 + formantConfidence * 0.25 + spectralTiltConfidence * 0.2));
+  // SNR couples in multiplicatively, so genuine noise can pull confidence below the
+  // 0.2 floor (toward the red tier) instead of the gate pretending a noisy frame is
+  // borderline-trustworthy. snrConfidence defaults to 1 (a no-op) for callers that
+  // don't yet supply an SNR estimate, preserving prior behaviour and the fixtures.
+  const confidenceGate = clamp01(baseGate * clamp01(snrConfidence));
   const voicedGate = clamp01(Math.max(0.25, voicedStrength * 0.75 + pitchConfidence * 0.25));
 
   let reliableFrame;
@@ -110,6 +117,46 @@ export function computeFrameReliability({ pitchConfidence = 0, formantConfidence
   }
 
   return { confidenceGate, voicedGate, reliableFrame };
+}
+
+// ====== PER-FRAME SNR / NOISE TRUST ======
+// Layer A feature-packet primitives (see docs/DSP_CONTRACT.md). These are the inputs
+// that drive the confidence tier, SNR-adaptive over-subtraction, and (later) the graded
+// watch/necklace haptics. Pure + unit-tested so the values are portable to the Kotlin/C++
+// ports and seed dsp-constants.json.
+
+// SNR(dB) tier edges + over-subtraction bounds + the pause noise-update rate now live in
+// the cross-platform spec (dsp-constants.json) and are codegen'd into dsp-constants.generated.js
+// (and the Kotlin/C++ equivalents). We import them here so this module stays the JS consumer
+// of the single source of truth; re-export keeps app.js / tests importing them from dsp-utils.
+export const { SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX, NOISE_PROFILE_UPDATE_RATE } = DSP_CONST;
+
+// a-posteriori SNR in dB from linear *power* (energy) terms.
+export function aPosterioriSnrDb(signalEnergy, noiseEnergy) {
+  const s = Math.max(0, signalEnergy);
+  const n = Math.max(1e-12, noiseEnergy);
+  return 10 * Math.log10((s + 1e-12) / n);
+}
+
+// Map SNR(dB) → 0..1 trust via a linear red→green ramp; drives confidence + UI vividness.
+export function snrToConfidence(snrDb, redDb = SNR_YELLOW_DB, greenDb = SNR_GREEN_DB) {
+  return normalizeAgainstRange(snrDb, redDb, greenDb);
+}
+
+// Coarse tier for UI/haptics: 'green' | 'yellow' | 'red'.
+export function snrTier(snrDb, yellowDb = SNR_YELLOW_DB, greenDb = SNR_GREEN_DB) {
+  if (snrDb >= greenDb) return 'green';
+  if (snrDb >= yellowDb) return 'yellow';
+  return 'red';
+}
+
+// SNR-adaptive over-subtraction factor. High SNR → OVERSUB_MIN (gentle); low SNR → up to
+// OVERSUB_MAX. Replaces the hardcoded 1.5 at the spectral-subtraction sites.
+export function adaptiveOverSubtraction(snrDb, {
+  minFactor = OVERSUB_MIN, maxFactor = OVERSUB_MAX, redDb = SNR_YELLOW_DB, greenDb = SNR_GREEN_DB
+} = {}) {
+  const noisiness = 1 - normalizeAgainstRange(snrDb, redDb, greenDb); // 0 clean → 1 noisy
+  return minFactor + (maxFactor - minFactor) * noisiness;
 }
 
 export function computeWeightTarget({ tiltHeaviness = 0.5, tiltWeight = 1, h1h2Heaviness = 0.5, h1h2Weight = 0, cppHeaviness = 0.5, cppWeight = 0 }) {

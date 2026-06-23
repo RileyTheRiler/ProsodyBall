@@ -1,4 +1,5 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS } from './dsp-utils.js';
+import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { BulbController } from './bulb-controller.js';
@@ -18,8 +19,8 @@ function escapeHtml(text) {
 // DSP TUNING CONSTANTS
 // Centralised so they're easy to find, tweak, and document.
 // ============================================================
-const YIN_THRESHOLD = 0.15;               // CMND threshold for pitch detection (lower = stricter)
-const PITCH_CONFIDENCE_FACTOR = 3.3;      // Maps CMND → confidence: conf = 1 - cmnd * factor
+// YIN_THRESHOLD and PITCH_CONFIDENCE_FACTOR now come from dsp-constants.generated.js
+// (single source of truth: dsp-constants.json) — imported above, not defined here.
 const INTONATION_ST_DIVISOR = 6.0;        // Semitone std-dev mapped to [0,1] bounce (0–1 ST flat, 2–4 conversational, 4–6 expressive)
 const TEMPO_TRANSITION_DIVISOR = 12;      // Energy crossings → [0,1] tempo
 const VOWEL_ONSET_SECS = 0.15;           // Seconds of sustain before vowel metric starts rising (sustain/diagnostic mode)
@@ -192,12 +193,23 @@ export class VoiceAnalyzer {
     this.isCalibrated = false;
     this.noiseAdaptRate = 0.002; // ongoing adaptation for changing environments
 
+    // Per-frame SNR / noise-trust (Layer A feature packet; see docs/DSP_CONTRACT.md).
+    // Start optimistic (assume a quiet room) so the UI doesn't flash red before the
+    // first measurement lands.
+    this.snrDb = 20;            // raw a-posteriori SNR over the voice band this frame
+    this.snrDbSmoothed = 20;    // EMA used for the over-subtraction factor + tiering
+    this.snrConfidence = 1;     // 0..1 trust derived from SNR; folds into the gate
+    this.snrTier = 'green';     // 'green' | 'yellow' | 'red' for UI/haptics
+    this.overSubFactor = 1.5;   // SNR-adaptive spectral over-subtraction (was hardcoded 1.5)
+
     this.metrics = {
       bounce: 0, vowel: 0,
       articulation: 0,
       pitch: 0, pitchEffort: 0, pitchZone: 0.5,
       energy: 0, resonance: 0,
-      attack: 0, weight: 0
+      attack: 0, weight: 0,
+      // Noise-trust surfaced to renderers/haptics (read-only, see docs/DSP_CONTRACT.md)
+      snrDb: 20, snrTier: 'green', snrConfidence: 1
     };
     this.pitchZoneLabel = 'Ambiguous';
     this.frameConfidence = 0; // overall frame confidence for game-level gating
@@ -861,16 +873,47 @@ export class VoiceAnalyzer {
     }
 
     this.analyser.getFloatFrequencyData(this.frequencyData);
+    // --- Spectral subtraction + per-frame voice-band SNR ---
+    // Over-subtraction adapts to the *previous* frame's smoothed SNR (SNR moves slowly
+    // relative to the frame rate, so this frame's factor is known before the loop). On
+    // detected pause frames we also EMA the per-bin noise profile toward the current
+    // spectrum, so a changing room (HVAC cycling, car RPM) re-tracks instead of
+    // mis-subtracting a profile frozen at calibration time.
+    this.overSubFactor = adaptiveOverSubtraction(this.snrDbSmoothed);
+    const snrBinHz = this.audioCtx.sampleRate / this.analyser.fftSize;
+    const SNR_LO_HZ = SNR_VOICE_BAND_LO_HZ, SNR_HI_HZ = SNR_VOICE_BAND_HI_HZ; // voice band (from spec); excludes <300 Hz rumble
+    const profileRate = rms < this.noiseFloor * 1.5 ? NOISE_PROFILE_UPDATE_RATE : 0; // pause → update
     if (this.isCalibrated && this.noiseSpectralProfile) {
+      let snrSigPow = 0, snrNoisePow = 0;
       for (let i = 0; i < this.frequencyData.length; i++) {
         let signalMag = Math.pow(10, this.frequencyData[i] / 20);
+        if (profileRate > 0) {
+          // A pause frame is a fresh ambient sample: nudge the per-bin profile toward it.
+          this.noiseSpectralProfile[i] += (signalMag - this.noiseSpectralProfile[i]) * profileRate;
+        }
         let noiseMag = this.noiseSpectralProfile[i] || 0;
-        // Apply subtraction factor (over-subtraction = 1.5, floor = 0.01)
-        let cleanMag = Math.max(0.01 * signalMag, signalMag - 1.5 * noiseMag);
+        const fHz = i * snrBinHz;
+        if (fHz >= SNR_LO_HZ && fHz <= SNR_HI_HZ) {
+          snrSigPow += signalMag * signalMag;
+          snrNoisePow += noiseMag * noiseMag;
+        }
+        // SNR-adaptive over-subtraction (floor 0.01) — replaces the old constant 1.5.
+        let cleanMag = Math.max(0.01 * signalMag, signalMag - this.overSubFactor * noiseMag);
         // Re-convert to dB scale for native compatibility with downstream dsp engines
         this.frequencyData[i] = cleanMag > 1e-10 ? 20 * Math.log10(cleanMag) : -200;
       }
+      this.snrDb = aPosterioriSnrDb(snrSigPow, snrNoisePow);
+    } else {
+      // Pre-calibration / calibration-skipped fallback: broadband amplitude ratio
+      // (rms is amplitude, hence 20·log10) against the scalar noise floor.
+      this.snrDb = 20 * Math.log10(Math.max(rms, 1e-6) / Math.max(this.noiseFloor, 1e-6));
     }
+    this.snrDbSmoothed += (this.snrDb - this.snrDbSmoothed) * 0.2;
+    this.snrConfidence = snrToConfidence(this.snrDbSmoothed);
+    this.snrTier = snrTier(this.snrDbSmoothed);
+    this.metrics.snrDb = this.snrDbSmoothed;
+    this.metrics.snrConfidence = this.snrConfidence;
+    this.metrics.snrTier = this.snrTier;
     const fData = this.frequencyData;
 
     // ====== SPECTRAL TILT (dynamic pitch-aware band ratio) ======
@@ -1017,11 +1060,12 @@ export class VoiceAnalyzer {
     if (pitch > 0 && this.pitchConfidence > 0.4 && this.vowelLikelihood > 0.25) {
       this.analyserFormant.getFloatFrequencyData(this.formantFreqData);
       if (this.isCalibrated && this.noiseSpectralProfile) {
-        // Both analysers use fftSize=4096 so bins match exactly
+        // Both analysers use fftSize=4096 so bins match exactly. Reuse this frame's
+        // SNR-adaptive over-subtraction factor (set in the main spectrum pass above).
         for (let i = 0; i < this.formantFreqData.length; i++) {
           let signalMag = Math.pow(10, this.formantFreqData[i] / 20);
           let noiseMag = this.noiseSpectralProfile[i] || 0;
-          let cleanMag = Math.max(0.01 * signalMag, signalMag - 1.5 * noiseMag);
+          let cleanMag = Math.max(0.01 * signalMag, signalMag - this.overSubFactor * noiseMag);
           this.formantFreqData[i] = cleanMag > 1e-10 ? 20 * Math.log10(cleanMag) : -200;
         }
       }
@@ -1272,6 +1316,7 @@ export class VoiceAnalyzer {
       formantConfidence: this.formantConfidence,
       voicedStrength,
       spectralTiltConfidence: this.spectralTiltConfidence,
+      snrConfidence: this.snrConfidence,
       wasLastFrameReliable: this.wasLastFrameReliable
     });
     this.wasLastFrameReliable = reliableFrame;
@@ -2060,6 +2105,11 @@ class VoxBallGame {
       voiceDetected: false,
       pitchLocked: false,
     };
+    // Reliability presentation (Layer B; see docs/DSP_CONTRACT.md): a render-side EMA of
+    // the analyzer's snrConfidence drives ball vividness so the user can tell whether
+    // they're changing their voice or just their room. Starts trusted so nothing flashes.
+    this.trustVividness = 1;
+    this._lowTrustSecs = 0; // sustained red-tier time; gates the calm text nudge
     this.pitchGridStrength = 'strong';
     this.teleprompterMode = 'off';
     this.voiceProfilePreset = 'auto';
@@ -5040,6 +5090,20 @@ class VoxBallGame {
     this.ballLit = this.colorblindMode
       ? (40 + ps * 30) + (pitchHue < 100 ? 10 : 0) // extra luminance boost at yellow end
       : 40 + ps * 30;
+
+    // --- Reliability vividness ---
+    // In noise (low SNR trust) desaturate + gently dim the ball, so it visibly reads as
+    // "uncertain" rather than as a confident voice change. We smooth snrConfidence again
+    // here (it is already smoothed in the analyzer) so the ball eases, never strobes, and
+    // we drive saturation + luminance (not hue) so the cue survives colorblind mode.
+    const snrConf = this.analyzer.metrics.snrConfidence;
+    this.trustVividness += (snrConf - this.trustVividness) * Math.min(1, dt * 4); // ~250ms
+    const trust = this.trustVividness;
+    this.ballSat *= 0.30 + 0.70 * trust;
+    this.ballLit *= 0.70 + 0.30 * trust;
+    this._lowTrustSecs = this.analyzer.metrics.snrTier === 'red'
+      ? Math.min(6, this._lowTrustSecs + dt)
+      : Math.max(0, this._lowTrustSecs - dt * 2);
   }
 
   // ==========================================================
@@ -5299,12 +5363,16 @@ class VoxBallGame {
     ctx.translate(this.ball.x, this.ball.y + this.ball.radius * (1 - this.ball.squash) * 0.5);
     ctx.scale(1 + (1 - this.ball.squash) * 0.3, this.ball.squash);
 
-    // Ball glow — boosted for visibility against dark scene
-    const glowSize = this.ball.radius * (2.2 + prosodyGlow * 1.5);
+    // Ball glow — boosted for visibility against dark scene. When SNR trust is low the
+    // glow shrinks and breathes with a calm slow pulse (never a strobe), so an unreliable
+    // reading looks unsettled rather than confidently bright.
+    const trust = this.trustVividness;
+    const glowPulse = trust > 0.85 ? 1 : 0.82 + 0.18 * Math.sin(time * 2.2);
+    const glowSize = this.ball.radius * (2.2 + prosodyGlow * 1.5) * (0.7 + 0.3 * trust);
     const glowGrad = ctx.createRadialGradient(0, 0, this.ball.radius * 0.2, 0, 0, glowSize);
-    glowGrad.addColorStop(0, this.getBallColor(0.35));
-    glowGrad.addColorStop(0.4, this.getBallColor(0.12));
-    glowGrad.addColorStop(0.7, this.getBallColor(0.04));
+    glowGrad.addColorStop(0, this.getBallColor(0.35 * glowPulse));
+    glowGrad.addColorStop(0.4, this.getBallColor(0.12 * glowPulse));
+    glowGrad.addColorStop(0.7, this.getBallColor(0.04 * glowPulse));
     glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = glowGrad;
     ctx.beginPath();
@@ -5393,6 +5461,22 @@ class VoxBallGame {
     ctx.stroke();
     ctx.restore();
     ctx.restore();
+
+    // --- Calm reliability nudge (the non-color channel) ---
+    // After SNR has sat in the red tier for a moment, say it plainly so a noisy room isn't
+    // mistaken for a voice change. Calm amber (never alarm red), fades in, auto-hides as
+    // trust recovers. Pairs with the ball's desaturation so the cue isn't colour-only.
+    if (this._lowTrustSecs > 1.5) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, (this._lowTrustSecs - 1.5) / 0.8) * 0.92;
+      ctx.font = '600 13px "Outfit", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.shadowColor = 'rgba(0,0,0,0.85)';
+      ctx.shadowBlur = 6;
+      ctx.fillStyle = this.colorblindMode ? '#ffd166' : '#ffb86b';
+      ctx.fillText('Room’s a bit noisy — readings may drift (try a closer mic)', w / 2, 34);
+      ctx.restore();
+    }
 
     // Sparkles
     for (const s of this.sparkles) {

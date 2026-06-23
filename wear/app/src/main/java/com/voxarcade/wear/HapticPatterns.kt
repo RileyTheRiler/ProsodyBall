@@ -45,4 +45,11 @@ object HapticPatterns {
             Intensity.STRONG -> 230
         }
     }
+
+    /** One step gentler — used for the yellow SNR tier so uncertain readings buzz softer. */
+    fun degradeIntensity(intensity: Intensity): Intensity = when (intensity) {
+        Intensity.STRONG -> Intensity.MEDIUM
+        Intensity.MEDIUM -> Intensity.GENTLE
+        Intensity.GENTLE -> Intensity.GENTLE
+    }
 }
