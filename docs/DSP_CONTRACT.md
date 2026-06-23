@@ -158,7 +158,14 @@ features. Extending it is genuinely new work:
 
 This is the mechanism that actually fences semantic drift. Constant codegen alone does not.
 
-## Constants that graduate to `dsp-constants.json` (only after this is ratified)
+## Constants that graduate to `dsp-constants.json`
+
+**Status: scaffolded.** `dsp-constants.json` + `tools/gen-dsp-constants.mjs` now codegen
+`dsp-constants.generated.js`, `wear/.../DspConstants.kt`, and
+`hardware/dsp_constants_generated.h`. `npm run check:constants` (in `test:all`/CI) fails on
+drift. `dsp-utils.js` consumes the generated JS. v1 covers the SNR/noise/confidence/tilt/
+centroid constants + the D4 gates; the JS consumer is wired, Kotlin/C++ adoption (replacing
+hand-maintained values; removing the colliding `#define`s first) is the mechanical follow-up.
 
 Per-platform table, not a flat file (sample rate and LPC order legitimately differ):
 

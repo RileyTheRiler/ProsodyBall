@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "description": "Single source of truth for cross-platform DSP constants. Edit values HERE, then run `npm run gen:constants` to regenerate the per-language files. CI (`npm run check:constants`) fails if the generated files drift from this spec. See docs/DSP_CONTRACT.md. NOTE: when the C++ ports adopt hardware/dsp_constants_generated.h, remove the matching #defines from config.h/dsp.h first (a textual #define of YIN_THRESHOLD etc. would collide with the constexpr).",
+  "platforms": ["js", "kotlin", "cpp"],
+  "constants": {
+    "SNR_GREEN_DB": { "type": "float", "unit": "dB", "value": 20, "doc": "a-posteriori SNR at/above which readings are trusted freely (green tier)." },
+    "SNR_YELLOW_DB": { "type": "float", "unit": "dB", "value": 10, "doc": "SNR below which trust collapses to the red tier; the green/yellow ramp spans yellow..green." },
+    "SNR_VOICE_BAND_LO_HZ": { "type": "int", "unit": "Hz", "value": 300, "doc": "Low edge of the voice band SNR is measured over (excludes sub-300 Hz rumble)." },
+    "SNR_VOICE_BAND_HI_HZ": { "type": "int", "unit": "Hz", "value": 3500, "doc": "High edge of the voice-band SNR window." },
+    "OVERSUB_MIN": { "type": "float", "value": 1.0, "doc": "Spectral over-subtraction factor in clean SNR (gentle; avoids musical noise)." },
+    "OVERSUB_MAX": { "type": "float", "value": 2.5, "doc": "Spectral over-subtraction factor at/below the red SNR edge (aggressive)." },
+    "NOISE_PROFILE_UPDATE_RATE": { "type": "float", "value": 0.08, "doc": "Per-pause EMA rate for re-tracking the per-bin noise profile." },
+    "UPDATE_CONF_GATE": { "type": "float", "value": 0.4, "doc": "Confidence at/above which the resonance estimate updates (D4)." },
+    "ALERT_CONF_GATE": { "type": "float", "value": 0.45, "doc": "Confidence at/above which directional feedback (haptic/UI) fires (D4); stricter than UPDATE_CONF_GATE." },
+    "YIN_THRESHOLD": { "type": "float", "value": 0.15, "doc": "YIN CMND threshold for pitch detection (lower = stricter)." },
+    "FORMANT_BW_REJECT_HZ": { "type": "int", "unit": "Hz", "value": 600, "doc": "LPC roots with bandwidth above this are rejected as non-formants." },
+    "TILT_LOW_LO_HZ": { "type": "int", "unit": "Hz", "value": 80, "doc": "Canonical tiltDb low-band low edge (D3: raw fixed band)." },
+    "TILT_LOW_HI_HZ": { "type": "int", "unit": "Hz", "value": 1200, "doc": "Canonical tiltDb low-band high edge." },
+    "TILT_HIGH_LO_HZ": { "type": "int", "unit": "Hz", "value": 2500, "doc": "Canonical tiltDb high-band low edge." },
+    "TILT_HIGH_HI_HZ": { "type": "int", "unit": "Hz", "value": 5000, "doc": "Canonical tiltDb high-band high edge." },
+    "CENTROID_LO_HZ": { "type": "int", "unit": "Hz", "value": 120, "doc": "Spectral-centroid analysis band low edge." },
+    "CENTROID_HI_HZ": { "type": "int", "unit": "Hz", "value": 5000, "doc": "Spectral-centroid analysis band high edge." },
+    "CAPTURE_SAMPLE_RATE_HZ": { "type": "int", "unit": "Hz", "perPlatform": { "kotlin": 16000, "cpp": 16000 }, "doc": "Mic capture rate on the embedded/native ports. Web is browser-determined (often 48000) and intentionally omitted." },
+    "LPC_ORDER": { "type": "int", "perPlatform": { "kotlin": 14 }, "doc": "LPC order for the formant envelope. Web derives it adaptively from the downsampled rate; the C++ ports use a harmonic envelope (no LPC) today, so both are omitted (D2)." }
+  }
+}

@@ -1,3 +1,5 @@
+import * as DSP_CONST from './dsp-constants.generated.js';
+
 export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
@@ -123,17 +125,11 @@ export function computeFrameReliability({ pitchConfidence = 0, formantConfidence
 // watch/necklace haptics. Pure + unit-tested so the values are portable to the Kotlin/C++
 // ports and seed dsp-constants.json.
 
-// SNR(dB) tier edges, a-posteriori. Green = trust freely; yellow = soft uncertainty;
-// red = suppress/dim. Seed values for the cross-platform constant spec.
-export const SNR_GREEN_DB = 20;
-export const SNR_YELLOW_DB = 10;
-// Berouti-style over-subtraction bounds: gentle in clean SNR (a constant 1.5 over-scrubs
-// quiet rooms into musical noise → spurious LPC poles), stronger only when SNR is low.
-export const OVERSUB_MIN = 1.0;
-export const OVERSUB_MAX = 2.5;
-// Per-pause EMA rate for un-freezing the per-bin noise profile (applied only on detected
-// pause frames, so a handful of pause frames re-tracks an HVAC/RPM shift).
-export const NOISE_PROFILE_UPDATE_RATE = 0.08;
+// SNR(dB) tier edges + over-subtraction bounds + the pause noise-update rate now live in
+// the cross-platform spec (dsp-constants.json) and are codegen'd into dsp-constants.generated.js
+// (and the Kotlin/C++ equivalents). We import them here so this module stays the JS consumer
+// of the single source of truth; re-export keeps app.js / tests importing them from dsp-utils.
+export const { SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX, NOISE_PROFILE_UPDATE_RATE } = DSP_CONST;
 
 // a-posteriori SNR in dB from linear *power* (energy) terms.
 export function aPosterioriSnrDb(signalEnergy, noiseEnergy) {
