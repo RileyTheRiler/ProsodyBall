@@ -1,4 +1,5 @@
 import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS } from './dsp-utils.js';
+import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { BulbController } from './bulb-controller.js';
@@ -18,8 +19,8 @@ function escapeHtml(text) {
 // DSP TUNING CONSTANTS
 // Centralised so they're easy to find, tweak, and document.
 // ============================================================
-const YIN_THRESHOLD = 0.15;               // CMND threshold for pitch detection (lower = stricter)
-const PITCH_CONFIDENCE_FACTOR = 3.3;      // Maps CMND → confidence: conf = 1 - cmnd * factor
+// YIN_THRESHOLD and PITCH_CONFIDENCE_FACTOR now come from dsp-constants.generated.js
+// (single source of truth: dsp-constants.json) — imported above, not defined here.
 const INTONATION_ST_DIVISOR = 6.0;        // Semitone std-dev mapped to [0,1] bounce (0–1 ST flat, 2–4 conversational, 4–6 expressive)
 const TEMPO_TRANSITION_DIVISOR = 12;      // Energy crossings → [0,1] tempo
 const VOWEL_ONSET_SECS = 0.15;           // Seconds of sustain before vowel metric starts rising (sustain/diagnostic mode)
@@ -880,7 +881,7 @@ export class VoiceAnalyzer {
     // mis-subtracting a profile frozen at calibration time.
     this.overSubFactor = adaptiveOverSubtraction(this.snrDbSmoothed);
     const snrBinHz = this.audioCtx.sampleRate / this.analyser.fftSize;
-    const SNR_LO_HZ = 300, SNR_HI_HZ = 3500; // voice band for trust; excludes <300 Hz rumble
+    const SNR_LO_HZ = SNR_VOICE_BAND_LO_HZ, SNR_HI_HZ = SNR_VOICE_BAND_HI_HZ; // voice band (from spec); excludes <300 Hz rumble
     const profileRate = rms < this.noiseFloor * 1.5 ? NOISE_PROFILE_UPDATE_RATE : 0; // pause → update
     if (this.isCalibrated && this.noiseSpectralProfile) {
       let snrSigPow = 0, snrNoisePow = 0;

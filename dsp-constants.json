@@ -13,6 +13,7 @@
     "UPDATE_CONF_GATE": { "type": "float", "value": 0.4, "doc": "Confidence at/above which the resonance estimate updates (D4)." },
     "ALERT_CONF_GATE": { "type": "float", "value": 0.45, "doc": "Confidence at/above which directional feedback (haptic/UI) fires (D4); stricter than UPDATE_CONF_GATE." },
     "YIN_THRESHOLD": { "type": "float", "value": 0.15, "doc": "YIN CMND threshold for pitch detection (lower = stricter)." },
+    "PITCH_CONFIDENCE_FACTOR": { "type": "float", "value": 3.3, "doc": "Maps YIN CMND to confidence: conf = 1 - cmnd * factor. Canonical = web's value; the C++ ports' 3.0 was drift, reconciled here (adopt on next C++ sync)." },
     "FORMANT_BW_REJECT_HZ": { "type": "int", "unit": "Hz", "value": 600, "doc": "LPC roots with bandwidth above this are rejected as non-formants." },
     "TILT_LOW_LO_HZ": { "type": "int", "unit": "Hz", "value": 80, "doc": "Canonical tiltDb low-band low edge (D3: raw fixed band)." },
     "TILT_LOW_HI_HZ": { "type": "int", "unit": "Hz", "value": 1200, "doc": "Canonical tiltDb low-band high edge." },

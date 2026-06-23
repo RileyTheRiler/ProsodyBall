@@ -25,6 +25,8 @@ object DspConstants {
     const val ALERT_CONF_GATE: Double = 0.45
     /** YIN CMND threshold for pitch detection (lower = stricter). */
     const val YIN_THRESHOLD: Double = 0.15
+    /** Maps YIN CMND to confidence: conf = 1 - cmnd * factor. Canonical = web's value; the C++ ports' 3.0 was drift, reconciled here (adopt on next C++ sync). */
+    const val PITCH_CONFIDENCE_FACTOR: Double = 3.3
     /** LPC roots with bandwidth above this are rejected as non-formants. (Hz) */
     const val FORMANT_BW_REJECT_HZ: Int = 600
     /** Canonical tiltDb low-band low edge (D3: raw fixed band). (Hz) */

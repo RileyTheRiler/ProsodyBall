@@ -25,6 +25,8 @@ namespace dsp_constants {
   constexpr float ALERT_CONF_GATE = 0.45f;
   // YIN CMND threshold for pitch detection (lower = stricter).
   constexpr float YIN_THRESHOLD = 0.15f;
+  // Maps YIN CMND to confidence: conf = 1 - cmnd * factor. Canonical = web's value; the C++ ports' 3.0 was drift, reconciled here (adopt on next C++ sync).
+  constexpr float PITCH_CONFIDENCE_FACTOR = 3.3f;
   // LPC roots with bandwidth above this are rejected as non-formants. (Hz)
   constexpr int FORMANT_BW_REJECT_HZ = 600;
   // Canonical tiltDb low-band low edge (D3: raw fixed band). (Hz)

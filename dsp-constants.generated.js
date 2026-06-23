@@ -21,6 +21,8 @@ export const UPDATE_CONF_GATE = 0.4;
 export const ALERT_CONF_GATE = 0.45;
 // YIN CMND threshold for pitch detection (lower = stricter).
 export const YIN_THRESHOLD = 0.15;
+// Maps YIN CMND to confidence: conf = 1 - cmnd * factor. Canonical = web's value; the C++ ports' 3.0 was drift, reconciled here (adopt on next C++ sync).
+export const PITCH_CONFIDENCE_FACTOR = 3.3;
 // LPC roots with bandwidth above this are rejected as non-formants. (Hz)
 export const FORMANT_BW_REJECT_HZ = 600;
 // Canonical tiltDb low-band low edge (D3: raw fixed band). (Hz)
