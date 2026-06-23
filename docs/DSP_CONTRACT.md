@@ -143,6 +143,12 @@ the same threshold drives web ball vividness and watch haptic tiers.
 
 ## Golden-test contract
 
+**Status: JS leg landed** (`dsp-golden.test.mjs`) — frozen input→output vectors for the
+pure canonical-feature functions (dispersion/VTL, centroid, femininity cues, gender score,
+cepstrum/CPP), which are the concrete targets the ports must reproduce. Still to do: the
+full audio→packet pipeline leg (needs Web Audio / a worklet harness to run the analyzer
+headlessly) and the Kotlin/C++ legs that run the same vectors through those ports.
+
 The existing fixture (`fixtures/audio-eval/reference-frames.json`) feeds **pre-computed
 confidence scalars** and asserts **gating** outputs — it does *not* go from audio to
 features. Extending it is genuinely new work:
