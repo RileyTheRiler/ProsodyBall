@@ -115,6 +115,13 @@ export async function runEval({ verbose = false } = {}) {
   analyzer.hfNoiseFloor = 0.001;
   analyzer.micTiltBaselineDb = 0;
 
+  // Pin the estimator. The live default is 'auto' (SNR-driven method selection), which would
+  // swap methods as this fixture's SNR drifts around the tier edges and make the golden
+  // non-deterministic. The golden ranges below were calibrated against the harmonic envelope,
+  // so the regression net tests that one estimator end-to-end; 'auto' selection is covered by
+  // selectResonanceMethod's unit tests.
+  analyzer.resonanceMethod = 'harmonic';
+
   const chunkSize = 4096;
   const dt = chunkSize / sampleRate;
   const voicedPitch = [], f1s = [], f2s = [], snrDbs = [], resonances = [];

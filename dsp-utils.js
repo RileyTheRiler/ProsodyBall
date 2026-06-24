@@ -129,7 +129,8 @@ export function computeFrameReliability({ pitchConfidence = 0, formantConfidence
 // the cross-platform spec (dsp-constants.json) and are codegen'd into dsp-constants.generated.js
 // (and the Kotlin/C++ equivalents). We import them here so this module stays the JS consumer
 // of the single source of truth; re-export keeps app.js / tests importing them from dsp-utils.
-export const { SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX, NOISE_PROFILE_UPDATE_RATE } = DSP_CONST;
+export const { SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX, NOISE_PROFILE_UPDATE_RATE,
+  STEADY_PITCH_ST, STEADY_FORMANT_REL_DELTA, STEADY_WEIGHT_FLOOR } = DSP_CONST;
 
 // a-posteriori SNR in dB from linear *power* (energy) terms.
 export function aPosterioriSnrDb(signalEnergy, noiseEnergy) {
@@ -157,6 +158,34 @@ export function adaptiveOverSubtraction(snrDb, {
 } = {}) {
   const noisiness = 1 - normalizeAgainstRange(snrDb, redDb, greenDb); // 0 clean → 1 noisy
   return minFactor + (maxFactor - minFactor) * noisiness;
+}
+
+// Steady-state weight in [floor, 1]. 1 at a held vowel target; →floor during onsets,
+// offsets, glides, and coarticulatory transitions — the frames no clinician would hand-
+// measure. Combines short-window pitch stability (segment-local semitone deviation) with
+// frame-to-frame formant motion (|dF1|/F1 + |dF2|/F2). Used to up-weight steady frames and
+// down-weight (not discard) transition frames in the live per-frame resonance estimate.
+export function steadyStateWeight({
+  pitchSemitoneDev = 0,   // recent pitch deviation in semitones (segment-local std)
+  formantRelDelta = 0,    // combined frame-to-frame |dF1|/F1 + |dF2|/F2
+  pitchTol = STEADY_PITCH_ST,
+  formantTol = STEADY_FORMANT_REL_DELTA,
+  floor = STEADY_WEIGHT_FLOOR
+} = {}) {
+  const pitchSteady = clamp(1 - Math.abs(pitchSemitoneDev) / Math.max(1e-6, pitchTol), 0, 1);
+  const formantSteady = clamp(1 - Math.abs(formantRelDelta) / Math.max(1e-6, formantTol), 0, 1);
+  const steadiness = pitchSteady * formantSteady; // both must hold for a frame to count as steady
+  return floor + (1 - floor) * steadiness;
+}
+
+// SNR-driven resonance-method selection for the 'auto' mode. Each of the four estimators
+// degrades differently in noise: LPC root-solving is most precise in clean signal but its
+// roots get unstable as noise rises; the cepstral envelope is smoother/more robust mid-SNR;
+// the spectral centroid is the most noise-tolerant (no peak-picking) when SNR collapses.
+export function selectResonanceMethod(snrDb, { greenDb = SNR_GREEN_DB, yellowDb = SNR_YELLOW_DB } = {}) {
+  if (snrDb >= greenDb) return 'lpc';        // clean: root-solved precision
+  if (snrDb >= yellowDb) return 'cepstral';  // moderate noise: smooth, robust
+  return 'centroid';                          // heavy noise: most noise-tolerant
 }
 
 export function computeWeightTarget({ tiltHeaviness = 0.5, tiltWeight = 1, h1h2Heaviness = 0.5, h1h2Weight = 0, cppHeaviness = 0.5, cppWeight = 0 }) {

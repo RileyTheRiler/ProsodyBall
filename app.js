@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS } from './dsp-utils.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
@@ -79,13 +79,22 @@ export class VoiceAnalyzer {
     this.pitchConfidence = 0;  // 0=unreliable, 1=very confident (from YIN CMND)
 
     // Resonance — harmonic envelope formant estimation
-    this.resonanceMethod = 'harmonic'; // 'harmonic' | 'cepstral' | 'lpc' | 'centroid'
+    // 'auto' picks an estimator per-frame from the smoothed SNR (see selectResonanceMethod);
+    // the rest force one estimator. 'auto' is the default so the live number leans on whichever
+    // method degrades least in the current noise instead of one static choice.
+    this.resonanceMethod = 'auto'; // 'auto' | 'harmonic' | 'cepstral' | 'lpc' | 'centroid'
+    this.activeResonanceMethod = 'harmonic'; // estimator actually used this frame (resolves 'auto')
     this.smoothResonance = 0.5; // 0=low/dark resonance, 1=high/bright resonance
     this.smoothF1 = 500;        // smoothed F1 estimate (Hz)
     this.smoothF2 = 1500;       // smoothed F2 estimate (Hz) — primary resonance correlate
     this.smoothF3 = 2700;       // smoothed F3 estimate (Hz) — secondary resonance cue
     this.formantConfidence = 0;  // how reliable current F1/F2/F3 estimates are
     this.vowelLikelihood = 0;   // 0=not vowel-like, 1=strong vowel formants
+    // Steady-state targeting: weight live frames by how "held" they are so vowel targets
+    // dominate the estimate over onset/offset/coarticulation frames (see steadyStateWeight).
+    this.formantSteadiness = 1;  // smoothed steady-state weight [floor..1] for the live score
+    this._prevResF1 = 0;         // last accepted raw F1 candidate (for frame-to-frame delta)
+    this._prevResF2 = 0;         // last accepted raw F2 candidate
 
     // ====== PERCEIVED-GENDER CUES (multi-cue model) ======
     // Modal (habitual median) pitch over a voiced window, not the momentary note.
@@ -209,7 +218,10 @@ export class VoiceAnalyzer {
       energy: 0, resonance: 0,
       attack: 0, weight: 0,
       // Noise-trust surfaced to renderers/haptics (read-only, see docs/DSP_CONTRACT.md)
-      snrDb: 20, snrTier: 'green', snrConfidence: 1
+      snrDb: 20, snrTier: 'green', snrConfidence: 1,
+      // Resonance diagnostics: steady-state weight applied this frame + active estimator
+      // (resolves 'auto'). Read-only; surfaced for the eval harness / UI debugging.
+      resSteadiness: 1, resMethod: 'harmonic'
     };
     this.pitchZoneLabel = 'Ambiguous';
     this.frameConfidence = 0; // overall frame confidence for game-level gating
@@ -358,6 +370,9 @@ export class VoiceAnalyzer {
     this.smoothF3 = 2700;
     this.formantConfidence = 0;
     this.vowelLikelihood = 0;
+    this.formantSteadiness = 1;
+    this._prevResF1 = 0;
+    this._prevResF2 = 0;
     // Perceived-gender cue state
     this.modalF0Buf = [];
     this.modalF0Hz = 0;
@@ -1072,7 +1087,15 @@ export class VoiceAnalyzer {
 
       let f1Candidate = 0, f2Candidate = 0, f3Candidate = 0, conf = 0;
 
-      switch (this.resonanceMethod) {
+      // In 'auto', resolve the estimator from the (slow-moving) smoothed SNR so the live
+      // number leans on whichever method degrades least in the current noise; otherwise honour
+      // the explicit selection. activeResonanceMethod feeds methodTrust + the UI/metrics.
+      const effectiveMethod = this.resonanceMethod === 'auto'
+        ? selectResonanceMethod(this.snrDbSmoothed)
+        : this.resonanceMethod;
+      this.activeResonanceMethod = effectiveMethod;
+
+      switch (effectiveMethod) {
         case 'harmonic':
           ({ f1: f1Candidate, f2: f2Candidate, f3: f3Candidate, confidence: conf } =
             this._resonanceHarmonicEnvelope(pitch));
@@ -1094,6 +1117,39 @@ export class VoiceAnalyzer {
             this._resonanceHarmonicEnvelope(pitch));
       }
 
+      // --- Steady-state weighting (vowel-target targeting) ---
+      // Reuse existing primitives — recent pitch trajectory + this method's raw F1/F2 — to
+      // gauge how "held" this frame is. Onset/offset/glide frames score low; held vowels score
+      // high. The weight modulates how hard a frame may move the live estimate (below), so the
+      // resonance number leans on clinician-measurable steady frames without any separate mode.
+      let pitchDevSt = 0;
+      const ph = this.pitchHistory;
+      if (ph.length >= 3) {
+        const n = Math.min(5, ph.length); // short window → local glide, not long-window prosody
+        let sum = 0;
+        for (let i = ph.length - n; i < ph.length; i++) sum += ph[i];
+        const mean = sum / n;
+        if (mean > 0) {
+          let sq = 0;
+          for (let i = ph.length - n; i < ph.length; i++) {
+            const st = 12 * Math.log2(ph[i] / mean);
+            sq += st * st;
+          }
+          pitchDevSt = Math.sqrt(sq / n);
+        }
+      }
+      let formantRelDelta = 0;
+      if (this._prevResF1 > 0 && this._prevResF2 > 0 && f1Candidate > 0 && f2Candidate > 0) {
+        formantRelDelta = Math.abs(f1Candidate - this._prevResF1) / this._prevResF1
+                        + Math.abs(f2Candidate - this._prevResF2) / this._prevResF2;
+      }
+      if (f1Candidate > 0) this._prevResF1 = f1Candidate;
+      if (f2Candidate > 0) this._prevResF2 = f2Candidate;
+      const steadiness = steadyStateWeight({ pitchSemitoneDev: pitchDevSt, formantRelDelta });
+      this.formantSteadiness += (steadiness - this.formantSteadiness) * 0.3;
+      this.metrics.resSteadiness = this.formantSteadiness;
+      this.metrics.resMethod = effectiveMethod;
+
       // --- Kalman-Filtered Formant Continuity ---
       // Replaces simple EMA/jump-penalty with a 1D constant-velocity model.
       // During pitch slides, velocity tracks the true formant trajectory
@@ -1105,11 +1161,13 @@ export class VoiceAnalyzer {
         cepstral: 0.5, // smooth but broad
         centroid: 0.3  // conflates pitch
       };
-      const methodTrust = methodTrustMap[this.resonanceMethod] || methodTrustMap.harmonic;
-      
-      // Adaptive measurement noise: low confidence = large R (trust prediction more)
+      const methodTrust = methodTrustMap[effectiveMethod] || methodTrustMap.harmonic;
+
+      // Adaptive measurement noise: low confidence = large R (trust prediction more).
+      // Steady-state weight folds in here too so jumpy transition frames inflate R (and are
+      // pulled toward the prediction) while held-vowel frames are trusted at face value.
       const R_base = 2500; // Hz^2 base measurement noise
-      const R_scale = Math.max(0.1, conf * methodTrust);
+      const R_scale = Math.max(0.1, conf * methodTrust * this.formantSteadiness);
       const R = R_base / (R_scale * R_scale);
 
       if (f1Candidate > 0) this.smoothF1 = this._kalmanUpdate(this._kalmanF1, f1Candidate, R);
@@ -1131,12 +1189,15 @@ export class VoiceAnalyzer {
         ? clamp01((this.smoothF2 - 1000) / 1400)
         : vtlScore;
       const rawResonance = vtlScore * 0.55 + f1Score * 0.25 + f2Score * 0.20;
-      this.smoothResonance += (rawResonance - this.smoothResonance) * (0.05 + conf * 0.08);
+      // Steady-state weight scales the EMA step: held vowels move the score quickly toward
+      // their reading; transition frames only nudge it (floor), so the live number settles on
+      // vowel targets rather than chasing onsets/glides.
+      this.smoothResonance += (rawResonance - this.smoothResonance) * (0.05 + conf * 0.08) * this.formantSteadiness;
 
       // --- Formant dispersion (ΔF) -> apparent vocal-tract length gender cue ---
       const rawDispersion = computeFormantDispersion([this.smoothF1, this.smoothF2, this.smoothF3]);
       if (rawDispersion > 0) {
-        this.formantDispersionHz += (rawDispersion - this.formantDispersionHz) * (0.05 + conf * 0.08);
+        this.formantDispersionHz += (rawDispersion - this.formantDispersionHz) * (0.05 + conf * 0.08) * this.formantSteadiness;
       }
 
       // --- Cepstral Peak Prominence (breathiness) — every Nth frame for cost control ---
@@ -3910,6 +3971,9 @@ class VoxBallGame {
       this.analyzer.smoothF3 = 2700;
       this.analyzer.smoothResonance = 0.5;
       this.analyzer.formantConfidence = 0;
+      this.analyzer.formantSteadiness = 1;
+      this.analyzer._prevResF1 = 0;
+      this.analyzer._prevResF2 = 0;
     });
 
     // Readout-display mode selectors (mirror the resonance method selector). These are
