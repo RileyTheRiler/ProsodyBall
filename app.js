@@ -5469,22 +5469,42 @@ class VoxBallGame {
     // Cool blue-violet = low/dark resonance → warm gold = high/bright resonance
     const res = this.analyzer.smoothResonance;
     const resConf = this.analyzer.formantConfidence;
-    const resAlpha = (0.10 + res * 0.35 + prosodyGlow * 0.1) * (0.3 + resConf * 0.7);
+    // Readability fix (presentation only): confidence drives *saturation*, not opacity.
+    // The old code multiplied alpha by (0.3 + conf*0.7), so an everyday moderate-confidence
+    // frame rounded down to ~0.06 alpha and the ring was invisible most of the time. Now
+    // alpha is floored and resonance-driven; low confidence only washes the colour out
+    // (desaturate, don't erase) and silence mutes it to a faint grey anchor rather than
+    // vanishing. resonance value still scales alpha, width, radius and hue.
+    const confVis = 0.55 + resConf * 0.45;  // 0.55 (silence) → 1.0 (confident): gentle, never erases
+    const confSat = 0.45 + resConf * 0.55;  // saturation multiplier: uncertain → washed/grey
+    const resAlpha = (0.30 + res * 0.45 + prosodyGlow * 0.1) * confVis;
+
+    // Base offset pushed out (was +4) so the ring clears the rim light even at rest, and a
+    // fixed-radius "track" at that rest position so small resonance moves read as distance
+    // from a baseline (like an empty slider track at 0%) instead of an absolute radius.
+    const ringBaseOffset = 8;
+    const trackRadius = this.ball.radius + ringBaseOffset;
+    ctx.strokeStyle = 'hsla(220, 15%, 60%, 0.10)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(0, 0, trackRadius, 0, Math.PI * 2);
+    ctx.stroke();
+
     if (resAlpha > 0.04) {
       // F2 ring (primary): colorblind = blue(220)→yellow(55), normal = blue(240)→gold(45)
       let resHue, resSat, resLit;
       if (this.colorblindMode) {
         resHue = 220 - res * 165; // 220 (blue) → 55 (yellow)
-        resSat = 70 + res * 30;
+        resSat = (70 + res * 30) * confSat;
         resLit = 45 + res * 35;   // darker blue → brighter yellow (luminance-mapped)
       } else {
         resHue = 240 - res * 195;
-        resSat = 60 + res * 40;
+        resSat = (60 + res * 40) * confSat;
         resLit = 50 + res * 30;
       }
-      const ringRadius = this.ball.radius + 4 + res * 6 + prosodyGlow * 3;
+      const ringRadius = this.ball.radius + ringBaseOffset + res * 6 + prosodyGlow * 3;
       ctx.strokeStyle = `hsla(${resHue}, ${resSat}%, ${resLit}%, ${resAlpha})`;
-      ctx.lineWidth = 1.5 + res * 2;
+      ctx.lineWidth = 2.5 + res * 3;  // thicker floor + steeper scale (was 1.5 + res*2): width reads as signal strength on small screens
       ctx.beginPath();
       ctx.arc(0, 0, ringRadius, 0, Math.PI * 2);
       ctx.stroke();
