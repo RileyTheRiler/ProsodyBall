@@ -2234,10 +2234,15 @@ class VoxBallGame {
 
   /** Show/hide info-popup tooltips via JS (CSS-only approach was unreliable) */
   _setupInfoPopups() {
-    document.querySelectorAll('.info-wrapper').forEach(wrapper => {
+    document.querySelectorAll('.info-wrapper').forEach((wrapper, index) => {
       const popup = wrapper.querySelector('.info-popup');
       const trigger = wrapper.querySelector('.info-trigger');
       if (!popup || !trigger) return;
+
+      const popupId = popup.id || `info-popup-${index}`;
+      popup.id = popupId;
+      trigger.setAttribute('aria-describedby', popupId);
+      trigger.setAttribute('aria-expanded', 'false');
 
       const show = () => {
         popup.removeAttribute('hidden');
@@ -2245,6 +2250,7 @@ class VoxBallGame {
         popup.style.opacity = '1';
         popup.style.visibility = 'visible';
         popup.style.pointerEvents = 'auto';
+        trigger.setAttribute('aria-expanded', 'true');
       };
       const hide = () => {
         popup.style.display = 'none';
@@ -2252,6 +2258,7 @@ class VoxBallGame {
         popup.style.visibility = 'hidden';
         popup.style.pointerEvents = 'none';
         popup.setAttribute('hidden', '');
+        trigger.setAttribute('aria-expanded', 'false');
       };
 
       wrapper.addEventListener('mouseenter', show);
