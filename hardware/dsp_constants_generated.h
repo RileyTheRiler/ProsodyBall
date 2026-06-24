@@ -19,6 +19,12 @@ namespace dsp_constants {
   constexpr float OVERSUB_MAX = 2.5f;
   // Per-pause EMA rate for re-tracking the per-bin noise profile.
   constexpr float NOISE_PROFILE_UPDATE_RATE = 0.08f;
+  // Short-window pitch deviation (semitones) at which the steady-state weight's pitch term hits 0 (full glide/onset). Below it, frames count as held. (ST)
+  constexpr float STEADY_PITCH_ST = 1.5f;
+  // Combined frame-to-frame |dF1|/F1 + |dF2|/F2 at which the steady-state weight's formant term hits 0 (coarticulatory transition).
+  constexpr float STEADY_FORMANT_REL_DELTA = 0.25f;
+  // Lower bound of the steady-state weight so transition frames still nudge the live resonance estimate (down-weighted, not discarded).
+  constexpr float STEADY_WEIGHT_FLOOR = 0.3f;
   // Confidence at/above which the resonance estimate updates (D4).
   constexpr float UPDATE_CONF_GATE = 0.4f;
   // Confidence at/above which directional feedback (haptic/UI) fires (D4); stricter than UPDATE_CONF_GATE.

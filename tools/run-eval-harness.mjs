@@ -115,10 +115,22 @@ export async function runEval({ verbose = false } = {}) {
   analyzer.hfNoiseFloor = 0.001;
   analyzer.micTiltBaselineDb = 0;
 
+  // Pin the estimator. The live default is 'auto' (SNR-driven method selection), which would
+  // swap methods as this fixture's SNR drifts around the tier edges and make the golden
+  // non-deterministic. The golden ranges below were calibrated against the harmonic envelope,
+  // so the regression net tests that one estimator end-to-end; 'auto' selection is covered by
+  // selectResonanceMethod's unit tests.
+  analyzer.resonanceMethod = 'harmonic';
+
   const chunkSize = 4096;
   const dt = chunkSize / sampleRate;
   const voicedPitch = [], f1s = [], f2s = [], snrDbs = [], resonances = [];
   let frames = 0, voicedFrames = 0, formantFrames = 0;
+  // Frame-to-frame F1/F2 jitter, accumulated only across *adjacent* formant frames so
+  // segment gaps don't count as a jump. This is the steady-state-weighting validation
+  // number: lower jitter == the live estimate chasing onsets/glides less.
+  let prevF1 = 0, prevF2 = 0, prevWasFormant = false;
+  let jitF1Sum = 0, jitF2Sum = 0, jitN = 0;
 
   for (let i = 0; i + chunkSize <= audioData.length; i += chunkSize) {
     analyzer.audioCtx._currentChunk = audioData.subarray(i, i + chunkSize);
@@ -130,11 +142,19 @@ export async function runEval({ verbose = false } = {}) {
       voicedPitch.push(analyzer.lastPitch);
       resonances.push(analyzer.smoothResonance);
     }
-    if (analyzer.formantConfidence > 0.4 && analyzer.smoothF1 > 0 && analyzer.smoothF2 > 0) {
+    const isFormant = analyzer.formantConfidence > 0.4 && analyzer.smoothF1 > 0 && analyzer.smoothF2 > 0;
+    if (isFormant) {
       formantFrames++;
       f1s.push(analyzer.smoothF1);
       f2s.push(analyzer.smoothF2);
+      if (prevWasFormant) {
+        jitF1Sum += Math.abs(analyzer.smoothF1 - prevF1);
+        jitF2Sum += Math.abs(analyzer.smoothF2 - prevF2);
+        jitN++;
+      }
+      prevF1 = analyzer.smoothF1; prevF2 = analyzer.smoothF2;
     }
+    prevWasFormant = isFormant;
   }
 
   const stats = {
@@ -146,6 +166,8 @@ export async function runEval({ verbose = false } = {}) {
     avgF2: +mean(f2s).toFixed(1),
     avgSnrDb: +mean(snrDbs).toFixed(2),
     avgResonance: +mean(resonances).toFixed(3),
+    jitterF1: +(jitN ? jitF1Sum / jitN : 0).toFixed(1),
+    jitterF2: +(jitN ? jitF2Sum / jitN : 0).toFixed(1),
   };
   if (verbose) console.log(JSON.stringify(stats, null, 2));
   return stats;

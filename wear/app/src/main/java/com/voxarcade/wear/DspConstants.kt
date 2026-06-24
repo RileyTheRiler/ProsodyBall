@@ -19,6 +19,12 @@ object DspConstants {
     const val OVERSUB_MAX: Double = 2.5
     /** Per-pause EMA rate for re-tracking the per-bin noise profile. */
     const val NOISE_PROFILE_UPDATE_RATE: Double = 0.08
+    /** Short-window pitch deviation (semitones) at which the steady-state weight's pitch term hits 0 (full glide/onset). Below it, frames count as held. (ST) */
+    const val STEADY_PITCH_ST: Double = 1.5
+    /** Combined frame-to-frame |dF1|/F1 + |dF2|/F2 at which the steady-state weight's formant term hits 0 (coarticulatory transition). */
+    const val STEADY_FORMANT_REL_DELTA: Double = 0.25
+    /** Lower bound of the steady-state weight so transition frames still nudge the live resonance estimate (down-weighted, not discarded). */
+    const val STEADY_WEIGHT_FLOOR: Double = 0.3
     /** Confidence at/above which the resonance estimate updates (D4). */
     const val UPDATE_CONF_GATE: Double = 0.4
     /** Confidence at/above which directional feedback (haptic/UI) fires (D4); stricter than UPDATE_CONF_GATE. */

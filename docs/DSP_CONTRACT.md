@@ -63,6 +63,17 @@ Notes:
   display (Kotlin 700–2200, C++ 400–2200) is **presentation** (Layer B), not canonical.
 - `snrDb` is the keystone new field. It must read the noise profile *after* the
   pause-based update lands, so the contract and the noise-stage work ship together.
+- **Steady-state weighting** (web-first; `steadyStateWeight` in `dsp-utils.js`): within a
+  voiced segment, each frame's live resonance update is scaled by a `[STEADY_WEIGHT_FLOOR..1]`
+  weight derived from short-window pitch deviation (`STEADY_PITCH_ST`) and frame-to-frame
+  `|dF1|/F1 + |dF2|/F2` (`STEADY_FORMANT_REL_DELTA`). Held-vowel targets dominate the score
+  over onset/offset/coarticulation frames. The constants are in the shared spec so the Kotlin/
+  C++ ports can adopt it; the wiring is web-only today.
+- **SNR-driven method selection** (web-first; `selectResonanceMethod`): the `'auto'` resonance
+  method resolves per-frame to `lpc` (≥`SNR_GREEN_DB`), `cepstral` (≥`SNR_YELLOW_DB`), or
+  `centroid` (below) from the smoothed SNR, since the four extractors degrade differently in
+  noise. Which extractor is canonical for `f1Hz/f2Hz/f3Hz` cross-port is still open (**D2**);
+  `'auto'` is a web-side selection over web's four methods, not a change to that decision.
 
 ### Layer B — Platform presentation (intentionally divergent, tested per-platform)
 

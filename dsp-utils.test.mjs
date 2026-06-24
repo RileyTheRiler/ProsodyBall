@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {
   computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError,
   computeFrameReliability, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction,
-  SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX
+  steadyStateWeight, selectResonanceMethod,
+  SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX, STEADY_WEIGHT_FLOOR
 } from './dsp-utils.js';
 
 test('computeRawProsody applies weighted sum', () => {
@@ -113,4 +114,40 @@ test('computeFrameReliability lets low SNR pull confidence below the 0.2 floor',
   const noisy = computeFrameReliability({ ...inputs, snrConfidence: 0.1 });
   assert.ok(noisy.confidenceGate < clean.confidenceGate);
   assert.ok(noisy.confidenceGate < 0.2); // the old hard floor no longer hides noise
+});
+
+// ---------- steady-state weighting ----------
+
+test('steadyStateWeight is 1 for a perfectly held vowel (no pitch or formant motion)', () => {
+  assert.ok(Math.abs(steadyStateWeight({ pitchSemitoneDev: 0, formantRelDelta: 0 }) - 1) < 1e-9);
+});
+
+test('steadyStateWeight collapses to the floor on a full transition (either term saturates)', () => {
+  // Pitch glide past tolerance alone is enough to floor it (terms multiply).
+  assert.ok(Math.abs(steadyStateWeight({ pitchSemitoneDev: 5, formantRelDelta: 0 }) - STEADY_WEIGHT_FLOOR) < 1e-9);
+  // Likewise a big formant jump alone.
+  assert.ok(Math.abs(steadyStateWeight({ pitchSemitoneDev: 0, formantRelDelta: 1 }) - STEADY_WEIGHT_FLOOR) < 1e-9);
+});
+
+test('steadyStateWeight is monotonic: more motion → less weight, bounded to [floor,1]', () => {
+  const held = steadyStateWeight({ pitchSemitoneDev: 0.2, formantRelDelta: 0.02 });
+  const moving = steadyStateWeight({ pitchSemitoneDev: 0.9, formantRelDelta: 0.15 });
+  assert.ok(held > moving);
+  assert.ok(held <= 1 && moving >= STEADY_WEIGHT_FLOOR);
+});
+
+test('steadyStateWeight treats sign of deviation symmetrically', () => {
+  const up = steadyStateWeight({ pitchSemitoneDev: 0.7, formantRelDelta: -0.1 });
+  const down = steadyStateWeight({ pitchSemitoneDev: -0.7, formantRelDelta: 0.1 });
+  assert.ok(Math.abs(up - down) < 1e-9);
+});
+
+// ---------- SNR-driven method selection ----------
+
+test('selectResonanceMethod picks LPC clean, cepstral mid, centroid noisy', () => {
+  assert.equal(selectResonanceMethod(30), 'lpc');               // well above green
+  assert.equal(selectResonanceMethod(SNR_GREEN_DB), 'lpc');     // green edge inclusive
+  assert.equal(selectResonanceMethod(15), 'cepstral');          // between the tiers
+  assert.equal(selectResonanceMethod(SNR_YELLOW_DB), 'cepstral');// yellow edge inclusive
+  assert.equal(selectResonanceMethod(5), 'centroid');           // below yellow
 });
