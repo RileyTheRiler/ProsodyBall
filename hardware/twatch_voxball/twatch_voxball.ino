@@ -22,10 +22,15 @@
  *
  * Requires (Arduino IDE): "esp32" boards package + "TTGO TWatch Library" (Library Manager).
  */
+// IMPORTANT — include order: <BLEDevice.h> MUST come before LilyGoWatch.h (pulled in by
+// config.h). If the TTGO library is included first, the BLE 4.2 GAP types (esp_ble_adv_data_t,
+// esp_ble_adv_params_t, ...) end up undefined and the ESP32 core's own BLE headers fail to
+// compile ("esp_ble_adv_data_t does not name a type"). Pulling in BLEDevice.h first sets up the
+// Bluedroid config correctly. Verified on esp32 core 2.0.14 + TTGO TWatch Library; do not reorder.
+#include <BLEDevice.h>       // BLE client for the optional orb companion mode (include FIRST)
 #include "config.h"          // selects LILYGO_WATCH_2020_V3 then includes <LilyGoWatch.h>
 #include <driver/i2s.h>
 #include <Preferences.h>
-#include <BLEDevice.h>       // BLE client for the optional orb companion mode
 #include "dsp.h"
 
 // --- PDM microphone pins / port (from the library's TwatcV3Special/Microphone example) ---
