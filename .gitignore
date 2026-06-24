@@ -30,3 +30,7 @@ wear/local.properties
 wear/.idea/
 # Web app copied into the APK at build time (generated, not source)
 wear/app/src/main/assets/web/
+
+# T-Watch (ESP32) firmware build outputs
+hardware/twatch_voxball/build/
+hardware/twatch_voxball/dsp_host_test

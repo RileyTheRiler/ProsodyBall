@@ -1,0 +1,85 @@
+name: Build T-Watch firmware
+
+# Compile-checks the standalone LilyGo T-Watch 2020 V3 firmware (hardware/twatch_voxball) —
+# the ESP32 sibling of the Galaxy Watch app. Two guards run on every relevant push:
+#   1. dsp-host-test    — compiles + runs the pure DSP on the host. Fast (seconds); guards the
+#                         voice math that is shared, by contract, with the web app.
+#   2. firmware-compile — a full Arduino build against the REAL toolchain, so a broken TTGO API
+#                         call or include is caught here instead of on the bench.
+#
+# The TTGO TWatch Library only builds on ESP32 Arduino core 2.0.x, so the core is pinned to
+# 2.0.14 and the library to a known-good commit (see hardware/twatch_voxball/SETUP.md).
+
+on:
+  push:
+    branches:
+      - main
+      - "claude/**"
+    paths:
+      - "hardware/twatch_voxball/**"
+      - ".github/workflows/twatch-build.yml"
+  workflow_dispatch:
+
+env:
+  ESP32_CORE_VERSION: "2.0.14"
+  # Pinned commit of Xinyuan-LilyGO/TTGO_TWatch_Library for reproducible builds. Bump this
+  # deliberately after confirming a newer revision still compiles the firmware.
+  TTGO_LIB_REF: "e5a0f825a21198f97d2bafee03ea853766483d20"
+
+jobs:
+  dsp-host-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build & run DSP host tests
+        working-directory: hardware/twatch_voxball
+        run: |
+          g++ -std=c++17 -O2 -Wall -I. dsp.cpp test/dsp_host_test.cpp -o dsp_host_test
+          ./dsp_host_test
+
+  firmware-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install arduino-cli
+        uses: arduino/setup-arduino-cli@v1
+
+      - name: Install ESP32 core ${{ env.ESP32_CORE_VERSION }}
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls \
+            https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install "esp32:esp32@${ESP32_CORE_VERSION}"
+
+      - name: Install TTGO TWatch Library (pinned commit)
+        run: |
+          USER_DIR="$(arduino-cli config get directories.user)"
+          mkdir -p "$USER_DIR/libraries"
+          curl -fsSL -o /tmp/ttgo.tar.gz \
+            "https://codeload.github.com/Xinyuan-LilyGO/TTGO_TWatch_Library/tar.gz/${TTGO_LIB_REF}"
+          tar xzf /tmp/ttgo.tar.gz -C "$USER_DIR/libraries"
+          mv "$USER_DIR/libraries/TTGO_TWatch_Library-${TTGO_LIB_REF}" \
+             "$USER_DIR/libraries/TTGO_TWatch_Library"
+
+      - name: Install pyserial (needed by the esptool elf->bin step)
+        run: python3 -m pip install --user pyserial
+
+      - name: Compile firmware (TTGO T-Watch, 2020 V3)
+        run: |
+          arduino-cli compile \
+            --fqbn "esp32:esp32:twatch:Revision=TWATCH_2020_V3" \
+            --warnings default \
+            --output-dir hardware/twatch_voxball/build \
+            hardware/twatch_voxball
+
+      - name: Upload compiled binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: twatch-voxball-firmware
+          path: hardware/twatch_voxball/build/*.bin
+          if-no-files-found: error
