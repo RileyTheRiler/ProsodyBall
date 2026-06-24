@@ -19,7 +19,7 @@ export class CalibrationWizard {
   }
 
   _clearVisual() {
-    if (this.visualEl) this.visualEl.innerHTML = '';
+    if (this.visualEl) this.visualEl.textContent = '';
   }
 
   _setStep(title, desc, progress) {
