@@ -58,16 +58,19 @@ jobs:
 
       - name: Install TTGO TWatch Library (pinned commit)
         run: |
-          USER_DIR="$(arduino-cli config get directories.user)"
-          mkdir -p "$USER_DIR/libraries"
+          # arduino-cli's default user/sketchbook dir is $HOME/Arduino (there is no
+          # `config get` subcommand to query it), so place the library there directly.
+          LIB_DIR="$HOME/Arduino/libraries"
+          mkdir -p "$LIB_DIR"
           curl -fsSL -o /tmp/ttgo.tar.gz \
             "https://codeload.github.com/Xinyuan-LilyGO/TTGO_TWatch_Library/tar.gz/${TTGO_LIB_REF}"
-          tar xzf /tmp/ttgo.tar.gz -C "$USER_DIR/libraries"
-          mv "$USER_DIR/libraries/TTGO_TWatch_Library-${TTGO_LIB_REF}" \
-             "$USER_DIR/libraries/TTGO_TWatch_Library"
+          tar xzf /tmp/ttgo.tar.gz -C "$LIB_DIR"
+          mv "$LIB_DIR/TTGO_TWatch_Library-${TTGO_LIB_REF}" "$LIB_DIR/TTGO_TWatch_Library"
 
       - name: Install pyserial (needed by the esptool elf->bin step)
-        run: python3 -m pip install --user pyserial
+        # esp32 2.0.14 drives esptool.py with the system python3; the Debian package
+        # avoids PEP-668 "externally managed" pip errors on the runner.
+        run: sudo apt-get update && sudo apt-get install -y python3-serial
 
       - name: Compile firmware (TTGO T-Watch, 2020 V3)
         run: |
