@@ -5145,26 +5145,31 @@ class VoxBallGame {
     if (this.particles.length > 80) this.particles.splice(0, this.particles.length - 80);
 
     // ==========================================================
-    // BALL COLOR — hue from pitch or perceived gender (see _computeBallHue),
-    // prosody drives saturation and brightness
+    // BALL COLOR — hue from pitch or perceived gender (see _computeBallHue).
+    // Color (saturation/lightness) is DECOUPLED from prosody: expressiveness already
+    // drives ball size, glow, trail and sparkles, so the *hue* must stay vivid and readable
+    // whether you hold a steady note or inflect. Previously sat = 25 + ps*75, so a monotone
+    // pitch-check posture (ps≈0) collapsed to ~25% sat and the pitch colour read as grey.
+    // Only low SNR now mutes the colour — mildly — so a noisy room still looks "uncertain".
     // ==========================================================
     const pitchHue = this._computeBallHue(dt);
     this.ballHue = pitchHue;
-    this.ballSat = 25 + ps * 75;   // 25% (muted) → 100% (vivid)
+    this.ballSat = 88;   // constant, vivid — pitch colour is the readout, not an expressiveness meter
     this.ballLit = this.colorblindMode
-      ? (40 + ps * 30) + (pitchHue < 100 ? 10 : 0) // extra luminance boost at yellow end
-      : 40 + ps * 30;
+      ? 52 + (pitchHue < 100 ? 10 : 0) // extra luminance boost at the yellow end of the CB ramp
+      : 52;
 
     // --- Reliability vividness ---
     // In noise (low SNR trust) desaturate + gently dim the ball, so it visibly reads as
     // "uncertain" rather than as a confident voice change. We smooth snrConfidence again
     // here (it is already smoothed in the analyzer) so the ball eases, never strobes, and
     // we drive saturation + luminance (not hue) so the cue survives colorblind mode.
+    // Floors raised vs the old 0.30/0.70: noise now *mutes* the colour, never greys it out.
     const snrConf = this.analyzer.metrics.snrConfidence;
     this.trustVividness += (snrConf - this.trustVividness) * Math.min(1, dt * 4); // ~250ms
     const trust = this.trustVividness;
-    this.ballSat *= 0.30 + 0.70 * trust;
-    this.ballLit *= 0.70 + 0.30 * trust;
+    this.ballSat *= 0.65 + 0.35 * trust;  // 65%..100% of base — mild SNR mute, stays clearly coloured
+    this.ballLit *= 0.85 + 0.15 * trust;  // gentle dim in noise
     this._lowTrustSecs = this.analyzer.metrics.snrTier === 'red'
       ? Math.min(6, this._lowTrustSecs + dt)
       : Math.max(0, this._lowTrustSecs - dt * 2);
