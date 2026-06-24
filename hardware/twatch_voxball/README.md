@@ -28,18 +28,35 @@ are all on the watch.
 
 ## Flash the firmware (Arduino IDE)
 
+> **New here? Follow [`SETUP.md`](./SETUP.md)** — a full, hand-holding flashing walkthrough
+> (USB driver, exact board settings, troubleshooting). The steps below are the short version.
+
+> ⚠️ **Use ESP32 Arduino core `2.0.14`, not the newest (`3.x`).** The TTGO TWatch Library only
+> compiles on core 2.0.x; installing the default latest core makes the build fail with a wall
+> of errors inside `TFT_eSPI`/`lvgl`. This is the single most common first-time mistake.
+
 1. Install the **Arduino IDE**.
 2. Add ESP32 support: *File → Preferences → Additional Boards Manager URLs* →
-   `https://espressif.github.io/arduino-esp32/package_esp32_index.json`, then
-   *Boards Manager → install "esp32"*.
-3. *Library Manager → install **"TTGO TWatch Library"*** (by Lewis He / LilyGo). This wraps
-   the display (TFT_eSPI), the AXP202 power chip, touch, and exposes the V3 PDM mic.
+   `https://espressif.github.io/arduino-esp32/package_esp32_index.json`, then *Boards Manager*
+   → search **esp32** → **pick version `2.0.14` in the dropdown** before clicking **Install**.
+3. Install the **"TTGO TWatch Library"** (by Lewis He / LilyGo) — it wraps the display
+   (TFT_eSPI), the AXP202 power chip, touch, and exposes the V3 PDM mic. If it isn't in the
+   *Library Manager*, download the ZIP from
+   [the repo](https://github.com/Xinyuan-LilyGO/TTGO_TWatch_Library) and use *Sketch → Include
+   Library → Add .ZIP Library*.
 4. Open `twatch_voxball/twatch_voxball.ino`. Keep all four files in the folder:
-   `twatch_voxball.ino`, `config.h`, `dsp.h`, `dsp.cpp`.
-5. Select board **"TTGO T-Watch"**, choose your port, and click **Upload**.
+   `twatch_voxball.ino`, `config.h`, `dsp.h`, `dsp.cpp`. (The `test/` subfolder is host-only
+   and is ignored by the Arduino build.)
+5. Select board **"TTGO T-Watch"**, set **Board Revision → "T-Watch-2020-V3"**, choose your
+   port, and click **Upload**.
 
 `config.h` already sets `#define LILYGO_WATCH_2020_V3` before including the library, so the
 correct (V3) pin map and microphone support are compiled in.
+
+> Both the on-device firmware and the shared DSP are compile-checked in CI on every push
+> (`.github/workflows/twatch-build.yml`): a fast host build runs the DSP unit tests
+> (`test/dsp_host_test.cpp`), and a full Arduino build (esp32 core 2.0.14 + the TTGO library,
+> pinned) catches breakage before you flash.
 
 ## Power-on self-test
 
