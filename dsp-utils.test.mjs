@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError,
   computeFrameReliability, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction,
-  steadyStateWeight, selectResonanceMethod,
+  steadyStateWeight, selectResonanceMethod, sanitizeUrl,
   SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX, STEADY_WEIGHT_FLOOR
 } from './dsp-utils.js';
 
@@ -150,4 +150,33 @@ test('selectResonanceMethod picks LPC clean, cepstral mid, centroid noisy', () =
   assert.equal(selectResonanceMethod(15), 'cepstral');          // between the tiers
   assert.equal(selectResonanceMethod(SNR_YELLOW_DB), 'cepstral');// yellow edge inclusive
   assert.equal(selectResonanceMethod(5), 'centroid');           // below yellow
+});
+
+// ---------- URL Sanitization ----------
+
+test('sanitizeUrl allows safe protocols and paths', () => {
+  assert.equal(sanitizeUrl('https://example.com'), 'https://example.com');
+  assert.equal(sanitizeUrl('http://localhost:3000'), 'http://localhost:3000');
+  assert.equal(sanitizeUrl('/relative/path'), '/relative/path');
+  assert.equal(sanitizeUrl('blob:https://example.com/uuid'), 'blob:https://example.com/uuid');
+});
+
+test('sanitizeUrl allows safe usage of dangerous protocol names in query or path', () => {
+  assert.equal(sanitizeUrl('https://example.com/?query=javascript:alert(1)'), 'https://example.com/?query=javascript:alert(1)');
+  assert.equal(sanitizeUrl('https://example.com/data:image/png;base64,123'), 'https://example.com/data:image/png;base64,123');
+});
+
+test('sanitizeUrl blocks dangerous protocols', () => {
+  assert.equal(sanitizeUrl('javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('  javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('%20%20javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('data:text/html,<script>alert(1)</script>'), 'about:blank');
+  assert.equal(sanitizeUrl('vbscript:msgbox(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('JaVaScRiPt:alert(1)'), 'about:blank');
+});
+
+test('sanitizeUrl handles null or empty input safely', () => {
+  assert.equal(sanitizeUrl(null), 'about:blank');
+  assert.equal(sanitizeUrl(undefined), 'about:blank');
+  assert.equal(sanitizeUrl(''), 'about:blank');
 });
