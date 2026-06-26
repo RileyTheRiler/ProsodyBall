@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { sanitizeUrl } from './dsp-utils.js';
 import {
   computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError,
   computeFrameReliability, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction,
@@ -150,4 +151,20 @@ test('selectResonanceMethod picks LPC clean, cepstral mid, centroid noisy', () =
   assert.equal(selectResonanceMethod(15), 'cepstral');          // between the tiers
   assert.equal(selectResonanceMethod(SNR_YELLOW_DB), 'cepstral');// yellow edge inclusive
   assert.equal(selectResonanceMethod(5), 'centroid');           // below yellow
+});
+
+test('sanitizeUrl handles dangerous protocols', () => {
+  assert.equal(sanitizeUrl('javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl(' javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('%20javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('data:text/html,alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('vbscript:msgbox(1)'), 'about:blank');
+});
+
+test('sanitizeUrl allows safe protocols', () => {
+  assert.equal(sanitizeUrl('http://example.com'), 'http://example.com');
+  assert.equal(sanitizeUrl('https://example.com'), 'https://example.com');
+  assert.equal(sanitizeUrl('blob:http://example.com/123'), 'blob:http://example.com/123');
+  assert.equal(sanitizeUrl('/local/path'), '/local/path');
+  assert.equal(sanitizeUrl('http://example.com/javascript:foo'), 'http://example.com/javascript:foo');
 });
