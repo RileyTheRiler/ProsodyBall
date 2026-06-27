@@ -2809,11 +2809,13 @@ class VoxBallGame {
   }
 
   deleteRecording(index) {
-    if (this.currentPlayback && this.currentPlayback.index === index) {
-      this.stopPlayback();
+    if (window.confirm('Are you sure you want to delete this recording? This cannot be undone.')) {
+      if (this.currentPlayback && this.currentPlayback.index === index) {
+        this.stopPlayback();
+      }
+      this.recordings.splice(index, 1);
+      this.updateRecordingsUI();
     }
-    this.recordings.splice(index, 1);
-    this.updateRecordingsUI();
   }
 
   clearAllRecordings() {
