@@ -2809,6 +2809,9 @@ class VoxBallGame {
   }
 
   deleteRecording(index) {
+    if (!window.confirm('Are you sure you want to delete this recording? This cannot be undone.')) {
+      return;
+    }
     if (this.currentPlayback && this.currentPlayback.index === index) {
       this.stopPlayback();
     }
