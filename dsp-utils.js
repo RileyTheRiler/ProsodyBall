@@ -468,3 +468,15 @@ export function computeGenderScoreMulti({
   const score = clamp01(0.5 + (blended - 0.5) * (1 - uncertainty) * DECISIVENESS);
   return { score, uncertainty };
 }
+
+// Mitigate DOM-based XSS by blocking dangerous protocols.
+// Safely allows blob:, http:, https:, etc.
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  const urlStr = String(url);
+  // ^ anchors the check to the beginning of the string to avoid falsely flagging safe URLs
+  if (/^(?:%20|\s)*(?:javascript|data|vbscript):/i.test(urlStr)) {
+    return 'about:blank';
+  }
+  return urlStr;
+}
