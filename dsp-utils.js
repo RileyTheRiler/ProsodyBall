@@ -468,3 +468,19 @@ export function computeGenderScoreMulti({
   const score = clamp01(0.5 + (blended - 0.5) * (1 - uncertainty) * DECISIVENESS);
   return { score, uncertainty };
 }
+export function sanitizeUrl(url) {
+  if (!url) return "about:blank";
+  const strUrl = String(url).trim();
+  if (/^(%20|\s)*(javascript|data|vbscript):/i.test(strUrl)) {
+    return "about:blank";
+  }
+  try {
+    const u = typeof window !== "undefined" ? new URL(strUrl, document.baseURI || window.location.href) : new URL(strUrl, "http://localhost");
+    if (/^(%20|\s)*(javascript|data|vbscript):/i.test(u.protocol)) {
+      return "about:blank";
+    }
+    return u.href;
+  } catch (e) {
+    return "about:blank";
+  }
+}
