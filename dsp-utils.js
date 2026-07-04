@@ -86,6 +86,16 @@ export async function getMicDiagnostics(ctx) {
   };
 }
 
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  const str = String(url).trim();
+  // We don't block 'blob:' URIs because they are used for downloading local files.
+  if (/^(%20|\s)*(javascript|data|vbscript):/i.test(str)) {
+    return 'about:blank';
+  }
+  return str;
+}
+
 export function clamp01(v) {
   return Math.max(0, Math.min(1, v));
 }
