@@ -468,3 +468,13 @@ export function computeGenderScoreMulti({
   const score = clamp01(0.5 + (blended - 0.5) * (1 - uncertainty) * DECISIVENESS);
   return { score, uncertainty };
 }
+
+// Sanitize URLs to prevent DOM-based XSS via dangerous protocols
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  const str = String(url);
+  if (/^(%20|\s)*(javascript|data|vbscript):/i.test(str)) {
+    return 'about:blank';
+  }
+  return str;
+}
