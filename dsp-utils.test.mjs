@@ -3,9 +3,21 @@ import assert from 'node:assert/strict';
 import {
   computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError,
   computeFrameReliability, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction,
-  steadyStateWeight, selectResonanceMethod,
+  steadyStateWeight, selectResonanceMethod, sanitizeUrl,
   SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX, STEADY_WEIGHT_FLOOR
 } from './dsp-utils.js';
+
+test('sanitizeUrl handles safe and dangerous protocols correctly', () => {
+  assert.equal(sanitizeUrl('https://example.com'), 'https://example.com');
+  assert.equal(sanitizeUrl('blob:http://localhost:3000/xyz'), 'blob:http://localhost:3000/xyz');
+  assert.equal(sanitizeUrl('javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl(' javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('%20javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('DATA:text/html,<html>'), 'about:blank');
+  assert.equal(sanitizeUrl('vbscript:msgbox(1)'), 'about:blank');
+  assert.equal(sanitizeUrl(null), 'about:blank');
+  assert.equal(sanitizeUrl('http://example.com/javascript:alert(1)'), 'http://example.com/javascript:alert(1)');
+});
 
 test('computeRawProsody applies weighted sum', () => {
   const metrics = { bounce: 1, vowel: 0.5, articulation: 0.5 };
