@@ -450,6 +450,33 @@ export function summarizeVoiceCloud(points) {
   };
 }
 
+// Fit a personal min/max range from a sample set for adaptive (per-user) normalization.
+// Uses a robust loPct–hiPct percentile band (default p05–p95, so octave-jump / outlier frames
+// don't set the ends), enforces a minimum spread so a monotone speaker can't collapse the
+// scale to a point, then pads outward by `pad`×spread so the observed range lands in the middle
+// of the meter and leaves headroom to push past it. Clamped to [absMin, absMax]. Returns null
+// on empty input. Pure + unit-tested so the pitch/tilt/resonance learners share one definition.
+export function fitPersonalRange(values, {
+  floorSpread = 0, absMin = -Infinity, absMax = Infinity, pad = 0.25, loPct = 0.05, hiPct = 0.95,
+} = {}) {
+  const sorted = (Array.isArray(values) ? values : []).filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+  if (sorted.length === 0) return null;
+  const at = (q) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(sorted.length * q)))];
+  const lo = at(loPct);
+  const hi = at(hiPct);
+  // Expand the observed band symmetrically up to floorSpread, then pad outward. Doing the
+  // floor on the *base band* (not just the padding term) is what guarantees a monotone speaker
+  // gets a full floorSpread-wide usable range instead of a sliver; identical to lo±pad when the
+  // real spread already exceeds the floor.
+  const mid = (lo + hi) / 2;
+  const spread = Math.max(floorSpread, hi - lo);
+  const half = spread / 2;
+  return {
+    min: Math.max(absMin, mid - half - spread * pad),
+    max: Math.min(absMax, mid + half + spread * pad),
+  };
+}
+
 // Derive a personal practice zone from the user's own vibration-alert rules — the map's target
 // region comes from the user's configured goals, not a normative template. "Drops below T"
 // means the user wants to stay ABOVE T (T becomes the zone floor); "goes above T" caps it.
