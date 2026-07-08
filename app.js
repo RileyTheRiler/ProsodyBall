@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules } from './dsp-utils.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
@@ -2199,6 +2199,21 @@ class VoxBallGame {
     };
     this._vowelPlotPoints = []; // {x, y} for F1/F2 scatter
     this._vowelPlotMax = 80;
+
+    // ====== VOICE MAP (pitch × resonance constellation) ======
+    // Session-long cloud of confidence-weighted {t, hz, res, score, w} samples on the
+    // pitch(log-Hz) × resonance plane. Sampled ~10×/s inside _pushAvgSamples — which runs
+    // unconditionally every frame — so the cloud accumulates even while the panel is closed;
+    // it is only *rendered* when the Voice Map card or popup is visible.
+    this._voiceMapPoints = [];
+    this._voiceMapMax = 900;      // ≈90 s of confident voicing at 10 samples/s
+    this._voiceMapLastPush = 0;
+    this._voiceMapStats = null;   // throttled summarizeVoiceCloud output
+    this._voiceMapStatsAt = 0;
+    // Background hue-field canvases keyed by size+palette. A Map (not a single slot) because
+    // the card and the focus popup render at different sizes in the same frame — a single
+    // cache would rebuild the field twice per frame while the popup is open.
+    this._voiceMapBgCache = new Map();
     // Vocal-attack orb animation: condenses gas→solid on each onset at a speed set by the
     // measured onset hardness, then evaporates. (Weight orb reads m.weight directly.)
     this._attackOrb = { solidity: 0, prevAttack: 0, hardness: 0, lastT: 0 };
@@ -5957,6 +5972,29 @@ class VoxBallGame {
       B.weight.push({ t, v: m.weight, tilt: 1 - a.spectralWeight, h1h2: a.h1h2SmoothedDb });
     }
 
+    // Voice Map cloud — one confidence-weighted sample per ~100 ms of confident voicing.
+    // The per-sample score is the pure pitch+resonance blend (not smoothGenderScore, which
+    // only updates in gender color mode), so map tinting works in every mode and matches
+    // the background field, which is painted with the same function.
+    if (t - this._voiceMapLastPush >= 0.1 &&
+        a.lastPitch > 0 && a.smoothPitchHz > 0 && a.pitchConfidence > 0.35 &&
+        a.formantConfidence > 0.2 && m.energy > 0.05) {
+      this._voiceMapPoints.push({
+        t,
+        hz: a.smoothPitchHz,
+        res: clamp01(a.smoothResonance),
+        score: computeGenderScore({
+          pitchHz: a.smoothPitchHz,
+          resonance: a.smoothResonance,
+          pitchConfidence: a.pitchConfidence,
+          formantConfidence: a.formantConfidence,
+        }),
+        w: clamp01(a.frameConfidence),
+      });
+      if (this._voiceMapPoints.length > this._voiceMapMax) this._voiceMapPoints.shift();
+      this._voiceMapLastPush = t;
+    }
+
     // Evict samples older than the retained max so buffers stay bounded; the active window
     // (which may be shorter, or 0 for "Live") is applied at read time in _recomputeAvgCache().
     const cutoff = t - this._avgWindowMaxSecs;
@@ -6124,7 +6162,7 @@ class VoxBallGame {
 
   _sizeExpandedCanvases() {
     const ids = ['expCanvasPitch', 'expCanvasResonance', 'expCanvasBounce',
-                 'expCanvasVowels', 'expCanvasAttack', 'expCanvasWeight'];
+                 'expCanvasVowels', 'expCanvasAttack', 'expCanvasWeight', 'expCanvasVoiceMap'];
     for (const id of ids) {
       const c = document.getElementById(id);
       if (c) {
@@ -6161,6 +6199,8 @@ class VoxBallGame {
       if (atkEl) atkEl.textContent = this._attackReadout();
       const wtEl = document.getElementById('expValWeight');
       if (wtEl) wtEl.textContent = this._weightReadout();
+      const vmEl = document.getElementById('expValVoiceMap');
+      if (vmEl) vmEl.textContent = this._voiceMapReadout();
 
       // Render each card canvas
       this._drawLineGraph('expCanvasPitch', this._metricHistory.pitch, '#c084fc', 60, 400, true);
@@ -6169,6 +6209,7 @@ class VoxBallGame {
       this._drawVowelPlot('expCanvasVowels');
       this._drawOrb('expCanvasAttack', this._attackOrb.solidity, '#2ec4b6');
       this._drawOrb('expCanvasWeight', m.weight, '#e06c9f');
+      this._drawVoiceMap('expCanvasVoiceMap');
     }
 
     // Render popup if open
@@ -6377,6 +6418,229 @@ class VoxBallGame {
     }
   }
 
+  // ---- Voice Map (pitch × resonance constellation) ----
+  // A 2D view of the session on the pitch(log-Hz, Y) × resonance(X) plane. Design language is
+  // the game's, not a lab plot: the live voice is a glowing comet (head vividness = frame
+  // confidence, the same trust-aware dimming the ball uses), the session history is a firefly
+  // cloud tinted by each moment's own blended score, the dashed ellipse is the ±1 SD "home
+  // zone", and the dashed rectangle is the user's own practice zone derived from their
+  // pitch/resonance vibration rules. The faint background tint is the app's OWN gender model
+  // (computeGenderScore) evaluated across the plane — the same score that drives the ball hue —
+  // which also makes the falsetto corner visible: high pitch over dark resonance never turns pink.
+
+  _voiceMapStatsFresh() {
+    const t = performance.now() / 1000;
+    if (!this._voiceMapStats || t - this._voiceMapStatsAt > 1) {
+      this._voiceMapStats = summarizeVoiceCloud(this._voiceMapPoints);
+      this._voiceMapStatsAt = t;
+    }
+    return this._voiceMapStats;
+  }
+
+  // format: 'card' keeps the header on one line; 'popup' spells the stats out.
+  _voiceMapReadout(format = 'card') {
+    const s = this._voiceMapStatsFresh();
+    if (!s || s.n < 10) return '—';
+    const hz = Math.round(s.medianHz);
+    const pct = Math.round(s.medianRes * 100);
+    return format === 'popup' ? `med ${hz} Hz · res ${pct}%` : `${hz}Hz·${pct}%`;
+  }
+
+  // Ambient perception field behind the map, cached per size + palette. Painted at low
+  // resolution and upscaled with smoothing so it reads as a soft glow, not a heat map.
+  _voiceMapBackground(w, h, minHz, maxHz) {
+    const key = `${w}x${h}:${this.colorblindMode ? 'cb' : 'std'}`;
+    const cached = this._voiceMapBgCache.get(key);
+    if (cached) return cached;
+    const cols = 40, rows = 28;
+    const off = document.createElement('canvas');
+    off.width = cols; off.height = rows;
+    const octx = off.getContext('2d');
+    for (let ry = 0; ry < rows; ry++) {
+      const yPos = 1 - (ry + 0.5) / rows; // top row = high pitch
+      const hz = minHz * Math.pow(maxHz / minHz, yPos);
+      for (let cx = 0; cx < cols; cx++) {
+        const res = (cx + 0.5) / cols;
+        const score = computeGenderScore({ pitchHz: hz, resonance: res, pitchConfidence: 1, formantConfidence: 1 });
+        const hue = genderScoreToHue(score, this.colorblindMode);
+        // Slightly stronger tint toward the decisive corners, near-neutral in the middle.
+        // Large canvases (the focus popup) get a modest boost — the same alpha spread over
+        // a big area reads flatter than on the small card.
+        const boost = h / (devicePixelRatio || 1) > 160 ? 1.35 : 1;
+        octx.fillStyle = `hsla(${hue}, 60%, 45%, ${(0.10 + 0.10 * Math.abs(score - 0.5) * 2) * boost})`;
+        octx.fillRect(cx, ry, 1, 1);
+      }
+    }
+    const bg = document.createElement('canvas');
+    bg.width = w; bg.height = h;
+    const bctx = bg.getContext('2d');
+    bctx.imageSmoothingEnabled = true;
+    bctx.drawImage(off, 0, 0, w, h);
+    // Bound the cache: resizes and palette flips mint new keys; keep only the recent few.
+    if (this._voiceMapBgCache.size >= 4) {
+      this._voiceMapBgCache.delete(this._voiceMapBgCache.keys().next().value);
+    }
+    this._voiceMapBgCache.set(key, bg);
+    return bg;
+  }
+
+  _drawVoiceMap(canvasId) {
+    const c = document.getElementById(canvasId);
+    if (!c || !c.width) return;
+    const ctx = c.getContext('2d');
+    const w = c.width, h = c.height;
+    const dpr = devicePixelRatio || 1;
+    const MIN_HZ = 80, MAX_HZ = 400;
+    const TRAIL_SECS = 4;
+    // The card and the focus popup share this renderer; the popup earns slightly larger
+    // type and the resonance tick percentages that would be clutter at card size.
+    const large = h / dpr > 160;
+    const fontPx = (large ? 10 : 8) * dpr;
+    // Mark sizes scale with the canvas (floored at dpr) so fireflies/comet keep the same
+    // visual proportion on the small card and the large focus popup.
+    const sz = Math.max(dpr, Math.min(w, h) / 150);
+    const X = (res) => clamp01(res) * w;
+    const Y = (hz) => (1 - pitchHzToLogPosition(hz, MIN_HZ, MAX_HZ)) * h;
+
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(this._voiceMapBackground(w, h, MIN_HZ, MAX_HZ), 0, 0);
+
+    // Log-pitch gridlines + Hz labels (equal vertical steps = equal musical intervals).
+    // Labels sit ON the line, right-aligned in a quiet left gutter, so they read as part
+    // of the grid instead of floating over the constellation.
+    ctx.font = `${fontPx}px "Space Mono", monospace`;
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    ctx.lineWidth = 1;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    const gutter = 3 * dpr;
+    for (const hz of [100, 150, 200, 300]) {
+      const y = Y(hz);
+      const label = hz === 300 ? '300 Hz' : `${hz}`;
+      const tw = ctx.measureText(label).width;
+      ctx.beginPath(); ctx.moveTo(gutter * 2 + tw, y); ctx.lineTo(w, y); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.22)';
+      ctx.fillText(label, gutter, y);
+    }
+    // Resonance axis: ticks plus the app's own dark→bright vocabulary at the corners.
+    for (const r of [0.25, 0.5, 0.75]) {
+      const x = X(r);
+      ctx.beginPath(); ctx.moveTo(x, h); ctx.lineTo(x, h - 4 * dpr); ctx.stroke();
+      if (large) {
+        ctx.fillStyle = 'rgba(255,255,255,0.16)';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${Math.round(r * 100)}`, x, h - 8 * dpr);
+      }
+    }
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = 'rgba(255,255,255,0.20)';
+    ctx.textAlign = 'left';
+    ctx.fillText('← darker', gutter, h - 3 * dpr);
+    ctx.textAlign = 'right';
+    ctx.fillText('brighter →', w - gutter, h - 3 * dpr);
+
+    // Personal practice zone from the user's own pitch/resonance vibration rules
+    const zone = voiceMapZoneFromRules(this.vibration?.rules);
+    if (zone) {
+      const x0 = zone.resMin != null ? X(zone.resMin) : 0;
+      const x1 = zone.resMax != null ? X(zone.resMax) : w;
+      const y0 = zone.pitchMaxHz != null ? Y(zone.pitchMaxHz) : 0;
+      const y1 = zone.pitchMinHz != null ? Y(zone.pitchMinHz) : h;
+      ctx.fillStyle = 'rgba(255,255,255,0.035)';
+      ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+      ctx.setLineDash([3 * dpr, 3 * dpr]);
+      ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+      ctx.setLineDash([]);
+    }
+
+    const pts = this._voiceMapPoints;
+    const now = performance.now() / 1000;
+
+    // Firefly cloud — every confident sample this session, each tinted by the score the
+    // app read at that moment, so the cloud itself shows how each region was perceived.
+    // Additive blending makes dense regions glow brighter instead of smearing into mud,
+    // and a slow age fade (full → 30% over ~5 min) keeps recent practice the brightest.
+    ctx.globalCompositeOperation = 'lighter';
+    for (const p of pts) {
+      const ageFade = Math.max(0.3, 1 - (now - p.t) / 300);
+      const hue = genderScoreToHue(p.score, this.colorblindMode);
+      ctx.fillStyle = `hsla(${hue}, 80%, 60%, ${(0.04 + 0.10 * p.w) * ageFade})`;
+      ctx.beginPath();
+      ctx.arc(X(p.res), Y(p.hz), 1.1 * sz, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+
+    // Home zone — mean ±1 SD ellipse of the session cloud (pitch SD in semitones)
+    const s = this._voiceMapStatsFresh();
+    if (s && s.n >= 20) {
+      const stSpan = 12 * Math.log2(MAX_HZ / MIN_HZ); // full map height in semitones
+      const rx = Math.max(3 * dpr, s.sdRes * w);
+      const ry = Math.max(3 * dpr, (s.sdSemitones / stSpan) * h);
+      ctx.beginPath();
+      ctx.ellipse(X(s.meanRes), Y(s.meanHz), rx, ry, 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.03)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+      ctx.setLineDash([4 * dpr, 4 * dpr]);
+      ctx.lineWidth = dpr;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Comet tail — the last few seconds of trajectory, brightening and thickening toward
+    // now with an eased falloff (long faint tail, vivid tip). Segments spanning a silence
+    // (>0.5 s gap) are not bridged. Additive, so the tail glows where it crosses the cloud.
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+    for (let i = pts.length - 1; i >= 1; i--) {
+      const p1 = pts[i], p0 = pts[i - 1];
+      const age = now - p1.t;
+      if (age > TRAIL_SECS) break;
+      if (p1.t - p0.t > 0.5) continue;
+      const k = Math.pow(1 - age / TRAIL_SECS, 1.4);
+      const hue = genderScoreToHue(p1.score, this.colorblindMode);
+      ctx.strokeStyle = `hsla(${hue}, 85%, 65%, ${0.06 + 0.40 * k})`;
+      ctx.lineWidth = (0.5 + 2.5 * k) * sz;
+      ctx.beginPath();
+      ctx.moveTo(X(p0.res), Y(p0.hz));
+      ctx.lineTo(X(p1.res), Y(p1.hz));
+      ctx.stroke();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+
+    // Comet head — glowing orb at the live position; vividness = frame confidence, and it
+    // fades out over ~1.5 s of silence instead of lingering stale.
+    const head = pts.length ? pts[pts.length - 1] : null;
+    if (head) {
+      const age = now - head.t;
+      if (age < 1.5) {
+        const fade = 1 - age / 1.5;
+        const conf = clamp01(this.analyzer.frameConfidence);
+        const hue = genderScoreToHue(head.score, this.colorblindMode);
+        const hx = X(head.res), hy = Y(head.hz);
+        const r = (4 + 3 * conf) * sz;
+        const glow = ctx.createRadialGradient(hx, hy, 0, hx, hy, r * 2.4);
+        glow.addColorStop(0, `hsla(${hue}, 90%, 72%, ${(0.35 + 0.55 * conf) * fade})`);
+        glow.addColorStop(0.55, `hsla(${hue}, 90%, 60%, ${0.18 * fade})`);
+        glow.addColorStop(1, `hsla(${hue}, 90%, 55%, 0)`);
+        ctx.fillStyle = glow;
+        ctx.beginPath(); ctx.arc(hx, hy, r * 2.4, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = `hsla(${hue}, 95%, 78%, ${(0.5 + 0.5 * conf) * fade})`;
+        ctx.beginPath(); ctx.arc(hx, hy, r * 0.55, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+
+    // Empty state
+    if (pts.length < 5) {
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      ctx.textAlign = 'center';
+      ctx.font = `${Math.round(9 * sz)}px "Space Mono", monospace`;
+      ctx.fillText('speak — the map lights up', w / 2, h / 2);
+    }
+  }
+
   // ---- Metric Popup ----
 
   _openMetricPopup(metric) {
@@ -6392,14 +6656,16 @@ class VoxBallGame {
       vowels: 'A vowel space plot (F1 vs F2) showing the brightness or darkness of vowel sounds like "EE" and "AH." Tracks resonance shifts during articulation.',
       attack: 'Vocal attack measures onset hardness — how steeply your voice rises into phonation. High = crisp glottal onsets; low = soft, breathy, gradual starts.',
       weight: 'Vocal weight is perceived heaviness from spectral tilt. High = thick, heavy, buzzy tone; low = light, bright, breathy tone.',
+      voicemap: 'Your voice as a comet on a two-axis map: height = pitch (log scale, so equal steps are equal musical intervals), left–right = resonance (vocal-tract size/brightness). The glowing head is your live voice — brighter when the reading is confident. Fireflies mark everywhere your voice has been this session; the dashed ellipse is your home zone (average ±1 SD). The faint background tint shows how each pitch+resonance combination tends to be read (it comes from this app’s own gender model — note the high-pitch/dark-resonance corner stays blue-purple: pitch alone doesn’t shift perception). Setting pitch or resonance vibration alerts draws your practice zone as a dashed box.',
     };
 
     const colors = {
       pitch: '#c084fc', resonance: '#ffaa44', bounce: '#ff6b6b',
       vowels: '#6bcb77', attack: '#2ec4b6', weight: '#e06c9f',
+      voicemap: '#7fd4ff',
     };
 
-    title.textContent = metric.toUpperCase();
+    title.textContent = metric === 'voicemap' ? 'VOICE MAP' : metric.toUpperCase();
     title.style.color = colors[metric] || '#fff';
     desc.textContent = descriptions[metric] || '';
 
@@ -6421,6 +6687,7 @@ class VoxBallGame {
     const colors = {
       pitch: '#c084fc', resonance: '#ffaa44', bounce: '#ff6b6b',
       vowels: '#6bcb77', attack: '#2ec4b6', weight: '#e06c9f',
+      voicemap: '#7fd4ff',
     };
     el.style.color = colors[metric] || '#fff';
 
@@ -6432,6 +6699,7 @@ class VoxBallGame {
       case 'vowels': el.textContent = ''; break;
       case 'attack': el.textContent = this._attackReadout(); break;
       case 'weight': el.textContent = this._weightReadout(); break;
+      case 'voicemap': el.textContent = this._voiceMapReadout('popup'); break;
     }
   }
 
@@ -6455,6 +6723,9 @@ class VoxBallGame {
         break;
       case 'weight':
         this._drawOrb(canvasId, this.analyzer.metrics.weight, '#e06c9f');
+        break;
+      case 'voicemap':
+        this._drawVoiceMap(canvasId);
         break;
     }
   }

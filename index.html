@@ -1392,6 +1392,11 @@
     .metric-card[data-metric="vowels"] .metric-card-title { color: var(--accent-vowel); }
     .metric-card[data-metric="attack"] .metric-card-title { color: var(--accent-attack); }
     .metric-card[data-metric="weight"] .metric-card-title { color: var(--accent-weight); }
+    .metric-card[data-metric="voicemap"] .metric-card-title { color: #7fd4ff; }
+
+    /* The Voice Map is a 2D plane, not a strip chart — give it more height so the
+       log-pitch axis has usable resolution. */
+    .metric-card[data-metric="voicemap"] .metric-card-canvas { height: 110px; }
 
     /* ===== METRIC FOCUS POPUP ===== */
     .metric-popup-backdrop {
@@ -2454,6 +2459,10 @@
         height: 50px;
       }
 
+      .metric-card[data-metric="voicemap"] .metric-card-canvas {
+        height: 90px;
+      }
+
       .metric-popup {
         width: 96vw;
         padding: 16px;
@@ -3057,6 +3066,10 @@
 
       .metric-card-canvas {
         height: 45px;
+      }
+
+      .metric-card[data-metric="voicemap"] .metric-card-canvas {
+        height: 70px;
       }
 
       /* Overlay: side-by-side layout preserved, scroll vertically */
@@ -4494,6 +4507,14 @@
           </div>
           <canvas class="metric-card-canvas" id="expCanvasWeight"></canvas>
           <div class="metric-card-desc">Perceived heaviness — gassy orb = light, solid orb = heavy</div>
+        </div>
+        <div class="metric-card" data-metric="voicemap">
+          <div class="metric-card-header">
+            <span class="metric-card-title">Voice Map</span>
+            <span class="metric-card-value" id="expValVoiceMap">—</span>
+          </div>
+          <canvas class="metric-card-canvas" id="expCanvasVoiceMap"></canvas>
+          <div class="metric-card-desc">Pitch × resonance constellation — comet = now, fireflies = this session, dashed ring = home zone</div>
         </div>
         </div>
       </div>
