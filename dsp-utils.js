@@ -396,6 +396,85 @@ export function cppToFemininity(cppDb, { min = 6, max = 14 } = {}) {
   return 1 - normalizeAgainstRange(cppDb, min, max);
 }
 
+// ====== VOICE MAP (2D pitch × resonance plane) ======
+// Presentation-layer helpers (Layer B in docs/DSP_CONTRACT.md) for the Voice Map card: a
+// constellation-style view of the session on the pitch (log-Hz, Y) × resonance (VTL score, X)
+// plane. Pure + unit-tested (voice-map.test.mjs) so the mapping math stays portable.
+
+// Log-frequency position: perceptually linear in semitones, so equal vertical steps are equal
+// musical intervals. A linear-Hz axis crushes the low (masculine) half of the range into a
+// sliver while stretching the top; log spacing gives both halves equal visual resolution.
+export function pitchHzToLogPosition(hz, minHz = 80, maxHz = 400) {
+  if (!(hz > 0)) return 0;
+  const lo = Math.log2(minHz);
+  const span = Math.log2(maxHz) - lo;
+  return clamp01((Math.log2(hz) - lo) / Math.max(1e-6, span));
+}
+
+// Summarize a session cloud of {hz, res, w} samples (w = per-frame confidence weight, so
+// shaky frames shape the home zone less than confident ones). Pitch statistics live in the
+// log domain — the mean is a geometric mean in Hz and the spread is in semitones — so a
+// wobbly low voice and a wobbly high voice report comparable spread. Returns null when empty.
+export function summarizeVoiceCloud(points) {
+  const pts = Array.isArray(points) ? points.filter((p) => p && p.hz > 0) : [];
+  const n = pts.length;
+  if (n === 0) return null;
+  let wSum = 0, logSum = 0, resSum = 0;
+  for (const p of pts) {
+    const w = Math.max(1e-6, p.w != null ? p.w : 1);
+    wSum += w;
+    logSum += Math.log2(p.hz) * w;
+    resSum += clamp01(p.res) * w;
+  }
+  const meanLog = logSum / wSum;
+  const meanRes = resSum / wSum;
+  let varLog = 0, varRes = 0;
+  for (const p of pts) {
+    const w = Math.max(1e-6, p.w != null ? p.w : 1);
+    const dl = Math.log2(p.hz) - meanLog;
+    const dr = clamp01(p.res) - meanRes;
+    varLog += dl * dl * w;
+    varRes += dr * dr * w;
+  }
+  const mid = (arr) => (arr.length % 2
+    ? arr[(arr.length - 1) / 2]
+    : (arr[arr.length / 2 - 1] + arr[arr.length / 2]) / 2);
+  return {
+    n,
+    meanHz: Math.pow(2, meanLog),                    // geometric mean
+    sdSemitones: Math.sqrt(varLog / wSum) * 12,      // log2-octaves → semitones
+    meanRes,
+    sdRes: Math.sqrt(varRes / wSum),
+    medianHz: mid(pts.map((p) => p.hz).sort((a, b) => a - b)),
+    medianRes: mid(pts.map((p) => clamp01(p.res)).sort((a, b) => a - b)),
+  };
+}
+
+// Derive a personal practice zone from the user's own vibration-alert rules — the map's target
+// region comes from the user's configured goals, not a normative template. "Drops below T"
+// means the user wants to stay ABOVE T (T becomes the zone floor); "goes above T" caps it.
+// Resonance thresholds are configured as 0–100%, returned normalized to 0..1. An axis with no
+// rule (or a contradictory pair) stays unbounded (null); returns null when nothing bounds the map.
+export function voiceMapZoneFromRules(rules) {
+  if (!Array.isArray(rules)) return null;
+  let pitchMinHz = null, pitchMaxHz = null, resMin = null, resMax = null;
+  for (const r of rules) {
+    if (!r || !Number.isFinite(r.threshold)) continue;
+    if (r.metric === 'pitch') {
+      if (r.direction === 'below') pitchMinHz = Math.max(pitchMinHz ?? -Infinity, r.threshold);
+      else if (r.direction === 'above') pitchMaxHz = Math.min(pitchMaxHz ?? Infinity, r.threshold);
+    } else if (r.metric === 'resonance') {
+      const t = clamp01(r.threshold / 100);
+      if (r.direction === 'below') resMin = Math.max(resMin ?? -Infinity, t);
+      else if (r.direction === 'above') resMax = Math.min(resMax ?? Infinity, t);
+    }
+  }
+  if (pitchMinHz != null && pitchMaxHz != null && pitchMinHz >= pitchMaxHz) { pitchMinHz = null; pitchMaxHz = null; }
+  if (resMin != null && resMax != null && resMin >= resMax) { resMin = null; resMax = null; }
+  if (pitchMinHz == null && pitchMaxHz == null && resMin == null && resMax == null) return null;
+  return { pitchMinHz, pitchMaxHz, resMin, resMax };
+}
+
 // Combine per-cue {value, confidence} into a final 0..1 score plus an uncertainty (0..1).
 // enabledMap[id] must be truthy for a cue to contribute (absent => disabled).
 // goalMode: 'feminization' | 'masculinization' (default 'feminization').
