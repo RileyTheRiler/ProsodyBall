@@ -468,3 +468,12 @@ export function computeGenderScoreMulti({
   const score = clamp01(0.5 + (blended - 0.5) * (1 - uncertainty) * DECISIVENESS);
   return { score, uncertainty };
 }
+
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  const urlString = String(url);
+  if (/^(%20|\s)*(javascript|data|vbscript):/i.test(urlString)) {
+    return 'about:blank';
+  }
+  return urlString;
+}
