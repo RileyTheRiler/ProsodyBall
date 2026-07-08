@@ -1492,6 +1492,21 @@
       text-align: center;
     }
 
+    /* The Voice Map is a 2D plane, not a strip chart — give its popup a wider frame and a
+       much taller canvas so it opens as a real map, and cap the description height so the
+       map (not the text) dominates the view. */
+    .metric-popup[data-metric="voicemap"] {
+      width: min(920px, 95vw);
+    }
+    .metric-popup[data-metric="voicemap"] .metric-popup-canvas {
+      height: min(58vh, 460px);
+    }
+    .metric-popup[data-metric="voicemap"] .metric-popup-desc {
+      max-height: 4.6em;
+      overflow-y: auto;
+      font-size: 0.78rem;
+    }
+
     /* Overlay */
     .overlay {
       position: absolute;
@@ -2471,6 +2486,10 @@
 
       .metric-popup-canvas {
         height: 160px;
+      }
+
+      .metric-popup[data-metric="voicemap"] .metric-popup-canvas {
+        height: 46vh;
       }
 
       .metric-popup-value {

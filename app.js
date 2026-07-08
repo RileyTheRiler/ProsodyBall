@@ -6646,8 +6646,11 @@ class VoxBallGame {
   _openMetricPopup(metric) {
     this.metricPopupOpen = metric;
     const backdrop = document.getElementById('metricPopupBackdrop');
+    const popup = document.getElementById('metricPopup');
     const title = document.getElementById('metricPopupTitle');
     const desc = document.getElementById('metricPopupDesc');
+    // Tag the popup so per-metric layout (e.g. the Voice Map's wider frame + tall canvas) applies.
+    if (popup) popup.dataset.metric = metric;
 
     const descriptions = {
       pitch: 'Displays the current fundamental frequency (F0). The color-coded slider shows your position in the pitch range. The line graph shows pitch stability and range over time.',
@@ -6656,7 +6659,7 @@ class VoxBallGame {
       vowels: 'A vowel space plot (F1 vs F2) showing the brightness or darkness of vowel sounds like "EE" and "AH." Tracks resonance shifts during articulation.',
       attack: 'Vocal attack measures onset hardness — how steeply your voice rises into phonation. High = crisp glottal onsets; low = soft, breathy, gradual starts.',
       weight: 'Vocal weight is perceived heaviness from spectral tilt. High = thick, heavy, buzzy tone; low = light, bright, breathy tone.',
-      voicemap: 'Your voice as a comet on a two-axis map: height = pitch (log scale, so equal steps are equal musical intervals), left–right = resonance (vocal-tract size/brightness). The glowing head is your live voice — brighter when the reading is confident. Fireflies mark everywhere your voice has been this session; the dashed ellipse is your home zone (average ±1 SD). The faint background tint shows how each pitch+resonance combination tends to be read (it comes from this app’s own gender model — note the high-pitch/dark-resonance corner stays blue-purple: pitch alone doesn’t shift perception). Setting pitch or resonance vibration alerts draws your practice zone as a dashed box.',
+      voicemap: 'Height = pitch, left–right = resonance (darker → brighter). The comet is your voice now; fireflies show everywhere it’s been this session, and the dashed ring is your home zone. Set a pitch or resonance alert to add a target box.',
     };
 
     const colors = {
