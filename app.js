@@ -6464,7 +6464,10 @@ class VoxBallGame {
         const score = computeGenderScore({ pitchHz: hz, resonance: res, pitchConfidence: 1, formantConfidence: 1 });
         const hue = genderScoreToHue(score, this.colorblindMode);
         // Slightly stronger tint toward the decisive corners, near-neutral in the middle.
-        octx.fillStyle = `hsla(${hue}, 60%, 45%, ${0.10 + 0.10 * Math.abs(score - 0.5) * 2})`;
+        // Large canvases (the focus popup) get a modest boost — the same alpha spread over
+        // a big area reads flatter than on the small card.
+        const boost = h / (devicePixelRatio || 1) > 160 ? 1.35 : 1;
+        octx.fillStyle = `hsla(${hue}, 60%, 45%, ${(0.10 + 0.10 * Math.abs(score - 0.5) * 2) * boost})`;
         octx.fillRect(cx, ry, 1, 1);
       }
     }
@@ -6488,28 +6491,53 @@ class VoxBallGame {
     const w = c.width, h = c.height;
     const dpr = devicePixelRatio || 1;
     const MIN_HZ = 80, MAX_HZ = 400;
-    const TRAIL_SECS = 2.5;
+    const TRAIL_SECS = 4;
+    // The card and the focus popup share this renderer; the popup earns slightly larger
+    // type and the resonance tick percentages that would be clutter at card size.
+    const large = h / dpr > 160;
+    const fontPx = (large ? 10 : 8) * dpr;
+    // Mark sizes scale with the canvas (floored at dpr) so fireflies/comet keep the same
+    // visual proportion on the small card and the large focus popup.
+    const sz = Math.max(dpr, Math.min(w, h) / 150);
     const X = (res) => clamp01(res) * w;
     const Y = (hz) => (1 - pitchHzToLogPosition(hz, MIN_HZ, MAX_HZ)) * h;
 
     ctx.clearRect(0, 0, w, h);
     ctx.drawImage(this._voiceMapBackground(w, h, MIN_HZ, MAX_HZ), 0, 0);
 
-    // Log-pitch gridlines + Hz labels (equal vertical steps = equal musical intervals)
-    ctx.font = `${8 * dpr}px "Space Mono", monospace`;
-    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-    ctx.fillStyle = 'rgba(255,255,255,0.28)';
+    // Log-pitch gridlines + Hz labels (equal vertical steps = equal musical intervals).
+    // Labels sit ON the line, right-aligned in a quiet left gutter, so they read as part
+    // of the grid instead of floating over the constellation.
+    ctx.font = `${fontPx}px "Space Mono", monospace`;
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
     ctx.lineWidth = 1;
     ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    const gutter = 3 * dpr;
     for (const hz of [100, 150, 200, 300]) {
       const y = Y(hz);
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
-      ctx.fillText(`${hz}`, 3 * dpr, y - 2 * dpr);
+      const label = hz === 300 ? '300 Hz' : `${hz}`;
+      const tw = ctx.measureText(label).width;
+      ctx.beginPath(); ctx.moveTo(gutter * 2 + tw, y); ctx.lineTo(w, y); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.22)';
+      ctx.fillText(label, gutter, y);
     }
+    // Resonance axis: ticks plus the app's own dark→bright vocabulary at the corners.
     for (const r of [0.25, 0.5, 0.75]) {
       const x = X(r);
       ctx.beginPath(); ctx.moveTo(x, h); ctx.lineTo(x, h - 4 * dpr); ctx.stroke();
+      if (large) {
+        ctx.fillStyle = 'rgba(255,255,255,0.16)';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${Math.round(r * 100)}`, x, h - 8 * dpr);
+      }
     }
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = 'rgba(255,255,255,0.20)';
+    ctx.textAlign = 'left';
+    ctx.fillText('← darker', gutter, h - 3 * dpr);
+    ctx.textAlign = 'right';
+    ctx.fillText('brighter →', w - gutter, h - 3 * dpr);
 
     // Personal practice zone from the user's own pitch/resonance vibration rules
     const zone = voiceMapZoneFromRules(this.vibration?.rules);
@@ -6531,13 +6559,18 @@ class VoxBallGame {
 
     // Firefly cloud — every confident sample this session, each tinted by the score the
     // app read at that moment, so the cloud itself shows how each region was perceived.
+    // Additive blending makes dense regions glow brighter instead of smearing into mud,
+    // and a slow age fade (full → 30% over ~5 min) keeps recent practice the brightest.
+    ctx.globalCompositeOperation = 'lighter';
     for (const p of pts) {
+      const ageFade = Math.max(0.3, 1 - (now - p.t) / 300);
       const hue = genderScoreToHue(p.score, this.colorblindMode);
-      ctx.fillStyle = `hsla(${hue}, 80%, 65%, ${0.05 + 0.12 * p.w})`;
+      ctx.fillStyle = `hsla(${hue}, 80%, 60%, ${(0.04 + 0.10 * p.w) * ageFade})`;
       ctx.beginPath();
-      ctx.arc(X(p.res), Y(p.hz), 1.3 * dpr, 0, Math.PI * 2);
+      ctx.arc(X(p.res), Y(p.hz), 1.1 * sz, 0, Math.PI * 2);
       ctx.fill();
     }
+    ctx.globalCompositeOperation = 'source-over';
 
     // Home zone — mean ±1 SD ellipse of the session cloud (pitch SD in semitones)
     const s = this._voiceMapStatsFresh();
@@ -6545,32 +6578,37 @@ class VoxBallGame {
       const stSpan = 12 * Math.log2(MAX_HZ / MIN_HZ); // full map height in semitones
       const rx = Math.max(3 * dpr, s.sdRes * w);
       const ry = Math.max(3 * dpr, (s.sdSemitones / stSpan) * h);
+      ctx.beginPath();
+      ctx.ellipse(X(s.meanRes), Y(s.meanHz), rx, ry, 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.03)';
+      ctx.fill();
       ctx.strokeStyle = 'rgba(255,255,255,0.3)';
       ctx.setLineDash([4 * dpr, 4 * dpr]);
       ctx.lineWidth = dpr;
-      ctx.beginPath();
-      ctx.ellipse(X(s.meanRes), Y(s.meanHz), rx, ry, 0, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
     }
 
-    // Comet tail — the last ~2.5 s of trajectory, brightening and thickening toward now.
-    // Segments spanning a silence (>0.5 s gap) are not bridged.
+    // Comet tail — the last few seconds of trajectory, brightening and thickening toward
+    // now with an eased falloff (long faint tail, vivid tip). Segments spanning a silence
+    // (>0.5 s gap) are not bridged. Additive, so the tail glows where it crosses the cloud.
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
     for (let i = pts.length - 1; i >= 1; i--) {
       const p1 = pts[i], p0 = pts[i - 1];
       const age = now - p1.t;
       if (age > TRAIL_SECS) break;
       if (p1.t - p0.t > 0.5) continue;
-      const k = 1 - age / TRAIL_SECS;
+      const k = Math.pow(1 - age / TRAIL_SECS, 1.4);
       const hue = genderScoreToHue(p1.score, this.colorblindMode);
-      ctx.strokeStyle = `hsla(${hue}, 85%, 70%, ${0.10 + 0.45 * k})`;
-      ctx.lineWidth = (0.5 + 2 * k) * dpr;
-      ctx.lineCap = 'round';
+      ctx.strokeStyle = `hsla(${hue}, 85%, 65%, ${0.06 + 0.40 * k})`;
+      ctx.lineWidth = (0.5 + 2.5 * k) * sz;
       ctx.beginPath();
       ctx.moveTo(X(p0.res), Y(p0.hz));
       ctx.lineTo(X(p1.res), Y(p1.hz));
       ctx.stroke();
     }
+    ctx.globalCompositeOperation = 'source-over';
 
     // Comet head — glowing orb at the live position; vividness = frame confidence, and it
     // fades out over ~1.5 s of silence instead of lingering stale.
@@ -6582,7 +6620,7 @@ class VoxBallGame {
         const conf = clamp01(this.analyzer.frameConfidence);
         const hue = genderScoreToHue(head.score, this.colorblindMode);
         const hx = X(head.res), hy = Y(head.hz);
-        const r = (4 + 3 * conf) * dpr;
+        const r = (4 + 3 * conf) * sz;
         const glow = ctx.createRadialGradient(hx, hy, 0, hx, hy, r * 2.4);
         glow.addColorStop(0, `hsla(${hue}, 90%, 72%, ${(0.35 + 0.55 * conf) * fade})`);
         glow.addColorStop(0.55, `hsla(${hue}, 90%, 60%, ${0.18 * fade})`);
@@ -6598,7 +6636,7 @@ class VoxBallGame {
     if (pts.length < 5) {
       ctx.fillStyle = 'rgba(255,255,255,0.25)';
       ctx.textAlign = 'center';
-      ctx.font = `${9 * dpr}px "Space Mono", monospace`;
+      ctx.font = `${Math.round(9 * sz)}px "Space Mono", monospace`;
       ctx.fillText('speak — the map lights up', w / 2, h / 2);
     }
   }
