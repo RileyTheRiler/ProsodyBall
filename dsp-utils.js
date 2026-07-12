@@ -324,11 +324,18 @@ export function computeSibilantFemininity(centroidHz, { min = 4000, max = 8500 }
 // Mean adjacent formant spacing (dispersion, ΔF) from F1..Fn. Proxy for vocal-tract length.
 export function computeFormantDispersion(formants) {
   if (!Array.isArray(formants)) return 0;
-  const f = formants.filter((x) => x > 0);
-  if (f.length < 2) return 0;
-  let sum = 0;
-  for (let i = 1; i < f.length; i++) sum += f[i] - f[i - 1];
-  return sum / (f.length - 1);
+  let first = 0, last = 0, count = 0;
+  for (let i = 0; i < formants.length; i++) {
+    const v = formants[i];
+    if (v > 0) {
+      if (count === 0) first = v;
+      last = v;
+      count++;
+    }
+  }
+  if (count < 2) return 0;
+  // A sum of consecutive differences (f1-f0) + (f2-f1) telescopically simplifies to (last - first)
+  return (last - first) / (count - 1);
 }
 
 // Formant dispersion -> femininity. Wider spacing = shorter tract = feminine.
