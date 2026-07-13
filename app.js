@@ -3239,26 +3239,17 @@ class VoxBallGame {
     };
 
     const updateAdaptiveProfileStatus = () => {
-      const pitch = this.analyzer.pitchProfile;
-      const tilt = this.analyzer.tiltProfile;
-      const pitchPct = Math.min(100, Math.round((pitch.voicedTime / Math.max(0.1, pitch.learningDuration)) * 100));
-      const tiltPct = Math.min(100, Math.round((tilt.voicedTime / Math.max(0.1, tilt.learningDuration)) * 100));
       if (pitchProfileLearned) {
-        pitchProfileLearned.textContent = pitch.isLearned
-          ? `${Math.round(pitch.min)}–${Math.round(pitch.max)} Hz learned`
-          : `Learning… ${pitchPct}%`;
+        pitchProfileLearned.textContent = this._formatAdaptiveStatus(this.analyzer.pitchProfile,
+          (p) => `${Math.round(p.min)}–${Math.round(p.max)} Hz learned`);
       }
       if (tiltProfileLearned) {
-        tiltProfileLearned.textContent = tilt.isLearned
-          ? `${tilt.min.toFixed(1)} to ${tilt.max.toFixed(1)} dB learned`
-          : `Learning… ${tiltPct}%`;
+        tiltProfileLearned.textContent = this._formatAdaptiveStatus(this.analyzer.tiltProfile,
+          (t) => `${t.min.toFixed(1)} to ${t.max.toFixed(1)} dB learned`);
       }
-      const res = this.analyzer.resonanceProfile;
-      const resPct = Math.min(100, Math.round((res.voicedTime / Math.max(0.1, res.learningDuration)) * 100));
       if (resonanceProfileLearned) {
-        resonanceProfileLearned.textContent = res.isLearned
-          ? `F1 ${Math.round(res.f1Min)}–${Math.round(res.f1Max)} Hz learned`
-          : `Learning… ${resPct}%`;
+        resonanceProfileLearned.textContent = this._formatAdaptiveStatus(this.analyzer.resonanceProfile,
+          (r) => `F1 ${Math.round(r.f1Min)}–${Math.round(r.f1Max)} Hz learned`);
       }
       if (frameConfidenceLabel) {
         frameConfidenceLabel.textContent = `${Math.round(this.analyzer.frameConfidence * 100)}%`;
@@ -6019,29 +6010,30 @@ class VoxBallGame {
     const resonanceStatus = els.resonanceStatus;
     const confidenceStatus = els.confidenceStatus;
     if (pitchStatus || tiltStatus || resonanceStatus || confidenceStatus) {
-      const pitch = this.analyzer.pitchProfile;
-      const tilt = this.analyzer.tiltProfile;
       if (pitchStatus) {
-        const pct = Math.min(100, Math.round((pitch.voicedTime / Math.max(0.1, pitch.learningDuration)) * 100));
-        pitchStatus.textContent = pitch.isLearned
-          ? `${Math.round(pitch.min)}–${Math.round(pitch.max)} Hz learned`
-          : `Learning… ${pct}%`;
+        pitchStatus.textContent = this._formatAdaptiveStatus(this.analyzer.pitchProfile,
+          (p) => `${Math.round(p.min)}–${Math.round(p.max)} Hz learned`);
       }
       if (tiltStatus) {
-        const pct = Math.min(100, Math.round((tilt.voicedTime / Math.max(0.1, tilt.learningDuration)) * 100));
-        tiltStatus.textContent = tilt.isLearned
-          ? `${tilt.min.toFixed(1)} to ${tilt.max.toFixed(1)} dB learned`
-          : `Learning… ${pct}%`;
+        tiltStatus.textContent = this._formatAdaptiveStatus(this.analyzer.tiltProfile,
+          (t) => `${t.min.toFixed(1)} to ${t.max.toFixed(1)} dB learned`);
       }
       if (resonanceStatus) {
-        const resP = this.analyzer.resonanceProfile;
-        const pct = Math.min(100, Math.round((resP.voicedTime / Math.max(0.1, resP.learningDuration)) * 100));
-        resonanceStatus.textContent = resP.isLearned
-          ? `F1 ${Math.round(resP.f1Min)}–${Math.round(resP.f1Max)} Hz learned`
-          : `Learning… ${pct}%`;
+        resonanceStatus.textContent = this._formatAdaptiveStatus(this.analyzer.resonanceProfile,
+          (r) => `F1 ${Math.round(r.f1Min)}–${Math.round(r.f1Max)} Hz learned`);
       }
       if (confidenceStatus) confidenceStatus.textContent = `${Math.round(this.analyzer.frameConfidence * 100)}%`;
     }
+  }
+
+  // Shared formatter for an adaptive-profile status readout (pitch / tilt / resonance). Returns
+  // the learned label once the profile is trained, otherwise a capped "Learning… X%" from its
+  // voiced-time progress. Single source for the string so the settings panel and the meters
+  // panel can't drift apart.
+  _formatAdaptiveStatus(profile, learnedFormatter) {
+    if (profile.isLearned) return learnedFormatter(profile);
+    const pct = Math.min(100, Math.round((profile.voicedTime / Math.max(0.1, profile.learningDuration)) * 100));
+    return `Learning… ${pct}%`;
   }
 
   _meterLabel(val, low, mid, high) {
