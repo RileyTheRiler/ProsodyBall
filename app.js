@@ -458,6 +458,20 @@ export class VoiceAnalyzer {
     this.noiseSpectralProfile = null;
   }
 
+  /**
+   * Reset the per-SPEAKER adaptive profiles (pitch / tilt / resonance) back to their unlearned
+   * defaults so the next person recalibrates from scratch — for passing the app between people.
+   * Deliberately keeps the room's NOISE calibration (isCalibrated / noiseFloor / noise profile)
+   * intact, since the environment hasn't changed. Also neutralizes the live resonance readout so
+   * the previous speaker's value doesn't linger on screen.
+   */
+  resetSpeakerProfiles() {
+    this.pitchProfile = { samples: [], min: 80, max: 380, isLearned: false, voicedTime: 0, learningDuration: 5.0 };
+    this.tiltProfile = { samples: [], min: -34, max: -4, isLearned: false, voicedTime: 0, learningDuration: 5.0 };
+    this.resonanceProfile = { samples: [], f1Min: 300, f1Max: 900, f2Min: 1000, f2Max: 2400, dispMin: 1029, dispMax: 1250, isLearned: false, voicedTime: 0, learningDuration: 6.0 };
+    this.smoothResonance = 0.5;
+  }
+
   // Per-bin A-weighting lookup table. The gain for a bin depends only on the bin's
   // centre frequency, which is fixed for a given (sampleRate, fftSize) — computing
   // sqrt/log10/pow for hundreds of bins on every frame is wasted work.
@@ -4173,6 +4187,8 @@ class VoxBallGame {
     popupBackdrop?.addEventListener('click', (e) => {
       if (e.target === popupBackdrop) this._closeMetricPopup();
     });
+    const voiceMapResetBtn = document.getElementById('voiceMapResetBtn');
+    voiceMapResetBtn?.addEventListener('click', () => this._resetVoiceMapForNewSpeaker(voiceMapResetBtn));
 
     const syncMotionToggleLabel = () => {
       if (!motionToggle) return;
@@ -6727,6 +6743,34 @@ class VoxBallGame {
       ctx.textAlign = 'center';
       ctx.font = `${Math.round(9 * sz)}px "Space Mono", monospace`;
       ctx.fillText('speak — the map lights up', w / 2, h / 2);
+    }
+  }
+
+  // Reset the Voice Map for a new speaker: clear this session's cloud/home-zone and drop the
+  // per-speaker pitch/tilt/resonance calibration so the next person's map starts blank and
+  // recalibrates to their own voice. The room's noise calibration is kept. Gives brief button
+  // feedback since it's a one-tap action (no modal — the whole point is fast speaker switching).
+  _resetVoiceMapForNewSpeaker(btn) {
+    this._voiceMapPoints = [];
+    this._voiceMapStats = null;
+    this._voiceMapStatsAt = 0;
+    this._voiceMapLastPush = 0;
+    this.smoothGenderScore = 0.5;
+    this.analyzer.resetSpeakerProfiles();
+
+    // Repaint the map + readouts immediately so the reset is visible even before the next frame.
+    if (this.metricPopupOpen === 'voicemap') {
+      this._renderPopupCanvas('voicemap');
+      this._updatePopupValue('voicemap');
+    }
+    const vmEl = document.getElementById('expValVoiceMap');
+    if (vmEl) vmEl.textContent = this._voiceMapReadout();
+
+    if (btn) {
+      const original = btn.textContent;
+      btn.textContent = '✓ Reset — new speaker, speak to recalibrate';
+      btn.disabled = true;
+      setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 1600);
     }
   }
 

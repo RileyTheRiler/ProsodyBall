@@ -1507,6 +1507,27 @@
       font-size: 0.78rem;
     }
 
+    /* Reset control — only shown in the Voice Map popup (the enlarged view). */
+    .voicemap-reset-btn {
+      display: none;
+      align-self: center;
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid rgba(127, 212, 255, 0.35);
+      background: rgba(127, 212, 255, 0.1);
+      color: #7fd4ff;
+      font-family: 'Space Mono', monospace;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .voicemap-reset-btn:hover {
+      background: rgba(127, 212, 255, 0.18);
+      border-color: rgba(127, 212, 255, 0.55);
+    }
+    .voicemap-reset-btn:active { transform: scale(0.97); }
+    .metric-popup[data-metric="voicemap"] .voicemap-reset-btn { display: block; }
+
     /* Overlay */
     .overlay {
       position: absolute;
@@ -2488,8 +2509,30 @@
         height: 160px;
       }
 
+      /* Voice Map on a phone: the popup fills the screen and the canvas flexes to take
+         nearly all of it, so the map — not the text — is what you see. */
+      .metric-popup[data-metric="voicemap"] {
+        height: 92vh;
+        max-height: 92vh;
+        padding: 12px;
+        gap: 8px;
+      }
       .metric-popup[data-metric="voicemap"] .metric-popup-canvas {
-        height: 46vh;
+        height: auto;
+        flex: 1 1 auto;
+        min-height: 0;
+      }
+      .metric-popup[data-metric="voicemap"] .metric-popup-value {
+        font-size: 1.05rem;
+      }
+      .metric-popup[data-metric="voicemap"] .metric-popup-desc {
+        max-height: 2.6em;
+        font-size: 0.68rem;
+        line-height: 1.35;
+      }
+      .metric-popup[data-metric="voicemap"] .voicemap-reset-btn {
+        padding: 11px 16px;
+        font-size: 0.82rem;
       }
 
       .metric-popup-value {
@@ -4550,6 +4593,7 @@
       </div>
       <div class="metric-popup-value" id="metricPopupValue">— Hz</div>
       <canvas class="metric-popup-canvas" id="metricPopupCanvas"></canvas>
+      <button class="voicemap-reset-btn" id="voiceMapResetBtn" type="button">↺ New speaker — reset calibration</button>
       <div class="metric-popup-desc" id="metricPopupDesc"></div>
     </div>
   </div>
