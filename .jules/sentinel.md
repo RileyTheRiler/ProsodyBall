@@ -51,3 +51,8 @@
 **Vulnerability:** Safe DOM construction using `document.createDocumentFragment()` and `.append()` was not consistently applied in `app.js` (e.g. `_showSessionSummary`, `renderTeleprompter`) or `calibration-wizard.js`. This allowed potential injection if dynamic data was ever used within loops with string concatenation, and led to conflicts with `innerHTML`.
 **Learning:** Relying on `innerHTML` for UI construction is inherently risky. Furthermore, manual DOM mocks in tests (like `MockEl`) require robust state initialization (e.g., `this.childNodes`) to correctly support safe DOM traversal methods like `.append()`.
 **Prevention:** Replace all complex `innerHTML` assignments with safe programmatic elements (`DocumentFragment`, `.createElement()`, `.textContent`). Ensure any manual DOM mocks fully implement necessary Node properties.
+
+## 2026-07-13 - [DOM-based XSS Risk via direct href assignment]
+**Vulnerability:** Unsafe assignments to `link.href` with untrusted sources (e.g., `window.location.href`) allowed potential DOM-based XSS through `javascript:` or `data:` protocol execution in `app.js`.
+**Learning:** Any URL constructed from user input or the current location must be sanitized before assignment to a `.href` property. The standard WHATWG `URL` parsing API (`new URL(url, base)`) is safer than regex to extract and reject dangerous protocols. Node tests for these functions must check for `window` availability (e.g., `typeof window !== 'undefined'`) to avoid test failures.
+**Prevention:** Always wrap `.href` assignments with a `sanitizeUrl` function that parses the URL and explicitly rejects `javascript:`, `vbscript:`, and `data:` protocols, returning a safe default like `about:blank`.

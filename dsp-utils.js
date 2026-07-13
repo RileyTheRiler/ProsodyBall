@@ -4,6 +4,23 @@ export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
 
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  try {
+    const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+    const parsed = new URL(url, base);
+    const protocol = parsed.protocol.toLowerCase();
+    if (['javascript:', 'vbscript:', 'data:'].includes(protocol)) {
+      return 'about:blank';
+    }
+    return parsed.href;
+  } catch (e) {
+    // If URL parsing fails, default to about:blank to be safe against malformed URLs
+    // that might bypass regex or other naive checks in edge-case browser contexts.
+    return 'about:blank';
+  }
+}
+
 export function computeRawProsody(metrics) {
   return (
     metrics.bounce * 0.50 +
