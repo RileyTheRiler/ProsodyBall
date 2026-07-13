@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange } from './dsp-utils.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
@@ -185,6 +185,22 @@ export class VoiceAnalyzer {
       isLearned: false,
       voicedTime: 0,
       learningDuration: 5.0
+    };
+
+    // Adaptive Resonance Range — learns the user's OWN F1 / F2 / formant-dispersion span
+    // during the first several seconds of voiced vowels, so the resonance score's 0% and
+    // 100% mean *this speaker's* darkest and brightest rather than fixed population anchors.
+    // Until learned, the score falls back to the fixed-anchor formulas (byte-identical to the
+    // pre-calibration behaviour, which the golden eval asserts on). Not persisted — relearned
+    // each session, exactly like pitchProfile / tiltProfile.
+    this.resonanceProfile = {
+      samples: [],      // {f1, f2, disp} from clean held-vowel frames
+      f1Min: 300, f1Max: 900,     // fixed-anchor fallbacks (mirror the old formulas)
+      f2Min: 1000, f2Max: 2400,
+      dispMin: 1029, dispMax: 1250, // dispersion (Hz) at VTL 17 cm → 14 cm
+      isLearned: false,
+      voicedTime: 0,
+      learningDuration: 6.0
     };
 
     // Adaptive HF energy tracking (for articulation normalisation)
@@ -425,6 +441,7 @@ export class VoiceAnalyzer {
     this.hfNoiseFloor = 0;
     this.pitchProfile = { samples: [], min: 80, max: 380, isLearned: false, voicedTime: 0, learningDuration: 5.0 };
     this.tiltProfile = { samples: [], min: -34, max: -4, isLearned: false, voicedTime: 0, learningDuration: 5.0 };
+    this.resonanceProfile = { samples: [], f1Min: 300, f1Max: 900, f2Min: 1000, f2Max: 2400, dispMin: 1029, dispMax: 1250, isLearned: false, voicedTime: 0, learningDuration: 6.0 };
     for (const k in this.metrics) this.metrics[k] = 0;
     this.metrics.pitchZone = 0.5;
     this.wasLastFrameReliable = false;
@@ -439,6 +456,20 @@ export class VoiceAnalyzer {
     this.noiseCalibrationTimer = 0;
     this.isCalibrated = false;
     this.noiseSpectralProfile = null;
+  }
+
+  /**
+   * Reset the per-SPEAKER adaptive profiles (pitch / tilt / resonance) back to their unlearned
+   * defaults so the next person recalibrates from scratch — for passing the app between people.
+   * Deliberately keeps the room's NOISE calibration (isCalibrated / noiseFloor / noise profile)
+   * intact, since the environment hasn't changed. Also neutralizes the live resonance readout so
+   * the previous speaker's value doesn't linger on screen.
+   */
+  resetSpeakerProfiles() {
+    this.pitchProfile = { samples: [], min: 80, max: 380, isLearned: false, voicedTime: 0, learningDuration: 5.0 };
+    this.tiltProfile = { samples: [], min: -34, max: -4, isLearned: false, voicedTime: 0, learningDuration: 5.0 };
+    this.resonanceProfile = { samples: [], f1Min: 300, f1Max: 900, f2Min: 1000, f2Max: 2400, dispMin: 1029, dispMax: 1250, isLearned: false, voicedTime: 0, learningDuration: 6.0 };
+    this.smoothResonance = 0.5;
   }
 
   // Per-bin A-weighting lookup table. The gain for a bin depends only on the bin's
@@ -1180,14 +1211,32 @@ export class VoiceAnalyzer {
       // ΔF is the mean adjacent formant spacing across F1–F3, which is much less vowel-dependent
       // than raw F2 alone.  Anchors: 17 cm (male, score 0) → 14 cm (female, score 1).
       const aVTL_cm = this.formantDispersionHz > 0 ? 35000 / (2 * this.formantDispersionHz) : 0;
-      const vtlScore = aVTL_cm > 0 ? clamp01((17 - aVTL_cm) / 3) : 0;
-      // F1 (25%): high F1 is decisive for "not male" (open, forward resonance).
-      const f1Score = Math.max(0, Math.min(1, (this.smoothF1 - 300) / 600));
-      // Vowel-normalized F2 (20%): only used when a vowel-like frame is detected; otherwise
-      // fold into vtlScore to avoid penalising back vowels (/u/ F2 ≈ 1000 Hz).
-      const f2Score = this.vowelLikelihood > 0.4
-        ? clamp01((this.smoothF2 - 1000) / 1400)
-        : vtlScore;
+      const rp = this.resonanceProfile;
+      let vtlScore, f1Score, f2Score;
+      if (rp.isLearned) {
+        // Personal calibration: each sub-score is normalized against THIS speaker's own
+        // learned span (brighter = wider dispersion, higher F1, higher F2), so 0%/100% mean
+        // their darkest/brightest instead of population anchors. This is what lets a voice
+        // that reads a flat ~65% on the fixed anchors actually travel the full 0–100 range.
+        vtlScore = this.formantDispersionHz > 0
+          ? normalizeAgainstRange(this.formantDispersionHz, rp.dispMin, rp.dispMax)
+          : 0;
+        f1Score = normalizeAgainstRange(this.smoothF1, rp.f1Min, rp.f1Max);
+        f2Score = this.vowelLikelihood > 0.4
+          ? normalizeAgainstRange(this.smoothF2, rp.f2Min, rp.f2Max)
+          : vtlScore;
+      } else {
+        // Fixed-anchor fallback — byte-identical to the pre-calibration behaviour the golden
+        // eval asserts on. Anchors: 17 cm (male, score 0) → 14 cm (female, score 1).
+        vtlScore = aVTL_cm > 0 ? clamp01((17 - aVTL_cm) / 3) : 0;
+        // F1 (25%): high F1 is decisive for "not male" (open, forward resonance).
+        f1Score = Math.max(0, Math.min(1, (this.smoothF1 - 300) / 600));
+        // Vowel-normalized F2 (20%): only used when a vowel-like frame is detected; otherwise
+        // fold into vtlScore to avoid penalising back vowels (/u/ F2 ≈ 1000 Hz).
+        f2Score = this.vowelLikelihood > 0.4
+          ? clamp01((this.smoothF2 - 1000) / 1400)
+          : vtlScore;
+      }
       const rawResonance = vtlScore * 0.55 + f1Score * 0.25 + f2Score * 0.20;
       // Steady-state weight scales the EMA step: held vowels move the score quickly toward
       // their reading; transition frames only nudge it (floor), so the live number settles on
@@ -1198,6 +1247,20 @@ export class VoiceAnalyzer {
       const rawDispersion = computeFormantDispersion([this.smoothF1, this.smoothF2, this.smoothF3]);
       if (rawDispersion > 0) {
         this.formantDispersionHz += (rawDispersion - this.formantDispersionHz) * (0.05 + conf * 0.08) * this.formantSteadiness;
+      }
+
+      // --- ADAPTIVE RESONANCE RANGE LEARNING ---
+      // Collect F1 / F2 / dispersion from clean, steady, vowel-like frames over the first few
+      // seconds of voicing, then fix the personal 0–100% span from robust percentiles. Mirrors
+      // the pitch/tilt learners; kept off the golden path because a short clip reaches neither
+      // the time nor the sample threshold (so the fixed-anchor branch above still runs there).
+      if (!rp.isLearned && conf > 0.4 && this.formantSteadiness > 0.5 &&
+          this.vowelLikelihood > 0.4 && this.smoothF1 > 0 && this.smoothF2 > 0 && this.formantDispersionHz > 0) {
+        rp.samples.push({ f1: this.smoothF1, f2: this.smoothF2, disp: this.formantDispersionHz });
+        rp.voicedTime += dt;
+        if (rp.voicedTime >= rp.learningDuration || rp.samples.length > 200) {
+          this._learnResonanceRange();
+        }
       }
 
       // --- Cepstral Peak Prominence (breathiness) — every Nth frame for cost control ---
@@ -1438,6 +1501,26 @@ export class VoiceAnalyzer {
 
     // Expose overall frame confidence so the game loop can gate the prosody score
     this.frameConfidence = reliableFrame ? confidenceGate : 0.15;
+  }
+
+  // Fix the personal resonance span from the collected held-vowel samples. Each axis uses a
+  // robust p05–p95 range (drops octave-jump/outlier frames) with a minimum-spread floor so a
+  // monotone setup can't collapse the scale, then pads ±25% of the spread outward. The padding
+  // maps the user's natural setup voice to roughly the middle 17–83% of the meter, leaving
+  // headroom at both ends so deliberately darkening or brightening still travels toward 0/100
+  // — which is exactly what "it won't go below 60%" was missing.
+  _learnResonanceRange() {
+    const rp = this.resonanceProfile;
+    const col = (key) => rp.samples.map((s) => s[key]);
+    const f1 = fitPersonalRange(col('f1'), { floorSpread: 150, absMin: 150, absMax: 1400 });
+    const f2 = fitPersonalRange(col('f2'), { floorSpread: 300, absMin: 700, absMax: 3200 });
+    const disp = fitPersonalRange(col('disp'), { floorSpread: 150, absMin: 600, absMax: 1800 });
+    if (!f1 || !f2 || !disp) return; // no usable samples — stay on the fixed-anchor fallback
+    rp.f1Min = f1.min; rp.f1Max = f1.max;
+    rp.f2Min = f2.min; rp.f2Max = f2.max;
+    rp.dispMin = disp.min; rp.dispMax = disp.max;
+    rp.isLearned = true;
+    console.log(`[ProsodyBall] Learned User Resonance Range — F1 ${rp.f1Min.toFixed(0)}–${rp.f1Max.toFixed(0)} Hz, F2 ${rp.f2Min.toFixed(0)}–${rp.f2Max.toFixed(0)} Hz, ΔF ${rp.dispMin.toFixed(0)}–${rp.dispMax.toFixed(0)} Hz`);
   }
 
   // ============================================
@@ -3092,6 +3175,7 @@ class VoxBallGame {
     const autoGainToggle = document.getElementById('autoGainToggle');
     const pitchProfileLearned = document.getElementById('pitchProfileLearned');
     const tiltProfileLearned = document.getElementById('tiltProfileLearned');
+    const resonanceProfileLearned = document.getElementById('resonanceProfileLearned');
     const frameConfidenceLabel = document.getElementById('frameConfidenceLabel');
     const motionToggle = document.getElementById('motionToggle');
     const cameraBtn = document.getElementById('cameraBtn');
@@ -3155,19 +3239,17 @@ class VoxBallGame {
     };
 
     const updateAdaptiveProfileStatus = () => {
-      const pitch = this.analyzer.pitchProfile;
-      const tilt = this.analyzer.tiltProfile;
-      const pitchPct = Math.min(100, Math.round((pitch.voicedTime / Math.max(0.1, pitch.learningDuration)) * 100));
-      const tiltPct = Math.min(100, Math.round((tilt.voicedTime / Math.max(0.1, tilt.learningDuration)) * 100));
       if (pitchProfileLearned) {
-        pitchProfileLearned.textContent = pitch.isLearned
-          ? `${Math.round(pitch.min)}–${Math.round(pitch.max)} Hz learned`
-          : `Learning… ${pitchPct}%`;
+        pitchProfileLearned.textContent = this._formatAdaptiveStatus(this.analyzer.pitchProfile,
+          (p) => `${Math.round(p.min)}–${Math.round(p.max)} Hz learned`);
       }
       if (tiltProfileLearned) {
-        tiltProfileLearned.textContent = tilt.isLearned
-          ? `${tilt.min.toFixed(1)} to ${tilt.max.toFixed(1)} dB learned`
-          : `Learning… ${tiltPct}%`;
+        tiltProfileLearned.textContent = this._formatAdaptiveStatus(this.analyzer.tiltProfile,
+          (t) => `${t.min.toFixed(1)} to ${t.max.toFixed(1)} dB learned`);
+      }
+      if (resonanceProfileLearned) {
+        resonanceProfileLearned.textContent = this._formatAdaptiveStatus(this.analyzer.resonanceProfile,
+          (r) => `F1 ${Math.round(r.f1Min)}–${Math.round(r.f1Max)} Hz learned`);
       }
       if (frameConfidenceLabel) {
         frameConfidenceLabel.textContent = `${Math.round(this.analyzer.frameConfidence * 100)}%`;
@@ -3899,6 +3981,9 @@ class VoxBallGame {
       this.analyzer.pitchProfile.samples = [];
       this.analyzer.tiltProfile.isLearned = false;
       this.analyzer.tiltProfile.samples = [];
+      this.analyzer.resonanceProfile.isLearned = false;
+      this.analyzer.resonanceProfile.samples = [];
+      this.analyzer.resonanceProfile.voicedTime = 0;
       const baseSustain = this.analyzer.defaultSustainedThreshold || this.analyzer.sustainedThreshold || 0.02;
       this.analyzer.sustainedThreshold = Math.max(0.01, baseSustain * cfg.sustainMul);
       this.analyzer.spectralTiltSmoothedDb += cfg.tiltShift;
@@ -4093,6 +4178,8 @@ class VoxBallGame {
     popupBackdrop?.addEventListener('click', (e) => {
       if (e.target === popupBackdrop) this._closeMetricPopup();
     });
+    const voiceMapResetBtn = document.getElementById('voiceMapResetBtn');
+    voiceMapResetBtn?.addEventListener('click', () => this._resetVoiceMapForNewSpeaker(voiceMapResetBtn));
 
     const syncMotionToggleLabel = () => {
       if (!motionToggle) return;
@@ -5891,6 +5978,7 @@ class VoxBallGame {
         mapSplatter: document.getElementById('mapSplatter'),
         pitchStatus: document.getElementById('pitchProfileLearned'),
         tiltStatus: document.getElementById('tiltProfileLearned'),
+        resonanceStatus: document.getElementById('resonanceProfileLearned'),
         confidenceStatus: document.getElementById('frameConfidenceLabel'),
       };
       this._meterEls.pitch.style.width = '3px';
@@ -5919,24 +6007,33 @@ class VoxBallGame {
 
     const pitchStatus = els.pitchStatus;
     const tiltStatus = els.tiltStatus;
+    const resonanceStatus = els.resonanceStatus;
     const confidenceStatus = els.confidenceStatus;
-    if (pitchStatus || tiltStatus || confidenceStatus) {
-      const pitch = this.analyzer.pitchProfile;
-      const tilt = this.analyzer.tiltProfile;
+    if (pitchStatus || tiltStatus || resonanceStatus || confidenceStatus) {
       if (pitchStatus) {
-        const pct = Math.min(100, Math.round((pitch.voicedTime / Math.max(0.1, pitch.learningDuration)) * 100));
-        pitchStatus.textContent = pitch.isLearned
-          ? `${Math.round(pitch.min)}–${Math.round(pitch.max)} Hz learned`
-          : `Learning… ${pct}%`;
+        pitchStatus.textContent = this._formatAdaptiveStatus(this.analyzer.pitchProfile,
+          (p) => `${Math.round(p.min)}–${Math.round(p.max)} Hz learned`);
       }
       if (tiltStatus) {
-        const pct = Math.min(100, Math.round((tilt.voicedTime / Math.max(0.1, tilt.learningDuration)) * 100));
-        tiltStatus.textContent = tilt.isLearned
-          ? `${tilt.min.toFixed(1)} to ${tilt.max.toFixed(1)} dB learned`
-          : `Learning… ${pct}%`;
+        tiltStatus.textContent = this._formatAdaptiveStatus(this.analyzer.tiltProfile,
+          (t) => `${t.min.toFixed(1)} to ${t.max.toFixed(1)} dB learned`);
+      }
+      if (resonanceStatus) {
+        resonanceStatus.textContent = this._formatAdaptiveStatus(this.analyzer.resonanceProfile,
+          (r) => `F1 ${Math.round(r.f1Min)}–${Math.round(r.f1Max)} Hz learned`);
       }
       if (confidenceStatus) confidenceStatus.textContent = `${Math.round(this.analyzer.frameConfidence * 100)}%`;
     }
+  }
+
+  // Shared formatter for an adaptive-profile status readout (pitch / tilt / resonance). Returns
+  // the learned label once the profile is trained, otherwise a capped "Learning… X%" from its
+  // voiced-time progress. Single source for the string so the settings panel and the meters
+  // panel can't drift apart.
+  _formatAdaptiveStatus(profile, learnedFormatter) {
+    if (profile.isLearned) return learnedFormatter(profile);
+    const pct = Math.min(100, Math.round((profile.voicedTime / Math.max(0.1, profile.learningDuration)) * 100));
+    return `Learning… ${pct}%`;
   }
 
   _meterLabel(val, low, mid, high) {
@@ -6641,13 +6738,44 @@ class VoxBallGame {
     }
   }
 
+  // Reset the Voice Map for a new speaker: clear this session's cloud/home-zone and drop the
+  // per-speaker pitch/tilt/resonance calibration so the next person's map starts blank and
+  // recalibrates to their own voice. The room's noise calibration is kept. Gives brief button
+  // feedback since it's a one-tap action (no modal — the whole point is fast speaker switching).
+  _resetVoiceMapForNewSpeaker(btn) {
+    this._voiceMapPoints = [];
+    this._voiceMapStats = null;
+    this._voiceMapStatsAt = 0;
+    this._voiceMapLastPush = 0;
+    this.smoothGenderScore = 0.5;
+    this.analyzer.resetSpeakerProfiles();
+
+    // Repaint the map + readouts immediately so the reset is visible even before the next frame.
+    if (this.metricPopupOpen === 'voicemap') {
+      this._renderPopupCanvas('voicemap');
+      this._updatePopupValue('voicemap');
+    }
+    const vmEl = document.getElementById('expValVoiceMap');
+    if (vmEl) vmEl.textContent = this._voiceMapReadout();
+
+    if (btn) {
+      const original = btn.textContent;
+      btn.textContent = '✓ Reset — new speaker, speak to recalibrate';
+      btn.disabled = true;
+      setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 1600);
+    }
+  }
+
   // ---- Metric Popup ----
 
   _openMetricPopup(metric) {
     this.metricPopupOpen = metric;
     const backdrop = document.getElementById('metricPopupBackdrop');
+    const popup = document.getElementById('metricPopup');
     const title = document.getElementById('metricPopupTitle');
     const desc = document.getElementById('metricPopupDesc');
+    // Tag the popup so per-metric layout (e.g. the Voice Map's wider frame + tall canvas) applies.
+    if (popup) popup.dataset.metric = metric;
 
     const descriptions = {
       pitch: 'Displays the current fundamental frequency (F0). The color-coded slider shows your position in the pitch range. The line graph shows pitch stability and range over time.',
@@ -6656,7 +6784,7 @@ class VoxBallGame {
       vowels: 'A vowel space plot (F1 vs F2) showing the brightness or darkness of vowel sounds like "EE" and "AH." Tracks resonance shifts during articulation.',
       attack: 'Vocal attack measures onset hardness — how steeply your voice rises into phonation. High = crisp glottal onsets; low = soft, breathy, gradual starts.',
       weight: 'Vocal weight is perceived heaviness from spectral tilt. High = thick, heavy, buzzy tone; low = light, bright, breathy tone.',
-      voicemap: 'Your voice as a comet on a two-axis map: height = pitch (log scale, so equal steps are equal musical intervals), left–right = resonance (vocal-tract size/brightness). The glowing head is your live voice — brighter when the reading is confident. Fireflies mark everywhere your voice has been this session; the dashed ellipse is your home zone (average ±1 SD). The faint background tint shows how each pitch+resonance combination tends to be read (it comes from this app’s own gender model — note the high-pitch/dark-resonance corner stays blue-purple: pitch alone doesn’t shift perception). Setting pitch or resonance vibration alerts draws your practice zone as a dashed box.',
+      voicemap: 'Height = pitch, left–right = resonance (darker → brighter). The comet is your voice now; fireflies show everywhere it’s been this session, and the dashed ring is your home zone. Set a pitch or resonance alert to add a target box.',
     };
 
     const colors = {
