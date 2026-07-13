@@ -1394,6 +1394,21 @@
     .metric-card[data-metric="weight"] .metric-card-title { color: var(--accent-weight); }
     .metric-card[data-metric="voicemap"] .metric-card-title { color: #7fd4ff; }
 
+    /* Resonance card carries a method dropdown in its header. Keep the title on one line and
+       drop the dropdown to its own full-width row so it never squeezes "RESONANCE" into a
+       vertical letter-stack on a narrow (mobile) card. */
+    .metric-card[data-metric="resonance"] .metric-card-header {
+      flex-wrap: wrap;
+      row-gap: 6px;
+    }
+    .metric-card[data-metric="resonance"] .metric-card-title { white-space: nowrap; }
+    .metric-card[data-metric="resonance"] .metric-card-header .metric-card-value { margin-left: auto; }
+    .metric-card[data-metric="resonance"] .metric-card-header .res-method-select {
+      flex: 1 1 100%;
+      order: 5;
+      min-width: 0;
+    }
+
     /* The Voice Map is a 2D plane, not a strip chart — give it more height so the
        log-pitch axis has usable resolution. */
     .metric-card[data-metric="voicemap"] .metric-card-canvas { height: 110px; }
@@ -4220,6 +4235,8 @@
         <span class="settings-label">Calibration</span>
         <button class="btn btn-help btn-fill" id="recalibrateBtn" aria-label="Run microphone calibration again"
           title="Run mic calibration again">Recalibrate</button>
+        <button class="btn btn-help btn-fill" id="guidedResonanceBtn" aria-label="Run guided resonance setup"
+          title="Guided setup that maps your resonance range from your deepest and brightest sounds">🎚 Guided resonance setup</button>
       </div>
 
       <div class="settings-group">
@@ -4526,6 +4543,13 @@
         <div class="metric-card" data-metric="resonance">
           <div class="metric-card-header">
             <span class="metric-card-title">Resonance</span>
+            <select id="resMethodSelectExpanded" class="res-method-select" aria-label="Resonance method">
+              <option value="auto" selected>Auto (SNR)</option>
+              <option value="harmonic">A: Harmonic Env</option>
+              <option value="cepstral">B: Cepstral</option>
+              <option value="lpc">C: LPC</option>
+              <option value="centroid">D: Centroid</option>
+            </select>
             <span class="metric-card-value" id="expValResonance">—</span>
           </div>
           <canvas class="metric-card-canvas" id="expCanvasResonance"></canvas>

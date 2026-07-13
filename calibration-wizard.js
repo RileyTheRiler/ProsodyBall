@@ -22,6 +22,136 @@ export class CalibrationWizard {
     if (this.visualEl) this.visualEl.innerHTML = '';
   }
 
+  _strong(text) {
+    return Object.assign(document.createElement('strong'), { textContent: text });
+  }
+
+  // ===== GUIDED RESONANCE CALIBRATION =====
+  // A deliberate two-step flow (run from Settings) that maps the user's resonance range by
+  // asking them to hold their darkest, then brightest, sound — instead of inferring it passively
+  // from ambient speech. Reuses this overlay + manual-update-loop pattern; the caller must have an
+  // active analyzer and should close the settings panel first.
+  async runResonanceCalibration(analyzer) {
+    if (!this.overlay) return { outcome: 'skipped', reason: 'missing-overlay' };
+    if (!analyzer || !analyzer.isActive) return { outcome: 'skipped', reason: 'inactive' };
+    try {
+      this.isWizardLoopActive = true;
+      this._show();
+      this._clearVisual();
+      this._setStep(
+        '🎚 Resonance Setup',
+        'Let’s map your resonance range in two held sounds — your deepest, then your brightest. About 12 seconds. Ready?',
+        0
+      );
+      this._showBtn(this.nextBtn, 'Start');
+      this._showBtn(this.skipBtn, 'Cancel');
+      if (await this._waitForClick() === 'skip') { this._hide(); return { outcome: 'cancelled', reason: 'user-cancel' }; }
+
+      const dark = await this._captureResonanceStep(analyzer, {
+        title: 'Step 1 of 2 · Deepest',
+        instruction: ['Make your ', this._strong('deepest, most hollow'), ' sound — like a big yawn, ',
+          this._strong('“awww”'), ', pulled back in your throat. Hold it steady…'],
+        progressBase: 10,
+      });
+      if (!this.isWizardLoopActive) { this._hide(); return { outcome: 'cancelled', reason: 'closed' }; }
+
+      const bright = await this._captureResonanceStep(analyzer, {
+        title: 'Step 2 of 2 · Brightest',
+        instruction: ['Now your ', this._strong('brightest, most forward'), ' sound — a smiley ',
+          this._strong('“eee”'), ' right at the front of your mouth. Hold it steady…'],
+        progressBase: 55,
+      });
+      if (!this.isWizardLoopActive) { this._hide(); return { outcome: 'cancelled', reason: 'closed' }; }
+
+      const MIN_SAMPLES = 5;
+      if (dark.f1.length < MIN_SAMPLES || bright.f1.length < MIN_SAMPLES) {
+        this._clearVisual();
+        this._setStep(
+          'Didn’t catch a steady sound',
+          'I couldn’t hear a clear held vowel for each step. Find a quieter spot and try again from Settings whenever you like.',
+          100
+        );
+        this._hideBtn(this.skipBtn);
+        this._showBtn(this.nextBtn, 'Done');
+        await this._waitForClick(5000, 'next');
+        this._hide();
+        return { outcome: 'incomplete', reason: 'insufficient-samples', darkN: dark.f1.length, brightN: bright.f1.length };
+      }
+
+      const applied = analyzer.applyGuidedResonanceRange(dark, bright);
+      this._clearVisual();
+      this._hideBtn(this.skipBtn);
+      if (!applied) {
+        this._setStep('Couldn’t map the range', 'Something looked off in the readings — please try again from Settings.', 100);
+        this._showBtn(this.nextBtn, 'Done');
+        await this._waitForClick(5000, 'next');
+        this._hide();
+        return { outcome: 'incomplete', reason: 'apply-failed' };
+      }
+      const rp = analyzer.resonanceProfile;
+      this._setStep(
+        '🎉 Resonance calibrated!',
+        `Your map now spans your own range (F1 ${Math.round(rp.f1Min)}–${Math.round(rp.f1Max)} Hz) — deepest at the left, brightest at the right.`,
+        100
+      );
+      this._showBtn(this.nextBtn, 'Done');
+      await this._waitForClick(4000, 'next');
+      return { outcome: 'completed', reason: 'completed' };
+    } catch (err) {
+      const errMsg = err && err.message ? err.message : String(err);
+      console.error('Resonance calibration failed:', errMsg, err);
+      return { outcome: 'incomplete', reason: 'exception', error: errMsg };
+    } finally {
+      this._hide();
+      this._clearVisual();
+      this._hideBtn(this.nextBtn);
+      this._hideBtn(this.skipBtn);
+    }
+  }
+
+  // Capture a single held-sound step: drive the analyzer for a fixed hold, collecting F1/F2/ΔF on
+  // confident voiced vowel frames, with a live level meter. Returns {f1, f2, disp} arrays.
+  async _captureResonanceStep(analyzer, { title, instruction, progressBase }) {
+    this._hideBtn(this.nextBtn);
+    this._hideBtn(this.skipBtn);
+    this._setStep(title, instruction, progressBase);
+
+    this._clearVisual();
+    const vuTrack = document.createElement('div');
+    vuTrack.className = 'cal-vu-track';
+    const vuFill = document.createElement('div');
+    vuFill.className = 'cal-vu-fill';
+    vuTrack.appendChild(vuFill);
+    if (this.visualEl) this.visualEl.appendChild(vuTrack);
+
+    const HOLD_SECS = 4.5;
+    const f1 = [], f2 = [], disp = [];
+    const start = performance.now();
+    let last = start;
+    while ((performance.now() - start) / 1000 < HOLD_SECS && this.isWizardLoopActive) {
+      if (!this.overlay?.classList.contains('show')) { this.isWizardLoopActive = false; break; }
+      const now = performance.now();
+      const dt = (now - last) / 1000;
+      last = now;
+      analyzer.update(Math.max(0.016, dt));
+
+      const e = analyzer.metrics?.energy || 0;
+      if (vuFill) vuFill.style.width = `${Math.min(100, e * 500)}%`;
+
+      if (analyzer.formantConfidence > 0.3 && analyzer.vowelLikelihood > 0.3 && e > 0.05 &&
+          analyzer.smoothF1 > 0 && analyzer.smoothF2 > 0 && analyzer.formantDispersionHz > 0) {
+        f1.push(analyzer.smoothF1);
+        f2.push(analyzer.smoothF2);
+        disp.push(analyzer.formantDispersionHz);
+      }
+
+      const elapsed = (now - start) / 1000;
+      if (this.progressEl) this.progressEl.style.width = `${progressBase + (elapsed / HOLD_SECS) * 40}%`;
+      await new Promise(r => setTimeout(r, 60));
+    }
+    return { f1, f2, disp };
+  }
+
   _setStep(title, desc, progress) {
     if (this.titleEl) this.titleEl.textContent = title;
     if (this.descEl) {
