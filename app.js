@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, sanitizeUrl } from './dsp-utils.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
@@ -3130,7 +3130,7 @@ class VoxBallGame {
       iframeNotice.appendChild(document.createTextNode('This app needs microphone access, which may be blocked when embedded.'));
       iframeNotice.appendChild(document.createElement('br'));
       const link = document.createElement('a');
-      link.href = directUrl;
+      link.href = sanitizeUrl(directUrl);
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       link.textContent = 'Open in new tab for full access ↗';
@@ -3455,7 +3455,7 @@ class VoxBallGame {
         errNode.appendChild(document.createTextNode('This requires HTTPS and a modern browser. '));
         if (isInIframe) {
           const link = document.createElement('a');
-          link.href = window.location.href;
+          link.href = sanitizeUrl(window.location.href);
           link.target = '_blank';
           link.rel = 'noopener noreferrer';
           link.textContent = 'Try opening in a new tab ↗';
@@ -3489,10 +3489,11 @@ class VoxBallGame {
               url.searchParams.set('ec', this.micInputPreferences.echoCancellation ? '1' : '0');
               url.searchParams.set('ns', this.micInputPreferences.noiseSuppression ? '1' : '0');
               url.searchParams.set('ag', this.micInputPreferences.autoGainControl ? '1' : '0');
-              if (phoneMicUrlEl) { phoneMicUrlEl.href = url.href; phoneMicUrlEl.textContent = url.href; phoneMicUrlEl.style.display = ''; }
+              const safeUrl = sanitizeUrl(url.href);
+              if (phoneMicUrlEl) { phoneMicUrlEl.href = safeUrl; phoneMicUrlEl.textContent = safeUrl; phoneMicUrlEl.style.display = ''; }
               if (phoneMicCodeEl) { phoneMicCodeEl.style.display = ''; phoneMicCodeEl.querySelector('strong').textContent = code; }
               if (phoneMicStatusEl) { phoneMicStatusEl.style.display = ''; phoneMicStatusEl.textContent = 'Waiting for phone to connect...'; }
-              showError(`📱 Open on your phone: ${url.href}`);
+              showError(`📱 Open on your phone: ${safeUrl}`);
             } else if (status === 'connected') {
               if (phoneMicStatusEl) phoneMicStatusEl.textContent = '✅ Phone connected!';
               clearError();
@@ -3537,7 +3538,7 @@ class VoxBallGame {
             msg.appendChild(document.createTextNode('🎙 Microphone blocked by browser — this usually happens inside iframes.'));
             msg.appendChild(document.createElement('br'));
             const link = document.createElement('a');
-            link.href = window.location.href;
+            link.href = sanitizeUrl(window.location.href);
             link.target = '_blank';
             link.rel = 'noopener noreferrer';
             link.textContent = 'Open in a new tab for full mic access ↗';
