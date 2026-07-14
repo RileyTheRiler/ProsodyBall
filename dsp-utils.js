@@ -1,5 +1,22 @@
 import * as DSP_CONST from './dsp-constants.generated.js';
 
+// Security enhancement: sanitizes URLs to prevent protocol-based XSS (e.g. javascript:)
+// Defaults to about:blank if the protocol is unsafe or parsing fails.
+export function sanitizeUrl(urlStr) {
+  if (!urlStr) return 'about:blank';
+  try {
+    const baseUrl = typeof window !== 'undefined' ? window.location.href : 'http://localhost';
+    const parsed = new URL(urlStr, baseUrl);
+    const safeProtocols = ['http:', 'https:', 'mailto:', 'blob:'];
+    if (safeProtocols.includes(parsed.protocol)) {
+      return parsed.href;
+    }
+    return 'about:blank';
+  } catch (e) {
+    return 'about:blank';
+  }
+}
+
 export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
