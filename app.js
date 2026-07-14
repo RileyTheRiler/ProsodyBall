@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples } from './dsp-utils.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
@@ -470,6 +470,29 @@ export class VoiceAnalyzer {
     this.tiltProfile = { samples: [], min: -34, max: -4, isLearned: false, voicedTime: 0, learningDuration: 5.0 };
     this.resonanceProfile = { samples: [], f1Min: 300, f1Max: 900, f2Min: 1000, f2Max: 2400, dispMin: 1029, dispMax: 1250, isLearned: false, voicedTime: 0, learningDuration: 6.0 };
     this.smoothResonance = 0.5;
+  }
+
+  /**
+   * Set the resonance range from a GUIDED calibration: two arrays each of {f1, f2, disp} samples
+   * captured while the user deliberately held their darkest sound then their brightest. Maps the
+   * dark extreme → 0% and the bright extreme → 100% (per axis), marks the profile learned, and
+   * clears the passive-learning buffer so it can't overwrite the deliberate range. Returns false
+   * (leaving the profile untouched) if any axis had no usable samples.
+   */
+  applyGuidedResonanceRange(dark, bright) {
+    const f1 = rangeFromExtremeSamples(dark.f1, bright.f1, { minSpread: 120, absMin: 150, absMax: 1400 });
+    const f2 = rangeFromExtremeSamples(dark.f2, bright.f2, { minSpread: 250, absMin: 700, absMax: 3200 });
+    const disp = rangeFromExtremeSamples(dark.disp, bright.disp, { minSpread: 120, absMin: 600, absMax: 1800 });
+    if (!f1 || !f2 || !disp) return false;
+    const rp = this.resonanceProfile;
+    rp.f1Min = f1.min; rp.f1Max = f1.max;
+    rp.f2Min = f2.min; rp.f2Max = f2.max;
+    rp.dispMin = disp.min; rp.dispMax = disp.max;
+    rp.samples = [];
+    rp.voicedTime = 0;
+    rp.isLearned = true;
+    this.smoothResonance = 0.5;
+    return true;
   }
 
   // Per-bin A-weighting lookup table. The gain for a bin depends only on the bin's
@@ -4063,8 +4086,12 @@ class VoxBallGame {
       teleprompterCustomBtn.classList.toggle('active', this.teleprompterMode === 'custom');
     });
 
-    document.getElementById('resMethodSelect').addEventListener('change', (e) => {
-      this.analyzer.resonanceMethod = e.target.value;
+    // Resonance method is selectable from two places — the compact meters bar (desktop) and the
+    // expanded metrics panel's Resonance card (reachable on mobile). Route both through one apply
+    // that resets the smoothed formants for a clean comparison and keeps the two <select>s in sync.
+    const resMethodSelectIds = ['resMethodSelect', 'resMethodSelectExpanded'];
+    const applyResonanceMethod = (value) => {
+      this.analyzer.resonanceMethod = value;
       // Reset smoothed values when switching methods for clean comparison
       this.analyzer.smoothF1 = 500;
       this.analyzer.smoothF2 = 1500;
@@ -4074,7 +4101,19 @@ class VoxBallGame {
       this.analyzer.formantSteadiness = 1;
       this.analyzer._prevResF1 = 0;
       this.analyzer._prevResF2 = 0;
-    });
+      for (const id of resMethodSelectIds) {
+        const el = document.getElementById(id);
+        if (el && el.value !== value) el.value = value;
+      }
+    };
+    for (const id of resMethodSelectIds) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.addEventListener('change', (e) => applyResonanceMethod(e.target.value));
+      // The expanded selector sits inside a metric card whose click opens the focus popup —
+      // stop the tap on the dropdown from also triggering that.
+      el.addEventListener('click', (e) => e.stopPropagation());
+    }
 
     // Readout-display mode selectors (mirror the resonance method selector). These are
     // display/selection only — they never change analyzer.metrics.* — and force an immediate
@@ -4620,6 +4659,16 @@ class VoxBallGame {
       this.guidedChecklist.voiceDetected = false;
       this.guidedChecklist.pitchLocked = false;
       showCalibrationOutcome(calResult);
+    });
+
+    const guidedResonanceBtn = document.getElementById('guidedResonanceBtn');
+    guidedResonanceBtn?.addEventListener('click', async () => {
+      if (!this.analyzer.isActive) {
+        showError('ℹ Start a session first, then run guided resonance setup.');
+        return;
+      }
+      toggleSettings(false); // close settings so the guided overlay isn't behind the modal
+      await this.calibrationWizard.runResonanceCalibration(this.analyzer);
     });
 
     this.canvas.addEventListener('click', (e) => {

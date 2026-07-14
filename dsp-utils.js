@@ -477,6 +477,34 @@ export function fitPersonalRange(values, {
   };
 }
 
+// Build a personal min/max range from two DELIBERATE extreme sample sets — the user's darkest
+// and brightest held sounds during a guided setup. Unlike fitPersonalRange (which infers a range
+// from ambient speech and pads outward for headroom), here the user intentionally produced the
+// ends, so the medians ARE the ends: we take the median of each set, order them (a swap-guard in
+// case the estimator read the "dark" sound higher), enforce a minimum spread, and pad only
+// slightly so hitting the exact extreme reads as 0/100 rather than clipping. Returns null if
+// either set is empty. Pure + unit-tested.
+export function rangeFromExtremeSamples(darkVals, brightVals, {
+  minSpread = 0, pad = 0.05, absMin = -Infinity, absMax = Infinity,
+} = {}) {
+  const median = (vals) => {
+    const s = (Array.isArray(vals) ? vals : []).filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+    if (s.length === 0) return null;
+    return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+  };
+  let lo = median(darkVals);
+  let hi = median(brightVals);
+  if (lo == null || hi == null) return null;
+  if (lo > hi) { const t = lo; lo = hi; hi = t; } // swap-guard: "dark" read brighter than "bright"
+  const spread = Math.max(minSpread, hi - lo);
+  const mid = (lo + hi) / 2;
+  const half = spread / 2;
+  return {
+    min: Math.max(absMin, mid - half - spread * pad),
+    max: Math.min(absMax, mid + half + spread * pad),
+  };
+}
+
 // Derive a personal practice zone from the user's own vibration-alert rules — the map's target
 // region comes from the user's configured goals, not a normative template. "Drops below T"
 // means the user wants to stay ABOVE T (T becomes the zone floor); "goes above T" caps it.
