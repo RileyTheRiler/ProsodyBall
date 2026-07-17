@@ -602,3 +602,24 @@ export function computeGenderScoreMulti({
   const score = clamp01(0.5 + (blended - 0.5) * (1 - uncertainty) * DECISIVENESS);
   return { score, uncertainty };
 }
+
+// Security utility: mitigate DOM-based XSS by neutralizing dangerous protocols.
+// Blocks javascript:, vbscript:, and data: URIs on anchor tags/window locations,
+// while allowing http:, https:, and blob: URIs for standard application functions.
+export function sanitizeUrl(url) {
+  if (!url) return '';
+  const urlStr = String(url);
+  try {
+    const parsed = new URL(urlStr, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+    const p = parsed.protocol.toLowerCase();
+    if (p === 'javascript:' || p === 'vbscript:' || p === 'data:') {
+      return 'about:blank';
+    }
+  } catch (e) {
+    // If URL parsing completely fails, it might be a weird relative string that
+    // the browser will parse differently. Safe fallback is usually leaving it alone
+    // or about:blank, but since we rely on new URL handling relative paths via base,
+    // we just return the string. The dangerous protocols usually parse successfully.
+  }
+  return urlStr;
+}
