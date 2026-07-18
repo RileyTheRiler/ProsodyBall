@@ -1,11 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError,
+  sanitizeUrl, computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError,
   computeFrameReliability, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction,
   steadyStateWeight, selectResonanceMethod,
   SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX, STEADY_WEIGHT_FLOOR
 } from './dsp-utils.js';
+
+test('sanitizeUrl handles safe and dangerous protocols correctly', () => {
+  assert.equal(sanitizeUrl('https://example.com/foo'), 'https://example.com/foo');
+  assert.equal(sanitizeUrl('http://example.com'), 'http://example.com/');
+
+  // XSS Vectors
+  assert.equal(sanitizeUrl('javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('data:text/html,<script>alert(1)</script>'), 'about:blank');
+  assert.equal(sanitizeUrl('vbscript:msgbox("hello")'), 'about:blank');
+
+  // Safe relative/blob URLs
+  assert.equal(sanitizeUrl('/relative/path').endsWith('/relative/path'), true);
+  assert.equal(sanitizeUrl('blob:https://example.com/12345'), 'blob:https://example.com/12345');
+});
 
 test('computeRawProsody applies weighted sum', () => {
   const metrics = { bounce: 1, vowel: 0.5, articulation: 0.5 };
