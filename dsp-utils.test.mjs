@@ -1,11 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  sanitizeUrl,
   computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError,
   computeFrameReliability, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction,
   steadyStateWeight, selectResonanceMethod,
   SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX, STEADY_WEIGHT_FLOOR
 } from './dsp-utils.js';
+
+test('sanitizeUrl allows safe protocols and blocks dangerous ones', () => {
+  // Safe protocols
+  assert.equal(sanitizeUrl('https://example.com'), 'https://example.com');
+  assert.equal(sanitizeUrl('http://localhost:3000'), 'http://localhost:3000');
+  assert.equal(sanitizeUrl('blob:http://localhost:3000/1234'), 'blob:http://localhost:3000/1234');
+  assert.equal(sanitizeUrl('/relative/path'), '/relative/path');
+  assert.equal(sanitizeUrl('?query=1'), '?query=1');
+
+  // Dangerous protocols
+  assert.equal(sanitizeUrl('javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('  javascript: alert(2) '), 'about:blank');
+  assert.equal(sanitizeUrl('vbscript:msgbox("hello")'), 'about:blank');
+  assert.equal(sanitizeUrl('data:text/html,<h1>XSS</h1>'), 'about:blank');
+
+  // Edge cases
+  assert.equal(sanitizeUrl(''), 'about:blank');
+  assert.equal(sanitizeUrl(null), 'about:blank');
+  assert.equal(sanitizeUrl(undefined), 'about:blank');
+});
 
 test('computeRawProsody applies weighted sum', () => {
   const metrics = { bounce: 1, vowel: 0.5, articulation: 0.5 };
