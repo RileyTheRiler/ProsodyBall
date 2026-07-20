@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError,
   computeFrameReliability, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction,
-  steadyStateWeight, selectResonanceMethod,
+  steadyStateWeight, selectResonanceMethod, sanitizeUrl,
   SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX, STEADY_WEIGHT_FLOOR
 } from './dsp-utils.js';
 
@@ -150,4 +150,22 @@ test('selectResonanceMethod picks LPC clean, cepstral mid, centroid noisy', () =
   assert.equal(selectResonanceMethod(15), 'cepstral');          // between the tiers
   assert.equal(selectResonanceMethod(SNR_YELLOW_DB), 'cepstral');// yellow edge inclusive
   assert.equal(selectResonanceMethod(5), 'centroid');           // below yellow
+});
+
+// ---------- URL Sanitization ----------
+
+test('sanitizeUrl handles dangerous and safe protocols correctly', () => {
+  // Safe protocols
+  assert.equal(sanitizeUrl('https://example.com'), 'https://example.com/');
+  assert.equal(sanitizeUrl('http://example.com'), 'http://example.com/');
+  assert.equal(sanitizeUrl('blob:http://localhost/123'), 'blob:http://localhost/123');
+
+  // Dangerous protocols
+  assert.equal(sanitizeUrl('javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('data:text/html,<script>alert(1)</script>'), 'about:blank');
+
+  // Edge cases
+  assert.equal(sanitizeUrl(''), 'about:blank');
+  assert.equal(sanitizeUrl(null), 'about:blank');
+  assert.equal(sanitizeUrl('invalid-url:something'), 'about:blank');
 });
