@@ -602,3 +602,18 @@ export function computeGenderScoreMulti({
   const score = clamp01(0.5 + (blended - 0.5) * (1 - uncertainty) * DECISIVENESS);
   return { score, uncertainty };
 }
+
+// Sanitize a URL to prevent DOM-based XSS. Only allows http:, https:, and blob: protocols.
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  try {
+    const parsed = new URL(url, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+    const safeProtocols = ['http:', 'https:', 'blob:'];
+    if (!safeProtocols.includes(parsed.protocol)) {
+      return 'about:blank';
+    }
+    return parsed.href;
+  } catch (e) {
+    return 'about:blank';
+  }
+}
