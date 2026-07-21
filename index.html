@@ -2591,6 +2591,10 @@
         font-size: 1rem;
       }
 
+      .rec-chip {
+        font-size: 0.64rem;
+      }
+
       .rec-item {
         padding: 12px 14px;
         gap: 10px;
@@ -3494,6 +3498,34 @@
       font-size: 0.78rem;
       color: var(--text-muted);
       font-family: 'Space Mono', monospace;
+    }
+
+    /* Per-clip voice review chips (pitch/resonance/prosody stats) */
+    .rec-item-metrics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 4px;
+    }
+
+    .rec-chip {
+      font-size: 0.68rem;
+      font-family: 'Space Mono', monospace;
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 999px;
+      padding: 1px 7px;
+      white-space: nowrap;
+    }
+
+    .rec-chip.muted {
+      opacity: 0.5;
+      font-style: italic;
+    }
+
+    .rec-chip.delta {
+      color: var(--text-primary);
     }
 
     .rec-item-actions {

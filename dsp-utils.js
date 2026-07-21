@@ -450,6 +450,38 @@ export function summarizeVoiceCloud(points) {
   };
 }
 
+// Summarize per-clip metric samples captured during recording (one sample per recorder tick:
+// { hz, conf, voiced, res, prosody }). Only samples that are voiced with a confident pitch
+// (voiced && hz > 0 && conf >= minConf) contribute to the stats, so silence, coughs, and
+// shaky frames can't skew a take's numbers. Returns null when fewer than minVoiced samples
+// qualify — the UI renders that as "no voice data" instead of junk stats. Values are left
+// unrounded; formatting is a render-time concern. Pure + unit-tested (clip-metrics.test.mjs).
+export function summarizeClipMetrics(samples, { minConf = 0.35, minVoiced = 5 } = {}) {
+  if (!Array.isArray(samples) || samples.length === 0) return null;
+  let voicedCount = 0;
+  let pitchSum = 0, pitchMin = Infinity, pitchMax = -Infinity;
+  let resSum = 0, prosodySum = 0;
+  for (const s of samples) {
+    if (!s || !s.voiced || !(s.hz > 0) || !(s.conf >= minConf)) continue;
+    voicedCount++;
+    pitchSum += s.hz;
+    if (s.hz < pitchMin) pitchMin = s.hz;
+    if (s.hz > pitchMax) pitchMax = s.hz;
+    resSum += clamp01(Number.isFinite(s.res) ? s.res : 0);
+    prosodySum += clamp01(Number.isFinite(s.prosody) ? s.prosody : 0);
+  }
+  if (voicedCount < Math.max(1, minVoiced)) return null;
+  return {
+    pitchAvgHz: pitchSum / voicedCount,
+    pitchMinHz: pitchMin,
+    pitchMaxHz: pitchMax,
+    resonanceAvg: resSum / voicedCount,
+    prosodyAvg: prosodySum / voicedCount,
+    voicedRatio: voicedCount / samples.length,
+    sampleCount: samples.length,
+  };
+}
+
 // Fit a personal min/max range from a sample set for adaptive (per-user) normalization.
 // Uses a robust loPct–hiPct percentile band (default p05–p95, so octave-jump / outlier frames
 // don't set the ends), enforces a minimum spread so a monotone speaker can't collapse the

@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics } from './dsp-utils.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
@@ -2187,8 +2187,9 @@ class VoxBallGame {
     this.isRecording = false;
     this._recInterval = null;
     this._recBuffers = [];
+    this._recMetricSamples = []; // live metric snapshots per recorder tick, summarized at stop
     this._recSampleRate = 48000;
-    this.recordings = []; // { blob, dataUrl, duration, timestamp, name }
+    this.recordings = []; // { blob, dataUrl, duration, timestamp, name, mimeType, metrics }
     this.recordingStartTime = 0;
     this.currentPlayback = null;
 
@@ -2633,6 +2634,7 @@ class VoxBallGame {
     try {
       this._recSampleRate = a.audioCtx.sampleRate;
       this._recBuffers = [];
+      this._recMetricSamples = [];
       const fftSize = a.analyserRec.fftSize; // 512
 
       // Poll interval = window duration in ms (e.g. 512/44100*1000 ≈ 11.6ms)
@@ -2657,6 +2659,15 @@ class VoxBallGame {
           // Push silence to keep timing intact (avoids clicks/jumps)
           this._recBuffers.push(new Float32Array(data.length));
         }
+
+        // Snapshot live analysis so the clip can carry review metrics.
+        this._recMetricSamples.push({
+          hz: a.smoothPitchHz,
+          conf: a.pitchConfidence,
+          voiced: isSpeech && a.lastPitch > 0,
+          res: a.smoothResonance,
+          prosody: this.prosodyScore,
+        });
       }, intervalMs);
 
       this.recordingStartTime = performance.now();
@@ -2677,7 +2688,7 @@ class VoxBallGame {
 
     return new Promise((resolve) => {
       try {
-        if (this._recBuffers.length === 0) { resolve(); return; }
+        if (this._recBuffers.length === 0) { this._recMetricSamples = []; resolve(); return; }
 
         // Merge all Float32 buffers
         // ⚡ Bolt: Replace reduce with traditional loop for performance
@@ -2692,6 +2703,10 @@ class VoxBallGame {
           offset += buf.length;
         }
         this._recBuffers = [];
+
+        // Summarize the metric snapshots into per-clip review stats (null = no usable voice)
+        const metrics = summarizeClipMetrics(this._recMetricSamples);
+        this._recMetricSamples = [];
 
         // Encode as WAV (PCM 16-bit mono)
         const wavBlob = this._encodeWAV(merged, this._recSampleRate);
@@ -2709,7 +2724,8 @@ class VoxBallGame {
             duration,
             timestamp: ts,
             name: `vox-ball-${fileTs}`,
-            mimeType: 'audio/wav'
+            mimeType: 'audio/wav',
+            metrics
           });
           this.updateRecordingsUI();
           resolve();
@@ -2981,6 +2997,31 @@ class VoxBallGame {
         Object.assign(document.createElement('div'), { className: 'rec-item-name', textContent: `Recording ${i + 1}` }),
         Object.assign(document.createElement('div'), { className: 'rec-item-meta', textContent: `${rec.timestamp} · ${this.formatDuration(rec.duration)}` })
       );
+
+      // Per-clip voice review chips (metrics captured live while recording)
+      const metricsRow = Object.assign(document.createElement('div'), { className: 'rec-item-metrics' });
+      const m = rec.metrics;
+      const chip = (text, extraClass = '') => Object.assign(
+        document.createElement('span'),
+        { className: `rec-chip${extraClass ? ' ' + extraClass : ''}`, textContent: text }
+      );
+      if (m) {
+        metricsRow.append(
+          chip(`avg ${Math.round(m.pitchAvgHz)} Hz`),
+          chip(`${Math.round(m.pitchMinHz)}–${Math.round(m.pitchMaxHz)} Hz`),
+          chip(`res ${Math.round(m.resonanceAvg * 100)}%`),
+          chip(`pros ${Math.round(m.prosodyAvg * 100)}%`)
+        );
+        metricsRow.title = `Voiced ${Math.round(m.voicedRatio * 100)}% of ${this.formatDuration(rec.duration)}`;
+        const prev = this.recordings[i - 1];
+        if (prev && prev.metrics) {
+          const delta = Math.round(m.pitchAvgHz - prev.metrics.pitchAvgHz);
+          metricsRow.appendChild(chip(`Δ ${delta >= 0 ? '+' : '−'}${Math.abs(delta)} Hz vs prev`, 'delta'));
+        }
+      } else {
+        metricsRow.appendChild(chip('no voice data', 'muted'));
+      }
+      info.appendChild(metricsRow);
 
       const progress = Object.assign(document.createElement('div'), { className: 'rec-progress' });
       progress.appendChild(Object.assign(document.createElement('div'), { className: 'rec-progress-fill', id: `rec-progress-${i}` }));
