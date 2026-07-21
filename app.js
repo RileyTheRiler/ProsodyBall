@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake } from './dsp-utils.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
@@ -2203,9 +2203,11 @@ class VoxBallGame {
     this.recordingStartTime = 0;
     this.currentPlayback = null;
     this._pendingClipLabel = null; // label attached to the next saved clip (set by practice flow)
+    this._pendingPhrase = null;    // known phrase text for the next saved clip → word-by-word analysis
+    this._recTickSec = 512 / 48000; // exact per-snapshot duration; recomputed at startRecording
 
-    // Guided phrase practice flow state
-    this.practice = { active: false, index: 0 };
+    // Guided phrase practice flow state; stage: 'prompt' (read & record) | 'results' (review take)
+    this.practice = { active: false, index: 0, stage: 'prompt' };
 
     // Procedural infinite terrain — layered sine waves, no finite array
     this.terrainLayers = [];
@@ -2653,6 +2655,9 @@ class VoxBallGame {
 
       // Poll interval = window duration in ms (e.g. 512/44100*1000 ≈ 11.6ms)
       const intervalMs = Math.round(1000 * fftSize / this._recSampleRate);
+      // Snapshot timeline uses index × this duration — sample-exact vs the encoded WAV,
+      // immune to setInterval wall-clock jitter.
+      this._recTickSec = fftSize / this._recSampleRate;
 
       this._recInterval = setInterval(() => {
         if (!this.isRecording || !a.analyserRec) return;
@@ -2681,6 +2686,8 @@ class VoxBallGame {
           voiced: isSpeech && a.lastPitch > 0,
           res: a.smoothResonance,
           prosody: this.prosodyScore,
+          energy: localRms,       // raw window RMS (pre-gate) → phrase segmentation contour
+          syl: a.syllableImpulse, // decaying onset impulse → word-split boundary hints
         });
       }, intervalMs);
 
@@ -2702,7 +2709,7 @@ class VoxBallGame {
 
     return new Promise((resolve) => {
       try {
-        if (this._recBuffers.length === 0) { this._recMetricSamples = []; this._pendingClipLabel = null; resolve(); return; }
+        if (this._recBuffers.length === 0) { this._recMetricSamples = []; this._pendingClipLabel = null; this._pendingPhrase = null; resolve(); return; }
 
         // Merge all Float32 buffers
         // ⚡ Bolt: Replace reduce with traditional loop for performance
@@ -2720,6 +2727,15 @@ class VoxBallGame {
 
         // Summarize the metric snapshots into per-clip review stats (null = no usable voice)
         const metrics = summarizeClipMetrics(this._recMetricSamples);
+        // Practice takes carry the known phrase → segment + align + per-word analysis.
+        const phrase = this._pendingPhrase;
+        this._pendingPhrase = null;
+        const phraseAnalysis = phrase
+          ? summarizePhraseTake(this._recMetricSamples, phrase, {
+              tickSec: this._recTickSec,
+              noiseFloor: this.analyzer.isCalibrated ? this.analyzer.noiseFloor : 0,
+            })
+          : null;
         this._recMetricSamples = [];
         const label = this._pendingClipLabel;
         this._pendingClipLabel = null;
@@ -2742,7 +2758,9 @@ class VoxBallGame {
             name: `vox-ball-${fileTs}`,
             mimeType: 'audio/wav',
             metrics,
-            label
+            label,
+            phrase,
+            phraseAnalysis
           });
           this.updateRecordingsUI();
           resolve();
@@ -2952,13 +2970,16 @@ class VoxBallGame {
 
   // ============================================
   // GUIDED PHRASE PRACTICE
-  // Minimal flow for reviewing takes: show one phrase at a time, record while the
-  // user reads it, save the take as a labeled clip, advance. Finishing opens the
-  // Clips drawer so the per-clip metrics are immediately reviewable side by side.
+  // Two-stage flow per phrase: 'prompt' (read & record the phrase) → 'results'
+  // (word-by-word + overall breakdown of the take, with Retry / Next). Takes are
+  // saved as labeled clips; finishing opens the Clips drawer so the per-clip
+  // metrics are reviewable side by side.
   // ============================================
   startPractice() {
     this.practice.active = true;
     this.practice.index = 0;
+    this.practice.stage = 'prompt';
+    this.practice.notice = null;
     this._renderPractice();
     document.getElementById('practicePanel')?.classList.add('show');
     document.getElementById('practiceBtn')?.setAttribute('aria-expanded', 'true');
@@ -2969,6 +2990,8 @@ class VoxBallGame {
       await this._practiceStopTake();
     }
     this.practice.active = false;
+    this.practice.stage = 'prompt';
+    this.practice.notice = null;
     document.getElementById('practicePanel')?.classList.remove('show');
     document.getElementById('practiceBtn')?.setAttribute('aria-expanded', 'false');
     if (openDrawer && this.recordings.length > 0) {
@@ -2982,8 +3005,11 @@ class VoxBallGame {
   }
 
   // Stop the current take and save it labeled with the phrase being practiced.
+  // _pendingPhrase carries the known phrase text into stopRecording, which runs the
+  // word-by-word analysis and stores it on the clip as .phraseAnalysis.
   async _practiceStopTake() {
     this._pendingClipLabel = `Practice: “${PRACTICE_PHRASES[this.practice.index]}”`;
+    this._pendingPhrase = PRACTICE_PHRASES[this.practice.index];
     await this.stopRecording();
     this._updateVoiceRecBtn();
   }
@@ -2992,20 +3018,46 @@ class VoxBallGame {
     if (!this.practice.active) return;
     if (this.isRecording) {
       await this._practiceStopTake();
-      if (this.practice.index + 1 >= PRACTICE_PHRASES.length) {
-        await this.endPractice(true); // done — open the drawer to review the takes
-        return;
+      const rec = this.recordings[this.recordings.length - 1];
+      const analysis = rec && rec.phrase === PRACTICE_PHRASES[this.practice.index] ? rec.phraseAnalysis : null;
+      if (analysis && analysis.overall) {
+        this.practice.stage = 'results';
+        this.practice.notice = null;
+        this._renderPracticeResults(analysis);
+      } else {
+        // Silent / unusable take: stay on the prompt so the user can retry immediately.
+        this.practice.notice = 'No speech detected — try again.';
       }
-      this.practice.index++;
     } else {
+      this.practice.notice = null;
       this.startRecording();
       this._updateVoiceRecBtn();
     }
     this._renderPractice();
   }
 
+  // From the results stage: re-record the same phrase.
+  _practiceRetry() {
+    if (!this.practice.active) return;
+    this.practice.stage = 'prompt';
+    this._renderPractice();
+  }
+
+  // From the results stage: advance to the next phrase, or finish after the last one.
+  async _practiceNext() {
+    if (!this.practice.active || this.practice.stage !== 'results') return;
+    if (this.practice.index + 1 >= PRACTICE_PHRASES.length) {
+      await this.endPractice(true); // done — open the drawer to review the takes
+      return;
+    }
+    this.practice.index++;
+    this.practice.stage = 'prompt';
+    this._renderPractice();
+  }
+
   _practiceSkip() {
-    if (!this.practice.active || this.isRecording) return;
+    if (!this.practice.active || this.isRecording || this.practice.stage === 'results') return;
+    this.practice.notice = null;
     if (this.practice.index + 1 >= PRACTICE_PHRASES.length) {
       this.endPractice(this.recordings.length > 0);
       return;
@@ -3016,18 +3068,22 @@ class VoxBallGame {
 
   _renderPractice() {
     const idx = this.practice.index;
+    const results = this.practice.stage === 'results';
     const progress = document.getElementById('practiceProgress');
     if (progress) progress.textContent = `Phrase ${idx + 1} of ${PRACTICE_PHRASES.length}`;
     const phrase = document.getElementById('practicePhrase');
     if (phrase) phrase.textContent = PRACTICE_PHRASES[idx];
     const hint = document.getElementById('practiceHint');
     if (hint) {
-      hint.textContent = this.isRecording
-        ? 'Recording — read the phrase, then press Done.'
-        : 'Press Record, read the phrase aloud, then press Done.';
+      hint.textContent = results
+        ? 'Word-by-word breakdown of your take.'
+        : this.isRecording
+          ? 'Recording — read the phrase, then press Done.'
+          : (this.practice.notice || 'Press Record, read the phrase aloud, then press Done.');
     }
     const recBtn = document.getElementById('practiceRecordBtn');
     if (recBtn) {
+      recBtn.hidden = results;
       recBtn.classList.toggle('recording', !!this.isRecording);
       recBtn.textContent = '';
       recBtn.append(
@@ -3036,7 +3092,77 @@ class VoxBallGame {
       );
     }
     const skipBtn = document.getElementById('practiceSkipBtn');
-    if (skipBtn) skipBtn.disabled = !!this.isRecording;
+    if (skipBtn) {
+      skipBtn.hidden = results;
+      skipBtn.disabled = !!this.isRecording;
+    }
+    const retryBtn = document.getElementById('practiceRetryBtn');
+    if (retryBtn) retryBtn.hidden = !results;
+    const nextBtn = document.getElementById('practiceNextBtn');
+    if (nextBtn) {
+      nextBtn.hidden = !results;
+      nextBtn.textContent = idx + 1 >= PRACTICE_PHRASES.length ? 'Finish' : 'Next phrase';
+    }
+    const resultsEl = document.getElementById('practiceResults');
+    if (resultsEl) resultsEl.hidden = !results;
+  }
+
+  // Render the word-by-word + overall breakdown of a practice take into #practiceResults.
+  _renderPracticeResults(analysis) {
+    const box = document.getElementById('practiceResults');
+    if (!box || !analysis) return;
+    box.textContent = '';
+
+    const wordsRow = Object.assign(document.createElement('div'), { className: 'practice-words' });
+    for (const w of (analysis.words || [])) {
+      const card = document.createElement('div');
+      card.className = `word-card${w.metrics ? '' : ' muted'}${w.matched ? '' : ' estimated'}`;
+      if (!w.matched) card.title = 'Estimated — this word boundary was inferred, not detected';
+      card.append(
+        Object.assign(document.createElement('div'), { className: 'word-card-text', textContent: w.word }),
+        Object.assign(document.createElement('div'), { className: 'word-card-metric', textContent: w.metrics ? `~${Math.round(w.metrics.pitchAvgHz)} Hz` : '—' }),
+        Object.assign(document.createElement('div'), { className: 'word-card-metric', textContent: `${w.durSec.toFixed(2)}s` })
+      );
+      const track = Object.assign(document.createElement('div'), { className: 'word-loud-bar' });
+      const fill = Object.assign(document.createElement('div'), { className: 'word-loud-fill' });
+      fill.style.width = `${Math.round(clamp01(w.relLoudness / 1.5) * 100)}%`;
+      track.appendChild(fill);
+      card.appendChild(track);
+      wordsRow.appendChild(card);
+    }
+    box.appendChild(wordsRow);
+
+    const overallRow = Object.assign(document.createElement('div'), { className: 'practice-overall' });
+    const chip = (text, extraClass = '') => Object.assign(
+      document.createElement('span'),
+      { className: `rec-chip${extraClass ? ' ' + extraClass : ''}`, textContent: text }
+    );
+    const o = analysis.overall;
+    if (o) {
+      overallRow.append(
+        chip(`avg ${Math.round(o.pitchAvgHz)} Hz`),
+        chip(`${Math.round(o.pitchMinHz)}–${Math.round(o.pitchMaxHz)} Hz`),
+        chip(`res ${Math.round(o.resonanceAvg * 100)}%`),
+        chip(`pros ${Math.round(o.prosodyAvg * 100)}%`),
+        chip(`range ${o.pitchRangeSemitones.toFixed(1)} st`),
+        chip(`pace ${o.paceWps.toFixed(1)} w/s`),
+        chip(`pauses ${o.pauseCount} (${o.pauseTotalSec.toFixed(1)}s)`),
+        chip(o.contour)
+      );
+    } else {
+      overallRow.appendChild(chip('no voice data', 'muted'));
+    }
+    box.appendChild(overallRow);
+
+    const seg = analysis.segmentation;
+    if (seg && seg.status !== 'exact') {
+      const note = Object.assign(document.createElement('div'), { className: 'practice-seg-note' });
+      const chunks = `${seg.runCount} speech chunk${seg.runCount === 1 ? '' : 's'}`;
+      note.textContent = seg.lowConfidence
+        ? `Heard ${chunks} for ${seg.wordCount} words — word boundaries are rough estimates. A quieter room or clearer pauses will sharpen them.`
+        : `Heard ${chunks} for ${seg.wordCount} words — word stats are estimated.`;
+      box.appendChild(note);
+    }
   }
 
   downloadRecording(index) {
@@ -3128,6 +3254,14 @@ class VoxBallGame {
         }
       } else {
         metricsRow.appendChild(chip('no voice data', 'muted'));
+      }
+      // Practice takes carry word-by-word analysis: summarize as a chip + tooltip.
+      const pw = rec.phraseAnalysis?.words;
+      if (pw && pw.length > 0) {
+        const okCount = pw.filter((w) => w.metrics).length;
+        const wordChip = chip(`words ${okCount}/${pw.length}`);
+        wordChip.title = pw.map((w) => `${w.word}: ${w.metrics ? `${Math.round(w.metrics.pitchAvgHz)} Hz` : '—'}`).join('\n');
+        metricsRow.appendChild(wordChip);
       }
       info.appendChild(metricsRow);
 
@@ -4311,6 +4445,8 @@ class VoxBallGame {
     });
     document.getElementById('practiceSkipBtn')?.addEventListener('click', () => this._practiceSkip());
     document.getElementById('practiceExitBtn')?.addEventListener('click', () => this.endPractice(false));
+    document.getElementById('practiceRetryBtn')?.addEventListener('click', () => this._practiceRetry());
+    document.getElementById('practiceNextBtn')?.addEventListener('click', () => this._practiceNext());
 
     const voicePlayBtn = document.getElementById('voicePlayBtn');
     if (voicePlayBtn) {

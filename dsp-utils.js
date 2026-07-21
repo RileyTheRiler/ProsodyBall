@@ -482,6 +482,368 @@ export function summarizeClipMetrics(samples, { minConf = 0.35, minVoiced = 5 } 
   };
 }
 
+// ============================================================
+// PHRASE TAKE ANALYSIS (word-by-word)
+// The practice flow records the user reading a KNOWN phrase. No ASR is available in the
+// sandboxed iframe, so word-level stats come from signal-driven segmentation instead:
+// the per-tick metric snapshots ({ hz, conf, voiced, res, prosody, energy, syl }) are
+// split into speech runs at energy dips, the runs are aligned to the phrase's words,
+// and each word slice is summarized with the same gates as whole-clip metrics.
+// All pure + unit-tested (phrase-analysis.test.mjs).
+// ============================================================
+
+// Segmentation tuning. Web-only (not in dsp-constants.json — that file is reserved for
+// constants shared with the kotlin/cpp ports). onMult is deliberately lower than the live
+// syllable detector's SYLLABLE_ON_MULT (0.6): we want whole word envelopes, not nuclei.
+export const PHRASE_SEG_DEFAULTS = {
+  onMult: 0.35,        // energy-range multiplier for the run-entry threshold
+  offMult: 0.12,       // hysteresis exit threshold (lower → runs survive mid-word dips)
+  minGapSec: 0.12,     // gaps shorter than this are intra-word stop closures (/t/, /k/) → merge
+  minRunSec: 0.09,     // shorter runs are dropped unless loud or voiced (clicks, breaths)
+  minEnergyRange: 0.003, // minimum p90−floor spread so near-silence can't produce hair-trigger thresholds
+  minConf: 0.35,       // pitch-confidence gate for treating a frame as voiced (matches summarizeClipMetrics)
+};
+
+// Split per-tick snapshots into speech runs. Thresholds are self-calibrating from the take's
+// own energy percentiles (p20 floor, p90 ceiling) because the analyzer may be uncalibrated
+// when recording starts; an explicit noiseFloor only ever raises the floor. A frame opens a
+// run when its energy clears the on-threshold (or it is confidently voiced — quiet but voiced
+// tails belong to the word), stays in the run while it clears the lower off-threshold
+// (hysteresis), and the run closes on the first frame that does neither. Runs separated by
+// sub-minGapSec gaps are merged; tiny quiet unvoiced runs are pruned. Frame times are
+// index × tickSec (sample-exact against the encoded WAV — setInterval wall-clock jitter
+// never enters the timeline).
+export function segmentSpeechRuns(samples, {
+  tickSec = 512 / 44100,
+  noiseFloor = 0,
+  onMult = PHRASE_SEG_DEFAULTS.onMult,
+  offMult = PHRASE_SEG_DEFAULTS.offMult,
+  minGapSec = PHRASE_SEG_DEFAULTS.minGapSec,
+  minRunSec = PHRASE_SEG_DEFAULTS.minRunSec,
+  minEnergyRange = PHRASE_SEG_DEFAULTS.minEnergyRange,
+  minConf = PHRASE_SEG_DEFAULTS.minConf,
+} = {}) {
+  if (!Array.isArray(samples) || samples.length === 0) return [];
+  const energy = samples.map((s) => (s && Number.isFinite(s.energy) ? s.energy : 0));
+  const sorted = [...energy].sort((a, b) => a - b);
+  const at = (q) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(sorted.length * q)))];
+  const floor = Math.max(noiseFloor, at(0.2));
+  const range = Math.max(at(0.9) - floor, minEnergyRange);
+  const on = floor + range * onMult;
+  const off = floor + range * offMult;
+  const isVoiced = (i) => {
+    const s = samples[i];
+    return !!(s && s.voiced && s.hz > 0 && s.conf >= minConf);
+  };
+
+  // Hysteresis state machine over frames → [startIdx, endIdx) spans.
+  const spans = [];
+  let start = -1;
+  for (let i = 0; i < samples.length; i++) {
+    const speechy = energy[i] >= (start < 0 ? on : off) || isVoiced(i);
+    if (start < 0) {
+      if (speechy) start = i;
+    } else if (!speechy) {
+      spans.push([start, i]);
+      start = -1;
+    }
+  }
+  if (start >= 0) spans.push([start, samples.length]);
+
+  // Merge spans separated by gaps too short to be inter-word pauses.
+  const merged = [];
+  for (const span of spans) {
+    const prev = merged[merged.length - 1];
+    if (prev && (span[0] - prev[1]) * tickSec < minGapSec) prev[1] = span[1];
+    else merged.push(span.slice());
+  }
+
+  const runs = [];
+  for (const [s0, s1] of merged) {
+    let peakEnergy = 0;
+    let voicedCount = 0;
+    for (let i = s0; i < s1; i++) {
+      if (energy[i] > peakEnergy) peakEnergy = energy[i];
+      if (isVoiced(i)) voicedCount++;
+    }
+    const durSec = (s1 - s0) * tickSec;
+    // Prune only when short AND quiet AND unvoiced — keeps real short words ("a", "I").
+    if (durSec < minRunSec && peakEnergy < on * 1.2 && voicedCount < 2) continue;
+    runs.push({
+      startIdx: s0,
+      endIdx: s1,
+      startSec: s0 * tickSec,
+      endSec: s1 * tickSec,
+      durSec,
+      peakEnergy,
+      voicedCount,
+    });
+  }
+  return runs;
+}
+
+// Rough syllable count: maximal vowel groups (y counts as a vowel), minus a silent
+// trailing 'e' (but not '-le', which is syllabic). Used as a word's duration weight when
+// splitting a blended run across words, and for phrase pace. Deliberately simple — the
+// tests pin its answers on the actual practice-phrase words so drift is visible.
+export function estimateSyllables(word) {
+  const w = String(word || '').toLowerCase().replace(/[^a-z]/g, '');
+  if (!w) return 1;
+  const groups = w.match(/[aeiouy]+/g);
+  let count = groups ? groups.length : 0;
+  if (count > 1 && w.endsWith('e') && !w.endsWith('le')) count--;
+  return Math.max(1, count);
+}
+
+// Align detected speech runs to the known words of the phrase.
+//   equal counts  → 1:1 ('exact', all matched)
+//   more runs     → repeatedly merge the adjacent pair with the smallest gap ('merged') —
+//                   the smallest gaps are intra-word closures the segmenter's merge pass missed
+//   fewer runs    → give each run a contiguous word group (cumulative syllable weight vs
+//                   cumulative run duration), then cut multi-word runs at interior boundaries,
+//                   preferring a syllable-onset frame near the proportional point, else the
+//                   local energy minimum ('split'; split words are matched:false = estimated)
+//   no runs       → unmatched slots ('fallback')
+// lowConfidence flags a raw run/word count mismatch over 50% so the UI can caveat harder.
+export function alignRunsToWords(runs, words, { samples = [], tickSec = 512 / 44100 } = {}) {
+  const runCount = Array.isArray(runs) ? runs.length : 0;
+  const wordCount = Array.isArray(words) ? words.length : 0;
+  const lowConfidence = wordCount > 0 && Math.abs(runCount - wordCount) / wordCount > 0.5;
+  if (wordCount === 0) return { slots: [], status: 'fallback', runCount, lowConfidence: false };
+  const slotFromSpan = (word, startIdx, endIdx, matched) => ({
+    word,
+    startIdx,
+    endIdx,
+    startSec: startIdx * tickSec,
+    endSec: endIdx * tickSec,
+    durSec: (endIdx - startIdx) * tickSec,
+    matched,
+  });
+  if (runCount === 0) {
+    return {
+      slots: words.map((word) => ({ word, startIdx: -1, endIdx: -1, startSec: 0, endSec: 0, durSec: 0, matched: false })),
+      status: 'fallback',
+      runCount,
+      lowConfidence,
+    };
+  }
+
+  let work = runs.map((r) => ({ startIdx: r.startIdx, endIdx: r.endIdx }));
+
+  if (work.length > wordCount) {
+    while (work.length > wordCount) {
+      let best = 0;
+      let bestGap = Infinity;
+      for (let i = 0; i + 1 < work.length; i++) {
+        const gap = work[i + 1].startIdx - work[i].endIdx;
+        if (gap < bestGap) { bestGap = gap; best = i; }
+      }
+      work.splice(best, 2, { startIdx: work[best].startIdx, endIdx: work[best + 1].endIdx });
+    }
+    return {
+      slots: work.map((r, k) => slotFromSpan(words[k], r.startIdx, r.endIdx, true)),
+      status: 'merged',
+      runCount,
+      lowConfidence,
+    };
+  }
+
+  if (work.length === wordCount) {
+    return {
+      slots: work.map((r, k) => slotFromSpan(words[k], r.startIdx, r.endIdx, true)),
+      status: 'exact',
+      runCount,
+      lowConfidence,
+    };
+  }
+
+  // Fewer runs than words: distribute words over runs, monotone and contiguous.
+  const weights = words.map(estimateSyllables);
+  const totalW = weights.reduce((a, b) => a + b, 0);
+  const durs = work.map((r) => r.endIdx - r.startIdx);
+  const totalDur = durs.reduce((a, b) => a + b, 0) || 1;
+  const runEndFrac = [];
+  {
+    let acc = 0;
+    for (const d of durs) { acc += d; runEndFrac.push(acc / totalDur); }
+  }
+  const groups = work.map(() => []);
+  {
+    let accW = 0;
+    for (let k = 0; k < wordCount; k++) {
+      const mid = (accW + weights[k] / 2) / totalW;
+      accW += weights[k];
+      let r = runEndFrac.findIndex((f) => mid < f);
+      if (r < 0) r = work.length - 1;
+      groups[r].push(k);
+    }
+  }
+  // Repair: every run needs ≥1 word. Shift words along the chain from the nearest
+  // multi-word group; word indices stay contiguous and ordered.
+  for (let r = 0; r < groups.length; r++) {
+    if (groups[r].length > 0) continue;
+    let donor = -1;
+    for (let d = 1; d < groups.length; d++) {
+      if (r - d >= 0 && groups[r - d].length > 1) { donor = r - d; break; }
+      if (r + d < groups.length && groups[r + d].length > 1) { donor = r + d; break; }
+    }
+    if (donor < 0) continue;
+    if (donor < r) {
+      for (let i = donor; i < r; i++) groups[i + 1].unshift(groups[i].pop());
+    } else {
+      for (let i = donor; i > r; i--) groups[i - 1].push(groups[i].shift());
+    }
+  }
+
+  const slots = new Array(wordCount);
+  for (let r = 0; r < work.length; r++) {
+    const g = groups[r];
+    const run = work[r];
+    if (g.length === 0) continue;
+    if (g.length === 1) {
+      slots[g[0]] = slotFromSpan(words[g[0]], run.startIdx, run.endIdx, true);
+      continue;
+    }
+    const span = run.endIdx - run.startIdx;
+    const wSum = g.reduce((a, k) => a + weights[k], 0);
+    const bounds = [run.startIdx];
+    let acc = 0;
+    let prevCut = run.startIdx;
+    for (let j = 0; j < g.length - 1; j++) {
+      acc += weights[g[j]];
+      const target = run.startIdx + Math.round((span * acc) / wSum);
+      const window = Math.max(1, Math.round((span / g.length) * 0.25));
+      const lo = Math.max(prevCut + 1, target - window);
+      const hi = Math.min(run.endIdx - 1, target + window);
+      let cut = Math.min(Math.max(target, prevCut + 1), run.endIdx - 1);
+      if (lo <= hi) {
+        let onsetAt = -1;
+        let minAt = lo;
+        let minE = Infinity;
+        for (let i = lo; i <= hi; i++) {
+          const s = samples[i];
+          const p = samples[i - 1];
+          const syl = s && Number.isFinite(s.syl) ? s.syl : 0;
+          const psyl = p && Number.isFinite(p.syl) ? p.syl : 0;
+          if (onsetAt < 0 && syl >= 0.9 && psyl < 0.9) onsetAt = i;
+          const e = s && Number.isFinite(s.energy) ? s.energy : 0;
+          if (e < minE) { minE = e; minAt = i; }
+        }
+        cut = onsetAt >= 0 ? onsetAt : minAt;
+      }
+      cut = Math.max(cut, prevCut); // degenerate tiny spans: allow empty slices, never regress
+      bounds.push(cut);
+      prevCut = cut;
+    }
+    bounds.push(run.endIdx);
+    for (let j = 0; j < g.length; j++) {
+      slots[g[j]] = slotFromSpan(words[g[j]], bounds[j], Math.max(bounds[j + 1], bounds[j]), false);
+    }
+  }
+  return { slots, status: 'split', runCount, lowConfidence };
+}
+
+// Per-word stats: each slot's snapshot slice goes through the same summarizeClipMetrics
+// gates as the whole clip, with minVoiced lowered (a 250 ms word is only ~20 ticks).
+// relLoudness is the word's mean energy relative to the phrase's voiced-frame average, so
+// the UI can show relative emphasis without absolute-level meaning.
+export function summarizeWordMetrics(samples, slots, { tickSec = 512 / 44100, minVoiced = 2, minConf = 0.35 } = {}) {
+  const all = Array.isArray(samples) ? samples : [];
+  const list = Array.isArray(slots) ? slots : [];
+  let eSum = 0;
+  let eN = 0;
+  for (const s of all) {
+    if (s && s.voiced && s.hz > 0 && Number.isFinite(s.energy)) { eSum += s.energy; eN++; }
+  }
+  const phraseEnergyAvg = eN > 0 ? eSum / eN : 0;
+  return list.map((slot) => {
+    const valid = !!slot && slot.startIdx >= 0 && slot.endIdx > slot.startIdx;
+    const slice = valid ? all.slice(slot.startIdx, slot.endIdx) : [];
+    let wSum = 0;
+    let wN = 0;
+    for (const s of slice) {
+      if (s && Number.isFinite(s.energy)) { wSum += s.energy; wN++; }
+    }
+    const energyAvg = wN > 0 ? wSum / wN : 0;
+    return {
+      word: slot ? slot.word : '',
+      matched: !!(slot && slot.matched),
+      startSec: valid ? slot.startSec : 0,
+      endSec: valid ? slot.endSec : 0,
+      durSec: valid ? slot.durSec : 0,
+      metrics: valid ? summarizeClipMetrics(slice, { minConf, minVoiced }) : null,
+      energyAvg,
+      relLoudness: phraseEnergyAvg > 0 ? energyAvg / phraseEnergyAvg : 0,
+    };
+  });
+}
+
+// End-to-end phrase-take analysis: tokenize the known phrase, segment → align → per-word
+// summarize, and extend the whole-clip summary with phrase-level stats (duration, speech
+// vs pause time, pace, pitch range, coarse contour). Returns overall: null (and
+// segmentation 'fallback') for an all-silent take, mirroring summarizeClipMetrics.
+export function summarizePhraseTake(samples, phrase, { tickSec = 512 / 44100, noiseFloor = 0, seg = {} } = {}) {
+  const all = Array.isArray(samples) ? samples : [];
+  // Keep letters/digits/apostrophes/hyphens; drops bare punctuation tokens like "—".
+  const words = String(phrase || '')
+    .split(/\s+/)
+    .map((w) => w.replace(/[^\p{L}\p{N}'’-]/gu, ''))
+    .filter(Boolean);
+  const runs = segmentSpeechRuns(all, { tickSec, noiseFloor, ...seg });
+  const align = alignRunsToWords(runs, words, { samples: all, tickSec });
+  const wordSummaries = summarizeWordMetrics(all, align.slots, { tickSec });
+  let overall = summarizeClipMetrics(all);
+  if (overall) {
+    const speechSec = runs.reduce((a, r) => a + r.durSec, 0);
+    let pauseCount = 0;
+    let pauseTotalSec = 0;
+    for (let i = 1; i < runs.length; i++) {
+      const gap = runs[i].startSec - runs[i - 1].endSec;
+      if (gap > 0) { pauseCount++; pauseTotalSec += gap; }
+    }
+    const sylTotal = words.reduce((a, w) => a + estimateSyllables(w), 0);
+    // Coarse contour: median voiced pitch of the last third vs the first third, ±1 st band.
+    const voicedHz = [];
+    for (const s of all) {
+      if (s && s.voiced && s.hz > 0 && s.conf >= PHRASE_SEG_DEFAULTS.minConf) voicedHz.push(s.hz);
+    }
+    let contour = 'flat';
+    if (voicedHz.length >= 6) {
+      const median = (arr) => {
+        const a2 = [...arr].sort((x, y) => x - y);
+        const m = a2.length >> 1;
+        return a2.length % 2 ? a2[m] : (a2[m - 1] + a2[m]) / 2;
+      };
+      const third = Math.floor(voicedHz.length / 3);
+      const st = 12 * Math.log2(median(voicedHz.slice(-third)) / median(voicedHz.slice(0, third)));
+      if (st > 1) contour = 'rising';
+      else if (st < -1) contour = 'falling';
+    }
+    overall = {
+      ...overall,
+      durationSec: all.length * tickSec,
+      speechSec,
+      pauseCount,
+      pauseTotalSec,
+      paceWps: speechSec > 0 ? words.length / speechSec : 0,
+      paceSylPerSec: speechSec > 0 ? sylTotal / speechSec : 0,
+      pitchRangeSemitones: overall.pitchMinHz > 0 ? 12 * Math.log2(overall.pitchMaxHz / overall.pitchMinHz) : 0,
+      contour,
+    };
+  }
+  return {
+    phrase: String(phrase || ''),
+    words: wordSummaries,
+    overall,
+    segmentation: {
+      status: align.status,
+      runCount: align.runCount,
+      wordCount: words.length,
+      lowConfidence: align.lowConfidence,
+    },
+  };
+}
+
 // Fit a personal min/max range from a sample set for adaptive (per-user) normalization.
 // Uses a robust loPct–hiPct percentile band (default p05–p95, so octave-jump / outlier frames
 // don't set the ends), enforces a minimum spread so a monotone speaker can't collapse the

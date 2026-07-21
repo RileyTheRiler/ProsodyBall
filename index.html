@@ -3403,7 +3403,7 @@
       border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 12px;
       padding: 18px 22px;
-      max-width: 420px;
+      max-width: 480px;
       width: 92vw;
       z-index: var(--z-dropdown);
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
@@ -3445,6 +3445,76 @@
 
     .practice-record.recording .rec-dot {
       animation: rec-pulse 1s infinite;
+    }
+
+    /* Word-by-word take results shown inside the practice panel */
+    .practice-results {
+      margin-bottom: 14px;
+    }
+
+    .practice-words {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: center;
+    }
+
+    .word-card {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 8px;
+      padding: 6px 8px;
+      min-width: 64px;
+      text-align: center;
+    }
+
+    .word-card.estimated {
+      border-style: dashed;
+    }
+
+    .word-card.muted {
+      opacity: 0.5;
+    }
+
+    .word-card-text {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .word-card-metric {
+      font-size: 0.65rem;
+      font-family: 'Space Mono', monospace;
+      color: var(--text-muted);
+    }
+
+    .word-loud-bar {
+      height: 3px;
+      margin-top: 4px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      overflow: hidden;
+    }
+
+    .word-loud-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: var(--accent-syllable, #c084fc);
+    }
+
+    .practice-overall {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      justify-content: center;
+      margin-top: 10px;
+    }
+
+    .practice-seg-note {
+      font-size: 0.7rem;
+      font-style: italic;
+      color: var(--text-muted);
+      margin-top: 8px;
     }
 
     .recordings-drawer {
@@ -4565,9 +4635,12 @@
         <div class="practice-progress" id="practiceProgress">Phrase 1 of 5</div>
         <div class="practice-phrase" id="practicePhrase"></div>
         <div class="practice-hint" id="practiceHint">Press Record, read the phrase aloud, then press Done.</div>
+        <div class="practice-results" id="practiceResults" hidden></div>
         <div class="practice-actions">
           <button class="btn practice-record" id="practiceRecordBtn"><span class="rec-dot"></span>&nbsp;Record</button>
           <button class="btn" id="practiceSkipBtn">Skip</button>
+          <button class="btn" id="practiceRetryBtn" hidden>Retry</button>
+          <button class="btn practice-record" id="practiceNextBtn" hidden>Next phrase</button>
           <button class="btn" id="practiceExitBtn">Exit</button>
         </div>
       </div>
