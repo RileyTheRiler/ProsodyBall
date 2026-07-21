@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics } from './dsp-utils.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
@@ -14,6 +14,16 @@ function escapeHtml(text) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
+
+// Guided phrase practice: short, voiced-heavy / intonation-rich phrases. Each take is
+// recorded and saved as a labeled clip so the per-clip review metrics can be compared.
+const PRACTICE_PHRASES = [
+  'We were away a year ago.',
+  'Where are you going on Wednesday?',
+  'Hello! It is so nice to see you again.',
+  'I really loved that little yellow umbrella.',
+  'Oh no — you are never going to believe this!',
+];
 
 // ============================================================
 // DSP TUNING CONSTANTS
@@ -2187,10 +2197,15 @@ class VoxBallGame {
     this.isRecording = false;
     this._recInterval = null;
     this._recBuffers = [];
+    this._recMetricSamples = []; // live metric snapshots per recorder tick, summarized at stop
     this._recSampleRate = 48000;
-    this.recordings = []; // { blob, dataUrl, duration, timestamp, name }
+    this.recordings = []; // { blob, dataUrl, duration, timestamp, name, mimeType, metrics, label }
     this.recordingStartTime = 0;
     this.currentPlayback = null;
+    this._pendingClipLabel = null; // label attached to the next saved clip (set by practice flow)
+
+    // Guided phrase practice flow state
+    this.practice = { active: false, index: 0 };
 
     // Procedural infinite terrain — layered sine waves, no finite array
     this.terrainLayers = [];
@@ -2633,6 +2648,7 @@ class VoxBallGame {
     try {
       this._recSampleRate = a.audioCtx.sampleRate;
       this._recBuffers = [];
+      this._recMetricSamples = [];
       const fftSize = a.analyserRec.fftSize; // 512
 
       // Poll interval = window duration in ms (e.g. 512/44100*1000 ≈ 11.6ms)
@@ -2657,6 +2673,15 @@ class VoxBallGame {
           // Push silence to keep timing intact (avoids clicks/jumps)
           this._recBuffers.push(new Float32Array(data.length));
         }
+
+        // Snapshot live analysis so the clip can carry review metrics.
+        this._recMetricSamples.push({
+          hz: a.smoothPitchHz,
+          conf: a.pitchConfidence,
+          voiced: isSpeech && a.lastPitch > 0,
+          res: a.smoothResonance,
+          prosody: this.prosodyScore,
+        });
       }, intervalMs);
 
       this.recordingStartTime = performance.now();
@@ -2677,7 +2702,7 @@ class VoxBallGame {
 
     return new Promise((resolve) => {
       try {
-        if (this._recBuffers.length === 0) { resolve(); return; }
+        if (this._recBuffers.length === 0) { this._recMetricSamples = []; this._pendingClipLabel = null; resolve(); return; }
 
         // Merge all Float32 buffers
         // ⚡ Bolt: Replace reduce with traditional loop for performance
@@ -2692,6 +2717,12 @@ class VoxBallGame {
           offset += buf.length;
         }
         this._recBuffers = [];
+
+        // Summarize the metric snapshots into per-clip review stats (null = no usable voice)
+        const metrics = summarizeClipMetrics(this._recMetricSamples);
+        this._recMetricSamples = [];
+        const label = this._pendingClipLabel;
+        this._pendingClipLabel = null;
 
         // Encode as WAV (PCM 16-bit mono)
         const wavBlob = this._encodeWAV(merged, this._recSampleRate);
@@ -2709,7 +2740,9 @@ class VoxBallGame {
             duration,
             timestamp: ts,
             name: `vox-ball-${fileTs}`,
-            mimeType: 'audio/wav'
+            mimeType: 'audio/wav',
+            metrics,
+            label
           });
           this.updateRecordingsUI();
           resolve();
@@ -2910,9 +2943,100 @@ class VoxBallGame {
       const playingLast = !!(this.currentPlayback && this.currentPlayback.index === lastIdx);
       playBtn.disabled = lastIdx < 0 || this.isRecording;
       playBtn.classList.toggle('playing', playingLast);
+      // Keep the practice panel's Record/Done button in sync however recording was toggled.
+      if (this.practice?.active) this._renderPractice();
       const plabel = playBtn.querySelector('.voice-play-label');
       if (plabel) plabel.textContent = playingLast ? ' Stop' : ' Play';
     }
+  }
+
+  // ============================================
+  // GUIDED PHRASE PRACTICE
+  // Minimal flow for reviewing takes: show one phrase at a time, record while the
+  // user reads it, save the take as a labeled clip, advance. Finishing opens the
+  // Clips drawer so the per-clip metrics are immediately reviewable side by side.
+  // ============================================
+  startPractice() {
+    this.practice.active = true;
+    this.practice.index = 0;
+    this._renderPractice();
+    document.getElementById('practicePanel')?.classList.add('show');
+    document.getElementById('practiceBtn')?.setAttribute('aria-expanded', 'true');
+  }
+
+  async endPractice(openDrawer) {
+    if (this.isRecording) {
+      await this._practiceStopTake();
+    }
+    this.practice.active = false;
+    document.getElementById('practicePanel')?.classList.remove('show');
+    document.getElementById('practiceBtn')?.setAttribute('aria-expanded', 'false');
+    if (openDrawer && this.recordings.length > 0) {
+      // Deferred: the click that ends practice is still bubbling, and the global
+      // outside-click handler would immediately close the drawer we just opened.
+      setTimeout(() => {
+        document.getElementById('recordingsDrawer')?.classList.add('show');
+        document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'true');
+      }, 0);
+    }
+  }
+
+  // Stop the current take and save it labeled with the phrase being practiced.
+  async _practiceStopTake() {
+    this._pendingClipLabel = `Practice: “${PRACTICE_PHRASES[this.practice.index]}”`;
+    await this.stopRecording();
+    this._updateVoiceRecBtn();
+  }
+
+  async _practiceRecordToggle() {
+    if (!this.practice.active) return;
+    if (this.isRecording) {
+      await this._practiceStopTake();
+      if (this.practice.index + 1 >= PRACTICE_PHRASES.length) {
+        await this.endPractice(true); // done — open the drawer to review the takes
+        return;
+      }
+      this.practice.index++;
+    } else {
+      this.startRecording();
+      this._updateVoiceRecBtn();
+    }
+    this._renderPractice();
+  }
+
+  _practiceSkip() {
+    if (!this.practice.active || this.isRecording) return;
+    if (this.practice.index + 1 >= PRACTICE_PHRASES.length) {
+      this.endPractice(this.recordings.length > 0);
+      return;
+    }
+    this.practice.index++;
+    this._renderPractice();
+  }
+
+  _renderPractice() {
+    const idx = this.practice.index;
+    const progress = document.getElementById('practiceProgress');
+    if (progress) progress.textContent = `Phrase ${idx + 1} of ${PRACTICE_PHRASES.length}`;
+    const phrase = document.getElementById('practicePhrase');
+    if (phrase) phrase.textContent = PRACTICE_PHRASES[idx];
+    const hint = document.getElementById('practiceHint');
+    if (hint) {
+      hint.textContent = this.isRecording
+        ? 'Recording — read the phrase, then press Done.'
+        : 'Press Record, read the phrase aloud, then press Done.';
+    }
+    const recBtn = document.getElementById('practiceRecordBtn');
+    if (recBtn) {
+      recBtn.classList.toggle('recording', !!this.isRecording);
+      recBtn.textContent = '';
+      recBtn.append(
+        Object.assign(document.createElement('span'), { className: 'rec-dot' }),
+        document.createTextNode(this.isRecording ? ' Done — save take' : ' Record')
+      );
+    }
+    const skipBtn = document.getElementById('practiceSkipBtn');
+    if (skipBtn) skipBtn.disabled = !!this.isRecording;
   }
 
   downloadRecording(index) {
@@ -2978,9 +3102,34 @@ class VoxBallGame {
 
       const info = Object.assign(document.createElement('div'), { className: 'rec-item-info' });
       info.append(
-        Object.assign(document.createElement('div'), { className: 'rec-item-name', textContent: `Recording ${i + 1}` }),
+        Object.assign(document.createElement('div'), { className: 'rec-item-name', textContent: rec.label || `Recording ${i + 1}`, title: rec.label || '' }),
         Object.assign(document.createElement('div'), { className: 'rec-item-meta', textContent: `${rec.timestamp} · ${this.formatDuration(rec.duration)}` })
       );
+
+      // Per-clip voice review chips (metrics captured live while recording)
+      const metricsRow = Object.assign(document.createElement('div'), { className: 'rec-item-metrics' });
+      const m = rec.metrics;
+      const chip = (text, extraClass = '') => Object.assign(
+        document.createElement('span'),
+        { className: `rec-chip${extraClass ? ' ' + extraClass : ''}`, textContent: text }
+      );
+      if (m) {
+        metricsRow.append(
+          chip(`avg ${Math.round(m.pitchAvgHz)} Hz`),
+          chip(`${Math.round(m.pitchMinHz)}–${Math.round(m.pitchMaxHz)} Hz`),
+          chip(`res ${Math.round(m.resonanceAvg * 100)}%`),
+          chip(`pros ${Math.round(m.prosodyAvg * 100)}%`)
+        );
+        metricsRow.title = `Voiced ${Math.round(m.voicedRatio * 100)}% of ${this.formatDuration(rec.duration)}`;
+        const prev = this.recordings[i - 1];
+        if (prev && prev.metrics) {
+          const delta = Math.round(m.pitchAvgHz - prev.metrics.pitchAvgHz);
+          metricsRow.appendChild(chip(`Δ ${delta >= 0 ? '+' : '−'}${Math.abs(delta)} Hz vs prev`, 'delta'));
+        }
+      } else {
+        metricsRow.appendChild(chip('no voice data', 'muted'));
+      }
+      info.appendChild(metricsRow);
 
       const progress = Object.assign(document.createElement('div'), { className: 'rec-progress' });
       progress.appendChild(Object.assign(document.createElement('div'), { className: 'rec-progress-fill', id: `rec-progress-${i}` }));
@@ -4144,6 +4293,25 @@ class VoxBallGame {
         }
       });
     }
+    // ---- Guided phrase practice: read short phrases, save labeled takes for review ----
+    const practiceBtn = document.getElementById('practiceBtn');
+    if (practiceBtn) {
+      practiceBtn.addEventListener('click', () => {
+        if (this.practice.active) { this.endPractice(false); return; }
+        if (!this.isRunning) { showError('🎙 Press Start to begin a session, then Practice.'); return; }
+        this.startPractice();
+      });
+    }
+    document.getElementById('practiceRecordBtn')?.addEventListener('click', () => {
+      if (!this.isRecording && !this.isRunning) {
+        showError('🎙 Session ended — press Start to continue practicing.');
+        return;
+      }
+      this._practiceRecordToggle();
+    });
+    document.getElementById('practiceSkipBtn')?.addEventListener('click', () => this._practiceSkip());
+    document.getElementById('practiceExitBtn')?.addEventListener('click', () => this.endPractice(false));
+
     const voicePlayBtn = document.getElementById('voicePlayBtn');
     if (voicePlayBtn) {
       voicePlayBtn.addEventListener('click', () => {
