@@ -1,6 +1,5 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake } from './dsp-utils.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
-import { analyzePhraseTake } from './phrase-analysis.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { BulbController } from './bulb-controller.js';
@@ -17,103 +16,13 @@ function escapeHtml(text) {
 }
 
 // Guided phrase practice: short, voiced-heavy / intonation-rich phrases. Each take is
-// recorded, analyzed (overall + word-by-word via phrase-analysis.js), and saved as a
-// labeled clip so takes can be compared in the Clips drawer.
-// Each entry declares its word/syllable structure (drives word alignment), what the
-// phrase trains (`focus` drives scoring), the expected phrase-final pitch direction
-// (`contourHint`), and a short coaching tip. `weak: true` marks function words that
-// should stay short/unstressed — they're graded leniently.
+// recorded and saved as a labeled clip so the per-clip review metrics can be compared.
 const PRACTICE_PHRASES = [
-  {
-    text: 'Heat from fire, fire from heat.',
-    focus: 'resonance',
-    contourHint: 'fall',
-    tip: 'Keep the sound bright and forward on every word.',
-    words: [
-      { w: 'Heat', syllables: 1 },
-      { w: 'from', syllables: 1, weak: true },
-      { w: 'fire', syllables: 2 },
-      { w: 'fire', syllables: 2 },
-      { w: 'from', syllables: 1, weak: true },
-      { w: 'heat', syllables: 1 },
-    ],
-  },
-  {
-    text: 'We were away a year ago.',
-    focus: 'elongation',
-    contourHint: 'fall',
-    tip: 'Let every vowel stretch — smooth and connected.',
-    words: [
-      { w: 'We', syllables: 1 },
-      { w: 'were', syllables: 1, weak: true },
-      { w: 'away', syllables: 2 },
-      { w: 'a', syllables: 1, weak: true },
-      { w: 'year', syllables: 1 },
-      { w: 'ago', syllables: 2 },
-    ],
-  },
-  {
-    text: 'Where are you going on Wednesday?',
-    focus: 'intonation',
-    contourHint: 'rise',
-    tip: 'Let the pitch lift toward the end of the question.',
-    words: [
-      { w: 'Where', syllables: 1 },
-      { w: 'are', syllables: 1, weak: true },
-      { w: 'you', syllables: 1 },
-      { w: 'going', syllables: 2 },
-      { w: 'on', syllables: 1, weak: true },
-      { w: 'Wednesday', syllables: 2 },
-    ],
-  },
-  {
-    text: 'Hello! It is so nice to see you again.',
-    focus: 'intonation',
-    contourHint: 'fall',
-    tip: 'Big friendly swoop on “Hello”, then land softly.',
-    words: [
-      { w: 'Hello', syllables: 2 },
-      { w: 'It', syllables: 1, weak: true },
-      { w: 'is', syllables: 1, weak: true },
-      { w: 'so', syllables: 1 },
-      { w: 'nice', syllables: 1 },
-      { w: 'to', syllables: 1, weak: true },
-      { w: 'see', syllables: 1 },
-      { w: 'you', syllables: 1, weak: true },
-      { w: 'again', syllables: 2 },
-    ],
-  },
-  {
-    text: 'I really loved that little yellow umbrella.',
-    focus: 'articulation',
-    contourHint: 'fall',
-    tip: 'Crisp consonants — keep the L’s and T’s clean and light.',
-    words: [
-      { w: 'I', syllables: 1, weak: true },
-      { w: 'really', syllables: 2 },
-      { w: 'loved', syllables: 1 },
-      { w: 'that', syllables: 1, weak: true },
-      { w: 'little', syllables: 2 },
-      { w: 'yellow', syllables: 2 },
-      { w: 'umbrella', syllables: 3 },
-    ],
-  },
-  {
-    text: 'Oh no — you are never going to believe this!',
-    focus: 'intonation',
-    tip: 'Go dramatic — swing the pitch as wide as feels fun.',
-    words: [
-      { w: 'Oh', syllables: 1 },
-      { w: 'no', syllables: 1 },
-      { w: 'you', syllables: 1, weak: true },
-      { w: 'are', syllables: 1, weak: true },
-      { w: 'never', syllables: 2 },
-      { w: 'going', syllables: 2 },
-      { w: 'to', syllables: 1, weak: true },
-      { w: 'believe', syllables: 2 },
-      { w: 'this', syllables: 1 },
-    ],
-  },
+  'We were away a year ago.',
+  'Where are you going on Wednesday?',
+  'Hello! It is so nice to see you again.',
+  'I really loved that little yellow umbrella.',
+  'Oh no — you are never going to believe this!',
 ];
 
 // ============================================================
@@ -2294,11 +2203,11 @@ class VoxBallGame {
     this.recordingStartTime = 0;
     this.currentPlayback = null;
     this._pendingClipLabel = null; // label attached to the next saved clip (set by practice flow)
-    this._pendingClipPhrase = null; // phrase definition for the next saved clip → word-by-word analysis
+    this._pendingPhrase = null;    // known phrase text for the next saved clip → word-by-word analysis
+    this._recTickSec = 512 / 48000; // exact per-snapshot duration; recomputed at startRecording
 
-    // Guided phrase practice flow state. phase: 'prompt' (read + record) or
-    // 'results' (reviewing the analysis card for takeIndex).
-    this.practice = { active: false, index: 0, phase: 'prompt', takeIndex: -1 };
+    // Guided phrase practice flow state; stage: 'prompt' (read & record) | 'results' (review take)
+    this.practice = { active: false, index: 0, stage: 'prompt' };
 
     // Procedural infinite terrain — layered sine waves, no finite array
     this.terrainLayers = [];
@@ -2746,6 +2655,9 @@ class VoxBallGame {
 
       // Poll interval = window duration in ms (e.g. 512/44100*1000 ≈ 11.6ms)
       const intervalMs = Math.round(1000 * fftSize / this._recSampleRate);
+      // Snapshot timeline uses index × this duration — sample-exact vs the encoded WAV,
+      // immune to setInterval wall-clock jitter.
+      this._recTickSec = fftSize / this._recSampleRate;
 
       this._recInterval = setInterval(() => {
         if (!this.isRecording || !a.analyserRec) return;
@@ -2768,16 +2680,14 @@ class VoxBallGame {
         }
 
         // Snapshot live analysis so the clip can carry review metrics.
-        // t/energy/artic feed the phrase word-segmentation (phrase-analysis.js).
         this._recMetricSamples.push({
-          t: performance.now() - this.recordingStartTime,
           hz: a.smoothPitchHz,
           conf: a.pitchConfidence,
           voiced: isSpeech && a.lastPitch > 0,
           res: a.smoothResonance,
           prosody: this.prosodyScore,
-          energy: localRms,
-          artic: a.metrics.articulation,
+          energy: localRms,       // raw window RMS (pre-gate) → phrase segmentation contour
+          syl: a.syllableImpulse, // decaying onset impulse → word-split boundary hints
         });
       }, intervalMs);
 
@@ -2799,7 +2709,7 @@ class VoxBallGame {
 
     return new Promise((resolve) => {
       try {
-        if (this._recBuffers.length === 0) { this._recMetricSamples = []; this._pendingClipLabel = null; this._pendingClipPhrase = null; resolve(); return; }
+        if (this._recBuffers.length === 0) { this._recMetricSamples = []; this._pendingClipLabel = null; this._pendingPhrase = null; resolve(); return; }
 
         // Merge all Float32 buffers
         // ⚡ Bolt: Replace reduce with traditional loop for performance
@@ -2817,20 +2727,18 @@ class VoxBallGame {
 
         // Summarize the metric snapshots into per-clip review stats (null = no usable voice)
         const metrics = summarizeClipMetrics(this._recMetricSamples);
-        // Practice takes carry a phrase definition → run the overall + word-by-word
-        // analysis (null when the take had no usable voice or analysis throws).
-        let analysis = null;
-        if (this._pendingClipPhrase) {
-          try {
-            analysis = analyzePhraseTake(this._recMetricSamples, this._pendingClipPhrase);
-          } catch (err) {
-            console.error('Phrase analysis failed:', err);
-          }
-        }
+        // Practice takes carry the known phrase → segment + align + per-word analysis.
+        const phrase = this._pendingPhrase;
+        this._pendingPhrase = null;
+        const phraseAnalysis = phrase
+          ? summarizePhraseTake(this._recMetricSamples, phrase, {
+              tickSec: this._recTickSec,
+              noiseFloor: this.analyzer.isCalibrated ? this.analyzer.noiseFloor : 0,
+            })
+          : null;
         this._recMetricSamples = [];
         const label = this._pendingClipLabel;
         this._pendingClipLabel = null;
-        this._pendingClipPhrase = null;
 
         // Encode as WAV (PCM 16-bit mono)
         const wavBlob = this._encodeWAV(merged, this._recSampleRate);
@@ -2851,7 +2759,8 @@ class VoxBallGame {
             mimeType: 'audio/wav',
             metrics,
             label,
-            analysis
+            phrase,
+            phraseAnalysis
           });
           this.updateRecordingsUI();
           resolve();
@@ -3061,16 +2970,16 @@ class VoxBallGame {
 
   // ============================================
   // GUIDED PHRASE PRACTICE
-  // Show one phrase at a time, record while the user reads it, then show an
-  // analysis card (overall score + word-by-word breakdown + pitch contour)
-  // before advancing. Takes are saved as labeled clips so the Clips drawer
-  // shows them side by side afterwards.
+  // Two-stage flow per phrase: 'prompt' (read & record the phrase) → 'results'
+  // (word-by-word + overall breakdown of the take, with Retry / Next). Takes are
+  // saved as labeled clips; finishing opens the Clips drawer so the per-clip
+  // metrics are reviewable side by side.
   // ============================================
   startPractice() {
     this.practice.active = true;
     this.practice.index = 0;
-    this.practice.phase = 'prompt';
-    this.practice.takeIndex = -1;
+    this.practice.stage = 'prompt';
+    this.practice.notice = null;
     this._renderPractice();
     document.getElementById('practicePanel')?.classList.add('show');
     document.getElementById('practiceBtn')?.setAttribute('aria-expanded', 'true');
@@ -3081,8 +2990,8 @@ class VoxBallGame {
       await this._practiceStopTake();
     }
     this.practice.active = false;
-    this.practice.phase = 'prompt';
-    this.practice.takeIndex = -1;
+    this.practice.stage = 'prompt';
+    this.practice.notice = null;
     document.getElementById('practicePanel')?.classList.remove('show');
     document.getElementById('practiceBtn')?.setAttribute('aria-expanded', 'false');
     if (openDrawer && this.recordings.length > 0) {
@@ -3095,223 +3004,165 @@ class VoxBallGame {
     }
   }
 
-  // Stop the current take and save it labeled + analyzed against the phrase
-  // being practiced. Returns true when a clip was actually saved.
+  // Stop the current take and save it labeled with the phrase being practiced.
+  // _pendingPhrase carries the known phrase text into stopRecording, which runs the
+  // word-by-word analysis and stores it on the clip as .phraseAnalysis.
   async _practiceStopTake() {
-    const phrase = PRACTICE_PHRASES[this.practice.index];
-    this._pendingClipLabel = `Practice: “${phrase.text}”`;
-    this._pendingClipPhrase = phrase;
-    const before = this.recordings.length;
+    this._pendingClipLabel = `Practice: “${PRACTICE_PHRASES[this.practice.index]}”`;
+    this._pendingPhrase = PRACTICE_PHRASES[this.practice.index];
     await this.stopRecording();
     this._updateVoiceRecBtn();
-    return this.recordings.length > before;
   }
 
   async _practiceRecordToggle() {
     if (!this.practice.active) return;
     if (this.isRecording) {
-      const saved = await this._practiceStopTake();
-      if (saved) {
-        this.practice.phase = 'results';
-        this.practice.takeIndex = this.recordings.length - 1;
+      await this._practiceStopTake();
+      const rec = this.recordings[this.recordings.length - 1];
+      const analysis = rec && rec.phrase === PRACTICE_PHRASES[this.practice.index] ? rec.phraseAnalysis : null;
+      if (analysis && analysis.overall) {
+        this.practice.stage = 'results';
+        this.practice.notice = null;
+        this._renderPracticeResults(analysis);
+      } else {
+        // Silent / unusable take: stay on the prompt so the user can retry immediately.
+        this.practice.notice = 'No speech detected — try again.';
       }
     } else {
+      this.practice.notice = null;
       this.startRecording();
       this._updateVoiceRecBtn();
     }
     this._renderPractice();
   }
 
-  // Advance past the current phrase (from the results card or via Skip).
-  _practiceAdvance() {
+  // From the results stage: re-record the same phrase.
+  _practiceRetry() {
+    if (!this.practice.active) return;
+    this.practice.stage = 'prompt';
+    this._renderPractice();
+  }
+
+  // From the results stage: advance to the next phrase, or finish after the last one.
+  async _practiceNext() {
+    if (!this.practice.active || this.practice.stage !== 'results') return;
+    if (this.practice.index + 1 >= PRACTICE_PHRASES.length) {
+      await this.endPractice(true); // done — open the drawer to review the takes
+      return;
+    }
+    this.practice.index++;
+    this.practice.stage = 'prompt';
+    this._renderPractice();
+  }
+
+  _practiceSkip() {
+    if (!this.practice.active || this.isRecording || this.practice.stage === 'results') return;
+    this.practice.notice = null;
     if (this.practice.index + 1 >= PRACTICE_PHRASES.length) {
       this.endPractice(this.recordings.length > 0);
       return;
     }
     this.practice.index++;
-    this.practice.phase = 'prompt';
-    this.practice.takeIndex = -1;
     this._renderPractice();
-  }
-
-  _practiceRetry() {
-    if (!this.practice.active || this.isRecording) return;
-    this.practice.phase = 'prompt';
-    this.practice.takeIndex = -1;
-    this._renderPractice();
-  }
-
-  _practiceSkip() {
-    if (!this.practice.active || this.isRecording) return;
-    this._practiceAdvance();
   }
 
   _renderPractice() {
     const idx = this.practice.index;
-    const def = PRACTICE_PHRASES[idx];
-    const results = this.practice.phase === 'results';
+    const results = this.practice.stage === 'results';
     const progress = document.getElementById('practiceProgress');
     if (progress) progress.textContent = `Phrase ${idx + 1} of ${PRACTICE_PHRASES.length}`;
     const phrase = document.getElementById('practicePhrase');
-    if (phrase) phrase.textContent = def.text;
+    if (phrase) phrase.textContent = PRACTICE_PHRASES[idx];
     const hint = document.getElementById('practiceHint');
     if (hint) {
-      hint.textContent = this.isRecording
-        ? 'Recording — read the phrase, then press Done.'
-        : (def.tip || 'Press Record, read the phrase aloud, then press Done.');
-      hint.style.display = results ? 'none' : '';
+      hint.textContent = results
+        ? 'Word-by-word breakdown of your take.'
+        : this.isRecording
+          ? 'Recording — read the phrase, then press Done.'
+          : (this.practice.notice || 'Press Record, read the phrase aloud, then press Done.');
     }
-    const actions = document.getElementById('practicePromptActions');
-    if (actions) actions.style.display = results ? 'none' : '';
     const recBtn = document.getElementById('practiceRecordBtn');
     if (recBtn) {
+      recBtn.hidden = results;
       recBtn.classList.toggle('recording', !!this.isRecording);
       recBtn.textContent = '';
       recBtn.append(
         Object.assign(document.createElement('span'), { className: 'rec-dot' }),
-        document.createTextNode(this.isRecording ? ' Done — see analysis' : ' Record')
+        document.createTextNode(this.isRecording ? ' Done — save take' : ' Record')
       );
     }
     const skipBtn = document.getElementById('practiceSkipBtn');
-    if (skipBtn) skipBtn.disabled = !!this.isRecording;
-
+    if (skipBtn) {
+      skipBtn.hidden = results;
+      skipBtn.disabled = !!this.isRecording;
+    }
+    const retryBtn = document.getElementById('practiceRetryBtn');
+    if (retryBtn) retryBtn.hidden = !results;
+    const nextBtn = document.getElementById('practiceNextBtn');
+    if (nextBtn) {
+      nextBtn.hidden = !results;
+      nextBtn.textContent = idx + 1 >= PRACTICE_PHRASES.length ? 'Finish' : 'Next phrase';
+    }
     const resultsEl = document.getElementById('practiceResults');
-    if (resultsEl) {
-      resultsEl.hidden = !results;
-      if (results) this._renderPracticeResults();
-    }
+    if (resultsEl) resultsEl.hidden = !results;
   }
 
-  // Score → chip severity class shared by the results card and the Clips drawer.
-  static scoreClass(score) {
-    return score >= 75 ? 'good' : score >= 50 ? 'ok' : 'low';
-  }
+  // Render the word-by-word + overall breakdown of a practice take into #practiceResults.
+  _renderPracticeResults(analysis) {
+    const box = document.getElementById('practiceResults');
+    if (!box || !analysis) return;
+    box.textContent = '';
 
-  // Fill the practice results card from the analyzed take.
-  _renderPracticeResults() {
-    const rec = this.recordings[this.practice.takeIndex];
-    const analysis = rec?.analysis;
-    const scoreEl = document.getElementById('paScore');
-    const takeawayEl = document.getElementById('paTakeaway');
-    const wordsEl = document.getElementById('paWords');
-    const statsEl = document.getElementById('paStats');
-    const spark = document.getElementById('paSpark');
-    if (wordsEl) wordsEl.textContent = '';
-    if (statsEl) statsEl.textContent = '';
-
-    if (!analysis) {
-      if (scoreEl) { scoreEl.textContent = '—'; scoreEl.className = 'pa-score'; }
-      if (takeawayEl) takeawayEl.textContent = 'No usable voice detected in that take — try again a little closer to the mic.';
-      if (spark) spark.hidden = true;
-      return;
-    }
-
-    const o = analysis.overall;
-    if (scoreEl) {
-      scoreEl.textContent = String(o.score);
-      scoreEl.className = `pa-score ${VoxBallGame.scoreClass(o.score)}`;
-    }
-    if (takeawayEl) takeawayEl.textContent = analysis.takeaway;
-
-    const chip = (text, cls = '') => Object.assign(
-      document.createElement('span'),
-      { className: `rec-chip${cls ? ' ' + cls : ''}`, textContent: text }
-    );
-    if (statsEl) {
-      statsEl.append(
-        chip(`avg ${Math.round(o.pitchAvgHz)} Hz`),
-        chip(`spread ${o.intonationSpreadSt.toFixed(1)} st`),
-        chip(`res ${Math.round(o.resonanceAvg * 100)}%`)
+    const wordsRow = Object.assign(document.createElement('div'), { className: 'practice-words' });
+    for (const w of (analysis.words || [])) {
+      const card = document.createElement('div');
+      card.className = `word-card${w.metrics ? '' : ' muted'}${w.matched ? '' : ' estimated'}`;
+      if (!w.matched) card.title = 'Estimated — this word boundary was inferred, not detected';
+      card.append(
+        Object.assign(document.createElement('div'), { className: 'word-card-text', textContent: w.word }),
+        Object.assign(document.createElement('div'), { className: 'word-card-metric', textContent: w.metrics ? `~${Math.round(w.metrics.pitchAvgHz)} Hz` : '—' }),
+        Object.assign(document.createElement('div'), { className: 'word-card-metric', textContent: `${w.durSec.toFixed(2)}s` })
       );
-      if (o.speakingRateWps) statsEl.appendChild(chip(`${o.speakingRateWps.toFixed(1)} w/s`));
-      if (o.pauseCount > 0) statsEl.appendChild(chip(`${o.pauseCount} pause${o.pauseCount > 1 ? 's' : ''}`));
+      const track = Object.assign(document.createElement('div'), { className: 'word-loud-bar' });
+      const fill = Object.assign(document.createElement('div'), { className: 'word-loud-fill' });
+      fill.style.width = `${Math.round(clamp01(w.relLoudness / 1.5) * 100)}%`;
+      track.appendChild(fill);
+      card.appendChild(track);
+      wordsRow.appendChild(card);
     }
+    box.appendChild(wordsRow);
 
-    if (spark) {
-      const drew = this._drawPhraseSpark(spark, analysis);
-      spark.hidden = !drew;
+    const overallRow = Object.assign(document.createElement('div'), { className: 'practice-overall' });
+    const chip = (text, extraClass = '') => Object.assign(
+      document.createElement('span'),
+      { className: `rec-chip${extraClass ? ' ' + extraClass : ''}`, textContent: text }
+    );
+    const o = analysis.overall;
+    if (o) {
+      overallRow.append(
+        chip(`avg ${Math.round(o.pitchAvgHz)} Hz`),
+        chip(`${Math.round(o.pitchMinHz)}–${Math.round(o.pitchMaxHz)} Hz`),
+        chip(`res ${Math.round(o.resonanceAvg * 100)}%`),
+        chip(`pros ${Math.round(o.prosodyAvg * 100)}%`),
+        chip(`range ${o.pitchRangeSemitones.toFixed(1)} st`),
+        chip(`pace ${o.paceWps.toFixed(1)} w/s`),
+        chip(`pauses ${o.pauseCount} (${o.pauseTotalSec.toFixed(1)}s)`),
+        chip(o.contour)
+      );
+    } else {
+      overallRow.appendChild(chip('no voice data', 'muted'));
     }
+    box.appendChild(overallRow);
 
-    if (wordsEl) {
-      if (analysis.aligned && analysis.words.length) {
-        for (const w of analysis.words) {
-          const el = document.createElement('span');
-          el.className = `pa-word ${VoxBallGame.scoreClass(w.score)}`;
-          const contourGlyph = w.contour === 'rise' ? '↗' : w.contour === 'fall' ? '↘' : '→';
-          el.append(
-            Object.assign(document.createElement('span'), { className: 'pa-word-text', textContent: w.word }),
-            Object.assign(document.createElement('span'), { className: 'pa-word-score', textContent: `${w.score} ${contourGlyph}` })
-          );
-          const bits = [
-            `${(w.durationMs / 1000).toFixed(2)}s`,
-            w.pitchAvgHz ? `${Math.round(w.pitchAvgHz)} Hz` : 'unvoiced',
-            w.pitchRangeSt ? `range ${w.pitchRangeSt.toFixed(1)} st` : null,
-            w.resonanceAvg != null ? `res ${Math.round(w.resonanceAvg * 100)}%` : null,
-            w.note || null,
-          ].filter(Boolean);
-          el.title = bits.join(' · ');
-          wordsEl.appendChild(el);
-        }
-      } else {
-        wordsEl.appendChild(chip('word-level view unavailable for this take', 'muted'));
-      }
+    const seg = analysis.segmentation;
+    if (seg && seg.status !== 'exact') {
+      const note = Object.assign(document.createElement('div'), { className: 'practice-seg-note' });
+      const chunks = `${seg.runCount} speech chunk${seg.runCount === 1 ? '' : 's'}`;
+      note.textContent = seg.lowConfidence
+        ? `Heard ${chunks} for ${seg.wordCount} words — word boundaries are rough estimates. A quieter room or clearer pauses will sharpen them.`
+        : `Heard ${chunks} for ${seg.wordCount} words — word stats are estimated.`;
+      box.appendChild(note);
     }
-  }
-
-  // Pitch contour sparkline with word-boundary ticks. Returns false when the
-  // take has too few voiced points to be worth drawing.
-  _drawPhraseSpark(canvas, analysis) {
-    const series = analysis.contourSeries || [];
-    const voiced = series.filter((p) => p.hz != null);
-    if (voiced.length < 4) return false;
-    const dpr = window.devicePixelRatio || 1;
-    const cssW = canvas.clientWidth || 300;
-    const cssH = canvas.clientHeight || 56;
-    canvas.width = Math.round(cssW * dpr);
-    canvas.height = Math.round(cssH * dpr);
-    const ctx = canvas.getContext('2d');
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, cssW, cssH);
-
-    const t0 = series[0].t;
-    const t1 = series[series.length - 1].t;
-    const spanT = Math.max(1, t1 - t0);
-    // Log-pitch (semitone) scaling so equal musical moves get equal height.
-    const sts = voiced.map((p) => 12 * Math.log2(p.hz / 100));
-    let stLo = Math.min(...sts), stHi = Math.max(...sts);
-    if (stHi - stLo < 2) { const mid = (stLo + stHi) / 2; stLo = mid - 1; stHi = mid + 1; }
-    const pad = 6;
-    const x = (t) => pad + ((t - t0) / spanT) * (cssW - 2 * pad);
-    const y = (hz) => {
-      const st = 12 * Math.log2(hz / 100);
-      return cssH - pad - ((st - stLo) / (stHi - stLo)) * (cssH - 2 * pad);
-    };
-
-    // Word boundary ticks behind the contour
-    if (analysis.aligned) {
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
-      ctx.lineWidth = 1;
-      for (const w of analysis.words) {
-        ctx.beginPath();
-        ctx.moveTo(x(w.tStartMs), 2);
-        ctx.lineTo(x(w.tStartMs), cssH - 2);
-        ctx.stroke();
-      }
-    }
-
-    ctx.strokeStyle = 'rgba(127, 215, 255, 0.95)';
-    ctx.lineWidth = 2;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    let penDown = false;
-    ctx.beginPath();
-    for (const p of series) {
-      if (p.hz == null) { penDown = false; continue; }
-      if (!penDown) { ctx.moveTo(x(p.t), y(p.hz)); penDown = true; }
-      else ctx.lineTo(x(p.t), y(p.hz));
-    }
-    ctx.stroke();
-    return true;
   }
 
   downloadRecording(index) {
@@ -3404,17 +3255,15 @@ class VoxBallGame {
       } else {
         metricsRow.appendChild(chip('no voice data', 'muted'));
       }
-      info.appendChild(metricsRow);
-
-      // Word-by-word scores for analyzed practice takes (see phrase-analysis.js)
-      if (rec.analysis?.aligned && rec.analysis.words?.length) {
-        const wordsRow = Object.assign(document.createElement('div'), { className: 'rec-item-metrics' });
-        for (const w of rec.analysis.words) {
-          wordsRow.appendChild(chip(`${w.word} ${w.score}`, VoxBallGame.scoreClass(w.score)));
-        }
-        wordsRow.title = `Take score ${rec.analysis.overall.score}/100 — per-word scores from phrase analysis`;
-        info.appendChild(wordsRow);
+      // Practice takes carry word-by-word analysis: summarize as a chip + tooltip.
+      const pw = rec.phraseAnalysis?.words;
+      if (pw && pw.length > 0) {
+        const okCount = pw.filter((w) => w.metrics).length;
+        const wordChip = chip(`words ${okCount}/${pw.length}`);
+        wordChip.title = pw.map((w) => `${w.word}: ${w.metrics ? `${Math.round(w.metrics.pitchAvgHz)} Hz` : '—'}`).join('\n');
+        metricsRow.appendChild(wordChip);
       }
+      info.appendChild(metricsRow);
 
       const progress = Object.assign(document.createElement('div'), { className: 'rec-progress' });
       progress.appendChild(Object.assign(document.createElement('div'), { className: 'rec-progress-fill', id: `rec-progress-${i}` }));
@@ -4596,15 +4445,8 @@ class VoxBallGame {
     });
     document.getElementById('practiceSkipBtn')?.addEventListener('click', () => this._practiceSkip());
     document.getElementById('practiceExitBtn')?.addEventListener('click', () => this.endPractice(false));
-    // Results-card actions (shown after each analyzed take)
-    document.getElementById('paRetryBtn')?.addEventListener('click', () => this._practiceRetry());
-    document.getElementById('paNextBtn')?.addEventListener('click', () => this._practiceAdvance());
-    document.getElementById('paPlayBtn')?.addEventListener('click', () => {
-      const idx = this.practice.takeIndex;
-      if (idx < 0) return;
-      if (this.currentPlayback && this.currentPlayback.index === idx) this.stopPlayback();
-      else this.playRecording(idx);
-    });
+    document.getElementById('practiceRetryBtn')?.addEventListener('click', () => this._practiceRetry());
+    document.getElementById('practiceNextBtn')?.addEventListener('click', () => this._practiceNext());
 
     const voicePlayBtn = document.getElementById('voicePlayBtn');
     if (voicePlayBtn) {
