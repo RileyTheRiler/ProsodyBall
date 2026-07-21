@@ -3447,6 +3447,93 @@
       animation: rec-pulse 1s infinite;
     }
 
+    /* Take analysis card: overall score, pitch-contour sparkline, word chips */
+    .practice-results {
+      margin-top: 4px;
+      text-align: left;
+    }
+
+    .pa-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .pa-score {
+      font-family: 'Space Mono', monospace;
+      font-size: 1.7rem;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--text-primary);
+      flex-shrink: 0;
+    }
+
+    .pa-score.good { color: #7dd87d; }
+    .pa-score.ok { color: #e8c96b; }
+    .pa-score.low { color: #e88a8a; }
+
+    .pa-takeaway {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.35;
+    }
+
+    .pa-spark {
+      display: block;
+      width: 100%;
+      height: 56px;
+      margin-bottom: 8px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .pa-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      justify-content: center;
+      margin-bottom: 8px;
+    }
+
+    .pa-words {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      justify-content: center;
+      margin-bottom: 12px;
+    }
+
+    .pa-word {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1px;
+      font-family: 'Space Mono', monospace;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 4px 8px;
+      background: rgba(255, 255, 255, 0.05);
+      cursor: default;
+    }
+
+    .pa-word-text {
+      font-size: 0.72rem;
+      color: var(--text-primary);
+    }
+
+    .pa-word-score {
+      font-size: 0.66rem;
+      color: var(--text-muted);
+    }
+
+    .pa-word.good { border-color: rgba(125, 216, 125, 0.45); }
+    .pa-word.good .pa-word-score { color: #7dd87d; }
+    .pa-word.ok { border-color: rgba(232, 201, 107, 0.45); }
+    .pa-word.ok .pa-word-score { color: #e8c96b; }
+    .pa-word.low { border-color: rgba(232, 138, 138, 0.45); }
+    .pa-word.low .pa-word-score { color: #e88a8a; }
+
     .recordings-drawer {
       position: absolute;
       top: 60px;
@@ -3582,6 +3669,11 @@
     .rec-chip.delta {
       color: var(--text-primary);
     }
+
+    /* Word-score tiers on practice-take chips (drawer + results card stats) */
+    .rec-chip.good { color: #7dd87d; border-color: rgba(125, 216, 125, 0.35); }
+    .rec-chip.ok { color: #e8c96b; border-color: rgba(232, 201, 107, 0.35); }
+    .rec-chip.low { color: #e88a8a; border-color: rgba(232, 138, 138, 0.35); }
 
     .rec-item-actions {
       display: flex;
@@ -4562,13 +4654,29 @@
       </div>
 
       <div class="practice-panel" id="practicePanel" role="dialog" aria-label="Guided phrase practice">
-        <div class="practice-progress" id="practiceProgress">Phrase 1 of 5</div>
+        <div class="practice-progress" id="practiceProgress">Phrase 1 of 6</div>
         <div class="practice-phrase" id="practicePhrase"></div>
         <div class="practice-hint" id="practiceHint">Press Record, read the phrase aloud, then press Done.</div>
-        <div class="practice-actions">
+        <div class="practice-actions" id="practicePromptActions">
           <button class="btn practice-record" id="practiceRecordBtn"><span class="rec-dot"></span>&nbsp;Record</button>
           <button class="btn" id="practiceSkipBtn">Skip</button>
           <button class="btn" id="practiceExitBtn">Exit</button>
+        </div>
+        <!-- Take analysis card: overall score + pitch contour + word-by-word chips.
+             Populated by _renderPracticeResults after each recorded take. -->
+        <div class="practice-results" id="practiceResults" hidden aria-live="polite">
+          <div class="pa-header">
+            <span class="pa-score" id="paScore">—</span>
+            <span class="pa-takeaway" id="paTakeaway"></span>
+          </div>
+          <canvas class="pa-spark" id="paSpark" aria-label="Pitch contour of your take" role="img"></canvas>
+          <div class="pa-stats" id="paStats"></div>
+          <div class="pa-words" id="paWords"></div>
+          <div class="practice-actions">
+            <button class="btn" id="paPlayBtn">▶ Play</button>
+            <button class="btn" id="paRetryBtn">Retry</button>
+            <button class="btn" id="paNextBtn">Next phrase</button>
+          </div>
         </div>
       </div>
     </div>
