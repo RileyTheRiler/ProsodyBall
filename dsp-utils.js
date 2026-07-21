@@ -86,6 +86,23 @@ export async function getMicDiagnostics(ctx) {
   };
 }
 
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  try {
+    const parsed = new URL(url, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+    const protocol = parsed.protocol.toLowerCase();
+    if (['http:', 'https:', 'mailto:', 'tel:', 'blob:'].includes(protocol)) {
+      return url;
+    }
+  } catch (e) {
+    // If URL parsing fails and it's a simple relative path without protocol
+    if (/^\/[^/\\]/.test(url) || /^[a-zA-Z0-9_-]+\//.test(url) || /^[a-zA-Z0-9_-]+\.html/.test(url) || url.startsWith('?')) {
+        return url;
+    }
+  }
+  return 'about:blank';
+}
+
 export function clamp01(v) {
   return Math.max(0, Math.min(1, v));
 }

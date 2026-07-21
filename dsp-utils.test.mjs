@@ -3,9 +3,31 @@ import assert from 'node:assert/strict';
 import {
   computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError,
   computeFrameReliability, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction,
-  steadyStateWeight, selectResonanceMethod,
+  steadyStateWeight, selectResonanceMethod, sanitizeUrl,
   SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX, STEADY_WEIGHT_FLOOR
 } from './dsp-utils.js';
+
+test('sanitizeUrl handles safe and dangerous URLs', () => {
+  // Safe protocols
+  assert.equal(sanitizeUrl('http://example.com'), 'http://example.com');
+  assert.equal(sanitizeUrl('https://example.com'), 'https://example.com');
+  assert.equal(sanitizeUrl('blob:http://example.com/xyz'), 'blob:http://example.com/xyz');
+  assert.equal(sanitizeUrl('mailto:user@example.com'), 'mailto:user@example.com');
+  assert.equal(sanitizeUrl('tel:+1234567890'), 'tel:+1234567890');
+
+  // Dangerous protocols
+  assert.equal(sanitizeUrl('javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('data:text/html,<script>alert(1)</script>'), 'about:blank');
+  assert.equal(sanitizeUrl('vbscript:alert(1)'), 'about:blank');
+
+  // Empty
+  assert.equal(sanitizeUrl(''), 'about:blank');
+  assert.equal(sanitizeUrl(null), 'about:blank');
+
+  // Valid relative URLs
+  assert.equal(sanitizeUrl('/path/to/page'), '/path/to/page');
+  assert.equal(sanitizeUrl('phone.html?room=1234'), 'phone.html?room=1234');
+});
 
 test('computeRawProsody applies weighted sum', () => {
   const metrics = { bounce: 1, vowel: 0.5, articulation: 0.5 };
