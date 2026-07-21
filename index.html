@@ -3452,6 +3452,44 @@
       margin-bottom: 14px;
     }
 
+    /* Coaching header: take score + one-line takeaway (phrase-coach.js) */
+    .practice-score-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+      text-align: left;
+    }
+
+    .practice-score {
+      font-family: 'Space Mono', monospace;
+      font-size: 1.7rem;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--text-primary);
+      flex-shrink: 0;
+    }
+
+    .practice-score.good { color: #7dd87d; }
+    .practice-score.ok { color: #e8c96b; }
+    .practice-score.low { color: #e88a8a; }
+
+    .practice-takeaway {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.35;
+    }
+
+    /* Pitch-contour sparkline (canvas drawn by _drawPhraseSpark) */
+    .practice-spark {
+      display: block;
+      width: 100%;
+      height: 56px;
+      margin-bottom: 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.04);
+    }
+
     .practice-words {
       display: flex;
       flex-wrap: wrap;
@@ -3475,6 +3513,22 @@
     .word-card.muted {
       opacity: 0.5;
     }
+
+    /* Coaching score tiers on word cards */
+    .word-card.good { border-color: rgba(125, 216, 125, 0.45); }
+    .word-card.ok { border-color: rgba(232, 201, 107, 0.45); }
+    .word-card.low { border-color: rgba(232, 138, 138, 0.45); }
+
+    .word-card-score {
+      font-size: 0.72rem;
+      font-family: 'Space Mono', monospace;
+      font-weight: 700;
+      margin-top: 2px;
+    }
+
+    .word-card.good .word-card-score { color: #7dd87d; }
+    .word-card.ok .word-card-score { color: #e8c96b; }
+    .word-card.low .word-card-score { color: #e88a8a; }
 
     .word-card-text {
       font-size: 0.8rem;
@@ -3652,6 +3706,11 @@
     .rec-chip.delta {
       color: var(--text-primary);
     }
+
+    /* Coaching score tiers on drawer word chips */
+    .rec-chip.good { color: #7dd87d; border-color: rgba(125, 216, 125, 0.35); }
+    .rec-chip.ok { color: #e8c96b; border-color: rgba(232, 201, 107, 0.35); }
+    .rec-chip.low { color: #e88a8a; border-color: rgba(232, 138, 138, 0.35); }
 
     .rec-item-actions {
       display: flex;
@@ -4632,13 +4691,14 @@
       </div>
 
       <div class="practice-panel" id="practicePanel" role="dialog" aria-label="Guided phrase practice">
-        <div class="practice-progress" id="practiceProgress">Phrase 1 of 5</div>
+        <div class="practice-progress" id="practiceProgress">Phrase 1 of 6</div>
         <div class="practice-phrase" id="practicePhrase"></div>
         <div class="practice-hint" id="practiceHint">Press Record, read the phrase aloud, then press Done.</div>
         <div class="practice-results" id="practiceResults" hidden></div>
         <div class="practice-actions">
           <button class="btn practice-record" id="practiceRecordBtn"><span class="rec-dot"></span>&nbsp;Record</button>
           <button class="btn" id="practiceSkipBtn">Skip</button>
+          <button class="btn" id="practicePlayBtn" hidden>▶ Play</button>
           <button class="btn" id="practiceRetryBtn" hidden>Retry</button>
           <button class="btn practice-record" id="practiceNextBtn" hidden>Next phrase</button>
           <button class="btn" id="practiceExitBtn">Exit</button>
