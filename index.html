@@ -3392,6 +3392,61 @@
       font-weight: 700;
     }
 
+    /* Guided phrase practice panel: shows one phrase at a time; each take is saved
+       as a labeled clip in the Recordings drawer for per-clip metric review. */
+    .practice-panel {
+      position: absolute;
+      top: 18%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-surface);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 18px 22px;
+      max-width: 420px;
+      width: 92vw;
+      z-index: var(--z-dropdown);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      display: none;
+      text-align: center;
+    }
+
+    .practice-panel.show {
+      display: block;
+    }
+
+    .practice-progress {
+      font-size: 0.75rem;
+      font-family: 'Space Mono', monospace;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .practice-phrase {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 12px 0;
+      line-height: 1.4;
+    }
+
+    .practice-hint {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-bottom: 14px;
+    }
+
+    .practice-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+    }
+
+    .practice-record.recording .rec-dot {
+      animation: rec-pulse 1s infinite;
+    }
+
     .recordings-drawer {
       position: absolute;
       top: 60px;
@@ -4141,6 +4196,7 @@
           <option value="custom">Teleprompter: Custom Text</option>
         </select>
         <button class="btn btn-help" id="teleprompterCustomBtn" aria-label="Edit custom teleprompter text" title="Edit custom teleprompter text">Edit Text</button>
+        <button class="btn btn-help" id="practiceBtn" aria-label="Guided phrase practice" title="Guided phrase practice" aria-expanded="false" aria-controls="practicePanel">Practice</button>
 
         <button class="btn btn-cb" id="cbToggle" aria-label="Toggle colorblind mode" title="Colorblind mode">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
@@ -4502,6 +4558,17 @@
         </div>
         <div class="recordings-list" id="recordingsList">
           <div class="recordings-empty" id="recsEmpty">No recordings yet. Press <b>Rec</b> while a session is running.</div>
+        </div>
+      </div>
+
+      <div class="practice-panel" id="practicePanel" role="dialog" aria-label="Guided phrase practice">
+        <div class="practice-progress" id="practiceProgress">Phrase 1 of 5</div>
+        <div class="practice-phrase" id="practicePhrase"></div>
+        <div class="practice-hint" id="practiceHint">Press Record, read the phrase aloud, then press Done.</div>
+        <div class="practice-actions">
+          <button class="btn practice-record" id="practiceRecordBtn"><span class="rec-dot"></span>&nbsp;Record</button>
+          <button class="btn" id="practiceSkipBtn">Skip</button>
+          <button class="btn" id="practiceExitBtn">Exit</button>
         </div>
       </div>
     </div>
