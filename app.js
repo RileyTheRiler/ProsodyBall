@@ -2188,12 +2188,16 @@ class VoxBallGame {
     this.goalMode = storedGoal === 'masculinization' ? 'masculinization' : 'feminization';
     this.gameMode = 'ball';
 
-    // Recording — AnalyserNode polling approach
+    // Recording
     this.isRecording = false;
     this._recInterval = null;
     this._recBuffers = [];
     this._recMetricSamples = []; // live metric snapshots per recorder tick, summarized at stop
     this._recSampleRate = 48000;
+    this._mediaRecorder = null;
+    this._recChunks = [];
+    this._recUseMediaRecorder = false;
+    this._recMimeType = null;
     this.recordings = []; // { blob, dataUrl, duration, timestamp, name, mimeType, metrics, label }
     this.recordingStartTime = 0;
     this.currentPlayback = null;
@@ -2633,13 +2637,19 @@ class VoxBallGame {
   }
 
   // ============================================
-  // RECORDING — AnalyserNode time-domain polling + WAV encoding
-  // The ONLY reliable approach in sandboxed iframes:
-  // - MediaRecorder: stream consumed by Web Audio → silence
-  // - ScriptProcessorNode: needs ctx.destination → blocked in sandbox
-  // - AnalyserNode.getFloatTimeDomainData: WORKS (proven — the ball moves!)
-  // We poll a dedicated small-FFT analyser at matched intervals
-  // to capture approximately non-overlapping sample windows.
+  // RECORDING
+  // Raw audio capture uses MediaRecorder against the live mic/input MediaStream
+  // whenever one is available — it's encoded natively by the browser, off the
+  // main thread, so it stays gapless regardless of how busy the UI/DSP work on
+  // this thread gets. (An earlier AnalyserNode-polling capture — reading a 512-
+  // sample/~11.6ms window on a setInterval tick — depended on that timer firing
+  // exactly on time; any jitter from the per-frame pitch/formant analysis or
+  // rendering caused polls to miss or double up windows, which is what produced
+  // the choppy, broken-up played-back audio. That approach is kept only as a
+  // fallback for inputs with no MediaStream, e.g. analyzing an uploaded file.)
+  // A dedicated small-FFT analyser is still polled at matched intervals purely
+  // to snapshot pitch/resonance/prosody metrics for phrase review — that data
+  // path is independent of the audio encoding.
   // ============================================
   startRecording() {
     const a = this.analyzer;
@@ -2652,9 +2662,11 @@ class VoxBallGame {
 
       // Poll interval = window duration in ms (e.g. 512/44100*1000 ≈ 11.6ms)
       const intervalMs = Math.round(1000 * fftSize / this._recSampleRate);
-      // Snapshot timeline uses index × this duration — sample-exact vs the encoded WAV,
-      // immune to setInterval wall-clock jitter.
+      // Snapshot timeline uses index × this duration — sample-exact vs the encoded
+      // clip, immune to setInterval wall-clock jitter.
       this._recTickSec = fftSize / this._recSampleRate;
+
+      this._recUseMediaRecorder = !!(a.stream && typeof MediaRecorder !== 'undefined');
 
       this._recInterval = setInterval(() => {
         if (!this.isRecording || !a.analyserRec) return;
@@ -2669,11 +2681,16 @@ class VoxBallGame {
         const threshold = a.isCalibrated ? a.noiseFloor * 2.5 : 0.02;
         const isSpeech = localRms > threshold || a.pitchConfidence > 0.3;
 
-        if (isSpeech) {
-          this._recBuffers.push(new Float32Array(data));
-        } else {
-          // Push silence to keep timing intact (avoids clicks/jumps)
-          this._recBuffers.push(new Float32Array(data.length));
+        if (!this._recUseMediaRecorder) {
+          // Legacy capture path only — MediaRecorder handles the real audio
+          // when available, so this buffer isn't needed (and shouldn't gate
+          // silence, since MediaRecorder captures everything verbatim).
+          if (isSpeech) {
+            this._recBuffers.push(new Float32Array(data));
+          } else {
+            // Push silence to keep timing intact (avoids clicks/jumps)
+            this._recBuffers.push(new Float32Array(data.length));
+          }
         }
 
         // Snapshot live analysis so the clip can carry review metrics.
@@ -2688,11 +2705,37 @@ class VoxBallGame {
         });
       }, intervalMs);
 
+      if (this._recUseMediaRecorder) {
+        this._recChunks = [];
+        const mimeType = this._pickRecordingMimeType();
+        this._mediaRecorder = mimeType ? new MediaRecorder(a.stream, { mimeType }) : new MediaRecorder(a.stream);
+        this._recMimeType = this._mediaRecorder.mimeType || mimeType || 'audio/webm';
+        this._mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) this._recChunks.push(e.data);
+        };
+        this._mediaRecorder.start();
+      }
+
       this.recordingStartTime = performance.now();
       this.isRecording = true;
     } catch (e) {
       console.error('Recording failed:', e);
     }
+  }
+
+  _pickRecordingMimeType() {
+    if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return null;
+    const candidates = [
+      'audio/webm;codecs=opus',
+      'audio/mp4;codecs=mp4a.40.2', // Safari
+      'audio/mp4',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+    ];
+    for (const type of candidates) {
+      if (MediaRecorder.isTypeSupported(type)) return type;
+    }
+    return null;
   }
 
   stopRecording() {
@@ -2705,80 +2748,117 @@ class VoxBallGame {
     }
 
     return new Promise((resolve) => {
-      try {
-        if (this._recBuffers.length === 0) { this._recMetricSamples = []; this._pendingClipLabel = null; this._pendingPhrase = null; this._pendingPhraseDef = null; resolve(); return; }
+      const finalize = (audioBlob, mimeType) => {
+        try {
+          // Summarize the metric snapshots into per-clip review stats (null = no usable voice)
+          const metrics = summarizeClipMetrics(this._recMetricSamples);
+          // Practice takes carry the known phrase → segment + align + per-word analysis,
+          // then the coaching layer (phrase-coach.js) turns it into scores + a sparkline.
+          const phrase = this._pendingPhrase;
+          const phraseDef = this._pendingPhraseDef;
+          this._pendingPhrase = null;
+          this._pendingPhraseDef = null;
+          const phraseAnalysis = phrase
+            ? summarizePhraseTake(this._recMetricSamples, phrase, {
+                tickSec: this._recTickSec,
+                noiseFloor: this.analyzer.isCalibrated ? this.analyzer.noiseFloor : 0,
+              })
+            : null;
+          const phraseScore = phraseDef && phraseAnalysis
+            ? scorePhraseTake(phraseAnalysis, phraseDef)
+            : null;
+          const contourSeries = phraseAnalysis && phraseAnalysis.overall
+            ? buildContourSeries(this._recMetricSamples, { tickSec: this._recTickSec })
+            : null;
+          this._recMetricSamples = [];
+          const label = this._pendingClipLabel;
+          this._pendingClipLabel = null;
 
-        // Merge all Float32 buffers
-        // ⚡ Bolt: Replace reduce with traditional loop for performance
-        let totalLen = 0;
-        for (let i = 0; i < this._recBuffers.length; i++) {
-          totalLen += this._recBuffers[i].length;
+          const duration = (performance.now() - this.recordingStartTime) / 1000;
+          const now = new Date();
+          const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          const fileTs = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+
+          // Convert to data URL for universal playback in sandbox
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            this.recordings.push({
+              blob: audioBlob,
+              dataUrl: reader.result,
+              duration,
+              timestamp: ts,
+              name: `vox-ball-${fileTs}`,
+              mimeType,
+              metrics,
+              label,
+              phrase,
+              phraseAnalysis,
+              phraseScore,
+              contourSeries
+            });
+            this.updateRecordingsUI();
+            resolve();
+          };
+          reader.onerror = () => { resolve(); };
+          reader.readAsDataURL(audioBlob);
+        } catch (e) {
+          const msg = e && e.message ? e.message : String(e);
+          console.error(`Recording save error (${e && e.name || 'Error'}): ${msg}`, e);
+          resolve();
         }
-        const merged = new Float32Array(totalLen);
-        let offset = 0;
-        for (const buf of this._recBuffers) {
-          merged.set(buf, offset);
-          offset += buf.length;
-        }
+      };
+
+      const abort = () => {
         this._recBuffers = [];
-
-        // Summarize the metric snapshots into per-clip review stats (null = no usable voice)
-        const metrics = summarizeClipMetrics(this._recMetricSamples);
-        // Practice takes carry the known phrase → segment + align + per-word analysis,
-        // then the coaching layer (phrase-coach.js) turns it into scores + a sparkline.
-        const phrase = this._pendingPhrase;
-        const phraseDef = this._pendingPhraseDef;
+        this._recChunks = [];
+        this._recMetricSamples = [];
+        this._pendingClipLabel = null;
         this._pendingPhrase = null;
         this._pendingPhraseDef = null;
-        const phraseAnalysis = phrase
-          ? summarizePhraseTake(this._recMetricSamples, phrase, {
-              tickSec: this._recTickSec,
-              noiseFloor: this.analyzer.isCalibrated ? this.analyzer.noiseFloor : 0,
-            })
-          : null;
-        const phraseScore = phraseDef && phraseAnalysis
-          ? scorePhraseTake(phraseAnalysis, phraseDef)
-          : null;
-        const contourSeries = phraseAnalysis && phraseAnalysis.overall
-          ? buildContourSeries(this._recMetricSamples, { tickSec: this._recTickSec })
-          : null;
-        this._recMetricSamples = [];
-        const label = this._pendingClipLabel;
-        this._pendingClipLabel = null;
+        resolve();
+      };
 
-        // Encode as WAV (PCM 16-bit mono)
-        const wavBlob = this._encodeWAV(merged, this._recSampleRate);
-        const duration = (performance.now() - this.recordingStartTime) / 1000;
-        const now = new Date();
-        const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        const fileTs = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      try {
+        if (this._recUseMediaRecorder && this._mediaRecorder) {
+          const mr = this._mediaRecorder;
+          const mimeType = this._recMimeType || 'audio/webm';
+          mr.onstop = () => {
+            this._mediaRecorder = null;
+            const chunks = this._recChunks;
+            this._recChunks = [];
+            if (chunks.length === 0) { abort(); return; }
+            finalize(new Blob(chunks, { type: mimeType }), mimeType);
+          };
+          mr.onerror = (e) => {
+            console.error('MediaRecorder error:', e && e.error ? e.error : e);
+          };
+          if (mr.state !== 'inactive') mr.stop();
+          else abort();
+        } else {
+          if (this._recBuffers.length === 0) { abort(); return; }
 
-        // Convert to data URL for universal playback in sandbox
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          this.recordings.push({
-            blob: wavBlob,
-            dataUrl: reader.result,
-            duration,
-            timestamp: ts,
-            name: `vox-ball-${fileTs}`,
-            mimeType: 'audio/wav',
-            metrics,
-            label,
-            phrase,
-            phraseAnalysis,
-            phraseScore,
-            contourSeries
-          });
-          this.updateRecordingsUI();
-          resolve();
-        };
-        reader.onerror = () => { resolve(); };
-        reader.readAsDataURL(wavBlob);
+          // Merge all Float32 buffers
+          // ⚡ Bolt: Replace reduce with traditional loop for performance
+          let totalLen = 0;
+          for (let i = 0; i < this._recBuffers.length; i++) {
+            totalLen += this._recBuffers[i].length;
+          }
+          const merged = new Float32Array(totalLen);
+          let offset = 0;
+          for (const buf of this._recBuffers) {
+            merged.set(buf, offset);
+            offset += buf.length;
+          }
+          this._recBuffers = [];
+
+          // Encode as WAV (PCM 16-bit mono)
+          const wavBlob = this._encodeWAV(merged, this._recSampleRate);
+          finalize(wavBlob, 'audio/wav');
+        }
       } catch (e) {
         const msg = e && e.message ? e.message : String(e);
         console.error(`Recording save error (${e && e.name || 'Error'}): ${msg}`, e);
-        resolve();
+        abort();
       }
     });
   }
@@ -3290,12 +3370,20 @@ class VoxBallGame {
     const url = URL.createObjectURL(rec.blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${rec.name}.wav`;
+    a.download = `${rec.name}${this._extensionForMimeType(rec.mimeType)}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     // Revoke immediately — the download has already been initiated by click()
     URL.revokeObjectURL(url);
+  }
+
+  _extensionForMimeType(mimeType) {
+    if (!mimeType) return '.wav';
+    if (mimeType.includes('webm')) return '.webm';
+    if (mimeType.includes('mp4')) return '.m4a';
+    if (mimeType.includes('ogg')) return '.ogg';
+    return '.wav';
   }
 
   deleteRecording(index) {
