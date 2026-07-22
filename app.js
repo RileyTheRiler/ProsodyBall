@@ -6573,7 +6573,7 @@ class VoxBallGame {
     // Resonance meter — position-based indicator like pitch; numeric readout = windowed avg F1/F2
     const res = this.analyzer.smoothResonance;
     els.resonance.style.left = (res * 100) + '%';
-    els.valResonance.textContent = this._resonanceReadout('hud');
+    els.valResonance.textContent = this._resonanceReadout();
 
     for (const [k, el] of Object.entries(els.highlight)) {
       this.metricHighlightTimers[k] = Math.max(0, this.metricHighlightTimers[k] - 1 / 60);
@@ -6636,7 +6636,7 @@ class VoxBallGame {
       B.pitch.push({ t, v: a.smoothPitchHz });
     }
     if (a.formantConfidence > 0.2 && m.energy > 0.05) {
-      B.resonance.push({ t, f1: a.smoothF1, f2: a.smoothF2 });
+      B.resonance.push({ t, f1: a.smoothF1, f2: a.smoothF2, res: a.smoothResonance });
     }
     if (m.attack > 0.02) {
       B.attack.push({ t, v: m.attack, rise: a.attackRiseHardness, abrupt: a.attackAbruptness });
@@ -6720,16 +6720,21 @@ class VoxBallGame {
       } else this._avgCache.pitch = null;
     }
 
-    // Resonance — mean F1/F2 and a bright/neutral/dark descriptor (from F2, matching the
-    // resonance-score logic in the analyzer).
+    // Resonance — mean of the adaptive 0-1 resonance score (same score that drives the meter
+    // bar position), bucketed into a plain-language 5-tier descriptor. F1/F2 are kept only as
+    // supporting detail, not shown as raw numbers to the user.
     {
       const s = within(B.resonance);
       if (s.length >= MIN_N) {
-        let f1 = 0, f2 = 0;
-        for (const p of s) { f1 += p.f1; f2 += p.f2; }
-        const meanF1 = f1 / s.length, meanF2 = f2 / s.length;
-        const descriptor = meanF2 >= 1900 ? 'Bright' : meanF2 >= 1500 ? 'Neutral' : 'Dark';
-        this._avgCache.resonance = { n: s.length, meanF1, meanF2, descriptor };
+        let f1 = 0, f2 = 0, res = 0;
+        for (const p of s) { f1 += p.f1; f2 += p.f2; res += p.res; }
+        const meanF1 = f1 / s.length, meanF2 = f2 / s.length, meanRes = res / s.length;
+        const descriptor = meanRes >= 0.8 ? 'Bright'
+          : meanRes >= 0.6 ? 'Bright Mid'
+          : meanRes >= 0.4 ? 'Mid'
+          : meanRes >= 0.2 ? 'Dark Mid'
+          : 'Dark';
+        this._avgCache.resonance = { n: s.length, meanF1, meanF2, meanRes, descriptor };
       } else this._avgCache.resonance = null;
     }
 
@@ -6772,13 +6777,10 @@ class VoxBallGame {
     }
   }
 
-  _resonanceReadout(format) {
+  _resonanceReadout() {
     const s = this._avgSummary('resonance');
     if (!s) return '—';
-    const f1 = Math.round(s.meanF1), f2 = Math.round(s.meanF2);
-    if (format === 'popup') return `F1: ${f1} Hz  F2: ${f2} Hz`;
-    if (format === 'card') return `${s.descriptor} · F2 ${f2}`;
-    return `${f1}/${f2}`; // compact HUD
+    return s.descriptor; // plain-language tier: Bright / Bright Mid / Mid / Dark Mid / Dark
   }
 
   _attackReadout() {
@@ -6867,7 +6869,7 @@ class VoxBallGame {
       const pEl = document.getElementById('expValPitch');
       if (pEl) pEl.textContent = this._pitchReadout(true);
       const rEl = document.getElementById('expValResonance');
-      if (rEl) rEl.textContent = this._resonanceReadout('card');
+      if (rEl) rEl.textContent = this._resonanceReadout();
       const atkEl = document.getElementById('expValAttack');
       if (atkEl) atkEl.textContent = this._attackReadout();
       const wtEl = document.getElementById('expValWeight');
@@ -7397,7 +7399,7 @@ class VoxBallGame {
 
     switch (metric) {
       case 'pitch': el.textContent = this._pitchReadout(true); break;
-      case 'resonance': el.textContent = this._resonanceReadout('popup'); break;
+      case 'resonance': el.textContent = this._resonanceReadout(); break;
       // Bounce/Vowels: percentage readouts removed — the chart below is the readout.
       case 'bounce': el.textContent = ''; break;
       case 'vowels': el.textContent = ''; break;
