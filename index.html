@@ -4384,6 +4384,14 @@
       </div>
 
       <div class="settings-group">
+        <span class="settings-label">Voice Training Goal</span>
+        <select id="goalModeSelect" class="theme-select btn-fill" aria-label="Voice training goal">
+          <option value="feminization">Goal: Feminization (lighter, brighter)</option>
+          <option value="masculinization">Goal: Masculinization (deeper, heavier)</option>
+        </select>
+      </div>
+
+      <div class="settings-group">
         <span class="settings-label">Orb Color</span>
         <select id="colorModeSelect" class="theme-select btn-fill" aria-label="Orb color mode">
           <option value="pitch" selected>Color: Pitch</option>
@@ -4699,6 +4707,7 @@
           <button class="btn practice-record" id="practiceRecordBtn"><span class="rec-dot"></span>&nbsp;Record</button>
           <button class="btn" id="practiceSkipBtn">Skip</button>
           <button class="btn" id="practicePlayBtn" hidden>▶ Play</button>
+          <button class="btn" id="practiceSpeakBtn" hidden aria-label="Hear a spoken summary of your results">🔊 Hear feedback</button>
           <button class="btn" id="practiceRetryBtn" hidden>Retry</button>
           <button class="btn practice-record" id="practiceNextBtn" hidden>Next phrase</button>
           <button class="btn" id="practiceExitBtn">Exit</button>

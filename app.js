@@ -1,6 +1,7 @@
 import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake } from './dsp-utils.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { PRACTICE_PHRASES, scorePhraseTake, buildContourSeries } from './phrase-coach.js';
+import { buildPhraseSpeechSummary } from './speech-feedback.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { BulbController } from './bulb-controller.js';
@@ -2201,6 +2202,7 @@ class VoxBallGame {
     this.recordings = []; // { blob, dataUrl, duration, timestamp, name, mimeType, metrics, label }
     this.recordingStartTime = 0;
     this.currentPlayback = null;
+    this.currentSpeech = null; // in-flight SpeechSynthesisUtterance for the practice results "Hear feedback" button
     this._pendingClipLabel = null; // label attached to the next saved clip (set by practice flow)
     this._pendingPhrase = null;    // known phrase text for the next saved clip → word-by-word analysis
     this._pendingPhraseDef = null; // PRACTICE_PHRASES entry for the next saved clip → coaching scores
@@ -3013,6 +3015,7 @@ class VoxBallGame {
   }
 
   stopPlayback() {
+    this.stopSpeech(); // only one audio source (recorded clip or spoken feedback) plays at a time
     if (this.currentPlayback) {
       const audio = this.currentPlayback.audio;
       audio.pause();
@@ -3024,6 +3027,35 @@ class VoxBallGame {
       this.currentPlayback = null;
       this._updateVoiceRecBtn();
     }
+  }
+
+  // Speak a short summary of the practice results via the browser's built-in TTS.
+  // Returns false (and does nothing) when speechSynthesis isn't available.
+  speakPhraseSummary(text) {
+    if (!('speechSynthesis' in window)) return false;
+    this.stopPlayback(); // mutual exclusion with recorded-clip playback (also cancels prior speech)
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.onend = () => { this.currentSpeech = null; this._updatePracticeSpeakBtn(); };
+    utter.onerror = () => { this.currentSpeech = null; this._updatePracticeSpeakBtn(); };
+    this.currentSpeech = utter;
+    window.speechSynthesis.speak(utter);
+    this._updatePracticeSpeakBtn();
+    return true;
+  }
+
+  stopSpeech() {
+    if (this.currentSpeech) {
+      window.speechSynthesis.cancel();
+      this.currentSpeech = null;
+      this._updatePracticeSpeakBtn();
+    }
+  }
+
+  // Keep the "Hear feedback" button label in sync with in-flight speech.
+  _updatePracticeSpeakBtn() {
+    const btn = document.getElementById('practiceSpeakBtn');
+    if (!btn) return;
+    btn.textContent = this.currentSpeech ? '⏹ Stop speaking' : '🔊 Hear feedback';
   }
 
   updateRecItemState(index, isPlaying) {
@@ -3201,6 +3233,9 @@ class VoxBallGame {
     }
     const playBtn = document.getElementById('practicePlayBtn');
     if (playBtn) playBtn.hidden = !results;
+    const speakBtn = document.getElementById('practiceSpeakBtn');
+    if (speakBtn) speakBtn.hidden = !results || !('speechSynthesis' in window);
+    if (!results) this.stopSpeech(); // don't keep talking about a take the user has left
     const resultsEl = document.getElementById('practiceResults');
     if (resultsEl) {
       resultsEl.hidden = !results;
@@ -3686,6 +3721,7 @@ class VoxBallGame {
     const voiceProfileSelect = document.getElementById('voiceProfileSelect');
     const micDeviceSelect = document.getElementById('micDeviceSelect');
     const colorModeSelect = document.getElementById('colorModeSelect');
+    const goalModeSelect = document.getElementById('goalModeSelect');
     const genderCueInputs = {
       modalF0: document.getElementById('genderCueModalF0'),
       dispersion: document.getElementById('genderCueDispersion'),
@@ -3787,6 +3823,7 @@ class VoxBallGame {
       const phoneMicPanel = document.getElementById('phoneMicPanel');
       if (phoneMicPanel) phoneMicPanel.style.display = this.micInputPreferences.deviceId === 'phone-mic' ? '' : 'none';
       if (colorModeSelect) colorModeSelect.value = this.colorMode || 'pitch';
+      if (goalModeSelect) goalModeSelect.value = this.goalMode || 'feminization';
       for (const [cue, input] of Object.entries(genderCueInputs)) {
         if (input) input.checked = !!this.genderCues[cue];
       }
@@ -4529,6 +4566,11 @@ class VoxBallGame {
       if (!this.isRunning) this.drawIdleScene();
     });
 
+    goalModeSelect?.addEventListener('change', (e) => {
+      this.goalMode = e.target.value === 'masculinization' ? 'masculinization' : 'feminization';
+      localStorage.setItem('vox:goalMode', this.goalMode);
+    });
+
     for (const [cue, input] of Object.entries(genderCueInputs)) {
       input?.addEventListener('change', (e) => {
         this.genderCues[cue] = !!e.target.checked;
@@ -4669,6 +4711,14 @@ class VoxBallGame {
       if (idx < 0) return;
       if (this.currentPlayback && this.currentPlayback.index === idx) this.stopPlayback();
       else this.playRecording(idx);
+    });
+    document.getElementById('practiceSpeakBtn')?.addEventListener('click', () => {
+      if (this.currentSpeech) { this.stopSpeech(); return; }
+      const rec = this.recordings[this.practice.takeIndex];
+      if (!rec) return;
+      const phraseDef = PRACTICE_PHRASES[this.practice.index];
+      const text = buildPhraseSpeechSummary({ scored: rec.phraseScore, phraseDef, goalMode: this.goalMode });
+      this.speakPhraseSummary(text);
     });
 
     const voicePlayBtn = document.getElementById('voicePlayBtn');
