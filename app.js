@@ -12,6 +12,9 @@ import {
   parseVibrationPreferences,
   serializeVibrationPreferences,
 } from './vibration-preferences.js';
+import { ModalFocusManager } from './ui-dialog-manager.js';
+import { exportPortableSettings, importPortableSettings, resetPortableSettings } from './settings-transfer.js';
+import { SessionWakeLock, registerPwa } from './pwa.js';
 
 function escapeHtml(text) {
   if (!text) return text;
@@ -89,6 +92,12 @@ export class VoiceAnalyzer {
     this.smoothPitchHz = 160; // smoothed Hz for color mapping
     this._pitchMedianBuf = []; // for octave-jump suppression
     this.pitchConfidence = 0;  // 0=unreliable, 1=very confident (from YIN CMND)
+    this.pitchWorker = null;
+    this.pitchWorkerPending = false;
+    this.pitchWorkerSequence = 0;
+    this.pitchWorkerResult = null;
+    this.pitchWorkerLastConsumed = 0;
+    this.pitchWorkerLastHz = 0;
 
     // Resonance — harmonic envelope formant estimation
     // 'auto' picks an estimator per-frame from the smoothed SNR (see selectResonanceMethod);
@@ -265,6 +274,25 @@ export class VoiceAnalyzer {
     return this._buffers[name];
   }
 
+  _initPitchWorker() {
+    if (this.pitchWorker || typeof Worker === 'undefined') return;
+    try {
+      this.pitchWorker = new Worker(new URL('./pitch-analysis-worker.js', import.meta.url), { type: 'module' });
+      this.pitchWorker.addEventListener('message', ({ data }) => {
+        this.pitchWorkerPending = false;
+        this.pitchWorkerResult = data;
+      });
+      this.pitchWorker.addEventListener('error', (error) => {
+        console.warn('Pitch worker unavailable; using main-thread analysis.', error.message);
+        this.pitchWorker?.terminate();
+        this.pitchWorker = null;
+        this.pitchWorkerPending = false;
+      });
+    } catch {
+      this.pitchWorker = null;
+    }
+  }
+
   async start(audioFile = null, inputOptions = {}) {
     try {
       this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -331,6 +359,7 @@ export class VoiceAnalyzer {
       this.frequencyData = new Float32Array(this.analyser.frequencyBinCount);
       this.formantFreqData = new Float32Array(this.analyserFormant.frequencyBinCount);
       this.hfFrequencyData = new Uint8Array(this.analyserHF.frequencyBinCount);
+      this._initPitchWorker();
 
       // Dedicated small-FFT analyser for recording — polls time-domain samples
       // fftSize=512 → 11.6ms window at 44.1kHz, polled at matched interval
@@ -361,6 +390,10 @@ export class VoiceAnalyzer {
 
   stop() {
     this.isActive = false;
+    this.pitchWorker?.terminate();
+    this.pitchWorker = null;
+    this.pitchWorkerPending = false;
+    this.pitchWorkerResult = null;
 
     if (this.audioElement) {
       this.audioElement.pause();
@@ -623,7 +656,7 @@ export class VoiceAnalyzer {
     return i;
   }
 
-  detectPitch(precomputedRms) {
+  _detectPitchSync(precomputedRms) {
     // timeDomainData already populated by update() — no need to re-read
     const buf = this.timeDomainData;
     const n = buf.length;
@@ -757,6 +790,46 @@ export class VoiceAnalyzer {
       return sorted[Math.floor(sorted.length / 2)];
     }
     return rawHz;
+  }
+
+  detectPitch(precomputedRms) {
+    const silenceThreshold = this.isCalibrated ? this.noiseFloor * 2.5 : 0.015;
+    if (Number.isFinite(precomputedRms) && precomputedRms < silenceThreshold) return 0;
+
+    if (this.pitchWorker && !this.pitchWorkerPending && this.timeDomainData) {
+      const samples = this.timeDomainData.slice();
+      const id = ++this.pitchWorkerSequence;
+      this.pitchWorkerPending = true;
+      this.pitchWorker.postMessage({
+        id,
+        samples: samples.buffer,
+        options: {
+          sampleRate: this.audioCtx.sampleRate,
+          minHz: Math.max(40, this.pitchProfile.min * 0.85),
+          maxHz: Math.min(600, this.pitchProfile.max * 1.15),
+          threshold: YIN_THRESHOLD,
+          confidenceFactor: PITCH_CONFIDENCE_FACTOR,
+        },
+      }, [samples.buffer]);
+    }
+
+    const result = this.pitchWorkerResult;
+    if (result?.id > this.pitchWorkerLastConsumed) {
+      this.pitchWorkerLastConsumed = result.id;
+      this.pitchConfidence = result.confidence;
+      if (result.hz > 0) {
+        this._pitchMedianBuf.push(result.hz);
+        if (this._pitchMedianBuf.length > 7) this._pitchMedianBuf.shift();
+        const sorted = [...this._pitchMedianBuf].sort((a, b) => a - b);
+        this.pitchWorkerLastHz = sorted[Math.floor(sorted.length / 2)];
+      } else {
+        this.pitchWorkerLastHz = 0;
+      }
+      return this.pitchWorkerLastHz;
+    }
+
+    if (this.pitchWorkerLastConsumed > 0) return this.pitchWorkerLastHz;
+    return this._detectPitchSync(precomputedRms);
   }
 
   update(dt) {
@@ -2132,6 +2205,9 @@ class VoxBallGame {
     this.idleAnimId = null;
     this._disposables = []; // cleanup callbacks for listeners/observers
     this._pendingTimeouts = []; // track setTimeout IDs for cleanup
+    this.dialogManager = new ModalFocusManager({ root: document.getElementById('app') });
+    this.wakeLock = new SessionWakeLock();
+    this._disposables.push(() => this.wakeLock.destroy());
 
     // FIX: Store ball color as HSL components for proper HSLA compositing
     this.ballHue = 275;
@@ -2292,7 +2368,7 @@ class VoxBallGame {
 
     // ====== RUNTIME TOOLS ======
     this.perfMonitor = new PerformanceMonitor({ panelId: 'perfPanel' });
-    this.calibrationWizard = new CalibrationWizard();
+    this.calibrationWizard = new CalibrationWizard({ focusManager: this.dialogManager });
     this.bulbController = new BulbController({ swatchId: 'bulbSimSwatch', statusId: 'bulbStatus' });
     this.necklaceController = new NecklaceController({ onStatus: (s) => this._onNecklaceStatus(s) });
     this.hasCompletedCalibration = false;
@@ -4345,6 +4421,7 @@ class VoxBallGame {
       startBtn.classList.add('active');
       recBtn.classList.add('visible');
       this.isRunning = true;
+      this.wakeLock.request();
       if (this.dafEnabled) this.startDAF();
       this.lastTime = performance.now();
       this.loop();
@@ -4368,6 +4445,7 @@ class VoxBallGame {
       document.getElementById('dafPanel')?.classList.remove('show');
       document.getElementById('dafBtn')?.setAttribute('aria-expanded', 'false');
       this.isRunning = false;
+      this.wakeLock.release();
       this.analyzer.stop();
       cleanupPhoneMic();
       startBtn.textContent = '🎙 Start';
@@ -4387,8 +4465,7 @@ class VoxBallGame {
       // (panels have higher z-index than the welcome overlay, so they must be
       // explicitly closed here — setHudSettingsVisible only hides .hud-setting
       // buttons, not the panel contents themselves).
-      document.getElementById('settingsPanel')?.classList.remove('show');
-      document.getElementById('settingsBtn')?.setAttribute('aria-expanded', 'false');
+      toggleSettings(false);
       document.getElementById('vibPanel')?.classList.remove('show');
       document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
       document.getElementById('helpTooltip')?.classList.remove('show');
@@ -4423,6 +4500,7 @@ class VoxBallGame {
       // If a game is running, stop it and go directly to menu
       if (this.isRunning) {
         this.isRunning = false;
+        this.wakeLock.release();
         this.analyzer.stop();
         cleanupPhoneMic();
         startBtn.textContent = '🎙 Start';
@@ -4445,8 +4523,7 @@ class VoxBallGame {
 
       // Close all panels and reset aria-expanded
       this.stopDAF();
-      document.getElementById('settingsPanel')?.classList.remove('show');
-      document.getElementById('settingsBtn')?.setAttribute('aria-expanded', 'false');
+      toggleSettings(false);
       document.getElementById('vibPanel')?.classList.remove('show');
       document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
       document.getElementById('helpTooltip')?.classList.remove('show');
@@ -4466,8 +4543,7 @@ class VoxBallGame {
       document.getElementById('app').classList.remove('playing');
       setHudSettingsVisible(false);
       // Close any open panels before showing the menu
-      document.getElementById('settingsPanel')?.classList.remove('show');
-      document.getElementById('settingsBtn')?.setAttribute('aria-expanded', 'false');
+      toggleSettings(false);
       document.getElementById('vibPanel')?.classList.remove('show');
       document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
       document.getElementById('helpTooltip')?.classList.remove('show');
@@ -4947,8 +5023,13 @@ class VoxBallGame {
         setSimplePanelVisibility(recordingsDrawer, recordingsBtn, false);
         setSimplePanelVisibility(vibPanel, vibBtn, false);
         setSimplePanelVisibility(dafPanel, dafBtn, false);
-        settingsCloseTopBtn?.focus({ preventScroll: true });
+        this.dialogManager.activate(settingsPanel, {
+          initialFocus: settingsCloseTopBtn,
+          onEscape: () => toggleSettings(false),
+          exempt: [modalBackdrop],
+        });
       } else {
+        this.dialogManager.deactivate(settingsPanel);
         settingsPanel.style.display = 'none';
         settingsPanel.style.opacity = '0';
         settingsPanel.style.pointerEvents = 'none';
@@ -4967,6 +5048,43 @@ class VoxBallGame {
       settingsBtn?.focus({ preventScroll: true });
     });
     modalBackdrop?.addEventListener('click', () => toggleSettings(false));
+
+    const settingsDataStatus = document.getElementById('settingsDataStatus');
+    const setSettingsDataStatus = (message) => {
+      if (settingsDataStatus) settingsDataStatus.textContent = message;
+    };
+    document.getElementById('exportSettingsBtn')?.addEventListener('click', () => {
+      const bundle = exportPortableSettings(localStorage);
+      const blobUrl = URL.createObjectURL(new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }));
+      const link = Object.assign(document.createElement('a'), {
+        href: blobUrl,
+        download: `prosodyball-settings-${new Date().toISOString().slice(0, 10)}.json`,
+      });
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
+      setSettingsDataStatus(`Exported ${Object.keys(bundle.settings).length} portable preferences.`);
+    });
+    const importSettingsInput = document.getElementById('importSettingsInput');
+    document.getElementById('importSettingsBtn')?.addEventListener('click', () => importSettingsInput?.click());
+    importSettingsInput?.addEventListener('change', async () => {
+      try {
+        const file = importSettingsInput.files?.[0];
+        if (!file) return;
+        const imported = importPortableSettings(localStorage, JSON.parse(await file.text()));
+        setSettingsDataStatus(`Imported ${imported} preferences. Reloading…`);
+        window.setTimeout(() => window.location.reload(), 500);
+      } catch (error) {
+        setSettingsDataStatus(error.message || 'Could not import this settings file.');
+      } finally {
+        importSettingsInput.value = '';
+      }
+    });
+    document.getElementById('resetSettingsBtn')?.addEventListener('click', () => {
+      if (!window.confirm('Reset all ProsodyBall preferences and calibrations on this device?')) return;
+      const removed = resetPortableSettings(localStorage);
+      setSettingsDataStatus(`Reset ${removed} saved values. Reloading…`);
+      window.setTimeout(() => window.location.reload(), 500);
+    });
 
     // One outside-click path keeps every auxiliary panel and aria state in sync.
     document.addEventListener('click', (e) => {
@@ -7487,3 +7605,4 @@ export const game = document.getElementById('app') ? new VoxBallGame() : null;
 // shell, which seeds vibration rules and reads alert state). Additive only —
 // has no effect on the standalone web app.
 if (typeof window !== 'undefined' && game) window.voxGame = game;
+if (typeof window !== 'undefined') registerPwa();

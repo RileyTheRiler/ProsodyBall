@@ -1,5 +1,5 @@
 export class CalibrationWizard {
-  constructor({ overlayId = 'calibrationOverlay', titleId = 'calStepTitle', descId = 'calStepDesc', progressId = 'calProgressFill', nextBtnId = 'calNextBtn', skipBtnId = 'calSkipBtn', visualId = 'calVisualContainer' } = {}) {
+  constructor({ overlayId = 'calibrationOverlay', titleId = 'calStepTitle', descId = 'calStepDesc', progressId = 'calProgressFill', nextBtnId = 'calNextBtn', skipBtnId = 'calSkipBtn', visualId = 'calVisualContainer', focusManager = null } = {}) {
     this.overlay = document.getElementById(overlayId);
     this.titleEl = document.getElementById(titleId);
     this.descEl = document.getElementById(descId);
@@ -7,11 +7,23 @@ export class CalibrationWizard {
     this.nextBtn = document.getElementById(nextBtnId);
     this.skipBtn = document.getElementById(skipBtnId);
     this.visualEl = document.getElementById(visualId);
+    this.dialog = this.overlay?.querySelector?.('[role="dialog"]') || this.overlay;
+    this.focusManager = focusManager;
     this.isWizardLoopActive = false;
   }
 
-  _show() { this.overlay?.classList.add('show'); }
-  _hide() { this.overlay?.classList.remove('show'); this.isWizardLoopActive = false; }
+  _show() {
+    this.overlay?.classList.add('show');
+    this.focusManager?.activate(this.dialog, {
+      initialFocus: this.nextBtn,
+      onEscape: () => this.cancel(),
+    });
+  }
+  _hide() {
+    this.overlay?.classList.remove('show');
+    this.focusManager?.deactivate(this.dialog);
+    this.isWizardLoopActive = false;
+  }
 
   cancel() {
     this.isWizardLoopActive = false;

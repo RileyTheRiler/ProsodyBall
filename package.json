@@ -15,7 +15,7 @@
     "test:unit": "node --test *.test.mjs",
     "test:browser-smoke": "node tools/browser-smoke.mjs",
     "test:browser-matrix": "npm run test:browser-smoke && BROWSER=firefox npm run test:browser-smoke",
-    "lint": "node --check app.js && node --check vibration-preferences.js && node --check phrase-coach.js && node --check speech-feedback.js && node --check calibration-wizard.js && node --check bulb-controller.js && node --check necklace-controller.js && node --check hue-bridge.mjs && node --check tools/browser-smoke.mjs",
+    "lint": "node --check app.js && node --check vibration-preferences.js && node --check phrase-coach.js && node --check speech-feedback.js && node --check calibration-wizard.js && node --check bulb-controller.js && node --check necklace-controller.js && node --check ui-dialog-manager.js && node --check settings-transfer.js && node --check pitch-estimator.js && node --check pitch-analysis-worker.js && node --check pwa.js && node --check service-worker.js && node --check hue-bridge.mjs && node --check tools/browser-smoke.mjs",
     "typecheck": "npm run lint"
   },
   "devDependencies": {

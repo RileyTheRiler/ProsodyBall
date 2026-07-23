@@ -180,6 +180,63 @@ try {
       throw new Error(`vibration rules did not restore: ${JSON.stringify(restoredAlerts)}`);
     }
 
+    const pwaState = await page.evaluate(async () => {
+      const manifest = await fetch(document.querySelector('link[rel="manifest"]').href).then((response) => response.json());
+      const registration = await navigator.serviceWorker.ready;
+      return { shortName: manifest.short_name, scope: registration.scope };
+    });
+    if (pwaState.shortName !== 'ProsodyBall' || !pwaState.scope) {
+      throw new Error(`PWA registration failed: ${JSON.stringify(pwaState)}`);
+    }
+
+    const workerResult = await page.evaluate(() => new Promise((resolve, reject) => {
+      const worker = new Worker(new URL('./pitch-analysis-worker.js', document.baseURI), { type: 'module' });
+      const samples = Float32Array.from({ length: 4096 }, (_, i) => Math.sin(2 * Math.PI * 180 * i / 48000));
+      const timeout = setTimeout(() => reject(new Error('pitch worker timed out')), 5000);
+      worker.onmessage = ({ data }) => {
+        clearTimeout(timeout);
+        worker.terminate();
+        resolve(data);
+      };
+      worker.onerror = (event) => reject(new Error(event.message));
+      worker.postMessage({
+        id: 1,
+        samples: samples.buffer,
+        options: { sampleRate: 48000, minHz: 40, maxHz: 600, threshold: 0.12, confidenceFactor: 3 },
+      }, [samples.buffer]);
+    }));
+    if (Math.abs(workerResult.hz - 180) > 2 || workerResult.confidence < 0.8) {
+      throw new Error(`pitch worker result was inaccurate: ${JSON.stringify(workerResult)}`);
+    }
+
+    await page.setViewport({ width: 360, height: 640, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
+    const notificationState = await page.evaluate(() => {
+      document.getElementById('welcomeOverlay').classList.add('hidden');
+      const banner = document.getElementById('errorBanner');
+      banner.textContent = 'Persistent runtime error';
+      banner.classList.add('show');
+      const rect = banner.getBoundingClientRect();
+      const style = getComputedStyle(banner);
+      const insideWelcome = Boolean(banner.closest('#welcomeOverlay'));
+      const visible = style.display !== 'none' && rect.height > 0;
+      banner.classList.remove('show');
+      return { visible, insideWelcome };
+    });
+    if (!notificationState.visible || notificationState.insideWelcome) {
+      throw new Error(`global notification is not session-visible: ${JSON.stringify(notificationState)}`);
+    }
+
+    await page.click('#settingsBtn');
+    await page.keyboard.down('Shift');
+    await page.keyboard.press('Tab');
+    await page.keyboard.up('Shift');
+    const trappedFocus = await page.evaluate(() => document.getElementById('settingsPanel').contains(document.activeElement));
+    if (!trappedFocus) throw new Error('Settings focus escaped the modal');
+    await page.keyboard.press('Escape');
+    if (await page.$eval('#settingsPanel', (panel) => panel.classList.contains('show'))) {
+      throw new Error('Escape did not close Settings');
+    }
+
     for (const [width, height] of [[320, 568], [360, 640], [412, 915], [740, 360]]) {
       await checkMobileLayout(page, width, height);
     }
@@ -199,7 +256,7 @@ try {
     if (guidedState.settingsVisible || !guidedState.calibrationVisible || guidedState.calibrationInsideHiddenWelcome) {
       throw new Error(`guided resonance mobile flow failed: ${JSON.stringify(guidedState)}`);
     }
-    await page.click('#calSkipBtn');
+    await page.evaluate(() => document.getElementById('calSkipBtn').click());
     await page.waitForFunction(() => !document.getElementById('calibrationOverlay').classList.contains('show'));
   }
 

@@ -4,7 +4,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#12121f">
+  <meta name="mobile-web-app-capable" content="yes">
   <title>Vox Ball — Voice Training Game</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/app-icon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Space+Mono:wght@400;700&display=swap">
@@ -2008,13 +2012,20 @@
 
     .error-banner {
       display: none;
+      position: absolute;
+      top: max(12px, env(safe-area-inset-top));
+      left: 50%;
+      z-index: var(--z-popup);
+      transform: translateX(-50%);
       background: rgba(255, 80, 80, 0.12);
+      backdrop-filter: blur(12px);
       border: 1px solid rgba(255, 80, 80, 0.25);
       border-radius: 10px;
       padding: 14px 18px;
-      max-width: 500px;
-      width: 90%;
-      margin-bottom: 20px;
+      max-width: 680px;
+      max-height: min(40vh, 280px);
+      overflow: auto;
+      width: calc(100% - 24px);
       text-align: center;
       font-size: 0.95rem;
       line-height: 1.5;
@@ -2023,6 +2034,30 @@
 
     .error-banner.show {
       display: block;
+    }
+
+    .settings-data-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .settings-data-actions .danger {
+      color: #ffb4b4;
+      border-color: rgba(255, 107, 107, 0.45);
+    }
+
+    .settings-data-status {
+      min-height: 1.3em;
+      margin: 8px 0 0;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+    }
+
+    @media (max-width: 420px) {
+      .settings-data-actions {
+        grid-template-columns: 1fr;
+      }
     }
 
     .error-banner a {
@@ -4762,6 +4797,18 @@
         <div id="necklaceStatus" class="bulb-status" aria-live="polite"></div>
       </div>
 
+      <div class="settings-group">
+        <span class="settings-label">Settings Data</span>
+        <p class="settings-hint">Back up portable preferences or restore defaults. Bulb credentials and private endpoint URLs are never exported.</p>
+        <div class="settings-data-actions">
+          <button class="btn btn-help btn-fill" id="exportSettingsBtn" type="button">Export</button>
+          <button class="btn btn-help btn-fill" id="importSettingsBtn" type="button">Import</button>
+          <button class="btn btn-help btn-fill danger" id="resetSettingsBtn" type="button">Reset all</button>
+        </div>
+        <input id="importSettingsInput" type="file" accept="application/json,.json" hidden>
+        <p class="settings-data-status" id="settingsDataStatus" aria-live="polite"></p>
+      </div>
+
       <button class="btn btn-close-settings" id="closeSettingsBtn">Close</button>
     </div>
 
@@ -4803,8 +4850,6 @@
               <button class="btn-big" id="playBtn">🎙 Start Speaking</button>
               <div class="mic-note">Requires microphone access · All processing is local</div>
             </div>
-            <div class="error-banner" id="errorBanner"></div>
-            <div id="statusLiveRegion" class="sr-only" aria-live="polite" aria-atomic="true"></div>
             <div class="iframe-notice" id="iframeNotice"></div>
             <div class="perf-panel" id="perfPanel"></div>
 
@@ -4826,8 +4871,11 @@
 
         </div>
 
+      <div class="error-banner" id="errorBanner" role="alert"></div>
+      <div id="statusLiveRegion" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
       <div class="calibration-overlay" id="calibrationOverlay">
-        <div class="calibration-card" role="dialog" aria-modal="true" aria-labelledby="calStepTitle" aria-describedby="calStepDesc">
+        <div class="calibration-card" role="dialog" aria-modal="true" aria-labelledby="calStepTitle" aria-describedby="calStepDesc" tabindex="-1">
           <div class="calibration-title" id="calStepTitle">Preparing calibration</div>
           <div class="calibration-desc" id="calStepDesc">We'll quickly tune to your mic and voice.</div>
           <div id="calVisualContainer" class="cal-visual-container"></div>
