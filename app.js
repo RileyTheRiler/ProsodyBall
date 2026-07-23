@@ -6,6 +6,15 @@ import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
 import { BulbController } from './bulb-controller.js';
 import { NecklaceController, HapticSrc } from './necklace-controller.js';
+import {
+  VIBRATION_METRIC_SPECS,
+  VIBRATION_STORAGE_KEY,
+  parseVibrationPreferences,
+  serializeVibrationPreferences,
+} from './vibration-preferences.js';
+import { ModalFocusManager } from './ui-dialog-manager.js';
+import { exportPortableSettings, importPortableSettings, resetPortableSettings } from './settings-transfer.js';
+import { SessionWakeLock, registerPwa } from './pwa.js';
 
 function escapeHtml(text) {
   if (!text) return text;
@@ -83,6 +92,12 @@ export class VoiceAnalyzer {
     this.smoothPitchHz = 160; // smoothed Hz for color mapping
     this._pitchMedianBuf = []; // for octave-jump suppression
     this.pitchConfidence = 0;  // 0=unreliable, 1=very confident (from YIN CMND)
+    this.pitchWorker = null;
+    this.pitchWorkerPending = false;
+    this.pitchWorkerSequence = 0;
+    this.pitchWorkerResult = null;
+    this.pitchWorkerLastConsumed = 0;
+    this.pitchWorkerLastHz = 0;
 
     // Resonance — harmonic envelope formant estimation
     // 'auto' picks an estimator per-frame from the smoothed SNR (see selectResonanceMethod);
@@ -259,6 +274,25 @@ export class VoiceAnalyzer {
     return this._buffers[name];
   }
 
+  _initPitchWorker() {
+    if (this.pitchWorker || typeof Worker === 'undefined') return;
+    try {
+      this.pitchWorker = new Worker(new URL('./pitch-analysis-worker.js', import.meta.url), { type: 'module' });
+      this.pitchWorker.addEventListener('message', ({ data }) => {
+        this.pitchWorkerPending = false;
+        this.pitchWorkerResult = data;
+      });
+      this.pitchWorker.addEventListener('error', (error) => {
+        console.warn('Pitch worker unavailable; using main-thread analysis.', error.message);
+        this.pitchWorker?.terminate();
+        this.pitchWorker = null;
+        this.pitchWorkerPending = false;
+      });
+    } catch {
+      this.pitchWorker = null;
+    }
+  }
+
   async start(audioFile = null, inputOptions = {}) {
     try {
       this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -325,6 +359,7 @@ export class VoiceAnalyzer {
       this.frequencyData = new Float32Array(this.analyser.frequencyBinCount);
       this.formantFreqData = new Float32Array(this.analyserFormant.frequencyBinCount);
       this.hfFrequencyData = new Uint8Array(this.analyserHF.frequencyBinCount);
+      this._initPitchWorker();
 
       // Dedicated small-FFT analyser for recording — polls time-domain samples
       // fftSize=512 → 11.6ms window at 44.1kHz, polled at matched interval
@@ -355,6 +390,10 @@ export class VoiceAnalyzer {
 
   stop() {
     this.isActive = false;
+    this.pitchWorker?.terminate();
+    this.pitchWorker = null;
+    this.pitchWorkerPending = false;
+    this.pitchWorkerResult = null;
 
     if (this.audioElement) {
       this.audioElement.pause();
@@ -617,7 +656,7 @@ export class VoiceAnalyzer {
     return i;
   }
 
-  detectPitch(precomputedRms) {
+  _detectPitchSync(precomputedRms) {
     // timeDomainData already populated by update() — no need to re-read
     const buf = this.timeDomainData;
     const n = buf.length;
@@ -751,6 +790,46 @@ export class VoiceAnalyzer {
       return sorted[Math.floor(sorted.length / 2)];
     }
     return rawHz;
+  }
+
+  detectPitch(precomputedRms) {
+    const silenceThreshold = this.isCalibrated ? this.noiseFloor * 2.5 : 0.015;
+    if (Number.isFinite(precomputedRms) && precomputedRms < silenceThreshold) return 0;
+
+    if (this.pitchWorker && !this.pitchWorkerPending && this.timeDomainData) {
+      const samples = this.timeDomainData.slice();
+      const id = ++this.pitchWorkerSequence;
+      this.pitchWorkerPending = true;
+      this.pitchWorker.postMessage({
+        id,
+        samples: samples.buffer,
+        options: {
+          sampleRate: this.audioCtx.sampleRate,
+          minHz: Math.max(40, this.pitchProfile.min * 0.85),
+          maxHz: Math.min(600, this.pitchProfile.max * 1.15),
+          threshold: YIN_THRESHOLD,
+          confidenceFactor: PITCH_CONFIDENCE_FACTOR,
+        },
+      }, [samples.buffer]);
+    }
+
+    const result = this.pitchWorkerResult;
+    if (result?.id > this.pitchWorkerLastConsumed) {
+      this.pitchWorkerLastConsumed = result.id;
+      this.pitchConfidence = result.confidence;
+      if (result.hz > 0) {
+        this._pitchMedianBuf.push(result.hz);
+        if (this._pitchMedianBuf.length > 7) this._pitchMedianBuf.shift();
+        const sorted = [...this._pitchMedianBuf].sort((a, b) => a - b);
+        this.pitchWorkerLastHz = sorted[Math.floor(sorted.length / 2)];
+      } else {
+        this.pitchWorkerLastHz = 0;
+      }
+      return this.pitchWorkerLastHz;
+    }
+
+    if (this.pitchWorkerLastConsumed > 0) return this.pitchWorkerLastHz;
+    return this._detectPitchSync(precomputedRms);
   }
 
   update(dt) {
@@ -2126,6 +2205,9 @@ class VoxBallGame {
     this.idleAnimId = null;
     this._disposables = []; // cleanup callbacks for listeners/observers
     this._pendingTimeouts = []; // track setTimeout IDs for cleanup
+    this.dialogManager = new ModalFocusManager({ root: document.getElementById('app') });
+    this.wakeLock = new SessionWakeLock();
+    this._disposables.push(() => this.wakeLock.destroy());
 
     // FIX: Store ball color as HSL components for proper HSLA compositing
     this.ballHue = 275;
@@ -2235,6 +2317,14 @@ class VoxBallGame {
       flashAlpha: 0,       // on-canvas alert flash opacity
       flashMetric: '',     // which metric tripped (for display)
     };
+    try {
+      const savedVibration = parseVibrationPreferences(localStorage.getItem(VIBRATION_STORAGE_KEY));
+      this.vibration.enabled = savedVibration.enabled;
+      this.vibration.rules = savedVibration.rules;
+      this.vibration.nextId = savedVibration.nextId;
+    } catch {
+      // Storage can be unavailable in private/embedded contexts; defaults remain usable.
+    }
 
     // ====== SESSION STATS ======
     this.session = {
@@ -2278,7 +2368,7 @@ class VoxBallGame {
 
     // ====== RUNTIME TOOLS ======
     this.perfMonitor = new PerformanceMonitor({ panelId: 'perfPanel' });
-    this.calibrationWizard = new CalibrationWizard();
+    this.calibrationWizard = new CalibrationWizard({ focusManager: this.dialogManager });
     this.bulbController = new BulbController({ swatchId: 'bulbSimSwatch', statusId: 'bulbStatus' });
     this.necklaceController = new NecklaceController({ onStatus: (s) => this._onNecklaceStatus(s) });
     this.hasCompletedCalibration = false;
@@ -4331,6 +4421,7 @@ class VoxBallGame {
       startBtn.classList.add('active');
       recBtn.classList.add('visible');
       this.isRunning = true;
+      this.wakeLock.request();
       if (this.dafEnabled) this.startDAF();
       this.lastTime = performance.now();
       this.loop();
@@ -4354,6 +4445,7 @@ class VoxBallGame {
       document.getElementById('dafPanel')?.classList.remove('show');
       document.getElementById('dafBtn')?.setAttribute('aria-expanded', 'false');
       this.isRunning = false;
+      this.wakeLock.release();
       this.analyzer.stop();
       cleanupPhoneMic();
       startBtn.textContent = '🎙 Start';
@@ -4373,8 +4465,7 @@ class VoxBallGame {
       // (panels have higher z-index than the welcome overlay, so they must be
       // explicitly closed here — setHudSettingsVisible only hides .hud-setting
       // buttons, not the panel contents themselves).
-      document.getElementById('settingsPanel')?.classList.remove('show');
-      document.getElementById('settingsBtn')?.setAttribute('aria-expanded', 'false');
+      toggleSettings(false);
       document.getElementById('vibPanel')?.classList.remove('show');
       document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
       document.getElementById('helpTooltip')?.classList.remove('show');
@@ -4409,6 +4500,7 @@ class VoxBallGame {
       // If a game is running, stop it and go directly to menu
       if (this.isRunning) {
         this.isRunning = false;
+        this.wakeLock.release();
         this.analyzer.stop();
         cleanupPhoneMic();
         startBtn.textContent = '🎙 Start';
@@ -4431,8 +4523,7 @@ class VoxBallGame {
 
       // Close all panels and reset aria-expanded
       this.stopDAF();
-      document.getElementById('settingsPanel')?.classList.remove('show');
-      document.getElementById('settingsBtn')?.setAttribute('aria-expanded', 'false');
+      toggleSettings(false);
       document.getElementById('vibPanel')?.classList.remove('show');
       document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
       document.getElementById('helpTooltip')?.classList.remove('show');
@@ -4452,8 +4543,7 @@ class VoxBallGame {
       document.getElementById('app').classList.remove('playing');
       setHudSettingsVisible(false);
       // Close any open panels before showing the menu
-      document.getElementById('settingsPanel')?.classList.remove('show');
-      document.getElementById('settingsBtn')?.setAttribute('aria-expanded', 'false');
+      toggleSettings(false);
       document.getElementById('vibPanel')?.classList.remove('show');
       document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
       document.getElementById('helpTooltip')?.classList.remove('show');
@@ -4504,9 +4594,11 @@ class VoxBallGame {
           this._closeMetricPopup();
           return;
         }
-        helpTooltip.classList.remove('show');
-        vibPanel.classList.remove('show');
-        recordingsDrawer.classList.remove('show');
+        setSimplePanelVisibility(helpTooltip, helpBtn, false);
+        setSimplePanelVisibility(vibPanel, vibBtn, false);
+        setSimplePanelVisibility(recordingsDrawer, recordingsBtn, false);
+        setSimplePanelVisibility(dafPanel, dafBtn, false);
+        if (settingsPanel?.classList.contains('show')) toggleSettings(false);
         // If summary is showing, go to menu
         if (document.getElementById('summaryOverlay').classList.contains('show')) {
           document.getElementById('summaryOverlay').classList.remove('show');
@@ -4827,25 +4919,94 @@ class VoxBallGame {
     const vibMaster = document.getElementById('vibMasterToggle');
     const vibRulesList = document.getElementById('vibRulesList');
     const vibAddBtn = document.getElementById('vibAddRule');
+    const vibCloseBtn = document.getElementById('vibCloseBtn');
     const gameArea = document.querySelector('.game-area');
+    const dafBtn = document.getElementById('dafBtn');
+    const dafPanel = document.getElementById('dafPanel');
 
     // ---- Settings Panel UI ----
     const settingsBtn = document.getElementById('settingsBtn');
     const settingsPanel = document.getElementById('settingsPanel');
     const modalBackdrop = document.getElementById('modalBackdrop');
     const closeSettingsBtn = document.getElementById('closeSettingsBtn');
+    const settingsCloseTopBtn = document.getElementById('settingsCloseTopBtn');
+    const calibrationReadiness = document.getElementById('calibrationReadiness');
+    const guidedResonanceBtn = document.getElementById('guidedResonanceBtn');
+
+    const setSimplePanelVisibility = (panel, button, visible) => {
+      panel?.classList.toggle('show', visible);
+      button?.setAttribute('aria-expanded', visible ? 'true' : 'false');
+    };
+
+    const updateCalibrationReadiness = () => {
+      const ready = this.analyzer.isActive;
+      if (calibrationReadiness) {
+        calibrationReadiness.textContent = ready
+          ? 'Microphone active — calibration is ready.'
+          : 'Start a session first so calibration can hear your voice.';
+        calibrationReadiness.classList.toggle('ready', ready);
+      }
+      if (recalibrateBtn) {
+        recalibrateBtn.textContent = ready ? 'Recalibrate microphone' : 'Start session to recalibrate';
+        recalibrateBtn.setAttribute('aria-label', ready
+          ? 'Run microphone calibration again'
+          : 'Start a session before running microphone calibration');
+      }
+      if (guidedResonanceBtn) {
+        guidedResonanceBtn.textContent = ready
+          ? '🎚 Guided resonance setup'
+          : '🎚 Start session to calibrate resonance';
+        guidedResonanceBtn.setAttribute('aria-label', ready
+          ? 'Run guided resonance setup'
+          : 'Start a session before running guided resonance setup');
+      }
+    };
+
+    // On phones, turn the long settings list into accessible collapsible sections.
+    const mobileSettingsQuery = window.matchMedia('(max-width: 600px)');
+    const settingsSections = Array.from(settingsPanel?.querySelectorAll('.settings-group') || []).map((group, index) => {
+      const label = group.querySelector(':scope > .settings-label');
+      if (!label) return null;
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'settings-section-toggle';
+      toggle.textContent = label.textContent.trim();
+      const content = document.createElement('div');
+      content.className = 'settings-section-content';
+      content.id = `settingsSection${index + 1}`;
+      toggle.setAttribute('aria-controls', content.id);
+      while (group.firstChild) content.appendChild(group.firstChild);
+      group.append(toggle, content);
+      const startsOpen = toggle.textContent === 'Calibration';
+      toggle.dataset.mobileExpanded = startsOpen ? 'true' : 'false';
+      toggle.setAttribute('aria-expanded', startsOpen ? 'true' : 'false');
+      toggle.addEventListener('click', () => {
+        const expanded = toggle.getAttribute('aria-expanded') !== 'true';
+        toggle.dataset.mobileExpanded = expanded ? 'true' : 'false';
+        toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        content.hidden = !expanded;
+      });
+      return { toggle, content };
+    }).filter(Boolean);
+
+    const syncSettingsSections = () => {
+      const mobile = mobileSettingsQuery.matches;
+      for (const { toggle, content } of settingsSections) {
+        toggle.hidden = !mobile;
+        const expanded = toggle.dataset.mobileExpanded === 'true';
+        toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        content.hidden = mobile && !expanded;
+      }
+    };
+    syncSettingsSections();
+    mobileSettingsQuery.addEventListener('change', syncSettingsSections);
+    this._disposables.push(() => mobileSettingsQuery.removeEventListener('change', syncSettingsSections));
 
     const toggleSettings = (show) => {
       const isVisible = show !== undefined ? show : !settingsPanel.classList.contains('show');
       settingsPanel.classList.toggle('show', isVisible);
       settingsBtn?.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
       modalBackdrop.classList.toggle('show', isVisible);
-      if (settingsBtn) settingsBtn.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
-      settingsBtn?.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
-
-      if (settingsBtn) {
-        settingsBtn.setAttribute('aria-expanded', isVisible);
-      }
 
       // Force DOM visibility (bypass any CSS specificity issues)
       if (isVisible) {
@@ -4853,22 +5014,22 @@ class VoxBallGame {
         settingsPanel.style.display = 'flex';
         settingsPanel.style.opacity = '1';
         settingsPanel.style.pointerEvents = 'auto';
+        settingsPanel.scrollTop = 0;
         syncMicSettingsUi();
         updateAdaptiveProfileStatus();
+        updateCalibrationReadiness();
         populateMicDevices();
-        helpTooltip.classList.remove('show');
-        if (helpBtn) helpBtn.setAttribute('aria-expanded', 'false');
-        recordingsDrawer.classList.remove('show');
-        if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', 'false');
-        vibPanel.classList.remove('show');
-        if (vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
-        document.getElementById('helpBtn')?.setAttribute('aria-expanded', 'false');
-        recordingsDrawer.classList.remove('show');
-        document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'false');
-        vibPanel.classList.remove('show');
-        document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
-        vibBtn?.setAttribute('aria-expanded', 'false');
+        setSimplePanelVisibility(helpTooltip, helpBtn, false);
+        setSimplePanelVisibility(recordingsDrawer, recordingsBtn, false);
+        setSimplePanelVisibility(vibPanel, vibBtn, false);
+        setSimplePanelVisibility(dafPanel, dafBtn, false);
+        this.dialogManager.activate(settingsPanel, {
+          initialFocus: settingsCloseTopBtn,
+          onEscape: () => toggleSettings(false),
+          exempt: [modalBackdrop],
+        });
       } else {
+        this.dialogManager.deactivate(settingsPanel);
         settingsPanel.style.display = 'none';
         settingsPanel.style.opacity = '0';
         settingsPanel.style.pointerEvents = 'none';
@@ -4882,32 +5043,63 @@ class VoxBallGame {
     });
 
     closeSettingsBtn?.addEventListener('click', () => toggleSettings(false));
+    settingsCloseTopBtn?.addEventListener('click', () => {
+      toggleSettings(false);
+      settingsBtn?.focus({ preventScroll: true });
+    });
     modalBackdrop?.addEventListener('click', () => toggleSettings(false));
 
-    // Global click-to-close for all overlays
+    const settingsDataStatus = document.getElementById('settingsDataStatus');
+    const setSettingsDataStatus = (message) => {
+      if (settingsDataStatus) settingsDataStatus.textContent = message;
+    };
+    document.getElementById('exportSettingsBtn')?.addEventListener('click', () => {
+      const bundle = exportPortableSettings(localStorage);
+      const blobUrl = URL.createObjectURL(new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }));
+      const link = Object.assign(document.createElement('a'), {
+        href: blobUrl,
+        download: `prosodyball-settings-${new Date().toISOString().slice(0, 10)}.json`,
+      });
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
+      setSettingsDataStatus(`Exported ${Object.keys(bundle.settings).length} portable preferences.`);
+    });
+    const importSettingsInput = document.getElementById('importSettingsInput');
+    document.getElementById('importSettingsBtn')?.addEventListener('click', () => importSettingsInput?.click());
+    importSettingsInput?.addEventListener('change', async () => {
+      try {
+        const file = importSettingsInput.files?.[0];
+        if (!file) return;
+        const imported = importPortableSettings(localStorage, JSON.parse(await file.text()));
+        setSettingsDataStatus(`Imported ${imported} preferences. Reloading…`);
+        window.setTimeout(() => window.location.reload(), 500);
+      } catch (error) {
+        setSettingsDataStatus(error.message || 'Could not import this settings file.');
+      } finally {
+        importSettingsInput.value = '';
+      }
+    });
+    document.getElementById('resetSettingsBtn')?.addEventListener('click', () => {
+      if (!window.confirm('Reset all ProsodyBall preferences and calibrations on this device?')) return;
+      const removed = resetPortableSettings(localStorage);
+      setSettingsDataStatus(`Reset ${removed} saved values. Reloading…`);
+      window.setTimeout(() => window.location.reload(), 500);
+    });
+
+    // One outside-click path keeps every auxiliary panel and aria state in sync.
     document.addEventListener('click', (e) => {
-      // Settings panel (if clicking outside and not the gear)
-      if (settingsPanel && !settingsPanel.contains(e.target) && e.target !== settingsBtn && (!settingsBtn || !settingsBtn.contains(e.target))) {
+      if (settingsPanel && !settingsPanel.contains(e.target) && !settingsBtn?.contains(e.target)) {
         if (settingsPanel.classList.contains('show')) toggleSettings(false);
       }
-      // Vibration panel
-      if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || e.target !== vibBtn)) {
-        if (vibPanel.classList.contains('show')) {
-          vibPanel.classList.remove('show');
-          if (vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
-        }
-        vibPanel.classList.remove('show');
-        if (vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
-        document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
-        vibBtn?.setAttribute('aria-expanded', 'false');
-      }
-      // DAF panel
-      const _dafPanel = document.getElementById('dafPanel');
-      const _dafBtn = document.getElementById('dafBtn');
-      if (_dafPanel && !_dafPanel.contains(e.target) && e.target !== _dafBtn && (!_dafBtn || !_dafBtn.contains(e.target))) {
-        if (_dafPanel.classList.contains('show')) {
-          _dafPanel.classList.remove('show');
-          _dafBtn?.setAttribute('aria-expanded', 'false');
+      const dismissiblePanels = [
+        [vibPanel, vibBtn],
+        [dafPanel, dafBtn],
+        [helpTooltip, helpBtn],
+        [recordingsDrawer, recordingsBtn],
+      ];
+      for (const [panel, button] of dismissiblePanels) {
+        if (panel && !panel.contains(e.target) && !button?.contains(e.target)) {
+          setSimplePanelVisibility(panel, button, false);
         }
       }
     });
@@ -4919,40 +5111,40 @@ class VoxBallGame {
         if (vibPanel) {
           const isVisible = vibPanel.classList.toggle('show');
           vibBtn.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
+          if (isVisible) {
+            vibPanel.scrollTop = 0;
+            vibPanel.focus({ preventScroll: true });
+          }
         }
-
-        if (helpTooltip) {
-          helpTooltip.classList.remove('show');
-          document.getElementById('helpBtn')?.setAttribute('aria-expanded', 'false');
-        }
-
-        if (recordingsDrawer) {
-          recordingsDrawer.classList.remove('show');
-          document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'false');
-        }
-
-        if (settingsPanel && settingsPanel.classList.contains('show')) {
-          toggleSettings(false);
-        }
+        setSimplePanelVisibility(helpTooltip, helpBtn, false);
+        setSimplePanelVisibility(recordingsDrawer, recordingsBtn, false);
+        setSimplePanelVisibility(dafPanel, dafBtn, false);
+        if (settingsPanel?.classList.contains('show')) toggleSettings(false);
       });
     }
+
+    vibCloseBtn?.addEventListener('click', () => {
+      setSimplePanelVisibility(vibPanel, vibBtn, false);
+      vibBtn?.focus({ preventScroll: true });
+    });
+
+    const persistVibrationPreferences = () => {
+      try {
+        localStorage.setItem(VIBRATION_STORAGE_KEY, serializeVibrationPreferences(this.vibration));
+      } catch {
+        // Alerts still work for this session when storage is unavailable.
+      }
+    };
 
     if (vibMaster) {
       vibMaster.addEventListener('change', () => {
         this.vibration.enabled = vibMaster.checked;
         if (vibBtn) vibBtn.classList.toggle('active', vibMaster.checked);
+        persistVibrationPreferences();
       });
     }
 
-    const vibMetrics = [
-      { value: 'pitch', label: 'Pitch (Hz)', unit: 'Hz', min: 50, max: 500, step: 5, defaultBelow: 150, defaultAbove: 250 },
-      { value: 'resonance', label: 'Resonance', unit: '%', min: 0, max: 100, step: 5, defaultBelow: 30, defaultAbove: 70 },
-      { value: 'energy', label: 'Energy', unit: '%', min: 0, max: 100, step: 5, defaultBelow: 10, defaultAbove: 80 },
-      { value: 'bounce', label: 'Pitch Variation', unit: '%', min: 0, max: 100, step: 5, defaultBelow: 10, defaultAbove: 80 },
-      { value: 'tempo', label: 'Tempo Var.', unit: '%', min: 0, max: 100, step: 5, defaultBelow: 10, defaultAbove: 80 },
-      { value: 'vowel', label: 'Vowel Sustain', unit: '%', min: 0, max: 100, step: 5, defaultBelow: 10, defaultAbove: 70 },
-      { value: 'articulation', label: 'Articulation', unit: '%', min: 0, max: 100, step: 5, defaultBelow: 10, defaultAbove: 80 },
-    ];
+    const vibMetrics = VIBRATION_METRIC_SPECS;
 
     const getMetricInfo = (val) => vibMetrics.find(m => m.value === val) || vibMetrics[0];
 
@@ -5054,19 +5246,24 @@ class VoxBallGame {
           rule.metric = e.target.value;
           const newInfo = getMetricInfo(rule.metric);
           rule.threshold = rule.direction === 'below' ? newInfo.defaultBelow : newInfo.defaultAbove;
+          persistVibrationPreferences();
           renderVibRules();
         });
         el.querySelector('.vib-dir').addEventListener('change', (e) => {
           rule.direction = e.target.value;
+          persistVibrationPreferences();
         });
         el.querySelector('.vib-threshold').addEventListener('input', (e) => {
           rule.threshold = parseFloat(e.target.value) || 0;
+          persistVibrationPreferences();
         });
         el.querySelector('.vib-rule-toggle').addEventListener('change', (e) => {
           rule.enabled = e.target.checked;
+          persistVibrationPreferences();
         });
         el.querySelector('.vib-rule-del').addEventListener('click', () => {
           this.vibration.rules = this.vibration.rules.filter(r => r.id !== rule.id);
+          persistVibrationPreferences();
           renderVibRules();
         });
 
@@ -5084,6 +5281,7 @@ class VoxBallGame {
         cooldownTimer: 0,
         tripped: false,
       });
+      persistVibrationPreferences();
       renderVibRules();
     });
 
@@ -5091,6 +5289,9 @@ class VoxBallGame {
     this._renderVibRules = renderVibRules;
     this._gameArea = gameArea;
     this._vibRulesList = vibRulesList;
+    vibMaster.checked = this.vibration.enabled;
+    vibBtn?.classList.toggle('active', this.vibration.enabled);
+    renderVibRules();
 
     // Lightweight live-value updater (called from game loop, no DOM rebuild)
     this._updateVibLiveUI = () => {
@@ -5148,6 +5349,7 @@ class VoxBallGame {
       this.vibration.enabled = true;
       vibMaster.checked = true;
       vibBtn.classList.add('active');
+      persistVibrationPreferences();
       renderVibRules();
     };
 
@@ -5160,9 +5362,6 @@ class VoxBallGame {
     });
 
     // ── DAF (Delayed Auditory Feedback) panel handlers ──
-    const dafBtn = document.getElementById('dafBtn');
-    const dafPanel = document.getElementById('dafPanel');
-
     dafBtn?.addEventListener('click', (e) => {
       e.stopPropagation();
       const isVisible = dafPanel.classList.toggle('show');
@@ -5172,13 +5371,10 @@ class VoxBallGame {
         document.getElementById('dafDelaySlider').value = this.dafDelayMs;
         document.getElementById('dafDelayLabel').textContent = `${this.dafDelayMs}ms`;
         document.getElementById('dafBassFilterToggle').checked = this.dafBassFilter;
-        vibPanel?.classList.remove('show');
-        if (vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
-        helpTooltip?.classList.remove('show');
-        recordingsDrawer?.classList.remove('show');
-        if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', 'false');
-        settingsPanel?.classList.remove('show');
-        if (settingsBtn) settingsBtn.setAttribute('aria-expanded', 'false');
+        setSimplePanelVisibility(vibPanel, vibBtn, false);
+        setSimplePanelVisibility(helpTooltip, helpBtn, false);
+        setSimplePanelVisibility(recordingsDrawer, recordingsBtn, false);
+        if (settingsPanel?.classList.contains('show')) toggleSettings(false);
       }
     });
 
@@ -5220,8 +5416,9 @@ class VoxBallGame {
     });
 
     recalibrateBtn?.addEventListener('click', async () => {
+      toggleSettings(false);
       if (!this.analyzer.isActive) {
-        showError('ℹ Start a session first, then tap Recalibrate.');
+        showError('ℹ Start a session first, then open Settings and tap Recalibrate.');
         return;
       }
       // Clear stale calibration data so fresh samples are collected
@@ -5236,16 +5433,22 @@ class VoxBallGame {
       this.guidedChecklist.voiceDetected = false;
       this.guidedChecklist.pitchLocked = false;
       showCalibrationOutcome(calResult);
+      updateCalibrationReadiness();
     });
 
-    const guidedResonanceBtn = document.getElementById('guidedResonanceBtn');
     guidedResonanceBtn?.addEventListener('click', async () => {
+      // Close the sheet before reporting prerequisites or opening calibration.
+      // Otherwise the feedback/overlay is visually hidden behind Settings on phones.
+      toggleSettings(false);
       if (!this.analyzer.isActive) {
-        showError('ℹ Start a session first, then run guided resonance setup.');
+        showError('ℹ Start a session first, then open Settings and run Guided resonance setup.');
         return;
       }
-      toggleSettings(false); // close settings so the guided overlay isn't behind the modal
-      await this.calibrationWizard.runResonanceCalibration(this.analyzer);
+      const result = await this.calibrationWizard.runResonanceCalibration(this.analyzer);
+      if (result?.outcome === 'completed') {
+        updateAdaptiveProfileStatus();
+        updateCalibrationReadiness();
+      }
     });
 
     this.canvas.addEventListener('click', (e) => {
@@ -5265,35 +5468,10 @@ class VoxBallGame {
       this._updateHelpContent();
       const isVisible = helpTooltip.classList.toggle('show');
       helpBtn.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
-      recordingsDrawer.classList.remove('show');
-      const recBtn = document.getElementById('recordingsBtn');
-      if (recBtn) recBtn.setAttribute('aria-expanded', 'false');
-      vibPanel.classList.remove('show');
-      const vibToggle = document.getElementById('vibToggle');
-      if (vibToggle) vibToggle.setAttribute('aria-expanded', 'false');
-      if (helpBtn) helpBtn.setAttribute('aria-expanded', isVisible);
-      if (recordingsDrawer) {
-        recordingsDrawer.classList.remove('show');
-        if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', 'false');
-      }
-      if (vibPanel) {
-        vibPanel.classList.remove('show');
-        if (typeof vibBtn !== 'undefined' && vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
-      }
-      const isShown = helpTooltip.classList.toggle('show');
-      helpBtn.setAttribute('aria-expanded', isShown ? 'true' : 'false');
-
-      helpTooltip.classList.toggle('show');
-      helpBtn.setAttribute('aria-expanded', helpTooltip.classList.contains('show') ? 'true' : 'false');
-      recordingsDrawer.classList.remove('show');
-      document.getElementById('recordingsBtn')?.setAttribute('aria-expanded', 'false');
-      vibPanel.classList.remove('show');
-      document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
-
-      vibPanel.classList.remove('show');
-      document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
-
-      if (settingsPanel && settingsPanel.classList.contains('show')) toggleSettings(false);
+      setSimplePanelVisibility(recordingsDrawer, recordingsBtn, false);
+      setSimplePanelVisibility(vibPanel, vibBtn, false);
+      setSimplePanelVisibility(dafPanel, dafBtn, false);
+      if (settingsPanel?.classList.contains('show')) toggleSettings(false);
     });
 
     helpTabs.forEach((tab) => {
@@ -5304,48 +5482,6 @@ class VoxBallGame {
           panel.classList.toggle('active', panel.dataset.panel === selected);
         });
       });
-    });
-
-    document.addEventListener('click', (e) => {
-      if (helpTooltip && !helpTooltip.contains(e.target) && e.target !== helpBtn) {
-        if (helpTooltip.classList.contains('show')) {
-          helpTooltip.classList.remove('show');
-          if (helpBtn) helpBtn.setAttribute('aria-expanded', 'false');
-        }
-      }
-      if (recordingsDrawer && !recordingsDrawer.contains(e.target) && (!recordingsBtn || !recordingsBtn.contains(e.target))) {
-        if (recordingsDrawer.classList.contains('show')) {
-          recordingsDrawer.classList.remove('show');
-          if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', 'false');
-        }
-      }
-      if (vibPanel && !vibPanel.contains(e.target) && (!typeof vibBtn === 'undefined' || !vibBtn || !vibBtn.contains(e.target))) {
-        if (vibPanel.classList.contains('show')) {
-          vibPanel.classList.remove('show');
-          if (typeof vibBtn !== 'undefined' && vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
-        }
-        helpTooltip.classList.remove('show');
-        if (helpBtn) helpBtn.setAttribute('aria-expanded', 'false');
-      }
-      if (recordingsDrawer && !recordingsDrawer.contains(e.target) && (!recordingsBtn || !recordingsBtn.contains(e.target))) {
-        recordingsDrawer.classList.remove('show');
-        if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', 'false');
-      }
-      if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || !vibBtn.contains(e.target))) {
-        vibPanel.classList.remove('show');
-        const vibToggle = document.getElementById('vibToggle');
-        if (vibToggle) vibToggle.setAttribute('aria-expanded', 'false');
-        helpBtn?.setAttribute('aria-expanded', 'false');
-      }
-      if (recordingsDrawer && !recordingsDrawer.contains(e.target) && (!recordingsBtn || !recordingsBtn.contains(e.target))) {
-        recordingsDrawer.classList.remove('show');
-        recordingsBtn?.setAttribute('aria-expanded', 'false');
-      }
-      if (vibPanel && !vibPanel.contains(e.target) && (!vibBtn || !vibBtn.contains(e.target))) {
-        vibPanel.classList.remove('show');
-        document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
-        vibBtn?.setAttribute('aria-expanded', 'false');
-      }
     });
 
     // Recording controls
@@ -5388,35 +5524,10 @@ class VoxBallGame {
       e.stopPropagation();
       const isVisible = recordingsDrawer.classList.toggle('show');
       recordingsBtn.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
-      helpTooltip.classList.remove('show');
-      const helpBtnEl = document.getElementById('helpBtn');
-      if (helpBtnEl) helpBtnEl.setAttribute('aria-expanded', 'false');
-      vibPanel.classList.remove('show');
-      const vibBtnEl = document.getElementById('vibToggle');
-      if (vibBtnEl) vibBtnEl.setAttribute('aria-expanded', 'false');
-      if (recordingsBtn) recordingsBtn.setAttribute('aria-expanded', isVisible);
-      if (helpTooltip) {
-        helpTooltip.classList.remove('show');
-        if (helpBtn) helpBtn.setAttribute('aria-expanded', 'false');
-      }
-      if (vibPanel) {
-        vibPanel.classList.remove('show');
-        if (typeof vibBtn !== 'undefined' && vibBtn) vibBtn.setAttribute('aria-expanded', 'false');
-      }
-      const isShown = recordingsDrawer.classList.toggle('show');
-      recordingsBtn.setAttribute('aria-expanded', isShown ? 'true' : 'false');
-
-      recordingsDrawer.classList.toggle('show');
-      recordingsBtn.setAttribute('aria-expanded', recordingsDrawer.classList.contains('show') ? 'true' : 'false');
-      helpTooltip.classList.remove('show');
-      document.getElementById('helpBtn')?.setAttribute('aria-expanded', 'false');
-      vibPanel.classList.remove('show');
-      document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
-
-      vibPanel.classList.remove('show');
-      document.getElementById('vibToggle')?.setAttribute('aria-expanded', 'false');
-
-      if (settingsPanel && settingsPanel.classList.contains('show')) toggleSettings(false);
+      setSimplePanelVisibility(helpTooltip, helpBtn, false);
+      setSimplePanelVisibility(vibPanel, vibBtn, false);
+      setSimplePanelVisibility(dafPanel, dafBtn, false);
+      if (settingsPanel?.classList.contains('show')) toggleSettings(false);
     });
 
     clearAllRecs.addEventListener('click', () => {
@@ -7494,3 +7605,4 @@ export const game = document.getElementById('app') ? new VoxBallGame() : null;
 // shell, which seeds vibration rules and reads alert state). Additive only —
 // has no effect on the standalone web app.
 if (typeof window !== 'undefined' && game) window.voxGame = game;
+if (typeof window !== 'undefined') registerPwa();

@@ -1,15 +1,3 @@
----
-title: Vox Ball — Voice Training Game
-emoji: 🎙
-colorFrom: red
-colorTo: purple
-sdk: static
-app_file: index.html
-pinned: false
-license: mit
-short_description: Gamified voice training game — the Prosody Bowl
----
-
 # Vox Ball 🎙
 
 A gamified voice training game — train pitch, resonance, articulation, and prosody through real-time voice control of a bouncing ball. **Vox Ball** (aka the Prosody Bowl) teaches the 5 rules of expressive prosody:
@@ -25,7 +13,7 @@ A gamified voice training game — train pitch, resonance, articulation, and pro
 - 100% client-side — all audio processing happens locally in your browser
 - No data is sent to any server
 - Uses Web Audio API for real-time voice analysis
-- Autocorrelation-based pitch detection
+- Worker-backed YIN pitch detection with a main-thread fallback
 - Spectral analysis for articulation detection
 - Energy envelope tracking for syllable and tempo analysis
 
@@ -37,21 +25,9 @@ Click **Start Speaking** and allow microphone access. Then speak expressively �
 
 See [`IMPROVEMENT_SUGGESTIONS.md`](./IMPROVEMENT_SUGGESTIONS.md) for a prioritized list of UX, signal-accuracy, and product iteration ideas.
 
-**Note:** If microphone access is blocked when viewing the Space on huggingface.co, click the expand button (↗) in the top-right corner of the Space to open it in a full browser tab. The app will also detect this automatically and show an "Open in new tab" link.
-
-
-## Hugging Face Spaces file/folder setup
-
-For a **Static** Hugging Face Space (`sdk: static`), a flat structure works fine:
-
-- Keep `index.html` at the repo root.
-- Keep your JS files at the repo root too (for example: `app.js`, `dsp-utils.js`).
-- Use relative paths from `index.html` (example: `./app.js` or `app.js`).
-- After pushing changes, the Space rebuilds automatically.
-
 ## Technical Details
 
-- Pitch detection via autocorrelation on time-domain audio data
+- Pitch detection via YIN analysis on time-domain audio data
 - High-frequency bandpass filtering (3kHz+) for consonant/articulation detection
 - RMS energy tracking with history buffer for tempo variance analysis
 - Energy envelope zero-crossing detection for syllable segmentation
