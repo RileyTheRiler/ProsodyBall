@@ -24,3 +24,6 @@
 ## $(date +%Y-%m-%d) - [Inaccessible custom toggle switches due to duplicate IDs]
 **Learning:** Discovered that custom toggle switches built with `<label class="toggle-switch">` wrapping an `<input type="checkbox">` were failing because the `id` on the `<input>` was duplicated elsewhere in the DOM. This breaks the `<label for="[id]">` association, rendering the toggle invisible to screen readers and difficult to click.
 **Action:** Ensure custom toggle `<input>` elements have strictly unique IDs across the entire document so they correctly link with their `<label>` elements.
+## 2026-07-18 - [Redundant aria-labels on explicitly labeled inputs]
+**Learning:** When adding a `for` attribute to a `<label>` to explicitly associate it with an `<input>`, adding an `aria-label` to the input with the exact same text is redundant. The screen reader already derives the accessible name from the associated label.
+**Action:** Do not add `aria-label` attributes to `<input>` elements that are already explicitly linked to descriptive text via a `<label for="...">` association.
