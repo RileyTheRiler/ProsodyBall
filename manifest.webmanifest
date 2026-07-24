@@ -1,0 +1,19 @@
+{
+  "name": "ProsodyBall — Voice Training Game",
+  "short_name": "ProsodyBall",
+  "description": "Private, local voice-training feedback and practice.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0a0a12",
+  "theme_color": "#12121f",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "./icons/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

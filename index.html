@@ -4,7 +4,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#12121f">
+  <meta name="mobile-web-app-capable" content="yes">
   <title>Vox Ball — Voice Training Game</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/app-icon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Space+Mono:wght@400;700&display=swap">
@@ -580,11 +584,22 @@
       color: var(--text-muted);
       display: none;
       max-height: 70vh;
+      max-height: calc(100dvh - 76px - env(safe-area-inset-bottom, 0px));
       overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
+      scrollbar-gutter: stable;
     }
 
     .vib-panel.show {
       display: block;
+    }
+
+    .vib-panel-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
 
     .vib-panel h3 {
@@ -594,6 +609,28 @@
       display: flex;
       align-items: center;
       gap: 6px;
+      flex: 1;
+    }
+
+    .vib-panel-close {
+      width: 36px;
+      height: 36px;
+      flex: 0 0 36px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 9px;
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-primary);
+      font: inherit;
+      font-size: 1.15rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .vib-panel-close:hover,
+    .vib-panel-close:focus-visible {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.24);
+      outline: none;
     }
 
     .vib-panel-sub {
@@ -1863,6 +1900,10 @@
       justify-content: center;
       background: rgba(10, 10, 18, 0.86);
       backdrop-filter: blur(8px);
+      padding: 12px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
     }
 
     .calibration-overlay.show {
@@ -1871,6 +1912,9 @@
 
     .calibration-card {
       width: min(520px, 92vw);
+      max-height: calc(100% - 8px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
       background: var(--bg-surface);
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 14px;
@@ -1968,13 +2012,20 @@
 
     .error-banner {
       display: none;
+      position: absolute;
+      top: max(12px, env(safe-area-inset-top));
+      left: 50%;
+      z-index: var(--z-popup);
+      transform: translateX(-50%);
       background: rgba(255, 80, 80, 0.12);
+      backdrop-filter: blur(12px);
       border: 1px solid rgba(255, 80, 80, 0.25);
       border-radius: 10px;
       padding: 14px 18px;
-      max-width: 500px;
-      width: 90%;
-      margin-bottom: 20px;
+      max-width: 680px;
+      max-height: min(40vh, 280px);
+      overflow: auto;
+      width: calc(100% - 24px);
       text-align: center;
       font-size: 0.95rem;
       line-height: 1.5;
@@ -1983,6 +2034,30 @@
 
     .error-banner.show {
       display: block;
+    }
+
+    .settings-data-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .settings-data-actions .danger {
+      color: #ffb4b4;
+      border-color: rgba(255, 107, 107, 0.45);
+    }
+
+    .settings-data-status {
+      min-height: 1.3em;
+      margin: 8px 0 0;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+    }
+
+    @media (max-width: 420px) {
+      .settings-data-actions {
+        grid-template-columns: 1fr;
+      }
     }
 
     .error-banner a {
@@ -2627,12 +2702,32 @@
 
       /* --- VIBRATION PANEL: mobile-optimized --- */
       .vib-panel {
-        right: 4px;
-        left: 4px;
-        max-width: 100%;
-        max-height: 80vh;
+        position: fixed;
+        top: calc(env(safe-area-inset-top, 0px) + 64px);
+        right: max(8px, env(safe-area-inset-right, 0px));
+        bottom: max(8px, env(safe-area-inset-bottom, 0px));
+        left: max(8px, env(safe-area-inset-left, 0px));
+        width: auto;
+        max-width: none;
+        max-height: none;
         border-radius: 14px;
-        padding-bottom: env(safe-area-inset-bottom, 8px);
+        padding: 16px 14px max(16px, env(safe-area-inset-bottom, 0px));
+      }
+
+      .vib-panel-header {
+        position: sticky;
+        top: -16px;
+        z-index: 2;
+        margin: -16px -14px 12px;
+        padding: 12px 14px 10px;
+        background: rgba(18, 18, 31, 0.98);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .vib-panel-close {
+        width: 44px;
+        height: 44px;
+        flex-basis: 44px;
       }
 
       /* Vib rules: stack label/controls vertically on mobile */
@@ -2697,13 +2792,40 @@
 
       /* --- SETTINGS PANEL: full-width mobile sheet --- */
       .settings-panel {
+        position: fixed;
+        top: max(8px, env(safe-area-inset-top, 0px));
+        right: max(8px, env(safe-area-inset-right, 0px));
+        bottom: max(8px, env(safe-area-inset-bottom, 0px));
+        left: max(8px, env(safe-area-inset-left, 0px));
         max-width: 100%;
-        width: 96vw;
-        max-height: 85vh;
+        width: auto;
+        max-height: none;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;
         border-radius: 16px;
-        padding: 20px 18px;
+        padding: 18px 14px;
+        transform: none;
+      }
+
+      .settings-panel.show {
+        transform: none;
+      }
+
+      .settings-panel-header {
+        position: sticky;
+        top: -18px;
+        z-index: 3;
+        margin: -18px -14px 2px;
+        padding: 12px 14px 10px;
+        background: rgba(18, 18, 31, 0.98);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .settings-panel-close {
+        width: 44px;
+        height: 44px;
+        flex-basis: 44px;
       }
 
       .settings-panel h3 {
@@ -2719,11 +2841,75 @@
       }
 
       .settings-group {
+        gap: 0;
+        padding: 0;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        overflow: clip;
+      }
+
+      .settings-section-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
         gap: 12px;
+        width: 100%;
+        min-height: 52px;
+        padding: 12px 14px;
+        border: 0;
+        background: rgba(255, 255, 255, 0.035);
+        color: var(--text-primary);
+        font: inherit;
+        font-size: 0.9rem;
+        font-weight: 700;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .settings-section-toggle::after {
+        content: '⌄';
+        color: var(--text-muted);
+        font-size: 1.15rem;
+        transform: rotate(-90deg);
+        transition: transform 0.18s ease;
+      }
+
+      .settings-section-toggle[aria-expanded="true"]::after {
+        transform: rotate(0deg);
+      }
+
+      .settings-section-content {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 12px 14px 14px;
+      }
+
+      .settings-section-content[hidden] {
+        display: none;
+      }
+
+      .settings-section-content > .settings-label {
+        display: none;
       }
 
       .settings-label {
         font-size: 0.85rem;
+      }
+
+      .calibration-readiness {
+        margin: 0;
+        padding: 9px 10px;
+        border-radius: 9px;
+        background: rgba(255, 255, 255, 0.035);
+        color: var(--text-muted);
+        font-size: 0.82rem;
+        line-height: 1.4;
+      }
+
+      .calibration-readiness.ready {
+        color: #8de3b1;
+        background: rgba(107, 203, 119, 0.08);
       }
 
       .btn-close-settings {
@@ -2832,7 +3018,18 @@
       }
 
       /* --- CALIBRATION: mobile-friendly --- */
+      .calibration-overlay {
+        position: fixed;
+        padding:
+          max(12px, env(safe-area-inset-top, 0px))
+          max(12px, env(safe-area-inset-right, 0px))
+          max(12px, env(safe-area-inset-bottom, 0px))
+          max(12px, env(safe-area-inset-left, 0px));
+      }
+
       .calibration-card {
+        width: min(520px, 100%);
+        max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
         padding: 20px 16px;
         border-radius: 16px;
       }
@@ -3268,7 +3465,24 @@
       }
 
       .vib-panel {
-        max-height: 85vh;
+        position: fixed;
+        top: calc(env(safe-area-inset-top, 0px) + 48px);
+        right: max(8px, env(safe-area-inset-right, 0px));
+        bottom: max(6px, env(safe-area-inset-bottom, 0px));
+        left: auto;
+        width: min(420px, calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+        max-width: none;
+        max-height: none;
+      }
+
+      .vib-panel-header {
+        position: sticky;
+        top: -16px;
+        z-index: 2;
+        margin: -16px -18px 12px;
+        padding: 10px 18px 8px;
+        background: rgba(18, 18, 31, 0.98);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       }
 
       /* Camera modal: side-anchored for landscape */
@@ -4019,6 +4233,12 @@
       pointer-events: auto;
     }
 
+    .settings-panel-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
     .settings-panel h3 {
       font-size: 1.25rem;
       color: var(--text-primary);
@@ -4026,6 +4246,36 @@
       font-weight: 800;
       letter-spacing: 0.02em;
       text-align: center;
+      flex: 1;
+    }
+
+    .settings-panel-close {
+      width: 38px;
+      height: 38px;
+      flex: 0 0 38px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-primary);
+      font: inherit;
+      font-size: 1.2rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .settings-panel-close:hover,
+    .settings-panel-close:focus-visible {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.24);
+      outline: none;
+    }
+
+    .settings-section-toggle {
+      display: none;
+    }
+
+    .settings-section-content {
+      display: contents;
     }
 
     .settings-group {
@@ -4133,6 +4383,21 @@
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.1em;
+    }
+
+    .calibration-readiness {
+      margin: 0;
+      padding: 9px 10px;
+      border-radius: 9px;
+      background: rgba(255, 255, 255, 0.035);
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      line-height: 1.4;
+    }
+
+    .calibration-readiness.ready {
+      color: #8de3b1;
+      background: rgba(107, 203, 119, 0.08);
     }
 
     .btn-close-settings {
@@ -4364,8 +4629,11 @@
     </div>
 
     <div id="modalBackdrop" class="modal-backdrop"></div>
-    <div id="settingsPanel" class="settings-panel">
-      <h3>Session Settings</h3>
+    <div id="settingsPanel" class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settingsPanelTitle" tabindex="-1">
+      <div class="settings-panel-header">
+        <h3 id="settingsPanelTitle">Session Settings</h3>
+        <button class="settings-panel-close" id="settingsCloseTopBtn" type="button" aria-label="Close session settings">×</button>
+      </div>
 
       <div class="settings-group">
         <span class="settings-label">Voice Tracking</span>
@@ -4458,6 +4726,7 @@
 
       <div class="settings-group">
         <span class="settings-label">Calibration</span>
+        <p class="calibration-readiness" id="calibrationReadiness" aria-live="polite"></p>
         <button class="btn btn-help btn-fill" id="recalibrateBtn" aria-label="Run microphone calibration again"
           title="Run mic calibration again">Recalibrate</button>
         <button class="btn btn-help btn-fill" id="guidedResonanceBtn" aria-label="Run guided resonance setup"
@@ -4528,6 +4797,18 @@
         <div id="necklaceStatus" class="bulb-status" aria-live="polite"></div>
       </div>
 
+      <div class="settings-group">
+        <span class="settings-label">Settings Data</span>
+        <p class="settings-hint">Back up portable preferences or restore defaults. Bulb credentials and private endpoint URLs are never exported.</p>
+        <div class="settings-data-actions">
+          <button class="btn btn-help btn-fill" id="exportSettingsBtn" type="button">Export</button>
+          <button class="btn btn-help btn-fill" id="importSettingsBtn" type="button">Import</button>
+          <button class="btn btn-help btn-fill danger" id="resetSettingsBtn" type="button">Reset all</button>
+        </div>
+        <input id="importSettingsInput" type="file" accept="application/json,.json" hidden>
+        <p class="settings-data-status" id="settingsDataStatus" aria-live="polite"></p>
+      </div>
+
       <button class="btn btn-close-settings" id="closeSettingsBtn">Close</button>
     </div>
 
@@ -4569,23 +4850,7 @@
               <button class="btn-big" id="playBtn">🎙 Start Speaking</button>
               <div class="mic-note">Requires microphone access · All processing is local</div>
             </div>
-            <div class="error-banner" id="errorBanner"></div>
-            <div id="statusLiveRegion" class="sr-only" aria-live="polite" aria-atomic="true"></div>
             <div class="iframe-notice" id="iframeNotice"></div>
-            <div class="calibration-overlay" id="calibrationOverlay">
-              <div class="calibration-card">
-                <div class="calibration-title" id="calStepTitle">Preparing calibration</div>
-                <div class="calibration-desc" id="calStepDesc">We'll quickly tune to your mic and voice.</div>
-                <div id="calVisualContainer" class="cal-visual-container"></div>
-                <div class="cal-progress">
-                  <div class="cal-progress-fill" id="calProgressFill"></div>
-                </div>
-                <div class="cal-actions">
-                  <button class="cal-btn-secondary" id="calSkipBtn">Skip</button>
-                  <button class="cal-btn-primary" id="calNextBtn" style="display:none">Next</button>
-                </div>
-              </div>
-            </div>
             <div class="perf-panel" id="perfPanel"></div>
 
           <!-- Session summary overlay (shown on stop) -->
@@ -4606,6 +4871,24 @@
 
         </div>
 
+      <div class="error-banner" id="errorBanner" role="alert"></div>
+      <div id="statusLiveRegion" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
+      <div class="calibration-overlay" id="calibrationOverlay">
+        <div class="calibration-card" role="dialog" aria-modal="true" aria-labelledby="calStepTitle" aria-describedby="calStepDesc" tabindex="-1">
+          <div class="calibration-title" id="calStepTitle">Preparing calibration</div>
+          <div class="calibration-desc" id="calStepDesc">We'll quickly tune to your mic and voice.</div>
+          <div id="calVisualContainer" class="cal-visual-container"></div>
+          <div class="cal-progress">
+            <div class="cal-progress-fill" id="calProgressFill"></div>
+          </div>
+          <div class="cal-actions">
+            <button class="cal-btn-secondary" id="calSkipBtn">Skip</button>
+            <button class="cal-btn-primary" id="calNextBtn" style="display:none">Next</button>
+          </div>
+        </div>
+      </div>
+
       <div class="tooltip" id="helpTooltip">
         <div class="help-tabs">
           <button class="help-tab active" data-tab="howto">How To Play</button>
@@ -4625,8 +4908,11 @@
         </div>
       </div>
 
-      <div class="vib-panel" id="vibPanel">
-        <h3>📳 Vibration Alerts</h3>
+      <div class="vib-panel" id="vibPanel" role="dialog" aria-labelledby="vibPanelTitle" tabindex="-1">
+        <div class="vib-panel-header">
+          <h3 id="vibPanelTitle">📳 Vibration Alerts</h3>
+          <button class="vib-panel-close" id="vibCloseBtn" type="button" aria-label="Close vibration alerts">×</button>
+        </div>
         <div class="vib-panel-sub">
           Get haptic feedback when your voice drifts outside a target range. Visual pulse included for devices without vibration.
         </div>
