@@ -3422,6 +3422,9 @@ class VoxBallGame {
   }
 
   deleteRecording(index) {
+    if (!window.confirm('Are you sure you want to delete this recording?')) {
+      return;
+    }
     if (this.currentPlayback && this.currentPlayback.index === index) {
       this.stopPlayback();
     }
