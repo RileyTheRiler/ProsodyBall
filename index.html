@@ -3616,9 +3616,19 @@
       background: var(--bg-surface);
       border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 12px;
-      padding: 18px 22px;
+      /* No bottom padding: the sticky action row below supplies it, so it can
+         sit flush against the panel's bottom edge while the body scrolls. */
+      padding: 18px 22px 0;
       max-width: 480px;
       width: 92vw;
+      /* .game-area clips overflow, so a tall results list (long phrase = many
+         word cards) used to run off the bottom with no way to reach it. Cap the
+         panel inside the game area and scroll its body instead. */
+      max-height: calc(82% - 18px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
       z-index: var(--z-dropdown);
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
       display: none;
@@ -3653,8 +3663,28 @@
 
     .practice-actions {
       display: flex;
+      flex-wrap: wrap;
       gap: 8px;
       justify-content: center;
+      /* Pinned to the bottom of the scrolling panel so Record / Next / Exit stay
+         reachable however long the results list is. */
+      position: sticky;
+      bottom: 0;
+      padding: 10px 0 18px;
+      background: var(--bg-surface);
+    }
+
+    /* Soft fade above the pinned buttons so scrolled-under content reads as
+       "there's more", rather than as content chopped off mid-row. */
+    .practice-actions::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 100%;
+      height: 14px;
+      pointer-events: none;
+      background: linear-gradient(to top, var(--bg-surface), transparent);
     }
 
     .practice-record.recording .rec-dot {
@@ -3783,6 +3813,54 @@
       font-style: italic;
       color: var(--text-muted);
       margin-top: 8px;
+    }
+
+    /* Phone layout for the practice panel. Kept next to the component instead of
+       in the shared mobile block above, which the later base rules would win
+       against on equal specificity. */
+    @media (max-width: 600px) {
+      .practice-panel {
+        top: 8px;
+        width: calc(100vw - 16px);
+        max-width: 520px;
+        max-height: calc(100% - 16px);
+        padding: 14px 14px 0;
+      }
+
+      .practice-actions {
+        padding: 10px 0 14px;
+      }
+
+      .practice-actions .btn {
+        min-height: 44px;
+      }
+
+      /* Fit an extra word card per row on narrow screens */
+      .word-card {
+        min-width: 56px;
+      }
+    }
+
+    /* Landscape phones: almost no vertical room, so use all of it */
+    @media (max-width: 900px) and (max-height: 500px) and (orientation: landscape) {
+      .practice-panel {
+        top: 6px;
+        max-height: calc(100% - 12px);
+        padding: 10px 14px 0;
+      }
+
+      .practice-phrase {
+        font-size: 1.05rem;
+        margin: 6px 0;
+      }
+
+      .practice-hint {
+        margin-bottom: 8px;
+      }
+
+      .practice-actions {
+        padding: 8px 0 10px;
+      }
     }
 
     .recordings-drawer {
