@@ -1,5 +1,19 @@
 import * as DSP_CONST from './dsp-constants.generated.js';
 
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  try {
+    const parsed = new URL(url, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+    const safeProtocols = ['http:', 'https:', 'blob:'];
+    if (safeProtocols.includes(parsed.protocol)) {
+      return parsed.href;
+    }
+  } catch (e) {
+    // Invalid URL structure
+  }
+  return 'about:blank';
+}
+
 export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
