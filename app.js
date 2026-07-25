@@ -3287,6 +3287,14 @@ class VoxBallGame {
     const idx = this.practice.index;
     const def = PRACTICE_PHRASES[idx];
     const results = this.practice.stage === 'results';
+    // The panel scrolls (results can be taller than the game area); a new
+    // phrase or stage should start at the top rather than mid-scroll.
+    const panel = document.getElementById('practicePanel');
+    const key = `${idx}:${this.practice.stage}`;
+    if (panel && this._practiceViewKey !== key) {
+      this._practiceViewKey = key;
+      panel.scrollTop = 0;
+    }
     const progress = document.getElementById('practiceProgress');
     if (progress) progress.textContent = `Phrase ${idx + 1} of ${PRACTICE_PHRASES.length}`;
     const phrase = document.getElementById('practicePhrase');
