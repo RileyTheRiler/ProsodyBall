@@ -3851,6 +3851,7 @@ class VoxBallGame {
     const diagPanel = document.getElementById('diagPanel');
 
     const errorBanner = document.getElementById('errorBanner');
+    if (errorBanner) errorBanner.addEventListener('click', () => errorBanner.classList.remove('show'));
     const statusLiveRegion = document.getElementById('statusLiveRegion');
     const iframeNotice = document.getElementById('iframeNotice');
     const isInIframe = window.self !== window.top;
@@ -3962,17 +3963,24 @@ class VoxBallGame {
 
     const showCalibrationOutcome = (calResult) => {
       if (!calResult) return;
+      let autoDismissMs;
       if (calResult.outcome === 'completed') {
         showError('✅ Calibration complete. Tip: you can run Recalibrate from the top bar anytime.');
+        autoDismissMs = 5000;
       } else if (calResult.outcome === 'incomplete') {
         showError('⚠ Calibration timed out. You can continue, but tracking may be less accurate. Next action: tap Recalibrate when your room is quieter.');
+        autoDismissMs = 10000;
       } else if (calResult.outcome === 'cancelled') {
         showError('ℹ Calibration cancelled. Next action: tap Recalibrate in the top bar when you are ready.');
+        autoDismissMs = 8000;
       } else if (calResult.outcome === 'partial') {
         showError('ℹ Calibration partially completed. Next action: tap Recalibrate to finish vowel tuning for better accuracy.');
+        autoDismissMs = 10000;
       } else if (calResult.outcome === 'skipped') {
         showError('ℹ Calibration skipped. Next action: tap Recalibrate in the top bar for more stable tracking.');
+        autoDismissMs = 8000;
       }
+      if (autoDismissMs) setTimeout(clearError, autoDismissMs);
     };
 
 
