@@ -1,4 +1,4 @@
-const CACHE_NAME = 'prosodyball-shell-v2';
+const CACHE_NAME = 'prosodyball-shell-v3';
 const APP_SHELL = [
   './',
   './index.html',
@@ -14,6 +14,7 @@ const APP_SHELL = [
   './vibration-preferences.js',
   './ui-dialog-manager.js',
   './settings-transfer.js',
+  './daf-engine.js',
   './pitch-estimator.js',
   './pitch-analysis-worker.js',
   './pwa.js',

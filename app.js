@@ -15,6 +15,7 @@ import {
 import { ModalFocusManager } from './ui-dialog-manager.js';
 import { exportPortableSettings, importPortableSettings, resetPortableSettings } from './settings-transfer.js';
 import { SessionWakeLock, registerPwa } from './pwa.js';
+import { DafEngine } from './daf-engine.js';
 
 function escapeHtml(text) {
   if (!text) return text;
@@ -2241,11 +2242,8 @@ class VoxBallGame {
     this.dafDelayMs = parseInt(localStorage.getItem('vox:daf:delayMs') || '75');
     // Default OFF so DAF plays back the full raw voice band instead of cutting bass.
     this.dafBassFilter = localStorage.getItem('vox:daf:bassFilter') === 'true';
-    this._dafBuffer = [];
-    this._dafNextPlayTime = 0;
-    this._dafInterval = null;
-    this._dafGain = null;
-    this._dafFilter = null;
+    // Native Web Audio delay line; see daf-engine.js for why it is not a JS buffer loop.
+    this.daf = new DafEngine({ delayMs: this.dafDelayMs, bassFilter: this.dafBassFilter });
     this.smoothGenderScore = 0.5; // EMA of the 0..1 perceived-gender score (0.5 = androgynous)
     this.genderUncertainty = 1;   // 0..1 spread/disagreement of the gender cues
     // Per-cue toggles for the perceived-gender model. pitch + resonance are always on (the
@@ -2955,59 +2953,21 @@ class VoxBallGame {
     });
   }
 
+  // DAF (Delayed Auditory Feedback) is a native Web Audio delay line living in
+  // daf-engine.js — see that file for why it is a DelayNode and not a JS
+  // buffer loop. These wrappers just bind it to the analyzer's live graph.
   startDAF() {
     const a = this.analyzer;
-    if (!a.audioCtx || !a.analyserRec || this._dafInterval) return;
-    const fftSize = a.analyserRec.fftSize;
-    const sampleRate = a.audioCtx.sampleRate;
-    const intervalMs = Math.round(1000 * fftSize / sampleRate);
-
-    this._dafGain = a.audioCtx.createGain();
-    this._dafGain.gain.value = 0.9;
-    if (this.dafBassFilter) {
-      this._dafFilter = a.audioCtx.createBiquadFilter();
-      this._dafFilter.type = 'highpass';
-      this._dafFilter.frequency.value = 150;
-      this._dafGain.connect(this._dafFilter);
-      this._dafFilter.connect(a.audioCtx.destination);
-    } else {
-      this._dafGain.connect(a.audioCtx.destination);
-    }
-    this._dafBuffer = [];
-    this._dafNextPlayTime = 0;
-
-    this._dafInterval = setInterval(() => {
-      if (!a.analyserRec) return;
-      const samples = new Float32Array(fftSize);
-      a.analyserRec.getFloatTimeDomainData(samples);
-      this._dafBuffer.push({ samples, captureTime: performance.now() });
-
-      const threshold = performance.now() - this.dafDelayMs;
-      while (this._dafBuffer.length > 0 && this._dafBuffer[0].captureTime <= threshold) {
-        const { samples: s } = this._dafBuffer.shift();
-        const buf = a.audioCtx.createBuffer(1, s.length, sampleRate);
-        buf.copyToChannel(s, 0);
-        const src = a.audioCtx.createBufferSource();
-        src.buffer = buf;
-        src.connect(this._dafGain);
-        if (this._dafNextPlayTime < a.audioCtx.currentTime) {
-          this._dafNextPlayTime = a.audioCtx.currentTime;
-        }
-        src.start(this._dafNextPlayTime);
-        this._dafNextPlayTime += buf.duration;
-      }
-    }, intervalMs);
+    this.daf.start(a?.audioCtx, a?.source);
   }
 
   stopDAF() {
-    if (this._dafInterval) {
-      clearInterval(this._dafInterval);
-      this._dafInterval = null;
-    }
-    this._dafBuffer = [];
-    this._dafNextPlayTime = 0;
-    if (this._dafFilter) { this._dafFilter.disconnect(); this._dafFilter = null; }
-    if (this._dafGain) { this._dafGain.disconnect(); this._dafGain = null; }
+    this.daf.stop();
+  }
+
+  /** True while the DAF delay line is live in the audio graph. */
+  get dafActive() {
+    return this.daf.active;
   }
 
   _encodeWAV(samples, sampleRate) {
@@ -5421,16 +5381,13 @@ class VoxBallGame {
       this.dafDelayMs = parseInt(e.target.value);
       localStorage.setItem('vox:daf:delayMs', String(this.dafDelayMs));
       document.getElementById('dafDelayLabel').textContent = `${this.dafDelayMs}ms`;
-      this._dafBuffer = [];
+      this.daf.setDelayMs(this.dafDelayMs);
     });
 
     document.getElementById('dafBassFilterToggle')?.addEventListener('change', (e) => {
       this.dafBassFilter = e.target.checked;
       localStorage.setItem('vox:daf:bassFilter', String(this.dafBassFilter));
-      if (this._dafInterval) {
-        this.stopDAF();
-        this.startDAF();
-      }
+      this.daf.setBassFilter(this.dafBassFilter);
     });
 
     if (this.dafEnabled) dafBtn?.classList.add('active');
@@ -6406,7 +6363,14 @@ class VoxBallGame {
       ctx.shadowColor = 'rgba(0,0,0,0.85)';
       ctx.shadowBlur = 6;
       ctx.fillStyle = this.colorblindMode ? '#ffd166' : '#ffb86b';
-      ctx.fillText('Room’s a bit noisy — readings may drift (try a closer mic)', w / 2, 34);
+      // With DAF on, the most likely "noise" is the app's own playback leaking
+      // out of the speakers and back into the mic — that loop also drags the
+      // adaptive noise floor up. Name that cause first; it's the fixable one.
+      ctx.fillText(
+        this.dafActive
+          ? 'Room’s a bit noisy — if DAF is on speakers, headphones will fix this'
+          : 'Room’s a bit noisy — readings may drift (try a closer mic)',
+        w / 2, 34);
       ctx.restore();
     }
 
