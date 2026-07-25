@@ -3879,7 +3879,12 @@ class VoxBallGame {
       iframeNotice.classList.add('show');
     }
 
-    const showError = (msg) => {
+    // Banner messages. Real errors stay up until something clears them, but
+    // status notes ({ autoHideMs }) dismiss themselves — a "✅ Calibration
+    // complete" note that sits on screen forever reads like a stuck dialog.
+    // Every banner also gets a close button, so anything can be tapped away.
+    let errorHideTimer = null;
+    const showError = (msg, { autoHideMs = 0, tone = 'error' } = {}) => {
       if (msg instanceof Node) {
         errorBanner.textContent = '';
         errorBanner.appendChild(msg);
@@ -3888,10 +3893,24 @@ class VoxBallGame {
         errorBanner.textContent = msg;
         if (statusLiveRegion) statusLiveRegion.textContent = String(msg).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
       }
+      const dismissBtn = Object.assign(document.createElement('button'), {
+        className: 'error-banner-close',
+        type: 'button',
+        textContent: '×',
+      });
+      dismissBtn.setAttribute('aria-label', 'Dismiss message');
+      dismissBtn.addEventListener('click', () => clearError());
+      errorBanner.appendChild(dismissBtn);
+      errorBanner.classList.toggle('info', tone === 'info');
       errorBanner.classList.add('show');
+      clearTimeout(errorHideTimer);
+      errorHideTimer = autoHideMs > 0 ? setTimeout(() => clearError(), autoHideMs) : null;
     };
     const clearError = () => {
+      clearTimeout(errorHideTimer);
+      errorHideTimer = null;
       errorBanner.classList.remove('show');
+      errorBanner.classList.remove('info');
       if (statusLiveRegion) statusLiveRegion.textContent = '';
     };
 
@@ -3960,18 +3979,20 @@ class VoxBallGame {
       }
     };
 
+    // None of these block the session, so they read as status notes and time
+    // out on their own. The ones carrying a "next action" hang around longer.
     const showCalibrationOutcome = (calResult) => {
       if (!calResult) return;
       if (calResult.outcome === 'completed') {
-        showError('✅ Calibration complete. Tip: you can run Recalibrate from the top bar anytime.');
+        showError('✅ Calibration complete. Tip: you can run Recalibrate from the top bar anytime.', { autoHideMs: 5000, tone: 'info' });
       } else if (calResult.outcome === 'incomplete') {
-        showError('⚠ Calibration timed out. You can continue, but tracking may be less accurate. Next action: tap Recalibrate when your room is quieter.');
+        showError('⚠ Calibration timed out. You can continue, but tracking may be less accurate. Next action: tap Recalibrate when your room is quieter.', { autoHideMs: 9000 });
       } else if (calResult.outcome === 'cancelled') {
-        showError('ℹ Calibration cancelled. Next action: tap Recalibrate in the top bar when you are ready.');
+        showError('ℹ Calibration cancelled. Next action: tap Recalibrate in the top bar when you are ready.', { autoHideMs: 8000, tone: 'info' });
       } else if (calResult.outcome === 'partial') {
-        showError('ℹ Calibration partially completed. Next action: tap Recalibrate to finish vowel tuning for better accuracy.');
+        showError('ℹ Calibration partially completed. Next action: tap Recalibrate to finish vowel tuning for better accuracy.', { autoHideMs: 9000, tone: 'info' });
       } else if (calResult.outcome === 'skipped') {
-        showError('ℹ Calibration skipped. Next action: tap Recalibrate in the top bar for more stable tracking.');
+        showError('ℹ Calibration skipped. Next action: tap Recalibrate in the top bar for more stable tracking.', { autoHideMs: 8000, tone: 'info' });
       }
     };
 
@@ -5426,7 +5447,7 @@ class VoxBallGame {
     recalibrateBtn?.addEventListener('click', async () => {
       toggleSettings(false);
       if (!this.analyzer.isActive) {
-        showError('ℹ Start a session first, then open Settings and tap Recalibrate.');
+        showError('ℹ Start a session first, then open Settings and tap Recalibrate.', { autoHideMs: 6000, tone: 'info' });
         return;
       }
       // Clear stale calibration data so fresh samples are collected
@@ -5449,7 +5470,7 @@ class VoxBallGame {
       // Otherwise the feedback/overlay is visually hidden behind Settings on phones.
       toggleSettings(false);
       if (!this.analyzer.isActive) {
-        showError('ℹ Start a session first, then open Settings and run Guided resonance setup.');
+        showError('ℹ Start a session first, then open Settings and run Guided resonance setup.', { autoHideMs: 6000, tone: 'info' });
         return;
       }
       const result = await this.calibrationWizard.runResonanceCalibration(this.analyzer);
