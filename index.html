@@ -2021,7 +2021,8 @@
       backdrop-filter: blur(12px);
       border: 1px solid rgba(255, 80, 80, 0.25);
       border-radius: 10px;
-      padding: 14px 18px;
+      /* Right padding leaves room for the close button */
+      padding: 14px 44px 14px 18px;
       max-width: 680px;
       max-height: min(40vh, 280px);
       overflow: auto;
@@ -2034,6 +2035,39 @@
 
     .error-banner.show {
       display: block;
+    }
+
+    /* Status notes (calibration outcomes and the like) aren't failures, so they
+       drop the red error styling. */
+    .error-banner.info {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.18);
+      color: var(--text-primary);
+    }
+
+    .error-banner-close {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: none;
+      border: none;
+      border-radius: 8px;
+      color: inherit;
+      opacity: 0.65;
+      font-size: 1.4rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .error-banner-close:hover,
+    .error-banner-close:focus-visible {
+      opacity: 1;
+      background: rgba(255, 255, 255, 0.1);
     }
 
     .settings-data-actions {
@@ -2149,6 +2183,16 @@
       input[type="number"],
       textarea {
         font-size: 16px;
+      }
+
+      /* Full touch target for the banner's close button */
+      .error-banner {
+        padding-right: 52px;
+      }
+
+      .error-banner-close {
+        width: 44px;
+        height: 44px;
       }
 
       /* --- GLOBAL TYPOGRAPHY FIXES: bump up tiny labels for readability --- */
