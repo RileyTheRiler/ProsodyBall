@@ -46,6 +46,19 @@ float uiClamp(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi :
 static int absi(int v) { return v < 0 ? -v : v; }
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
+void uiFormatFixed(float v, int decimals, char *out, size_t n) {
+  const bool neg = (v < 0.0f);
+  if (neg) v = -v;
+  const long scale = (decimals >= 4) ? 10000L : 100L;
+  // Guard the cast: an inf/NaN or absurd value would otherwise wrap the integer silently.
+  if (!(v >= 0.0f) || v > 1.0e6f) { snprintf(out, n, "--"); return; }
+  const long scaled = (long)(v * (float)scale + 0.5f);
+  const long whole = scaled / scale, frac = scaled % scale;
+  const char *sign = neg ? "-" : "";
+  if (decimals >= 4) snprintf(out, n, "%s%ld.%04ld", sign, whole, frac);
+  else               snprintf(out, n, "%s%ld.%02ld", sign, whole, frac);
+}
+
 // ====================================================================
 // Settings
 // ====================================================================
@@ -195,7 +208,8 @@ void uiItemLabel(uint8_t id, char *out, size_t n) {
     case IT_AUTODIM: t = "Auto-dim";    break;
     case IT_HUD:     t = "Text + bars"; break;
     case IT_ORB:     t = "LED orb";     break;
-    default:         t = "How to use";  break;   // IT_HELP
+    case IT_HELP:    t = "How to use";  break;
+    default:         t = "Signal check"; break;  // IT_DIAG
   }
   snprintf(out, n, "%s", t);
 }
@@ -216,7 +230,7 @@ void uiItemValue(const Settings &s, int presetIdx, uint8_t id, char *out, size_t
     case IT_AUTODIM: snprintf(out, n, "%s", ONOFF[s.autoDim ? 1 : 0]); break;
     case IT_HUD:     snprintf(out, n, "%s", ONOFF[s.showHud ? 1 : 0]); break;
     case IT_ORB:     snprintf(out, n, "%s", ONOFF[s.orb ? 1 : 0]); break;
-    default:         snprintf(out, n, "Show"); break;   // IT_HELP
+    default:         snprintf(out, n, "Show"); break;   // IT_HELP, IT_DIAG
   }
 }
 
@@ -239,7 +253,8 @@ ItemAction uiCycleItem(Settings &s, int &presetIdx, uint8_t id) {
     case IT_AUTODIM: s.autoDim = !s.autoDim; break;
     case IT_HUD:     s.showHud = !s.showHud; break;
     case IT_ORB:     s.orb = !s.orb; break;
-    default:         return ACT_HELP;   // IT_HELP
+    case IT_HELP:    return ACT_HELP;
+    default:         return ACT_DIAG;   // IT_DIAG
   }
   return ACT_VALUE;
 }
@@ -299,12 +314,9 @@ int uiTapZone(int y) {
 // ====================================================================
 // Pitch history
 // ====================================================================
-void PitchTrace::clear() { len = 0; lastMs = 0; }
+void PitchTrace::clear() { len = 0; }
 
-bool PitchTrace::push(int16_t y, bool voiced, bool inBand, uint32_t nowMs) {
-  // lastMs == 0 means "nothing sampled yet", so the first sample is always taken.
-  if (lastMs != 0 && (nowMs - lastMs) < UI_TRACE_MS) return false;
-  lastMs = nowMs;
+void PitchTrace::push(int16_t y, bool voiced, bool inBand) {
   if (len >= UI_TRACE_LEN) {                       // scroll the window left by one
     for (int i = 1; i < UI_TRACE_LEN; i++) pts[i - 1] = pts[i];
     len = UI_TRACE_LEN - 1;
@@ -312,7 +324,32 @@ bool PitchTrace::push(int16_t y, bool voiced, bool inBand, uint32_t nowMs) {
   TracePt p;
   p.y = y; p.voiced = voiced; p.inBand = inBand;
   pts[len++] = p;
-  return true;
+}
+
+// ====================================================================
+// Signal probe
+// ====================================================================
+void SignalProbe::reset() {
+  frames = voicedFrames = atCeiling = atFloor = 0;
+  peakHz = lowHz = peakRms = 0.0f;
+}
+
+void SignalProbe::update(const VoxResult &r) {
+  frames++;
+  if (r.rms > peakRms) peakRms = r.rms;
+  if (!r.voiced) return;
+  voicedFrames++;
+  if (r.pitchHz > peakHz) peakHz = r.pitchHz;
+  if (lowHz == 0.0f || r.pitchHz < lowHz) lowHz = r.pitchHz;
+  if (r.pitchHz >= VOX_PITCH_MAX_HZ) atCeiling++;
+  if (r.pitchHz <= VOX_PITCH_MIN_HZ) atFloor++;
+}
+
+int SignalProbe::ceilingPct() const {
+  return voicedFrames ? (int)(100.0f * atCeiling / voicedFrames + 0.5f) : 0;
+}
+int SignalProbe::floorPct() const {
+  return voicedFrames ? (int)(100.0f * atFloor / voicedFrames + 0.5f) : 0;
 }
 
 // ====================================================================

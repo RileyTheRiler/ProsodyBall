@@ -683,6 +683,102 @@ static void drawStats() {
 }
 
 // ====================================================================
+// SIGNAL CHECK — what the DSP actually reports, in numbers
+// ====================================================================
+// Every other screen shows an *interpretation* of the voice. When the interpretation looks
+// wrong there is no way, from the ball alone, to tell a bad pitch estimate from a pitch the
+// plot simply cannot draw, or a quiet mic from a quiet room. This screen shows the raw
+// analysis so that question has an answer instead of a guess.
+//
+// The row that matters most is "above range": the plot and the analysis both stop at
+// VOX_PITCH_MAX_HZ, so a voice above it flattens against the top of the screen and looks
+// like a tracking failure. A non-zero percentage there means the range is too low, not that
+// the detector is broken.
+static SignalProbe gProbe;
+
+static void drawDiagRow(int y, const char *label, const char *value, uint16_t color) {
+  TFT_eSPI *tft = ttgo->tft;
+  tft->fillRect(96, y - 5, UI_SCR_W - 96 - 6, 11, C_BG);
+  tft->setTextDatum(ML_DATUM);
+  tft->setTextColor(C_MUTED, C_BG);
+  tft->drawString(label, 8, y, 1);
+  tft->setTextDatum(MR_DATUM);
+  tft->setTextColor(color, C_BG);
+  tft->drawString(value, UI_SCR_W - 6, y, 1);
+}
+
+static void drawDiagChrome() {
+  TFT_eSPI *tft = ttgo->tft;
+  tft->fillScreen(C_BG);
+  tft->setTextDatum(MC_DATUM);
+  tft->setTextColor(C_ACCENT, C_BG);
+  tft->drawString("Signal check", UI_SCR_W / 2, 12, 2);
+  tft->setTextColor(C_DIM, C_BG);
+  tft->drawString("speak normally and watch these", UI_SCR_W / 2, 28, 1);
+  drawButton(8, 202, 108, 30, "Reset", nullptr, C_PANEL, C_WARN, C_DIM);
+  drawButton(124, 202, 108, 30, "Back", nullptr, C_PANEL, C_TEXT, C_ACCENT);
+}
+
+static void drawDiagnostics(const VoxResult &r, uint32_t now) {
+  static uint32_t lastMs = 0;
+  if (now - lastMs < 200) return;         // numbers are unreadable faster than ~5 Hz
+  lastMs = now;
+
+  char v[40], a[16], b[16];
+  int y = 44;
+  const int dy = 13;
+
+  uiFormatFixed(r.rms, 4, a, sizeof(a));
+  uiFormatFixed(gProbe.peakRms, 4, b, sizeof(b));
+  snprintf(v, sizeof(v), "%s  peak %s", a, b);
+  drawDiagRow(y, "mic level", v, r.rms > 0.001f ? C_TEXT : C_WARN); y += dy;
+
+  uiFormatFixed(gDsp.noiseFloor(), 4, a, sizeof(a));
+  drawDiagRow(y, "noise floor", a, C_TEXT); y += dy;
+
+  uiFormatFixed(r.confidence, 2, a, sizeof(a));
+  snprintf(v, sizeof(v), "%s  conf %s", r.voiced ? "YES" : "no", a);
+  drawDiagRow(y, "voiced", v, r.voiced ? C_OK : C_MUTED); y += dy;
+
+  if (r.voiced) snprintf(v, sizeof(v), "%d Hz", (int)(r.pitchHz + 0.5f));
+  else          snprintf(v, sizeof(v), "--");
+  drawDiagRow(y, "pitch", v, r.voiced ? C_TEXT : C_MUTED); y += dy;
+
+  if (gProbe.peakHz > 0) snprintf(v, sizeof(v), "%d - %d Hz", (int)gProbe.lowHz, (int)gProbe.peakHz);
+  else                   snprintf(v, sizeof(v), "--");
+  drawDiagRow(y, "range seen", v, C_TEXT); y += dy;
+
+  // The discriminator: voiced time the plot physically cannot represent.
+  const int ceilPct = gProbe.ceilingPct(), floorPct = gProbe.floorPct();
+  snprintf(v, sizeof(v), "%d%%   (limit %d Hz)", ceilPct, (int)VOX_PITCH_MAX_HZ);
+  drawDiagRow(y, "above range", v, ceilPct > 5 ? C_WARN : C_MUTED); y += dy;
+  snprintf(v, sizeof(v), "%d%%   (limit %d Hz)", floorPct, (int)VOX_PITCH_MIN_HZ);
+  drawDiagRow(y, "below range", v, floorPct > 5 ? C_WARN : C_MUTED); y += dy;
+
+  snprintf(v, sizeof(v), "%d Hz", (int)(r.centroidHz + 0.5f));
+  drawDiagRow(y, "centroid", v, C_TEXT); y += dy;
+
+  uiFormatFixed(r.brightness, 2, a, sizeof(a));
+  drawDiagRow(y, "brightness", a, C_TEXT); y += dy;
+
+  snprintf(v, sizeof(v), "%d %d %d", (int)r.f1, (int)r.f2, (int)r.f3);
+  drawDiagRow(y, "F1 F2 F3", v, r.formantConf > 0.3f ? C_TEXT : C_MUTED); y += dy;
+
+  uiFormatFixed(r.resonance, 2, a, sizeof(a));
+  uiFormatFixed(r.formantConf, 2, b, sizeof(b));
+  snprintf(v, sizeof(v), "%s  conf %s", a, b);
+  drawDiagRow(y, "resonance", v, r.formantConf > 0.3f ? C_TEXT : C_WARN); y += dy;
+
+  uiFormatFixed(r.genderScore, 2, a, sizeof(a));
+  uiFormatFixed(r.weight, 2, b, sizeof(b));
+  snprintf(v, sizeof(v), "%s / %s", a, b);
+  drawDiagRow(y, "gender / weight", v, C_TEXT); y += dy;
+
+  uiFormatFixed(r.bounce, 2, a, sizeof(a));
+  drawDiagRow(y, "bounce", a, C_TEXT);
+}
+
+// ====================================================================
 // TUTORIAL — shown once on first boot, and any time from Settings > How to use
 // ====================================================================
 static void drawTutorial() {
@@ -924,6 +1020,11 @@ static void enterStats() {
   drawStats();
 }
 
+static void enterDiag() {
+  gScreen = SCR_DIAG;
+  drawDiagChrome();
+}
+
 static void enterTutorial(bool fromSettings) {
   gScreen = SCR_TUTORIAL;
   gTutPage = 0;
@@ -1093,6 +1194,16 @@ static void handleQuickInput(const TouchEvent &ev, uint32_t now) {
   }
 }
 
+// The probe keeps running while this screen is open, so Back/Reset are all it needs.
+static void handleDiagInput(const TouchEvent &ev) {
+  if (ev.kind == TE_SWIPE_L || ev.kind == TE_SWIPE_R) { enterSettings(); return; }
+  if (ev.kind != TE_TAP) return;
+  if (ev.y < 202) return;
+  uiTick();
+  if (ev.x < UI_SCR_W / 2) { gProbe.reset(); drawDiagChrome(); }
+  else                     enterSettings();
+}
+
 static void handleStatsInput(const TouchEvent &ev) {
   if (ev.kind == TE_SWIPE_L || ev.kind == TE_SWIPE_R) { enterRun(true); return; }
   if (ev.kind != TE_TAP) return;
@@ -1118,7 +1229,9 @@ static bool handleSettingsTap(int x, int y) {
   if (y < SET_ROW_Y0 || slot < 0 || slot >= n) return false;
 
   uiTick();
-  if (uiCycleItem(gCfg, gPreset, items[slot]) == ACT_HELP) { enterTutorial(true); return false; }
+  const ItemAction act = uiCycleItem(gCfg, gPreset, items[slot]);
+  if (act == ACT_HELP) { enterTutorial(true); return false; }
+  if (act == ACT_DIAG) { enterDiag(); return false; }
   applyLiveSettings();
   // Cycling View or Buzz-on changes which rows exist, so repaint the whole page rather than
   // just the row that was tapped.
@@ -1188,8 +1301,15 @@ void loop() {
   static bool bestDirty = false;
   static bool hintsShown = false;
 
+  // `fresh` is the DSP's own clock: true only on the loop iterations that actually received a
+  // new analysis frame (~15.6 Hz). Anything that samples the voice — the pitch trace, the
+  // signal probe — must advance on this and not on the render loop, which runs ~4x faster.
   VoxResult got;
-  if (xQueueReceive(gResultQueue, &got, 0) == pdTRUE) latest = got;
+  const bool fresh = (xQueueReceive(gResultQueue, &got, 0) == pdTRUE);
+  if (fresh) {
+    latest = got;
+    gProbe.update(latest);   // runs on every screen, so the numbers reflect real use
+  }
 
   const uint32_t now = millis();
   int16_t tx = 0, ty = 0;
@@ -1227,8 +1347,13 @@ void loop() {
     case SCR_QUICK:    handleQuickInput(ev, now); break;
     case SCR_STATS:    handleStatsInput(ev); break;
     case SCR_SETTINGS: handleSettingsInput(ev, now); break;
+    case SCR_DIAG:     handleDiagInput(ev); break;
     default:           handleRunInput(ev, now); break;
   }
+
+  // The signal check is the one non-run screen that keeps painting: it exists to be watched
+  // while you speak.
+  if (gScreen == SCR_DIAG) { drawDiagnostics(latest, now); lastMs = now; delay(20); return; }
 
   // A menu is not training: freeze the clock so time spent in one never counts against the
   // session score, and skip the visualisation entirely.
@@ -1256,7 +1381,7 @@ void loop() {
   if (gCfg.mode == MODE_COLOR) {
     renderColor(latest, now);
   } else {
-    gTrace.push((int16_t)uiHzToY(latest.pitchHz), latest.voiced, inTarget, now);
+    if (fresh) gTrace.push((int16_t)uiHzToY(latest.pitchHz), latest.voiced, inTarget);
     updateBallPhysics(latest, dt);
     renderBall(latest, inTarget);
     if (gCfg.showHud && !gToast.visible(now)) drawBallHud(latest, inTarget, now);

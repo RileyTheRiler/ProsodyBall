@@ -31,8 +31,7 @@ static const int UI_HUD_Y    = 198;  // bottom readout strip
 static const int UI_AXIS_W    = 28;
 static const int UI_TRACE_X0  = 30;   // left edge of the pitch history trace
 static const int UI_TRACE_STEP = 6;   // px between trace samples
-static const int UI_TRACE_LEN  = 20;  // samples kept (~1.2 s at UI_TRACE_MS each)
-static const uint32_t UI_TRACE_MS = 60;
+static const int UI_TRACE_LEN  = 20;  // samples kept (one per analysis frame, so ~1.3 s)
 static const int UI_BALL_X    = 160;  // ball sits right of centre so the trace has room
 
 // ====================================================================
@@ -48,12 +47,16 @@ struct TracePt { int16_t y; bool voiced; bool inBand; };
 struct PitchTrace {
   TracePt  pts[UI_TRACE_LEN];
   int      len = 0;
-  uint32_t lastMs = 0;
 
   void clear();
-  // Append at most one sample per UI_TRACE_MS, scrolling the window left once it is full.
-  // Returns true when a sample was actually taken.
-  bool push(int16_t y, bool voiced, bool inBand, uint32_t nowMs);
+  // Append one sample, scrolling the window left once it is full.
+  //
+  // Call this exactly once per DSP analysis frame — never from the render loop. The DSP
+  // emits a frame every ~64 ms while the loop runs at ~60 Hz; sampling the slower signal on
+  // the faster, unrelated clock makes the two beat against each other, duplicating and
+  // dropping samples in a slow cycle that stair-steps the trace with movement that was never
+  // in the voice. Taking the frame as the clock makes that impossible by construction.
+  void push(int16_t y, bool voiced, bool inBand);
   // Screen x of sample i.
   static int xAt(int i) { return UI_TRACE_X0 + i * UI_TRACE_STEP; }
 };
@@ -123,6 +126,13 @@ extern const Preset PRESETS[];
 extern const int N_PRESET;
 
 float uiClamp(float v, float lo, float hi);
+
+// Format v with `decimals` digits (2 or 4) using integer maths only.
+//
+// Deliberately not snprintf's "%f": float support in printf is a build-time newlib option on
+// the ESP32 toolchain rather than a guarantee, and the one screen that must never lie is the
+// diagnostic screen. Doing it by hand costs nothing and removes the question.
+void uiFormatFixed(float v, int decimals, char *out, size_t n);
 Rgb   uiHsv(float hDeg, float s, float v);                       // h in degrees, s/v 0..1
 Rgb   uiBlendPal(int loIdx, int hiIdx, float t, float v);        // blend by t, scaled by v
 float uiMetricValue(const VoxResult &r, uint8_t src);            // the chosen metric, 0..1
@@ -138,14 +148,14 @@ int   uiHzToY(float hz);                                         // pitch -> plo
 enum ItemId {
   IT_MODE = 0, IT_SRC, IT_PRESET, IT_LO, IT_HI, IT_EFFECT,
   IT_BAND, IT_TRACE, IT_HAPTIC, IT_HTHR, IT_BRIGHT, IT_AUTODIM,
-  IT_HUD, IT_ORB, IT_HELP, IT_COUNT
+  IT_HUD, IT_ORB, IT_HELP, IT_DIAG, IT_COUNT
 };
 
 static const int UI_ROWS_PER_PAGE = 6;
 static const int UI_MAX_ITEMS     = IT_COUNT;
 
 // Tapping a row usually just cycles its value; a few rows are actions instead.
-enum ItemAction { ACT_VALUE = 0, ACT_HELP };
+enum ItemAction { ACT_VALUE = 0, ACT_HELP, ACT_DIAG };
 
 // Visible rows for the current settings, in display order. Returns the count written.
 int uiVisibleItems(const Settings &s, uint8_t *out, int maxOut);
@@ -240,9 +250,32 @@ struct SessionStats {
 };
 
 // ====================================================================
+// Signal probe — evidence for "is it tracking my voice, or is the display lying?"
+// ====================================================================
+// The analysis range and the drawable range are the same 80..300 Hz, so a voice above the
+// top of it reads as a flat line pinned to the top of the plot rather than as an error. That
+// is indistinguishable, by eye, from the pitch detector simply being wrong. This counts how
+// often the pitch actually lands on the ends of the range, which tells the two apart.
+struct SignalProbe {
+  uint32_t frames = 0;
+  uint32_t voicedFrames = 0;
+  uint32_t atCeiling = 0;      // voiced frames at/above VOX_PITCH_MAX_HZ (undrawable)
+  uint32_t atFloor = 0;        // voiced frames at/below VOX_PITCH_MIN_HZ
+  float    peakHz = 0.0f;
+  float    lowHz = 0.0f;       // 0 until a voiced frame arrives
+  float    peakRms = 0.0f;
+
+  void reset();
+  // Call once per DSP analysis frame.
+  void update(const VoxResult &r);
+  int  ceilingPct() const;     // % of voiced time the plot cannot represent
+  int  floorPct() const;
+};
+
+// ====================================================================
 // Screens
 // ====================================================================
-enum UiScreen { SCR_RUN = 0, SCR_QUICK, SCR_STATS, SCR_SETTINGS, SCR_TUTORIAL };
+enum UiScreen { SCR_RUN = 0, SCR_QUICK, SCR_STATS, SCR_SETTINGS, SCR_TUTORIAL, SCR_DIAG };
 
 // Quick menu: six large targets, laid out 2 columns x 3 rows.
 enum QuickAction { QA_MODE = 0, QA_RECAL, QA_RESET, QA_STATS, QA_SETTINGS, QA_CLOSE, QA_COUNT };

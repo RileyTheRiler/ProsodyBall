@@ -146,6 +146,40 @@ that use one. That is what keeps a 15-option menu down to two short pages.
 | **Text + bars** | On / Off (status bar, readout and meters — turn off for pure visuals) |
 | **LED orb** | On / Off (drive the LED orb — see *BLE companion* below) |
 | **How to use** | Replay the walkthrough |
+| **Signal check** | Live diagnostic readout — see below |
+
+### Signal check (diagnostics)
+
+**Settings → Signal check.** Every other screen shows an *interpretation* of your voice. When
+one looks wrong, the ball alone can't tell you whether the pitch estimate is bad, or the pitch
+is simply outside what the plot can draw, or the mic is quiet. This screen shows the raw
+analysis, updated ~5×/s, so that question has an answer:
+
+| Row | What it tells you |
+|-----|-------------------|
+| **mic level** (+ peak) | Non-zero when the mic works. Flat zero = no audio, and nothing downstream can be right. |
+| **noise floor** | What calibration measured. If it's near your speech level, the gate is swallowing you — recalibrate somewhere quieter. |
+| **voiced** + conf | Whether this frame was pitched, and how sure YIN is. |
+| **pitch** | The current estimate in Hz. |
+| **range seen** | Lowest and highest pitch since the last reset. |
+| **above / below range** | **The important one.** The share of voiced time sitting at the ends of the analysed range. |
+| **centroid**, **brightness** | Spectral centre of gravity, and it mapped to 0–1. This is what the *Brightness* colour source shows. |
+| **F1 F2 F3** | Estimated formants. Greyed out when formant confidence is low. |
+| **resonance** + conf | Formant-dispersion resonance — the real vocal-tract measure. **Not the same as brightness.** |
+| **gender / weight** | The blended perceived-gender score and the H1–H2 vocal weight. |
+| **bounce** | Intonation variability. |
+
+**Reading "above range".** The pitch band is `VOX_PITCH_MIN_HZ`–`VOX_PITCH_MAX_HZ` (80–300 Hz)
+and both the analysis and the plot stop there. A voice above the top flattens against the top
+edge of the screen, which looks exactly like a tracking failure but isn't. If this row shows
+more than a few percent, the range is too low for your voice — widen it in `dsp.h` and
+reflash. If it reads 0% while the trace still looks wrong, the range is not your problem.
+
+**Brightness is not resonance.** *Brightness* is the spectral centroid, which every /s/ and
+/f/ drags to the top — it is a crude proxy. The DSP separately computes a real formant-based
+`resonance`, shown on this screen. Compare the two rows while you speak: if brightness leaps
+around on consonants while resonance stays steady, that's the metric behaving as designed,
+not a bug.
 
 ### Color-mode effects
 *None* — flat fill. *Pulse* — whole-screen brightness pulse that quickens with loudness and
@@ -234,11 +268,18 @@ All tunables are grouped near the top of each file:
   `UI_TAP_SLOP_PX`) and the toast duration are all constants at the top of `ui.h`. The host
   tests assert the layout stays self-consistent, so a bad edit fails in CI rather than on the
   wrist.
+- **Anything looks like it isn't tracking your voice** — open **Settings → Signal check**
+  before changing anything. It distinguishes a dead mic from a swallowed noise gate from a
+  pitch outside the drawable range from a genuinely bad estimate, which all look identical on
+  the ball.
 - **Ball never moves / always "speak"** — check the mic-level line under the status bar
-  first: if it never moves, no audio is arriving. Confirm with
-  `Serial.printf("rms %.4f\n", res.rms);` in `audioTask`; values should rise when you speak.
-- **Pitch reads wrong/jumpy** — `Serial.printf` `res.pitchHz`; hum a low vs. high note and
-  compare against the web app's reading for the same voice.
+  first: if it never moves, no audio is arriving. *Signal check* → **mic level** confirms it.
+- **Trace flattens against the top of the screen** — that is the 300 Hz ceiling, not a
+  detector failure. *Signal check* → **above range** quantifies it; raise
+  `VOX_PITCH_MAX_HZ` in `dsp.h` if it's more than a few percent.
+- **Pitch reads wrong/jumpy** — check **conf** on *Signal check*; a low confidence with a
+  wild pitch usually means the noise floor is too high. Hum a low vs. high note and compare
+  against the web app's reading for the same voice.
 - **Settings look wrong / a row is missing** — rows are filtered by context, so a Color row
   genuinely does not exist while you are in Ball view. Switch views and look again.
 

@@ -17,6 +17,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cmath>
 #include <string>
 
 namespace {
@@ -142,8 +143,9 @@ int main() {
     n = uiVisibleItems(s, items, UI_MAX_ITEMS);
     check("rows: threshold row appears for the Loud trigger", contains(items, n, IT_HTHR));
 
-    check("rows: View and How-to-use are always reachable",
-          contains(items, n, IT_MODE) && contains(items, n, IT_HELP));
+    check("rows: View, How-to-use and Signal check are always reachable",
+          contains(items, n, IT_MODE) && contains(items, n, IT_HELP) &&
+          contains(items, n, IT_DIAG));
   }
 
   // ================================================================
@@ -218,6 +220,8 @@ int main() {
 
     check("cycle: How-to-use reports itself as an action, not a value",
           uiCycleItem(s, preset, IT_HELP) == ACT_HELP);
+    check("cycle: Signal check reports its own action, distinct from How-to-use",
+          uiCycleItem(s, preset, IT_DIAG) == ACT_DIAG);
 
     // Picking a preset sets both ends of the gradient; picking a colour by hand drops the
     // preset back to "Custom" so the label never lies about what is on screen.
@@ -259,6 +263,43 @@ int main() {
     ok = ok && value[0] != '\0';
     uiItemValue(bad, 999, IT_BRIGHT, value, sizeof(value));
     check("labels: out-of-range settings still render safely", ok && value[0] != '\0');
+  }
+
+  // ================================================================
+  // Fixed-point formatting — the diagnostic screen renders through this instead of "%f",
+  // so it has to be right for the values that screen actually shows.
+  // ================================================================
+  {
+    char b[16];
+    uiFormatFixed(0.0421f, 4, b, sizeof(b));
+    bool ok = std::strcmp(b, "0.0421") == 0;
+    uiFormatFixed(0.5f, 2, b, sizeof(b));
+    ok = ok && std::strcmp(b, "0.50") == 0;
+    uiFormatFixed(1.0f, 2, b, sizeof(b));
+    ok = ok && std::strcmp(b, "1.00") == 0;
+    uiFormatFixed(0.0f, 4, b, sizeof(b));
+    ok = ok && std::strcmp(b, "0.0000") == 0;
+    check("format: renders the diagnostic's value range exactly", ok, "last=" + std::string(b));
+
+    uiFormatFixed(0.999f, 2, b, sizeof(b));
+    check("format: rounds rather than truncates", std::strcmp(b, "1.00") == 0,
+          "got=" + std::string(b));
+
+    uiFormatFixed(-0.25f, 2, b, sizeof(b));
+    check("format: keeps the sign", std::strcmp(b, "-0.25") == 0, "got=" + std::string(b));
+
+    uiFormatFixed(0.07f, 2, b, sizeof(b));
+    check("format: pads the fraction instead of dropping a leading zero",
+          std::strcmp(b, "0.07") == 0, "got=" + std::string(b));
+
+    // A NaN or an absurd magnitude must not wrap the integer conversion into nonsense that
+    // reads like a real measurement.
+    uiFormatFixed(1.0f / 0.0f, 2, b, sizeof(b));
+    bool safe = std::strcmp(b, "--") == 0;
+    uiFormatFixed(std::nanf(""), 2, b, sizeof(b));
+    safe = safe && std::strcmp(b, "--") == 0;
+    check("format: refuses to print a number it cannot represent", safe,
+          "got=" + std::string(b));
   }
 
   // ================================================================
@@ -438,15 +479,15 @@ int main() {
   // Pitch history
   // ================================================================
   {
+    // The trace advances once per analysis frame, so every sample the DSP produces lands in
+    // the window exactly once — no render-clock rate limiting to beat against it.
     PitchTrace tr;
     tr.clear();
-    check("trace: the first sample is always taken", tr.push(100, true, false, 5000));
-    check("trace: samples are rate-limited", !tr.push(101, true, false, 5000 + UI_TRACE_MS - 1));
-    check("trace: the next slot opens after the interval",
-          tr.push(102, true, false, 5000 + UI_TRACE_MS));
+    tr.push(100, true, false);
+    tr.push(101, true, false);
+    check("trace: every pushed sample is kept", tr.len == 2, "len=" + i2s(tr.len));
 
-    uint32_t t = 6000;
-    for (int i = 0; i < UI_TRACE_LEN * 3; i++) { tr.push((int16_t)i, true, false, t); t += UI_TRACE_MS; }
+    for (int i = 0; i < UI_TRACE_LEN * 3; i++) tr.push((int16_t)i, true, false);
     check("trace: the window never grows past its length", tr.len == UI_TRACE_LEN,
           "len=" + i2s(tr.len));
     check("trace: the newest sample sits at the right-hand end",
@@ -455,9 +496,54 @@ int main() {
     check("trace: older samples scroll left in order",
           tr.pts[tr.len - 2].y == (int16_t)(UI_TRACE_LEN * 3 - 2));
 
+    bool contiguous = true;
+    for (int i = 1; i < tr.len; i++)
+      if (tr.pts[i].y != (int16_t)(tr.pts[i - 1].y + 1)) contiguous = false;
+    check("trace: the window holds consecutive samples, none dropped or repeated", contiguous);
+
     tr.clear();
-    check("trace: clearing empties the window and rearms the first sample",
-          tr.len == 0 && tr.push(50, true, false, 1));
+    check("trace: clearing empties the window", tr.len == 0);
+  }
+
+  // ================================================================
+  // Signal probe — the instrumentation that tells a bad pitch estimate apart from a pitch
+  // the plot cannot draw. Both look like a flat line on the watch.
+  // ================================================================
+  {
+    SignalProbe p;
+    p.reset();
+    check("probe: an empty probe reports zero, not a division by zero",
+          p.ceilingPct() == 0 && p.floorPct() == 0 && p.peakHz == 0.0f);
+
+    for (int i = 0; i < 8; i++) p.update(voicedAt(180.0f));
+    for (int i = 0; i < 2; i++) p.update(voicedAt(VOX_PITCH_MAX_HZ + 40.0f));
+    check("probe: counts voiced time the plot cannot represent",
+          p.ceilingPct() == 20, "pct=" + i2s(p.ceilingPct()));
+    check("probe: peak tracks the real pitch, not the clamped one",
+          p.peakHz > VOX_PITCH_MAX_HZ, "peak=" + i2s((int)p.peakHz));
+    check("probe: low end tracks the minimum voiced pitch",
+          p.lowHz == 180.0f, "low=" + i2s((int)p.lowHz));
+
+    VoxResult silent = {};
+    silent.rms = 0.9f;
+    for (int i = 0; i < 40; i++) p.update(silent);
+    check("probe: unvoiced frames do not dilute the range percentages",
+          p.ceilingPct() == 20 && p.voicedFrames == 10,
+          "pct=" + i2s(p.ceilingPct()) + " voiced=" + i2s((int)p.voicedFrames));
+    check("probe: peak mic level is tracked even when nothing is voiced",
+          p.peakRms == 0.9f && p.frames == 50);
+
+    p.reset();
+    check("probe: reset clears everything",
+          p.frames == 0 && p.voicedFrames == 0 && p.peakHz == 0.0f && p.peakRms == 0.0f &&
+          p.atCeiling == 0 && p.ceilingPct() == 0);
+  }
+  {
+    SignalProbe p;
+    p.reset();
+    for (int i = 0; i < 4; i++) p.update(voicedAt(VOX_PITCH_MIN_HZ - 20.0f));
+    check("probe: pitch under the range counts against the floor, not the ceiling",
+          p.floorPct() == 100 && p.ceilingPct() == 0);
   }
 
   // ================================================================
