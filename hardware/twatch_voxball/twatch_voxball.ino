@@ -3,19 +3,26 @@
  * --------------------------------------------------------------------
  * Self-contained: the watch captures its OWN voice from the V3's PDM microphone, runs
  * pitch + energy + brightness DSP on-device (dsp.cpp — a port of app.js / dsp-utils.js),
- * and visualises it locally on the 240x240 screen. No phone, no browser, no BLE.
+ * and visualises it locally on the 240x240 screen.
  *
- * Two visualisations (switchable in Settings):
- *   - VOX BALL : a ball whose height/colour follow pitch and that hops on each syllable.
+ * Two visualisations:
+ *   - VOX BALL : a ball whose height/colour follow pitch and that hops on each syllable,
+ *                over a labelled pitch axis, with a scrolling trace of your recent pitch.
  *   - COLOR    : the whole screen colours from a chosen metric, blended between two
  *                user-picked colours (e.g. pitch low->Blue, high->Pink).
  *
- * Everything is customisable on-device and saved to flash (NVS): mode, the metric that
- * drives colour, the two colours, the haptic trigger + threshold, and the pitch-target band.
+ * Screens: RUN (either visualisation) / QUICK menu / STATS / SETTINGS / TUTORIAL.
  *
- * Controls:
- *   - Short tap  : (running) top=raise target, bottom=lower target, middle=recalibrate+reset score.
- *   - Long press : open / interact with Settings (tap rows to cycle values; "Done" saves).
+ * Controls (all taught by the first-run walkthrough, and re-openable from Settings):
+ *   - Tap top / bottom  : move the pitch target band up / down (Ball view, band on)
+ *   - Tap middle        : quick menu — recalibrate, reset, stats, settings
+ *   - Long press        : straight to Settings
+ *   - Swipe left/right  : switch between the Ball and Color views
+ *
+ * This file owns pixels and hardware only. The decisions behind the UI — the settings
+ * model, which menu rows apply right now, what a touch meant, when a toast expires, the
+ * session scoreboard — live in ui.h/ui.cpp, which is pure C++ and unit-tested on the host
+ * (test/ui_host_test.cpp), exactly like dsp.cpp.
  *
  * Audio + DSP run on core 0; rendering/input on core 1 (Arduino loop), decoupled by a
  * 1-slot queue — the same producer/consumer shape as the orb sketch.
@@ -31,7 +38,9 @@
 #include "config.h"          // selects LILYGO_WATCH_2020_V3 then includes <LilyGoWatch.h>
 #include <driver/i2s.h>
 #include <Preferences.h>
+#include <string.h>
 #include "dsp.h"
+#include "ui.h"
 
 // --- PDM microphone pins / port (from the library's TwatcV3Special/Microphone example) ---
 #define MIC_DATA   2
@@ -45,87 +54,28 @@ static QueueHandle_t gResultQueue;      // length 1, overwritten with the latest
 static VoxDsp        gDsp;              // owned by the audio task (core 0)
 static volatile bool gRecalRequest = false;
 
+// --- UI state (the model lives in ui.h; these are this screen's instances of it) ---
+static Settings     gCfg;
+static Preferences  gPrefs;
+static int          gPreset = 0;        // runtime only; the low/high colours are what persist
+static SessionStats gStats;
+static Toast        gToast;
+static TouchTracker gTouch;
+static UiScreen     gScreen = SCR_RUN;
+static int          gPage = 0;          // settings page
+static int          gTutPage = 0;
+static bool         gTutFromSettings = false;
+static uint32_t     gQuickIdleMs = 0;   // quick menu auto-closes when untouched
+static uint32_t     gHintUntilMs = 0;   // "what do the taps do" overlay
+static bool         gStatusForce = true;
+static bool         gHudDirty = true;
+// Which control is currently held down, so it can be un-highlighted however the finger
+// leaves it — including the drag-away that produces no gesture at all.
+static int          gPressedQuick = -1, gPressedRow = -1;
+
 // ====================================================================
-// Persisted settings (NVS) + option tables
+// Persistence (NVS)
 // ====================================================================
-enum Mode      { MODE_BALL = 0, MODE_COLOR = 1 };
-enum HueMetric { SRC_PITCH = 0, SRC_BRIGHT, SRC_BOUNCE, SRC_LOUD, SRC_GENDER, SRC_WEIGHT, SRC_COUNT };
-enum Haptic    { HAP_OFF = 0, HAP_ONTARGET, HAP_SYLLABLE, HAP_BRIGHT, HAP_LOUD };
-enum Effect    { EFF_NONE = 0, EFF_PULSE, EFF_GRADIENT, EFF_METER, EFF_COUNT };
-
-struct Settings {
-  uint8_t  mode      = MODE_BALL;
-  uint8_t  colorSrc  = SRC_PITCH;   // which metric drives the colour
-  uint8_t  loColor   = 0;           // palette index at metric=0
-  uint8_t  hiColor   = 6;           // palette index at metric=1
-  uint8_t  effect    = EFF_NONE;    // Color-mode visual effect
-  uint8_t  haptic    = HAP_ONTARGET;
-  uint8_t  hapticThr = 50;          // % threshold for the >threshold haptics
-  uint8_t  autoDim   = 1;           // auto-dim + tilt-wake on/off
-  uint8_t  showBand  = 1;           // pitch-target band + glow + score on/off
-  uint8_t  showHud   = 1;           // bottom text readout on/off
-  uint8_t  orb       = 0;           // BLE companion: drive the LED orb on/off
-  uint16_t targetLoHz = 145;
-  uint16_t targetHiHz = 175;
-  uint16_t bestPct   = 0;           // best on-target % across sessions
-};
-static Settings    gCfg;
-static Preferences gPrefs;
-
-// Palette of named colours used as the low/high anchors of the colour blend.
-struct Pal { const char *name; uint8_t r, g, b; };
-static const Pal PALETTE[] = {
-  {"Blue", 30, 90, 255}, {"Teal", 0, 200, 180}, {"Green", 40, 220, 60},
-  {"Purple", 150, 60, 230}, {"Red", 240, 40, 40}, {"Orange", 255, 140, 0},
-  {"Pink", 255, 80, 170}, {"White", 240, 240, 240}, {"Cyan", 0, 230, 230},
-  {"Magenta", 230, 0, 200}, {"Yellow", 240, 220, 0}, {"Lime", 170, 240, 40},
-  {"Indigo", 70, 60, 220}, {"Rose", 255, 130, 150},
-};
-static const int N_PAL = sizeof(PALETTE) / sizeof(PALETTE[0]);
-// Palette indices (keep in sync with PALETTE order above) for the gradient presets.
-enum { P_BLUE = 0, P_TEAL, P_GREEN, P_PURPLE, P_RED, P_ORANGE, P_PINK, P_WHITE,
-       P_CYAN, P_MAGENTA, P_YELLOW, P_LIME, P_INDIGO, P_ROSE };
-
-// Named gradient presets: cycling these sets both low and high colours at once.
-// "Custom" (index 0) leaves the current low/high colours untouched.
-struct Preset { const char *name; uint8_t lo, hi; };
-static const Preset PRESETS[] = {
-  {"Custom", P_BLUE, P_PINK}, {"Trans", P_BLUE, P_PINK}, {"Fire", P_RED, P_YELLOW},
-  {"Ocean", P_INDIGO, P_CYAN}, {"Forest", P_GREEN, P_LIME}, {"Sunset", P_PURPLE, P_ORANGE},
-  {"Mono", P_TEAL, P_WHITE}, {"Candy", P_CYAN, P_MAGENTA},
-};
-static const int N_PRESET = sizeof(PRESETS) / sizeof(PRESETS[0]);
-static int gPreset = 0; // runtime only (low/high colours are what persist)
-
-static const char *MODE_NAMES[]   = { "Vox Ball", "Color" };
-static const char *SRC_NAMES[]    = { "Pitch", "Brightness", "Bounce", "Loudness", "Gender", "Weight" };
-static const char *HAPTIC_NAMES[] = { "Off", "On-target", "Syllables", "Bright", "Loud" };
-static const char *EFFECT_NAMES[] = { "None", "Pulse", "Gradient", "Meter" };
-static const char *ONOFF[]        = { "Off", "On" };
-
-
-// Clamp every persisted field to its valid range. NVS can return stale/corrupt values
-// (e.g. after a firmware change), and several of these index into name/colour tables.
-static void sanitizeSettings() {
-  if (gCfg.mode > MODE_COLOR) gCfg.mode = MODE_BALL;
-  if (gCfg.colorSrc >= SRC_COUNT) gCfg.colorSrc = SRC_PITCH;
-  if (gCfg.loColor >= N_PAL) gCfg.loColor = 0;
-  if (gCfg.hiColor >= N_PAL) gCfg.hiColor = 6;
-  if (gCfg.effect >= EFF_COUNT) gCfg.effect = EFF_NONE;
-  if (gCfg.haptic > HAP_LOUD) gCfg.haptic = HAP_OFF;
-  if (gCfg.hapticThr > 100) gCfg.hapticThr = 50;
-  gCfg.autoDim = gCfg.autoDim ? 1 : 0;
-  gCfg.showBand = gCfg.showBand ? 1 : 0;
-  gCfg.showHud = gCfg.showHud ? 1 : 0;
-  gCfg.orb = gCfg.orb ? 1 : 0;
-  if (gCfg.bestPct > 100) gCfg.bestPct = 100;
-
-  const uint16_t minHz = (uint16_t)VOX_PITCH_MIN_HZ, maxHz = (uint16_t)VOX_PITCH_MAX_HZ;
-  if (gCfg.targetLoHz < minHz || gCfg.targetLoHz > maxHz - 10) gCfg.targetLoHz = 145;
-  if (gCfg.targetHiHz < minHz + 10 || gCfg.targetHiHz > maxHz) gCfg.targetHiHz = 175;
-  if (gCfg.targetHiHz < gCfg.targetLoHz + 10) gCfg.targetHiHz = gCfg.targetLoHz + 10;
-}
-
 static void loadSettings() {
   gPrefs.begin("voxball", true);
   gCfg.mode       = gPrefs.getUChar("mode", gCfg.mode);
@@ -135,16 +85,20 @@ static void loadSettings() {
   gCfg.effect     = gPrefs.getUChar("eff", gCfg.effect);
   gCfg.haptic     = gPrefs.getUChar("hap", gCfg.haptic);
   gCfg.hapticThr  = gPrefs.getUChar("hthr", gCfg.hapticThr);
+  gCfg.screenBri  = gPrefs.getUChar("bri", gCfg.screenBri);
   gCfg.autoDim    = gPrefs.getUChar("adim", gCfg.autoDim);
   gCfg.showBand   = gPrefs.getUChar("band", gCfg.showBand);
+  gCfg.showTrace  = gPrefs.getUChar("trc", gCfg.showTrace);
   gCfg.showHud    = gPrefs.getUChar("hud", gCfg.showHud);
   gCfg.orb        = gPrefs.getUChar("orb", gCfg.orb);
+  gCfg.tutorial   = gPrefs.getUChar("tut", gCfg.tutorial);
   gCfg.targetLoHz = gPrefs.getUShort("tlo", gCfg.targetLoHz);
   gCfg.targetHiHz = gPrefs.getUShort("thi", gCfg.targetHiHz);
   gCfg.bestPct    = gPrefs.getUShort("best", gCfg.bestPct);
   gPrefs.end();
-  sanitizeSettings();
+  uiSanitizeSettings(gCfg);
 }
+
 static void saveSettings() {
   gPrefs.begin("voxball", false);
   gPrefs.putUChar("mode", gCfg.mode);
@@ -154,10 +108,13 @@ static void saveSettings() {
   gPrefs.putUChar("eff", gCfg.effect);
   gPrefs.putUChar("hap", gCfg.haptic);
   gPrefs.putUChar("hthr", gCfg.hapticThr);
+  gPrefs.putUChar("bri", gCfg.screenBri);
   gPrefs.putUChar("adim", gCfg.autoDim);
   gPrefs.putUChar("band", gCfg.showBand);
+  gPrefs.putUChar("trc", gCfg.showTrace);
   gPrefs.putUChar("hud", gCfg.showHud);
   gPrefs.putUChar("orb", gCfg.orb);
+  gPrefs.putUChar("tut", gCfg.tutorial);
   gPrefs.putUShort("tlo", gCfg.targetLoHz);
   gPrefs.putUShort("thi", gCfg.targetHiHz);
   gPrefs.putUShort("best", gCfg.bestPct);
@@ -213,69 +170,145 @@ static void audioTask(void *) {
 }
 
 // ====================================================================
-// Shared rendering helpers (core 1)
+// Palette / theme
 // ====================================================================
-static const int SCR_W = 240, SCR_H = 240;
-static const int TOP_MARGIN = 34, BOT_MARGIN = 46;
-static const int USABLE_H = SCR_H - TOP_MARGIN - BOT_MARGIN;
+// The same packing TFT_eSPI::color565 does. A macro rather than a function so the theme can
+// be file-scope constants (and so the Arduino prototype generator has nothing to trip over).
+#define RGB565(r, g, b) ((uint16_t)(((( r) & 0xF8) << 8) | ((( g) & 0xFC) << 3) | (( b) >> 3)))
 
-// App run state.
-enum UiState { RUNNING = 0, SETTINGS = 1 };
-static UiState gState = RUNNING;
+static const uint16_t C_BG     = 0x0000;
+static const uint16_t C_TEXT   = RGB565(232, 236, 244);
+static const uint16_t C_MUTED  = RGB565(130, 142, 160);
+static const uint16_t C_DIM    = RGB565(68, 76, 92);
+static const uint16_t C_ACCENT = RGB565(90, 190, 255);
+static const uint16_t C_OK     = RGB565(60, 220, 130);
+static const uint16_t C_WARN   = RGB565(255, 130, 90);
+static const uint16_t C_PANEL  = RGB565(24, 28, 38);
+static const uint16_t C_PANEL2 = RGB565(46, 54, 70);
 
-// Session stats.
-static float voicedTime = 0.0f, inTargetTime = 0.0f;
+static uint16_t rgb565(const Rgb &c) { return RGB565(c.r, c.g, c.b); }
 
-static inline float clampf(float v, float lo, float hi) {
-  return v < lo ? lo : (v > hi ? hi : v);
-}
-
-// The 0..1 value of whichever metric the user picked to drive colour.
-static float metricValue(const VoxResult &r, uint8_t src) {
-  switch (src) {
-    case SRC_PITCH:  return r.pitchPos;
-    case SRC_BRIGHT: return r.brightness;
-    case SRC_BOUNCE: return r.bounce;
-    case SRC_GENDER: return r.genderScore;   // 0 masc .. 1 fem
-    case SRC_WEIGHT: return r.weight;        // 0 light/breathy .. 1 heavy/pressed
-    default:         return clampf(r.rms * 8.0f, 0.0f, 1.0f); // SRC_LOUD
+// Backlight level for each Brightness setting.
+static uint8_t brightnessLevel() {
+  switch (gCfg.screenBri) {
+    case BRI_LOW: return 60;
+    case BRI_MED: return 150;
+    default:      return 255;
   }
 }
 
-// HSV (h deg, s/v 0..1) -> 8-bit RGB.
-static void hsvRGB(float h, float s, float v, uint8_t *R, uint8_t *G, uint8_t *B) {
-  h = fmodf(h, 360.0f); if (h < 0) h += 360.0f;
-  float c = v * s, x = c * (1 - fabsf(fmodf(h / 60.0f, 2.0f) - 1)), m = v - c;
-  float r, g, b;
-  if      (h < 60)  { r = c; g = x; b = 0; }
-  else if (h < 120) { r = x; g = c; b = 0; }
-  else if (h < 180) { r = 0; g = c; b = x; }
-  else if (h < 240) { r = 0; g = x; b = c; }
-  else if (h < 300) { r = x; g = 0; b = c; }
-  else              { r = c; g = 0; b = x; }
-  *R = (uint8_t)((r + m) * 255); *G = (uint8_t)((g + m) * 255); *B = (uint8_t)((b + m) * 255);
-}
-static uint16_t hsv565(float h, float s, float v) {
-  uint8_t R, G, B; hsvRGB(h, s, v, &R, &G, &B);
-  return ttgo->tft->color565(R, G, B);
-}
-
-// Linear blend of two palette entries by t (0..1), scaled by value v (0..1).
-static void blendPalRGB(int loIdx, int hiIdx, float t, float v, uint8_t *R, uint8_t *G, uint8_t *B) {
-  const Pal &a = PALETTE[loIdx], &b = PALETTE[hiIdx];
-  t = clampf(t, 0, 1); v = clampf(v, 0, 1);
-  *R = (uint8_t)((a.r + (b.r - a.r) * t) * v);
-  *G = (uint8_t)((a.g + (b.g - a.g) * t) * v);
-  *B = (uint8_t)((a.b + (b.b - a.b) * t) * v);
-}
-static uint16_t blendPal565(int loIdx, int hiIdx, float t, float v) {
-  uint8_t R, G, B; blendPalRGB(loIdx, hiIdx, t, v, &R, &G, &B);
-  return ttgo->tft->color565(R, G, B);
+// ====================================================================
+// Small drawing helpers
+// ====================================================================
+// A labelled panel button, optionally with a small caption above the label. Every tappable
+// thing outside the run screen is one of these, so targets are consistently finger-sized.
+static void drawButton(int x, int y, int w, int h, const char *label, const char *caption,
+                       uint16_t fill, uint16_t fg, uint16_t border) {
+  TFT_eSPI *tft = ttgo->tft;
+  tft->fillRoundRect(x, y, w, h, 8, fill);
+  tft->drawRoundRect(x, y, w, h, 8, border);
+  tft->setTextDatum(MC_DATUM);
+  if (caption && caption[0]) {
+    tft->setTextColor(C_MUTED, fill);
+    tft->drawString(caption, x + w / 2, y + 15, 1);
+    tft->setTextColor(fg, fill);
+    tft->drawString(label, x + w / 2, y + h / 2 + 9, 2);
+  } else {
+    tft->setTextColor(fg, fill);
+    tft->drawString(label, x + w / 2, y + h / 2, 2);
+  }
 }
 
-static int hzToY(float hz) {
-  float pos = clampf((hz - VOX_PITCH_MIN_HZ) / (VOX_PITCH_MAX_HZ - VOX_PITCH_MIN_HZ), 0, 1);
-  return TOP_MARGIN + (int)((1.0f - pos) * USABLE_H);
+static void drawDashedHLine(int y, uint16_t color) {
+  TFT_eSPI *tft = ttgo->tft;
+  for (int x = UI_TRACE_X0; x < UI_SCR_W - 6; x += 12) tft->drawFastHLine(x, y, 7, color);
+}
+
+// "1m 24s" / "48s" — session durations read better than a raw seconds count.
+static void formatDuration(float secs, char *out, size_t n) {
+  int s = (int)(secs + 0.5f);
+  if (s >= 60) snprintf(out, n, "%dm %02ds", s / 60, s % 60);
+  else         snprintf(out, n, "%ds", s);
+}
+
+// ====================================================================
+// Status bar — clock, view, mic level, battery, orb link
+// ====================================================================
+// The single biggest "is this thing even on?" fix: a permanent strip that shows the watch is
+// a watch (time, battery) and that the microphone is hearing you (the level line).
+// Declared up here because the status bar shows the orb link dot; the BLE task that owns it
+// is further down.
+static volatile bool gOrbConnected = false;
+
+static void drawStatusBar(bool force) {
+  TFT_eSPI *tft = ttgo->tft;
+  uint32_t now = millis();
+
+  // The RTC and PMU sit behind I2C; poll them at 1 Hz rather than every frame.
+  static uint32_t lastPollMs = 0;
+  static char clockBuf[8] = "--:--";
+  static int  batt = -1;
+  static bool charging = false;
+  if (force || now - lastPollMs > 1000) {
+    lastPollMs = now;
+    RTC_Date d = ttgo->rtc->getDateTime();
+    snprintf(clockBuf, sizeof(clockBuf), "%02d:%02d", (int)d.hour, (int)d.minute);
+    int p = ttgo->power->getBattPercentage();
+    batt = (p >= 0 && p <= 100) ? p : -1;
+    charging = ttgo->power->isChargeing();
+  }
+
+  const bool cal  = gDsp.calibrating();
+  const bool link = gOrbConnected;
+  static char lastClock[8] = "";
+  static int  lastBatt = -999;
+  static bool lastCharging = false, lastCal = false, lastLink = false;
+  static uint8_t lastMode = 255, lastOrb = 255;
+
+  if (!force && strcmp(clockBuf, lastClock) == 0 && batt == lastBatt &&
+      charging == lastCharging && cal == lastCal && link == lastLink &&
+      gCfg.mode == lastMode && gCfg.orb == lastOrb)
+    return;
+
+  strncpy(lastClock, clockBuf, sizeof(lastClock) - 1);
+  lastClock[sizeof(lastClock) - 1] = '\0';
+  lastBatt = batt; lastCharging = charging; lastCal = cal; lastLink = link;
+  lastMode = gCfg.mode; lastOrb = gCfg.orb;
+
+  tft->fillRect(0, 0, UI_SCR_W, UI_STATUS_H - 2, C_BG);
+
+  tft->setTextDatum(ML_DATUM);
+  tft->setTextColor(C_MUTED, C_BG);
+  tft->drawString(clockBuf, 6, 12, 2);
+
+  tft->setTextDatum(MC_DATUM);
+  if (cal) {
+    tft->setTextColor(C_WARN, C_BG);
+    tft->drawString("CALIBRATING", UI_SCR_W / 2, 12, 2);
+  } else {
+    tft->setTextColor(C_ACCENT, C_BG);
+    tft->drawString(MODE_NAMES[gCfg.mode % 2], UI_SCR_W / 2, 12, 2);
+  }
+
+  if (gCfg.orb) tft->fillCircle(188, 12, 4, link ? C_OK : C_DIM);
+
+  char b[12];
+  if (batt >= 0) snprintf(b, sizeof(b), "%d%%", batt);
+  else           snprintf(b, sizeof(b), "--");
+  tft->setTextDatum(MR_DATUM);
+  tft->setTextColor(charging ? C_OK : ((batt >= 0 && batt < 20) ? C_WARN : C_MUTED), C_BG);
+  tft->drawString(b, UI_SCR_W - 6, 12, 2);
+}
+
+// A 2 px live input meter along the bottom of the status bar. Cheap enough to redraw every
+// frame, and it answers "is the mic working?" without any text.
+static void drawMicLevel(const VoxResult &res) {
+  TFT_eSPI *tft = ttgo->tft;
+  int w = (int)(uiLoudness(res) * UI_SCR_W);
+  if (w < 0) w = 0;
+  if (w > UI_SCR_W) w = UI_SCR_W;
+  if (w > 0)         tft->fillRect(0, UI_STATUS_H - 2, w, 2, res.voiced ? C_ACCENT : C_MUTED);
+  if (w < UI_SCR_W)  tft->fillRect(w, UI_STATUS_H - 2, UI_SCR_W - w, 2, C_PANEL);
 }
 
 // ====================================================================
@@ -285,20 +318,45 @@ static float ballPos = 0.5f, ballVel = 0.0f;
 static float bounceY = 0.0f, bounceVel = 0.0f;
 static float prevImpulse = 0.0f;
 static float smoothHue = 270.0f, smoothR = 18.0f;
-static int prevX = -1, prevY = -1, prevR = 0;
+static int   prevX = -1, prevY = -1, prevR = 0;
+static int   prevBandLo = -1, prevBandHi = -1;
 
-static void dashedHLine(int y, uint16_t color) {
+// gTracePrev is last frame's trace, kept so it can be erased stroke-for-stroke instead of
+// clearing (and repainting) the whole plot area every frame.
+static PitchTrace gTrace, gTracePrev;
+
+static void drawTrace(const PitchTrace &tr, bool erase) {
   TFT_eSPI *tft = ttgo->tft;
-  for (int x = 8; x < SCR_W - 8; x += 12) tft->drawFastHLine(x, y, 7, color);
+  for (int i = 1; i < tr.len; i++) {
+    if (!tr.pts[i - 1].voiced || !tr.pts[i].voiced) continue;   // gaps stay gaps
+    uint16_t c = erase ? C_BG : (tr.pts[i].inBand ? C_OK : C_ACCENT);
+    tft->drawLine(PitchTrace::xAt(i - 1), tr.pts[i - 1].y,
+                  PitchTrace::xAt(i), tr.pts[i].y, c);
+  }
+}
+
+// Hz tick marks down the left gutter, so the ball's height means something concrete.
+static void drawPitchAxis() {
+  TFT_eSPI *tft = ttgo->tft;
+  tft->fillRect(0, UI_PLOT_TOP - 8, UI_AXIS_W, UI_PLOT_H + 16, C_BG);
+  tft->setTextDatum(TL_DATUM);
+  tft->setTextColor(C_DIM, C_BG);
+  for (int hz = 100; hz <= (int)VOX_PITCH_MAX_HZ; hz += 50) {
+    int y = uiHzToY((float)hz);
+    tft->drawFastHLine(UI_AXIS_W - 6, y, 5, C_DIM);
+    char l[6];
+    snprintf(l, sizeof(l), "%d", hz);
+    tft->drawString(l, 2, y - 4, 1);
+  }
 }
 
 static void updateBallPhysics(const VoxResult &res, float dt) {
-  dt = clampf(dt, 0.0f, 0.05f);
+  dt = uiClamp(dt, 0.0f, 0.05f);
   float target = res.voiced ? res.pitchPos : 0.5f;
   const float K = 14.0f, DAMP = 7.0f;
   ballVel += (target - ballPos) * K * dt;
   ballVel -= ballVel * DAMP * dt;
-  ballPos = clampf(ballPos + ballVel * dt, 0.0f, 1.0f);
+  ballPos = uiClamp(ballPos + ballVel * dt, 0.0f, 1.0f);
 
   if (res.syllableImpulse > 0.6f && prevImpulse <= 0.6f)
     bounceVel += 1.6f * (0.35f + 0.65f * res.bounce);
@@ -308,208 +366,414 @@ static void updateBallPhysics(const VoxResult &res, float dt) {
   if (bounceY < 0.0f) { bounceY = 0.0f; bounceVel = 0.0f; }
   if (bounceY > 0.45f) bounceY = 0.45f;
 
-  float hueTarget = res.voiced ? (210.0f + clampf(res.pitchPos, 0, 1) * 130.0f) : 270.0f;
+  float hueTarget = res.voiced ? (210.0f + uiClamp(res.pitchPos, 0, 1) * 130.0f) : 270.0f;
   smoothHue += (hueTarget - smoothHue) * 0.25f;
-  float rTarget = 14.0f + 24.0f * clampf(res.rms * 8.0f, 0.0f, 1.0f);
+  float rTarget = 14.0f + 24.0f * uiLoudness(res);
   smoothR += (rTarget - smoothR) * 0.3f;
 }
 
-static void renderBall(const VoxResult &res, bool inTarget, bool showBand, bool showHud) {
+static void renderBall(const VoxResult &res, bool inTarget) {
   TFT_eSPI *tft = ttgo->tft;
-  bool glow = showBand && inTarget;   // target visuals only when the band is enabled
-  float renderPos = clampf(ballPos + bounceY, 0.0f, 1.0f);
-  int x = SCR_W / 2;
-  int y = TOP_MARGIN + (int)((1.0f - renderPos) * USABLE_H);
+  const bool band = gCfg.showBand;
+  const bool glow = band && inTarget;
+
+  float renderPos = uiClamp(ballPos + bounceY, 0.0f, 1.0f);
+  int x = UI_BALL_X;
+  int y = UI_PLOT_TOP + (int)((1.0f - renderPos) * UI_PLOT_H);
   int r = (int)smoothR;
 
-  float base = res.voiced ? (0.45f + 0.55f * clampf(res.confidence, 0, 1)) : 0.22f;
-  uint16_t color = hsv565(smoothHue, 0.9f, glow ? clampf(base + 0.25f, 0, 1) : base);
+  // 1. lift the previous ball and trace off the plot ...
+  if (prevX >= 0) tft->fillCircle(prevX, prevY, prevR + 4, C_BG);
+  if (gTracePrev.len > 0) drawTrace(gTracePrev, true);
 
-  if (prevX >= 0) tft->fillCircle(prevX, prevY, prevR + 3, TFT_BLACK);
-
-  if (showBand) {
-    static int prevYLo = -1, prevYHi = -1;
-    int yLo = hzToY((float)gCfg.targetLoHz), yHi = hzToY((float)gCfg.targetHiHz);
-    if (prevYLo >= 0 && (prevYLo != yLo || prevYHi != yHi)) {
-      tft->drawFastHLine(0, prevYLo, SCR_W, TFT_BLACK);
-      tft->drawFastHLine(0, prevYHi, SCR_W, TFT_BLACK);
+  // 2. ... then repaint the chrome they may have punched through.
+  if (band) {
+    int yLo = uiHzToY((float)gCfg.targetLoHz), yHi = uiHzToY((float)gCfg.targetHiHz);
+    if (prevBandLo >= 0 && (prevBandLo != yLo || prevBandHi != yHi)) {
+      tft->fillRect(UI_TRACE_X0, prevBandLo, UI_SCR_W - UI_TRACE_X0, 1, C_BG);
+      tft->fillRect(UI_TRACE_X0, prevBandHi, UI_SCR_W - UI_TRACE_X0, 1, C_BG);
     }
-    prevYLo = yLo; prevYHi = yHi;
-    uint16_t bandColor = inTarget ? TFT_GREEN : tft->color565(70, 90, 80);
-    dashedHLine(yHi, bandColor); dashedHLine(yLo, bandColor);
+    prevBandLo = yLo; prevBandHi = yHi;
+    uint16_t bc = inTarget ? C_OK : C_DIM;
+    drawDashedHLine(yHi, bc);
+    drawDashedHLine(yLo, bc);
+  } else if (prevBandLo >= 0) {                  // band just turned off — clear its leftovers
+    tft->fillRect(UI_TRACE_X0, prevBandLo, UI_SCR_W - UI_TRACE_X0, 1, C_BG);
+    tft->fillRect(UI_TRACE_X0, prevBandHi, UI_SCR_W - UI_TRACE_X0, 1, C_BG);
+    prevBandLo = prevBandHi = -1;
   }
 
-  tft->fillCircle(x, y, r, color);
-  if (glow) tft->drawCircle(x, y, r + 3, TFT_GREEN);
-  prevX = x; prevY = y; prevR = r;
-
-  tft->fillRect(0, SCR_H - BOT_MARGIN + 6, SCR_W, BOT_MARGIN - 6, TFT_BLACK);
-  if (!showHud) return;
-  tft->setTextDatum(MC_DATUM);
-  char line[44];
-  if (gDsp.calibrating()) {
-    tft->setTextColor(TFT_WHITE, TFT_BLACK);
-    tft->drawString("Calibrating... stay quiet", SCR_W / 2, SCR_H - 24, 2);
+  // 3. trace, then the ball on top of it.
+  if (gCfg.showTrace) {
+    drawTrace(gTrace, false);
+    gTracePrev = gTrace;
   } else {
-    if (res.voiced) snprintf(line, sizeof(line), "%d Hz", (int)(res.pitchHz + 0.5f));
-    else            snprintf(line, sizeof(line), "--");
-    tft->setTextColor(glow ? TFT_GREEN : TFT_WHITE, TFT_BLACK);
-    tft->drawString(line, SCR_W / 2, SCR_H - 30, 4);
-    if (showBand) {
-      int pct = voicedTime > 0.2f ? (int)(100.0f * inTargetTime / voicedTime + 0.5f) : 0;
-      snprintf(line, sizeof(line), "%d-%d Hz  on-target %d%%  best %d%%",
-               gCfg.targetLoHz, gCfg.targetHiHz, pct, gCfg.bestPct);
-      tft->setTextColor(tft->color565(160, 180, 170), TFT_BLACK);
-      tft->drawString(line, SCR_W / 2, SCR_H - 10, 2);
-    }
+    gTracePrev.clear();
+  }
+
+  float base = res.voiced ? (0.45f + 0.55f * uiClamp(res.confidence, 0, 1)) : 0.22f;
+  uint16_t color = rgb565(uiHsv(smoothHue, 0.9f, glow ? uiClamp(base + 0.25f, 0, 1) : base));
+  tft->fillCircle(x, y, r, color);
+  if (glow) tft->drawCircle(x, y, r + 3, C_OK);
+  prevX = x; prevY = y; prevR = r;
+}
+
+// ====================================================================
+// Ball-mode HUD: on-target bar + readout, refreshed only when the text actually changes
+// ====================================================================
+static char gLastBig[16] = "", gLastSmall[40] = "";
+static bool gLastGlow = false;
+static int  gLastBarPct = -1;
+
+static void invalidateHud() {
+  gLastBig[0] = '\0'; gLastSmall[0] = '\0'; gLastBarPct = -1; gHudDirty = false;
+}
+
+static void drawOnTargetBar(int pct) {
+  if (pct == gLastBarPct) return;
+  gLastBarPct = pct;
+  TFT_eSPI *tft = ttgo->tft;
+  int w = (pct * UI_SCR_W) / 100;
+  if (w > 0)        tft->fillRect(0, UI_BAR_Y, w, UI_BAR_H, C_OK);
+  if (w < UI_SCR_W) tft->fillRect(w, UI_BAR_Y, UI_SCR_W - w, UI_BAR_H, C_PANEL);
+}
+
+static void drawBallHud(const VoxResult &res, bool inTarget, uint32_t now) {
+  static uint32_t lastMs = 0;
+  if (gHudDirty) invalidateHud();
+  if (now - lastMs < 100) return;               // the pitch number is unreadable faster than this
+  lastMs = now;
+  TFT_eSPI *tft = ttgo->tft;
+
+  if (gCfg.showBand) drawOnTargetBar(gStats.onTargetPct());
+  else if (gLastBarPct != -2) { tft->fillRect(0, UI_BAR_Y, UI_SCR_W, UI_BAR_H, C_BG); gLastBarPct = -2; }
+
+  char big[16], small[40];
+  if (gDsp.calibrating()) {
+    snprintf(big, sizeof(big), "...");
+    snprintf(small, sizeof(small), "Calibrating - stay quiet");
+  } else {
+    if (res.voiced) snprintf(big, sizeof(big), "%d Hz", (int)(res.pitchHz + 0.5f));
+    else            snprintf(big, sizeof(big), "--");
+    if (gCfg.showBand)
+      snprintf(small, sizeof(small), "%d-%d Hz   on %d%%   best %d%%",
+               gCfg.targetLoHz, gCfg.targetHiHz, gStats.onTargetPct(), gCfg.bestPct);
+    else
+      snprintf(small, sizeof(small), "tap: menu    hold: settings");
+  }
+
+  if (strcmp(big, gLastBig) != 0 || inTarget != gLastGlow) {
+    strncpy(gLastBig, big, sizeof(gLastBig) - 1); gLastBig[sizeof(gLastBig) - 1] = '\0';
+    gLastGlow = inTarget;
+    tft->fillRect(0, UI_HUD_Y, UI_SCR_W, 26, C_BG);
+    tft->setTextDatum(MC_DATUM);
+    tft->setTextColor(inTarget ? C_OK : C_TEXT, C_BG);
+    tft->drawString(big, UI_SCR_W / 2, UI_HUD_Y + 12, 4);
+  }
+  if (strcmp(small, gLastSmall) != 0) {
+    strncpy(gLastSmall, small, sizeof(gLastSmall) - 1); gLastSmall[sizeof(gLastSmall) - 1] = '\0';
+    tft->fillRect(0, UI_HUD_Y + 26, UI_SCR_W, UI_SCR_H - UI_HUD_Y - 26, C_BG);
+    tft->setTextDatum(MC_DATUM);
+    tft->setTextColor(C_MUTED, C_BG);
+    tft->drawString(small, UI_SCR_W / 2, UI_SCR_H - 8, 2);
   }
 }
 
 // ====================================================================
-// COLOR visualisation — whole screen coloured from the chosen metric
+// COLOR visualisation — the body of the screen coloured from the chosen metric
 // ====================================================================
-static void renderColor(const VoxResult &res) {
+static void renderColor(const VoxResult &res, uint32_t now) {
   TFT_eSPI *tft = ttgo->tft;
   const int lo = gCfg.loColor, hi = gCfg.hiColor;
-  float t = metricValue(res, gCfg.colorSrc);              // 0..1 chosen metric
-  float loud = clampf(res.rms * 8.0f, 0.0f, 1.0f);
+  const float t = uiMetricValue(res, gCfg.colorSrc);
+  const float loud = uiLoudness(res);
+
+  // The status bar and HUD keep their own strips so they don't have to be repainted under
+  // every frame of colour; with the HUD off the colour takes the whole screen — except while
+  // a toast is up, or the fill would paint straight over it.
+  const int bodyY = gCfg.showHud ? UI_STATUS_H : 0;
+  int bodyBottom = (gCfg.showHud || gToast.visible(now)) ? UI_HUD_Y : UI_SCR_H;
+  const int bodyH = bodyBottom - bodyY;
 
   switch (gCfg.effect) {
     case EFF_PULSE: {
-      // Whole-screen brightness pulse; faster/deeper with loudness, flash on each syllable.
+      // Whole-body brightness pulse; faster/deeper with loudness, flash on each syllable.
       static float phase = 0.0f;
       phase += 0.12f + 0.55f * loud;
       float s = 0.5f + 0.5f * sinf(phase);
       float v = (res.voiced ? 0.30f : 0.12f) * (0.55f + 0.45f * s) + 0.45f * res.syllableImpulse;
-      tft->fillScreen(blendPal565(lo, hi, t, clampf(v, 0, 1)));
+      tft->fillRect(0, bodyY, UI_SCR_W, bodyH, rgb565(uiBlendPal(lo, hi, t, uiClamp(v, 0, 1))));
       break;
     }
     case EFF_GRADIENT: {
       // Vertical lo(bottom) -> hi(top) gradient, brightness from loudness; a white marker
       // line shows where the chosen metric currently sits.
       float v = res.voiced ? (0.30f + 0.70f * loud) : 0.15f;
-      const int bands = 30, bandH = (SCR_H + bands - 1) / bands;
+      const int bands = 30, bandH = (bodyH + bands - 1) / bands;
       for (int b = 0; b < bands; b++) {
+        int y = bodyY + b * bandH;
+        int h = bandH;
+        if (y >= bodyY + bodyH) break;
+        if (y + h > bodyY + bodyH) h = bodyY + bodyH - y;
         float frac = 1.0f - (float)b / (bands - 1);      // top = hi
-        tft->fillRect(0, b * bandH, SCR_W, bandH, blendPal565(lo, hi, frac, v));
+        tft->fillRect(0, y, UI_SCR_W, h, rgb565(uiBlendPal(lo, hi, frac, v)));
       }
-      int my = TOP_MARGIN + (int)((1.0f - t) * USABLE_H);
-      tft->drawFastHLine(0, my, SCR_W, TFT_WHITE);
+      int my = bodyY + (int)((1.0f - uiClamp(t, 0, 1)) * bodyH);
+      tft->drawFastHLine(0, my, UI_SCR_W, TFT_WHITE);
       break;
     }
     case EFF_METER: {
       // Bottom-up level bar: fill height = chosen metric, in the high colour over a dim base.
       float v = res.voiced ? (0.40f + 0.60f * loud) : 0.20f;
-      int top = SCR_H - (int)(clampf(t, 0, 1) * SCR_H);
-      tft->fillRect(0, 0, SCR_W, top, blendPal565(lo, hi, 0.0f, 0.15f));
-      tft->fillRect(0, top, SCR_W, SCR_H - top, blendPal565(lo, hi, 1.0f, v));
+      int fill = (int)(uiClamp(t, 0, 1) * bodyH);
+      tft->fillRect(0, bodyY, UI_SCR_W, bodyH - fill, rgb565(uiBlendPal(lo, hi, 0.0f, 0.15f)));
+      tft->fillRect(0, bodyY + bodyH - fill, UI_SCR_W, fill, rgb565(uiBlendPal(lo, hi, 1.0f, v)));
       break;
     }
-    default: { // EFF_NONE
+    default: {  // EFF_NONE
       float v = res.voiced ? (0.25f + 0.75f * loud) : 0.12f;
-      tft->fillScreen(blendPal565(lo, hi, t, v));
+      tft->fillRect(0, bodyY, UI_SCR_W, bodyH, rgb565(uiBlendPal(lo, hi, t, v)));
       break;
     }
   }
 
-  if (!gCfg.showHud) return;
-  // Readable HUD strip.
-  tft->fillRect(0, SCR_H - 26, SCR_W, 26, TFT_BLACK);
-  tft->setTextDatum(MC_DATUM);
-  tft->setTextColor(TFT_WHITE, TFT_BLACK);
-  char line[40];
-  if (gDsp.calibrating())
-    snprintf(line, sizeof(line), "Calibrating... stay quiet");
-  else
-    snprintf(line, sizeof(line), "%s  %d%%", SRC_NAMES[gCfg.colorSrc], (int)(t * 100 + 0.5f));
-  tft->drawString(line, SCR_W / 2, SCR_H - 13, 2);
+  // The toast owns the HUD strip while it is up, so leave the strip alone until it clears.
+  if (!gCfg.showHud || gToast.visible(now)) return;
+
+  // HUD strip: which metric is driving the colour, its current value, and a bar for it —
+  // "Color" mode is otherwise impossible to read a number off.
+  static uint32_t lastMs = 0;
+  if (gHudDirty) { invalidateHud(); }
+  if (now - lastMs < 100) return;
+  lastMs = now;
+
+  char small[40];
+  if (gDsp.calibrating()) snprintf(small, sizeof(small), "Calibrating - stay quiet");
+  else snprintf(small, sizeof(small), "%s   %d%%", SRC_NAMES[gCfg.colorSrc % SRC_COUNT],
+                (int)(uiClamp(t, 0, 1) * 100 + 0.5f));
+  if (strcmp(small, gLastSmall) != 0) {
+    strncpy(gLastSmall, small, sizeof(gLastSmall) - 1); gLastSmall[sizeof(gLastSmall) - 1] = '\0';
+    tft->fillRect(0, UI_HUD_Y, UI_SCR_W, UI_SCR_H - UI_HUD_Y, C_BG);
+    tft->setTextDatum(MC_DATUM);
+    tft->setTextColor(C_TEXT, C_BG);
+    tft->drawString(small, UI_SCR_W / 2, UI_HUD_Y + 14, 2);
+  }
+  int w = (int)(uiClamp(t, 0, 1) * UI_SCR_W);
+  tft->fillRect(0, UI_SCR_H - 6, w, 4, rgb565(uiBlendPal(lo, hi, t, 1.0f)));
+  tft->fillRect(w, UI_SCR_H - 6, UI_SCR_W - w, 4, C_PANEL);
 }
 
 // ====================================================================
-// SETTINGS screen (paginated, item-based so it scales as options grow)
+// Toast — transient confirmation, drawn over the HUD strip
 // ====================================================================
-enum ItemId {
-  IT_MODE, IT_SRC, IT_PRESET, IT_LO, IT_HI, IT_EFFECT,
-  IT_HAPTIC, IT_HTHR, IT_AUTODIM, IT_BAND, IT_HUD, IT_ORB,
-  IT_PAGE, IT_DONE
-};
-// Two pages of ~8 rows each.
-static const uint8_t PAGE0[] = { IT_MODE, IT_SRC, IT_PRESET, IT_LO, IT_HI, IT_EFFECT, IT_PAGE, IT_DONE };
-static const uint8_t PAGE1[] = { IT_HAPTIC, IT_HTHR, IT_AUTODIM, IT_BAND, IT_HUD, IT_ORB, IT_PAGE, IT_DONE };
-static const uint8_t *PAGES[2] = { PAGE0, PAGE1 };
-static const int PAGE_LEN[2] = { (int)(sizeof(PAGE0)), (int)(sizeof(PAGE1)) };
-static int gPage = 0;
-static const int ROW_Y0 = 30, ROW_DY = 24;
+// It lives in the HUD strip on purpose: that is the one band of the screen no visualisation
+// paints into, so a toast never gets chewed up by the next frame of the ball or the colour.
+static const int TOAST_X = 4, TOAST_W = UI_SCR_W - 8;
+static const int TOAST_Y = UI_HUD_Y, TOAST_H = UI_SCR_H - UI_HUD_Y;
 
-static void itemText(uint8_t id, char *out, size_t n) {
-  switch (id) {
-    case IT_MODE:    snprintf(out, n, "Mode: %s", MODE_NAMES[gCfg.mode]); break;
-    case IT_SRC:     snprintf(out, n, "Color from: %s", SRC_NAMES[gCfg.colorSrc]); break;
-    case IT_PRESET:  snprintf(out, n, "Preset: %s", PRESETS[gPreset].name); break;
-    case IT_LO:      snprintf(out, n, "Low color: %s", PALETTE[gCfg.loColor].name); break;
-    case IT_HI:      snprintf(out, n, "High color: %s", PALETTE[gCfg.hiColor].name); break;
-    case IT_EFFECT:  snprintf(out, n, "Effect: %s", EFFECT_NAMES[gCfg.effect]); break;
-    case IT_HAPTIC:  snprintf(out, n, "Haptics: %s", HAPTIC_NAMES[gCfg.haptic]); break;
-    case IT_HTHR:    snprintf(out, n, "Haptic thr: %d%%", gCfg.hapticThr); break;
-    case IT_AUTODIM: snprintf(out, n, "Auto-dim: %s", ONOFF[gCfg.autoDim ? 1 : 0]); break;
-    case IT_BAND:    snprintf(out, n, "Target band: %s", ONOFF[gCfg.showBand ? 1 : 0]); break;
-    case IT_HUD:     snprintf(out, n, "HUD text: %s", ONOFF[gCfg.showHud ? 1 : 0]); break;
-    case IT_ORB:     snprintf(out, n, "Orb (BLE): %s", ONOFF[gCfg.orb ? 1 : 0]); break;
-    case IT_PAGE:    snprintf(out, n, "%s", gPage == 0 ? "More settings >" : "< Back"); break;
-    default:         snprintf(out, n, "* Done (save) *"); break;
+static void drawToast(uint32_t now) {
+  static bool wasVisible = false;
+  TFT_eSPI *tft = ttgo->tft;
+  bool vis = gToast.visible(now);
+  if (vis) {
+    if (!gToast.drawn) {
+      tft->fillRoundRect(TOAST_X, TOAST_Y, TOAST_W, TOAST_H, 8, C_PANEL2);
+      tft->drawRoundRect(TOAST_X, TOAST_Y, TOAST_W, TOAST_H, 8, C_ACCENT);
+      tft->setTextDatum(MC_DATUM);
+      tft->setTextColor(C_TEXT, C_PANEL2);
+      tft->drawString(gToast.msg, UI_SCR_W / 2, TOAST_Y + TOAST_H / 2, 2);
+      gToast.drawn = true;
+    }
+  } else if (wasVisible) {
+    tft->fillRect(TOAST_X, TOAST_Y, TOAST_W, TOAST_H, C_BG);
+    gToast.clear();
+    gHudDirty = true;                  // make the readout repaint itself
   }
+  wasVisible = vis;
+}
+
+// ====================================================================
+// Tap hints — a short-lived overlay so the touch zones are never a secret
+// ====================================================================
+static void drawTapHints(bool show) {
+  TFT_eSPI *tft = ttgo->tft;
+  const int yTop = UI_PLOT_TOP + 8, yBot = UI_PLOT_BOT - 8;
+  if (!show) {
+    tft->fillRect(UI_AXIS_W, yTop - 9, UI_SCR_W - UI_AXIS_W, 18, C_BG);
+    tft->fillRect(UI_AXIS_W, yBot - 9, UI_SCR_W - UI_AXIS_W, 18, C_BG);
+    // The wipe may have taken part of a band line with it; there is now no old position
+    // worth erasing, and the dashed lines are repainted from scratch on the next frame.
+    prevBandLo = prevBandHi = -1;
+    return;
+  }
+  tft->setTextDatum(MC_DATUM);
+  tft->setTextColor(C_DIM, C_BG);
+  const bool nudge = (gCfg.mode == MODE_BALL) && gCfg.showBand;
+  tft->drawString(nudge ? "tap: target +5" : "tap: menu", UI_SCR_W / 2 + 12, yTop, 2);
+  tft->drawString(nudge ? "tap: target -5" : "hold: settings", UI_SCR_W / 2 + 12, yBot, 2);
+}
+
+// ====================================================================
+// QUICK MENU — the middle tap. Six finger-sized buttons, all self-describing.
+// ====================================================================
+static void drawQuickButton(int i, bool pressed) {
+  int x, y, w, h;
+  uiQuickRect(i, &x, &y, &w, &h);
+  bool close = (i == QA_CLOSE);
+  drawButton(x, y, w, h, uiQuickLabel(i, gCfg), uiQuickCaption(i),
+             pressed ? C_PANEL2 : C_PANEL, close ? C_MUTED : C_TEXT, close ? C_DIM : C_ACCENT);
+}
+
+static void drawQuickMenu() {
+  TFT_eSPI *tft = ttgo->tft;
+  tft->fillScreen(C_BG);
+  tft->setTextDatum(MC_DATUM);
+  tft->setTextColor(C_ACCENT, C_BG);
+  tft->drawString("Quick menu", UI_SCR_W / 2, 16, 2);
+  for (int i = 0; i < QA_COUNT; i++) drawQuickButton(i, false);
+}
+
+// ====================================================================
+// STATS — what the session actually looked like
+// ====================================================================
+static void drawStatsRow(int y, const char *label, const char *value) {
+  TFT_eSPI *tft = ttgo->tft;
+  tft->setTextDatum(ML_DATUM);
+  tft->setTextColor(C_MUTED, C_BG);
+  tft->drawString(label, 14, y, 2);
+  tft->setTextDatum(MR_DATUM);
+  tft->setTextColor(C_TEXT, C_BG);
+  tft->drawString(value, UI_SCR_W - 14, y, 2);
+}
+
+static void drawStats() {
+  TFT_eSPI *tft = ttgo->tft;
+  tft->fillScreen(C_BG);
+  tft->setTextDatum(MC_DATUM);
+  tft->setTextColor(C_ACCENT, C_BG);
+  tft->drawString("Session", UI_SCR_W / 2, 14, 2);
+
+  char buf[24];
+  const int pct = gStats.onTargetPct();
+  snprintf(buf, sizeof(buf), "%d%%", pct);
+  tft->setTextColor(pct >= 50 ? C_OK : C_TEXT, C_BG);
+  tft->drawString(buf, UI_SCR_W / 2, 48, 4);
+  tft->setTextColor(C_MUTED, C_BG);
+  tft->drawString("of voiced time on target", UI_SCR_W / 2, 72, 1);
+
+  snprintf(buf, sizeof(buf), "%d%%", gCfg.bestPct);
+  drawStatsRow(96, "Best ever", buf);
+
+  if (gStats.avgPitch() > 0) snprintf(buf, sizeof(buf), "%d Hz", (int)(gStats.avgPitch() + 0.5f));
+  else                       snprintf(buf, sizeof(buf), "--");
+  drawStatsRow(118, "Average pitch", buf);
+
+  if (gStats.pitchMax > 0) snprintf(buf, sizeof(buf), "%d-%d Hz", (int)gStats.pitchMin, (int)gStats.pitchMax);
+  else                     snprintf(buf, sizeof(buf), "--");
+  drawStatsRow(140, "Range", buf);
+
+  formatDuration(gStats.voicedSecs, buf, sizeof(buf));
+  drawStatsRow(162, "Voiced time", buf);
+
+  snprintf(buf, sizeof(buf), "%d/min", (int)(gStats.syllablesPerMin() + 0.5f));
+  drawStatsRow(184, "Syllables", buf);
+
+  drawButton(8, 204, 108, 30, "Reset", nullptr, C_PANEL, C_WARN, C_DIM);
+  drawButton(124, 204, 108, 30, "Back", nullptr, C_PANEL, C_TEXT, C_ACCENT);
+}
+
+// ====================================================================
+// TUTORIAL — shown once on first boot, and any time from Settings > How to use
+// ====================================================================
+static void drawTutorial() {
+  TFT_eSPI *tft = ttgo->tft;
+  const TutorialCard &c = TUTORIAL[gTutPage];
+  tft->fillScreen(C_BG);
+  tft->setTextDatum(MC_DATUM);
+
+  tft->setTextColor(C_ACCENT, C_BG);
+  tft->drawString(c.title, UI_SCR_W / 2, 46, 4);
+  tft->setTextColor(C_TEXT, C_BG);
+  tft->drawString(c.l1, UI_SCR_W / 2, 96, 2);
+  tft->drawString(c.l2, UI_SCR_W / 2, 120, 2);
+  tft->drawString(c.l3, UI_SCR_W / 2, 144, 2);
+
+  for (int i = 0; i < N_TUTORIAL; i++)
+    tft->fillCircle(UI_SCR_W / 2 - (N_TUTORIAL - 1) * 7 + i * 14, 178, 4,
+                    i == gTutPage ? C_ACCENT : C_DIM);
+
+  const bool last = (gTutPage == N_TUTORIAL - 1);
+  drawButton(8, 204, 100, 30, gTutPage == 0 ? "Skip" : "Back", nullptr, C_PANEL, C_MUTED, C_DIM);
+  drawButton(132, 204, 100, 30, last ? "Start" : "Next", nullptr, C_PANEL, C_TEXT, C_ACCENT);
+}
+
+// ====================================================================
+// SETTINGS — context-filtered rows, auto-paginated
+// ====================================================================
+static const int SET_ROW_Y0 = 30, SET_ROW_H = 28, SET_FOOTER_Y = 202;
+
+static void drawSettingsRow(int slot, uint8_t id, bool pressed) {
+  TFT_eSPI *tft = ttgo->tft;
+  const int y = SET_ROW_Y0 + slot * SET_ROW_H;
+  const uint16_t bg = pressed ? C_PANEL2 : C_BG;
+  tft->fillRect(0, y, UI_SCR_W, SET_ROW_H - 1, bg);
+
+  char label[20], value[20];
+  uiItemLabel(id, label, sizeof(label));
+  uiItemValue(gCfg, gPreset, id, value, sizeof(value));
+
+  tft->setTextDatum(ML_DATUM);
+  tft->setTextColor(C_MUTED, bg);
+  tft->drawString(label, 10, y + 13, 2);
+
+  int valueRight = 222;
+  if (uiItemHasSwatch(id)) {
+    valueRight = 194;
+    // The preset row previews both ends of its gradient; the single-colour rows show one.
+    int loIdx = gCfg.loColor, hiIdx = gCfg.hiColor;
+    if (id == IT_LO) hiIdx = loIdx;
+    if (id == IT_HI) loIdx = hiIdx;
+    tft->fillRect(200, y + 6, 11, 14, RGB565(PALETTE[loIdx].r, PALETTE[loIdx].g, PALETTE[loIdx].b));
+    tft->fillRect(211, y + 6, 11, 14, RGB565(PALETTE[hiIdx].r, PALETTE[hiIdx].g, PALETTE[hiIdx].b));
+  }
+  tft->setTextDatum(MR_DATUM);
+  tft->setTextColor(id == IT_HELP ? C_ACCENT : C_TEXT, bg);
+  tft->drawString(value, valueRight, y + 13, 2);
+
+  // A chevron on every row: the one cue that says "this is tappable, and it cycles".
+  tft->fillTriangle(229, y + 8, 236, y + 13, 229, y + 19, C_DIM);
+  tft->drawFastHLine(0, y + SET_ROW_H - 1, UI_SCR_W, C_PANEL);
 }
 
 static void drawSettings() {
   TFT_eSPI *tft = ttgo->tft;
-  tft->fillScreen(TFT_BLACK);
-  tft->setTextDatum(TL_DATUM);
-  tft->setTextColor(tft->color565(120, 200, 255), TFT_BLACK);
-  char title[28];
-  snprintf(title, sizeof(title), "Settings  %d/2", gPage + 1);
-  tft->drawString(title, 12, 6, 2);
-  char line[40];
-  const uint8_t *items = PAGES[gPage];
-  for (int i = 0; i < PAGE_LEN[gPage]; i++) {
-    uint8_t id = items[i];
-    itemText(id, line, sizeof(line));
-    uint16_t c = (id == IT_DONE) ? TFT_GREEN : (id == IT_PAGE ? tft->color565(120, 200, 255) : TFT_WHITE);
-    if (id == IT_LO || id == IT_HI) {
-      int idx = (id == IT_LO) ? gCfg.loColor : gCfg.hiColor;
-      tft->fillRect(SCR_W - 28, ROW_Y0 + i * ROW_DY + 2, 16, 14,
-                    tft->color565(PALETTE[idx].r, PALETTE[idx].g, PALETTE[idx].b));
-    }
-    tft->setTextColor(c, TFT_BLACK);
-    tft->drawString(line, 12, ROW_Y0 + i * ROW_DY, 2);
-  }
-}
+  const int pages = uiPageCount(gCfg);
+  if (gPage >= pages) gPage = pages > 0 ? pages - 1 : 0;
+  if (gPage < 0) gPage = 0;
 
-// Returns true if the user chose "Done" (caller exits + saves).
-static bool handleSettingsTap(int ty) {
-  int i = (ty - ROW_Y0 + ROW_DY / 2) / ROW_DY;
-  if (i < 0) i = 0;
-  if (i >= PAGE_LEN[gPage]) i = PAGE_LEN[gPage] - 1;
-  switch (PAGES[gPage][i]) {
-    case IT_MODE:    gCfg.mode = (gCfg.mode + 1) % 2; break;
-    case IT_SRC:     gCfg.colorSrc = (gCfg.colorSrc + 1) % SRC_COUNT; break;
-    case IT_PRESET:
-      gPreset = (gPreset + 1) % N_PRESET;
-      if (gPreset > 0) { gCfg.loColor = PRESETS[gPreset].lo; gCfg.hiColor = PRESETS[gPreset].hi; }
-      break;
-    case IT_LO:      gCfg.loColor = (gCfg.loColor + 1) % N_PAL; gPreset = 0; break;
-    case IT_HI:      gCfg.hiColor = (gCfg.hiColor + 1) % N_PAL; gPreset = 0; break;
-    case IT_EFFECT:  gCfg.effect = (gCfg.effect + 1) % EFF_COUNT; break;
-    case IT_HAPTIC:  gCfg.haptic = (gCfg.haptic + 1) % 5; break;
-    case IT_HTHR:    gCfg.hapticThr = (gCfg.hapticThr >= 75) ? 25 : gCfg.hapticThr + 25; break;
-    case IT_AUTODIM: gCfg.autoDim = !gCfg.autoDim; break;
-    case IT_BAND:    gCfg.showBand = !gCfg.showBand; break;
-    case IT_HUD:     gCfg.showHud = !gCfg.showHud; break;
-    case IT_ORB:     gCfg.orb = !gCfg.orb; break;
-    case IT_PAGE:    gPage ^= 1; break;
-    default:         return true; // Done
-  }
-  drawSettings();
-  return false;
+  tft->fillScreen(C_BG);
+  tft->setTextDatum(ML_DATUM);
+  tft->setTextColor(C_ACCENT, C_BG);
+  tft->drawString("Settings", 10, 14, 2);
+  tft->setTextDatum(MR_DATUM);
+  tft->setTextColor(C_DIM, C_BG);
+  tft->drawString("tap a row to change", UI_SCR_W - 10, 15, 1);
+
+  uint8_t items[UI_ROWS_PER_PAGE];
+  int n = uiPageItems(gCfg, gPage, items, UI_ROWS_PER_PAGE);
+  for (int i = 0; i < n; i++) drawSettingsRow(i, items[i], false);
+
+  const bool multi = pages > 1;
+  drawButton(8, SET_FOOTER_Y, 44, 30, "<", nullptr, C_PANEL, multi ? C_TEXT : C_DIM,
+             multi ? C_ACCENT : C_PANEL);
+  drawButton(58, SET_FOOTER_Y, 44, 30, ">", nullptr, C_PANEL, multi ? C_TEXT : C_DIM,
+             multi ? C_ACCENT : C_PANEL);
+  char p[12];
+  snprintf(p, sizeof(p), "%d/%d", gPage + 1, pages);
+  tft->setTextDatum(MC_DATUM);
+  tft->setTextColor(C_MUTED, C_BG);
+  tft->drawString(p, 126, SET_FOOTER_Y + 15, 2);
+  drawButton(150, SET_FOOTER_Y, 82, 30, "Done", nullptr, C_PANEL, C_OK, C_OK);
 }
 
 // ====================================================================
@@ -523,12 +787,15 @@ static bool evalHaptic(const VoxResult &res, bool inTarget) {
     case HAP_ONTARGET: buzz = inTarget && !pInTarget; break;
     case HAP_SYLLABLE: { bool on = res.syllableImpulse > 0.6f; buzz = on && !pSyl; pSyl = on; } break;
     case HAP_BRIGHT:   { bool on = res.brightness > thr;       buzz = on && !pBright; pBright = on; } break;
-    case HAP_LOUD:     { bool on = clampf(res.rms * 8.0f, 0, 1) > thr; buzz = on && !pLoud; pLoud = on; } break;
+    case HAP_LOUD:     { bool on = uiLoudness(res) > thr;      buzz = on && !pLoud; pLoud = on; } break;
     default: break; // HAP_OFF
   }
   pInTarget = inTarget;
   return buzz;
 }
+
+// A short click for UI actions — distinct from the longer training buzz.
+static void uiTick() { ttgo->motor->onec(20); }
 
 // ====================================================================
 // BLE companion — the watch acts as a CLIENT and drives the LED orb
@@ -541,7 +808,6 @@ static BLEUUID ORB_CHR_UUID("5b1e0002-8a0e-4f1b-9c5a-2f3d4e5a6b7c");
 // Packet bytes recomputed each frame on core 1; read by the BLE task. Byte reads/writes are
 // atomic on the ESP32, so an occasional torn frame just means one stale LED colour — harmless.
 static volatile uint8_t gOrbR = 0, gOrbG = 0, gOrbB = 0, gOrbRes = 0, gOrbWgt = 128;
-static volatile bool gOrbConnected = false;
 
 static BLEClient *gClient = nullptr;
 static BLERemoteCharacteristic *gOrbChr = nullptr;
@@ -615,14 +881,62 @@ static void bleTask(void *) {
 
 // Recompute the orb packet from the latest analysis + on-screen colour.
 static void updateOrbPacket(const VoxResult &res) {
-  uint8_t R, G, B;
-  if (gCfg.mode == MODE_COLOR)
-    blendPalRGB(gCfg.loColor, gCfg.hiColor, metricValue(res, gCfg.colorSrc), 1.0f, &R, &G, &B);
-  else
-    hsvRGB(smoothHue, 0.9f, 1.0f, &R, &G, &B);
-  gOrbR = R; gOrbG = G; gOrbB = B;
-  gOrbRes = (uint8_t)(clampf(res.brightness, 0, 1) * 255);  // -> orb pulse rate/depth
-  gOrbWgt = (uint8_t)(clampf(res.weight, 0, 1) * 255);      // -> orb body/baseline
+  Rgb c = (gCfg.mode == MODE_COLOR)
+        ? uiBlendPal(gCfg.loColor, gCfg.hiColor, uiMetricValue(res, gCfg.colorSrc), 1.0f)
+        : uiHsv(smoothHue, 0.9f, 1.0f);
+  gOrbR = c.r; gOrbG = c.g; gOrbB = c.b;
+  gOrbRes = (uint8_t)(uiClamp(res.brightness, 0, 1) * 255);  // -> orb pulse rate/depth
+  gOrbWgt = (uint8_t)(uiClamp(res.weight, 0, 1) * 255);      // -> orb body/baseline
+}
+
+// ====================================================================
+// Screen transitions
+// ====================================================================
+static void enterRun(bool repaint) {
+  gScreen = SCR_RUN;
+  if (!repaint) return;
+  ttgo->tft->fillScreen(C_BG);
+  prevX = -1;
+  prevBandLo = prevBandHi = -1;
+  gTracePrev.clear();
+  gStatusForce = true;
+  gHudDirty = true;
+  if (gCfg.showHud && gCfg.mode == MODE_BALL) drawPitchAxis();
+  gHintUntilMs = millis() + 4000;
+}
+
+static void enterQuick() {
+  gScreen = SCR_QUICK;
+  gQuickIdleMs = millis();
+  gPressedQuick = -1;                  // the repaint below clears any highlight
+  drawQuickMenu();
+}
+
+static void enterSettings() {
+  gScreen = SCR_SETTINGS;
+  gPage = 0;
+  gPressedRow = -1;
+  drawSettings();
+}
+
+static void enterStats() {
+  gScreen = SCR_STATS;
+  drawStats();
+}
+
+static void enterTutorial(bool fromSettings) {
+  gScreen = SCR_TUTORIAL;
+  gTutPage = 0;
+  gTutFromSettings = fromSettings;
+  drawTutorial();
+}
+
+static void applyLiveSettings() { ttgo->setBrightness(brightnessLevel()); }
+
+static void toastBand(uint32_t now) {
+  char m[30];
+  snprintf(m, sizeof(m), "Target %d-%d Hz", gCfg.targetLoHz, gCfg.targetHiHz);
+  gToast.show(m, now);
 }
 
 // ====================================================================
@@ -647,15 +961,17 @@ void setup() {
 
   TFT_eSPI *tft = ttgo->tft;
   tft->setRotation(0);
+  applyLiveSettings();
 
   // Boot splash: soft teal — mirrors the orb sketch's power-on self-test.
-  tft->fillScreen(tft->color565(0, 150, 150));
+  tft->fillScreen(RGB565(0, 150, 150));
   delay(800);
-  tft->fillScreen(TFT_BLACK);
+  tft->fillScreen(C_BG);
   tft->setTextDatum(MC_DATUM);
-  tft->setTextColor(TFT_WHITE, TFT_BLACK);
-  tft->drawString("ProsodyBall", SCR_W / 2, SCR_H / 2 - 12, 4);
-  tft->drawString("calibrating mic...", SCR_W / 2, SCR_H / 2 + 16, 2);
+  tft->setTextColor(C_TEXT, C_BG);
+  tft->drawString("ProsodyBall", UI_SCR_W / 2, UI_SCR_H / 2 - 12, 4);
+  tft->setTextColor(C_MUTED, C_BG);
+  tft->drawString("calibrating mic...", UI_SCR_W / 2, UI_SCR_H / 2 + 16, 2);
 
   // Bring up audio + worker tasks; halt with a message if any critical step fails so we
   // never run the audio task against an uninitialised I2S port or a NULL queue.
@@ -666,76 +982,225 @@ void setup() {
       : pdFAIL;
   BaseType_t bleOk = xTaskCreatePinnedToCore(bleTask, "ble", 8192, NULL, 1, NULL, 1); // core 1
   if (!micOk || !gResultQueue || audioOk != pdPASS || bleOk != pdPASS) {
-    tft->fillScreen(TFT_BLACK);
-    tft->drawString("Startup failed", SCR_W / 2, SCR_H / 2, 4);
+    tft->fillScreen(C_BG);
+    tft->setTextColor(C_WARN, C_BG);
+    tft->drawString("Startup failed", UI_SCR_W / 2, UI_SCR_H / 2 - 10, 4);
+    tft->setTextColor(C_MUTED, C_BG);
+    tft->drawString("check the mic wiring / board", UI_SCR_W / 2, UI_SCR_H / 2 + 20, 1);
     for (;;) delay(1000);
   }
 
-  tft->fillScreen(TFT_BLACK);
+  gStats.reset();
+  // First boot ever: teach the controls instead of dropping the user onto a bare ball.
+  if (!gCfg.tutorial) enterTutorial(false);
+  else                enterRun(true);
 }
 
-static void enterSettings() {
-  gState = SETTINGS;
+// ====================================================================
+// Per-screen input handling
+// ====================================================================
+static void handleRunInput(const TouchEvent &ev, uint32_t now) {
+  switch (ev.kind) {
+    case TE_LONG:
+      uiTick();
+      enterSettings();
+      break;
+    case TE_SWIPE_L:
+    case TE_SWIPE_R: {
+      uiTick();
+      gCfg.mode = (gCfg.mode + 1) % 2;
+      saveSettings();
+      enterRun(true);
+      char m[30];
+      snprintf(m, sizeof(m), "View: %s", MODE_NAMES[gCfg.mode % 2]);
+      gToast.show(m, now);
+      break;
+    }
+    case TE_TAP: {
+      // Nudging an invisible band would be baffling, so the band shortcuts only exist when
+      // the band is actually on screen. Otherwise every tap opens the menu.
+      const bool nudge = (gCfg.mode == MODE_BALL) && gCfg.showBand;
+      const int zone = uiTapZone(ev.y);
+      if (nudge && zone == 0) {
+        uiTick();
+        if (uiNudgeBand(gCfg, 5)) { saveSettings(); toastBand(now); }
+        else gToast.show("Target at top of range", now);
+      } else if (nudge && zone == 2) {
+        uiTick();
+        if (uiNudgeBand(gCfg, -5)) { saveSettings(); toastBand(now); }
+        else gToast.show("Target at bottom of range", now);
+      } else {
+        uiTick();
+        enterQuick();
+      }
+      break;
+    }
+    default: break;
+  }
+}
+
+static void releaseQuickHighlight() {
+  if (gPressedQuick < 0) return;
+  drawQuickButton(gPressedQuick, false);
+  gPressedQuick = -1;
+}
+
+static void releaseRowHighlight() {
+  if (gPressedRow < 0) return;
+  uint8_t items[UI_ROWS_PER_PAGE];
+  int n = uiPageItems(gCfg, gPage, items, UI_ROWS_PER_PAGE);
+  if (gPressedRow < n) drawSettingsRow(gPressedRow, items[gPressedRow], false);
+  gPressedRow = -1;
+}
+
+static void handleQuickInput(const TouchEvent &ev, uint32_t now) {
+  if (ev.kind == TE_DOWN) {
+    gQuickIdleMs = now;
+    int i = uiQuickHit(ev.x, ev.y);
+    if (i >= 0) { drawQuickButton(i, true); gPressedQuick = i; }
+    return;
+  }
+  if (!gTouch.down) releaseQuickHighlight();
+  if (ev.kind == TE_SWIPE_L || ev.kind == TE_SWIPE_R) { enterRun(true); return; }
+  if (ev.kind != TE_TAP) {
+    if (now - gQuickIdleMs > 10000) enterRun(true);   // don't strand the user in a menu
+    return;
+  }
+
+  gQuickIdleMs = now;
+  int i = uiQuickHit(ev.x, ev.y);
+  if (i < 0) { drawQuickMenu(); return; }
+  uiTick();
+  switch (i) {
+    case QA_MODE:                                   // stay put so the new label is visible
+      gCfg.mode = (gCfg.mode + 1) % 2;
+      saveSettings();
+      drawQuickButton(QA_MODE, false);
+      break;
+    case QA_RECAL:
+      gRecalRequest = true;
+      enterRun(true);
+      gToast.show("Recalibrating - stay quiet", now, 2200);
+      break;
+    case QA_RESET:
+      gStats.reset();
+      enterRun(true);
+      gToast.show("Session reset", now);
+      break;
+    case QA_STATS:    enterStats(); break;
+    case QA_SETTINGS: enterSettings(); break;
+    default:          enterRun(true); break;        // QA_CLOSE
+  }
+}
+
+static void handleStatsInput(const TouchEvent &ev) {
+  if (ev.kind == TE_SWIPE_L || ev.kind == TE_SWIPE_R) { enterRun(true); return; }
+  if (ev.kind != TE_TAP) return;
+  if (ev.y < 204) return;                            // only the buttons act
+  uiTick();
+  if (ev.x < UI_SCR_W / 2) { gStats.reset(); drawStats(); }
+  else                     enterRun(true);
+}
+
+// Returns true when the user chose Done.
+static bool handleSettingsTap(int x, int y) {
+  const int pages = uiPageCount(gCfg);
+  if (y >= SET_FOOTER_Y) {
+    if (x < 52)        { if (pages > 1) { gPage = (gPage + pages - 1) % pages; uiTick(); drawSettings(); } }
+    else if (x < 102)  { if (pages > 1) { gPage = (gPage + 1) % pages; uiTick(); drawSettings(); } }
+    else if (x >= 150) { uiTick(); return true; }
+    return false;
+  }
+
+  uint8_t items[UI_ROWS_PER_PAGE];
+  int n = uiPageItems(gCfg, gPage, items, UI_ROWS_PER_PAGE);
+  int slot = (y - SET_ROW_Y0) / SET_ROW_H;
+  if (y < SET_ROW_Y0 || slot < 0 || slot >= n) return false;
+
+  uiTick();
+  if (uiCycleItem(gCfg, gPreset, items[slot]) == ACT_HELP) { enterTutorial(true); return false; }
+  applyLiveSettings();
+  // Cycling View or Buzz-on changes which rows exist, so repaint the whole page rather than
+  // just the row that was tapped.
   drawSettings();
-}
-static void exitSettings() {
-  saveSettings();
-  gState = RUNNING;
-  gPage = 0;                  // reopen at page 1 next time
-  prevX = -1;                 // force a clean ball redraw
-  ttgo->tft->fillScreen(TFT_BLACK);
+  return false;
 }
 
+static void handleSettingsInput(const TouchEvent &ev, uint32_t now) {
+  if (ev.kind == TE_DOWN) {
+    if (ev.y < SET_FOOTER_Y && ev.y >= SET_ROW_Y0) {
+      uint8_t items[UI_ROWS_PER_PAGE];
+      int n = uiPageItems(gCfg, gPage, items, UI_ROWS_PER_PAGE);
+      int slot = (ev.y - SET_ROW_Y0) / SET_ROW_H;
+      if (slot >= 0 && slot < n) { drawSettingsRow(slot, items[slot], true); gPressedRow = slot; }
+    }
+    return;
+  }
+  if (!gTouch.down) releaseRowHighlight();
+  if (ev.kind == TE_SWIPE_L || ev.kind == TE_SWIPE_R) {
+    const int pages = uiPageCount(gCfg);
+    if (pages > 1) {
+      gPage = (ev.kind == TE_SWIPE_L) ? (gPage + 1) % pages : (gPage + pages - 1) % pages;
+      drawSettings();
+    }
+    return;
+  }
+  if (ev.kind != TE_TAP) return;
+  if (handleSettingsTap(ev.x, ev.y)) {
+    saveSettings();
+    enterRun(true);
+    gToast.show("Settings saved", now);
+  }
+}
+
+static void handleTutorialInput(const TouchEvent &ev, uint32_t now) {
+  int step = 0;
+  if (ev.kind == TE_SWIPE_L) step = 1;
+  else if (ev.kind == TE_SWIPE_R) step = -1;
+  else if (ev.kind == TE_TAP) step = (ev.x < UI_SCR_W / 2) ? -1 : 1;
+  else return;
+
+  uiTick();
+  if (step > 0 && gTutPage >= N_TUTORIAL - 1) {        // finished
+    gCfg.tutorial = 1;
+    saveSettings();
+    if (gTutFromSettings) enterSettings();
+    else { enterRun(true); gToast.show("Tap the middle for the menu", now, 2500); }
+    return;
+  }
+  if (step < 0 && gTutPage == 0) {                     // "Skip" on the first card
+    gCfg.tutorial = 1;
+    saveSettings();
+    if (gTutFromSettings) enterSettings();
+    else enterRun(true);
+    return;
+  }
+  gTutPage += step;
+  if (gTutPage < 0) gTutPage = 0;
+  if (gTutPage >= N_TUTORIAL) gTutPage = N_TUTORIAL - 1;
+  drawTutorial();
+}
+
+// ====================================================================
 void loop() {
   static VoxResult latest = {};
   static uint32_t lastMs = 0, lastSaveMs = 0;
   static bool bestDirty = false;
-  static bool touchedPrev = false, longFired = false;
-  static int pressTy = 0;
-  static uint32_t touchStartMs = 0;
+  static bool hintsShown = false;
 
   VoxResult got;
   if (xQueueReceive(gResultQueue, &got, 0) == pdTRUE) latest = got;
 
-  uint32_t now = millis();
-  int16_t tx, ty;
-  bool touched = ttgo->getTouch(tx, ty);
-  bool rising = touched && !touchedPrev;
-  bool falling = !touched && touchedPrev;
+  const uint32_t now = millis();
+  int16_t tx = 0, ty = 0;
+  const bool touched = ttgo->getTouch(tx, ty);
+  const TouchEvent ev = gTouch.update(touched, (int)tx, (int)ty, now);
 
-  if (rising) {
-    pressTy = ty; touchStartMs = now; longFired = false;
-    if (gState == SETTINGS) {
-      longFired = true;                 // suppress the release acting as a running tap
-      if (handleSettingsTap(ty)) exitSettings();
-    }
-  }
-  // Long-press opens settings (running only).
-  if (touched && gState == RUNNING && !longFired && (now - touchStartMs) > 800) {
-    enterSettings(); longFired = true;
-  }
-  if (falling && gState == RUNNING && !longFired) {
-    // Short tap zones: top=raise target, bottom=lower target, middle=recalibrate.
-    if (pressTy < SCR_H / 3) {
-      gCfg.targetLoHz = (uint16_t)clampf(gCfg.targetLoHz + 5, VOX_PITCH_MIN_HZ, VOX_PITCH_MAX_HZ - 10);
-      gCfg.targetHiHz = (uint16_t)clampf(gCfg.targetHiHz + 5, VOX_PITCH_MIN_HZ + 10, VOX_PITCH_MAX_HZ);
-      saveSettings();
-    } else if (pressTy > 2 * SCR_H / 3) {
-      gCfg.targetLoHz = (uint16_t)clampf(gCfg.targetLoHz - 5, VOX_PITCH_MIN_HZ, VOX_PITCH_MAX_HZ - 10);
-      gCfg.targetHiHz = (uint16_t)clampf(gCfg.targetHiHz - 5, VOX_PITCH_MIN_HZ + 10, VOX_PITCH_MAX_HZ);
-      saveSettings();
-    } else {
-      gRecalRequest = true;
-      voicedTime = inTargetTime = 0.0f;
-    }
-  }
-  touchedPrev = touched;
-
-  // --- Auto-dim + tilt-wake -------------------------------------------------
+  // --- Auto-dim + tilt-wake (every screen) ----------------------------------
   // Activity = touch, voice, or wrist motion. A wrist tilt redistributes gravity
   // across the axes (magnitude stays ~1 g), so we watch per-axis change, not |a|.
   static const uint32_t DIM_AFTER_MS = 20000;
-  static const uint8_t  BRIGHT_LEVEL = 255, DIM_LEVEL = 12;
+  static const uint8_t  DIM_LEVEL = 12;
   static const long     MOTION_THRESH = 2000; // sum of |Δaxis| counts (BMA4 2 g)
   static uint32_t lastActivityMs = 0;
   static bool dimmed = false, haveAccel = false;
@@ -745,8 +1210,7 @@ void loop() {
   Accel acc;
   if (ttgo->bma->getAccel(acc)) {
     if (haveAccel) {
-      int dx = acc.x - pax, dy = acc.y - pay, dz = acc.z - paz;
-      long d = (long)abs(dx) + abs(dy) + abs(dz);
+      long d = (long)abs(acc.x - pax) + abs(acc.y - pay) + abs(acc.z - paz);
       if (d > MOTION_THRESH) motion = true;
     }
     pax = acc.x; pay = acc.y; paz = acc.z; haveAccel = true;
@@ -754,42 +1218,61 @@ void loop() {
   bool active = touched || motion || (latest.voiced && latest.rms > 0.02f);
   if (active || lastActivityMs == 0) lastActivityMs = now;
   bool wantDim = gCfg.autoDim && (now - lastActivityMs) > DIM_AFTER_MS;
-  if (wantDim && !dimmed)      { ttgo->setBrightness(DIM_LEVEL);    dimmed = true; }
-  else if (!wantDim && dimmed) { ttgo->setBrightness(BRIGHT_LEVEL); dimmed = false; }
+  if (wantDim && !dimmed)      { ttgo->setBrightness(DIM_LEVEL); dimmed = true; }
+  else if (!wantDim && dimmed) { applyLiveSettings(); dimmed = false; }
 
-  // While in settings, don't run the visualisation. Reset the clock so the time spent in
-  // Settings isn't counted as training time on the next frame.
-  if (gState == SETTINGS) { lastMs = now; delay(20); return; }
+  // --- Input, per screen ----------------------------------------------------
+  switch (gScreen) {
+    case SCR_TUTORIAL: handleTutorialInput(ev, now); break;
+    case SCR_QUICK:    handleQuickInput(ev, now); break;
+    case SCR_STATS:    handleStatsInput(ev); break;
+    case SCR_SETTINGS: handleSettingsInput(ev, now); break;
+    default:           handleRunInput(ev, now); break;
+  }
+
+  // A menu is not training: freeze the clock so time spent in one never counts against the
+  // session score, and skip the visualisation entirely.
+  if (gScreen != SCR_RUN) { lastMs = now; hintsShown = false; delay(20); return; }
 
   float dt = lastMs ? (now - lastMs) / 1000.0f : 0.016f;
   lastMs = now;
 
-  bool inTarget = latest.voiced &&
-                  latest.pitchHz >= gCfg.targetLoHz && latest.pitchHz <= gCfg.targetHiHz;
-  if (latest.voiced) { voicedTime += dt; if (inTarget) inTargetTime += dt; }
+  const bool inTarget = latest.voiced &&
+                        latest.pitchHz >= gCfg.targetLoHz && latest.pitchHz <= gCfg.targetHiHz;
+  gStats.update(latest, dt, inTarget);
 
   // Track + lazily persist the best on-target score. Keep it dirty until actually saved so
   // an improvement during the throttle window isn't lost.
-  if (voicedTime > 3.0f) {
-    int pct = (int)(100.0f * inTargetTime / voicedTime + 0.5f);
-    if (pct > gCfg.bestPct) { gCfg.bestPct = (uint16_t)pct; bestDirty = true; }
+  if (gStats.voicedSecs > 3.0f) {
+    int pct = gStats.onTargetPct();
+    if (pct > (int)gCfg.bestPct) { gCfg.bestPct = (uint16_t)pct; bestDirty = true; }
     if (bestDirty && now - lastSaveMs > 15000) { saveSettings(); lastSaveMs = now; bestDirty = false; }
   }
 
   if (evalHaptic(latest, inTarget)) ttgo->motor->onec();
 
+  if (gCfg.showHud) { drawStatusBar(gStatusForce); gStatusForce = false; drawMicLevel(latest); }
+
   if (gCfg.mode == MODE_COLOR) {
-    renderColor(latest);
+    renderColor(latest, now);
   } else {
+    gTrace.push((int16_t)uiHzToY(latest.pitchHz), latest.voiced, inTarget, now);
     updateBallPhysics(latest, dt);
-    renderBall(latest, inTarget, gCfg.showBand, gCfg.showHud);
+    renderBall(latest, inTarget);
+    if (gCfg.showHud && !gToast.visible(now)) drawBallHud(latest, inTarget, now);
   }
 
-  // BLE companion: feed the orb the latest colour + a connection dot (top-right).
-  if (gCfg.orb) {
-    updateOrbPacket(latest);
-    ttgo->tft->fillCircle(SCR_W - 9, 9, 5, gOrbConnected ? TFT_GREEN : ttgo->tft->color565(90, 90, 90));
+  // Tap hints fade out on their own once you've had a chance to read them.
+  if (gCfg.showHud && gCfg.mode == MODE_BALL) {
+    bool want = (int32_t)(gHintUntilMs - now) > 0;
+    if (want) { drawTapHints(true); hintsShown = true; }
+    else if (hintsShown) { drawTapHints(false); hintsShown = false; }
   }
+
+  drawToast(now);
+
+  // BLE companion: feed the orb the latest colour.
+  if (gCfg.orb) updateOrbPacket(latest);
 
   delay(16);
 }

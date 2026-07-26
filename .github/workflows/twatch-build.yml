@@ -2,8 +2,10 @@ name: Build T-Watch firmware
 
 # Compile-checks the standalone LilyGo T-Watch 2020 V3 firmware (hardware/twatch_voxball) —
 # the ESP32 sibling of the Galaxy Watch app. Two guards run on every relevant push:
-#   1. dsp-host-test    — compiles + runs the pure DSP on the host. Fast (seconds); guards the
-#                         voice math that is shared, by contract, with the web app.
+#   1. host-tests       — compiles + runs the pure DSP and the pure UI model on the host. Fast
+#                         (seconds); guards the voice math that is shared, by contract, with
+#                         the web app, plus the UI rules (menu paging, gestures, scoreboard)
+#                         that are invisible on a 240x240 screen.
 #   2. firmware-compile — a full Arduino build against the REAL toolchain, so a broken TTGO API
 #                         call or include is caught here instead of on the bench.
 #
@@ -27,7 +29,7 @@ env:
   TTGO_LIB_REF: "e5a0f825a21198f97d2bafee03ea853766483d20"
 
 jobs:
-  dsp-host-test:
+  host-tests:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -38,6 +40,12 @@ jobs:
         run: |
           g++ -std=c++17 -O2 -Wall -I. dsp.cpp test/dsp_host_test.cpp -o dsp_host_test
           ./dsp_host_test
+
+      - name: Build & run UI host tests
+        working-directory: hardware/twatch_voxball
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -I. dsp.cpp ui.cpp test/ui_host_test.cpp -o ui_host_test
+          ./ui_host_test
 
   firmware-compile:
     runs-on: ubuntu-latest
