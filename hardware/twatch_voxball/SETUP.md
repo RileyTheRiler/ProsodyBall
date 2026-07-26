@@ -91,9 +91,9 @@ should now list a new port (e.g. `COM5` on Windows, `/dev/cu.wchusbserial…` on
 
 ## Step 5 — Open the sketch and set the board options
 
-1. Open **`hardware/twatch_voxball/twatch_voxball.ino`**. Keep all four files together in the
-   folder: `twatch_voxball.ino`, `config.h`, `dsp.h`, `dsp.cpp`. (The `test/` subfolder is
-   host-only and is ignored by the Arduino build.)
+1. Open **`hardware/twatch_voxball/twatch_voxball.ino`**. Keep all six files together in the
+   folder: `twatch_voxball.ino`, `config.h`, `dsp.h`, `dsp.cpp`, `ui.h`, `ui.cpp`. (The
+   `test/` subfolder is host-only and is ignored by the Arduino build.)
 2. **Tools → Board → ESP32 Arduino → "TTGO T-Watch".**
 3. Set these under **Tools** (defaults are fine except *Board Revision*):
 
@@ -128,15 +128,21 @@ On power-up the firmware runs a deliberate self-test you can sanity-check agains
 1. The screen flashes **soft teal** (~1 s) — confirms the display + backlight work.
 2. It shows **"ProsodyBall — calibrating mic…"** and spends ~1 second measuring the room's
    noise floor. **Stay quiet** during this.
-3. **Speak.** The ball rises with your pitch, hops on each syllable, and shifts blue → pink.
+3. On the **very first boot** a four-card walkthrough teaches the gestures. Tap the right half
+   for the next card, the left half to go back, **Skip** to dismiss. (It only appears once —
+   reopen it any time from **Settings → How to use**.)
+4. **Speak.** The ball rises with your pitch, hops on each syllable, shifts blue → pink, and
+   leaves a trace of your recent pitch behind it. The thin line under the status bar moves
+   with the microphone level — if that line is dead, no audio is arriving.
 
 If it boots but says **"Startup failed"**, the microphone or a worker task didn't initialise —
 recheck that you selected the **V3** board revision and that you have the **V3** hardware.
 
 ### Controls (quick reference — full details in `README.md`)
-- **Short tap:** top third = raise pitch target, bottom third = lower it, middle = recalibrate
-  + reset score.
-- **Long press (~0.8 s):** open **Settings** (two pages; tap rows to cycle, **Done** to save).
+- **Tap top / bottom third:** raise / lower the pitch target band (Ball view, band on).
+- **Tap the middle:** the **quick menu** — recalibrate, reset score, stats, settings.
+- **Swipe left / right:** switch between the **Ball** and **Color** views.
+- **Long press (~0.7 s):** jump straight to **Settings** (tap rows to cycle, **Done** to save).
   Settings persist across reboots.
 
 ---

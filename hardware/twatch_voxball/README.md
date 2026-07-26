@@ -2,19 +2,23 @@
 
 A wearable, self-contained voice trainer. The watch listens with its **own** built-in PDM
 microphone, runs pitch + energy + brightness analysis **on-device** (no phone, no browser,
-no Bluetooth), and visualises it on its 240×240 screen. **Two visualisations**, switchable
-in Settings:
+no Bluetooth), and visualises it on its 240×240 screen. **Two views**, switchable with a
+**swipe**:
 
 - **Vox Ball** — a ball whose height & colour follow **pitch** (low=blue → high=pink) and
-  that **hops on each syllable**; livelier intonation makes the hop taller. A dashed
-  **target band** lets you train toward a pitch range (green glow + buzz + on-target %).
+  that **hops on each syllable**; livelier intonation makes the hop taller. The ball sits on
+  a **labelled Hz axis**, trailed by a **scrolling trace of your recent pitch**, with a dashed
+  **target band** to train toward (green glow + buzz + on-target %).
 - **Color** — the **whole screen** colours from a metric **you choose** (pitch, brightness,
   bounce, loudness, **perceived gender**, or **vocal weight**), blended between **two colours
   you pick**. Louder = brighter. *Gender* blends pitch + vocal-tract resonance
   (0 = masculine … 1 = feminine); *Weight* is breathy/light … pressed/heavy (H1–H2).
 
-Everything is **customisable on-device and saved to flash**: mode, the metric that drives
-colour, the two colours, the haptic trigger + threshold, and the target band.
+Both views sit under a **status bar** (clock, battery, current view, live mic-level meter, orb
+link) and above a readout, so you can always tell the watch is on, charged, and hearing you.
+
+A **walkthrough runs on first boot** to teach the four gestures, and every control confirms
+itself with an on-screen toast. Everything is **customisable on-device and saved to flash**.
 
 > The browser-driven LED orb lives in [`../prosodyball_orb`](../prosodyball_orb) and is a
 > completely separate project — that one does no audio processing.
@@ -44,67 +48,104 @@ are all on the watch.
    *Library Manager*, download the ZIP from
    [the repo](https://github.com/Xinyuan-LilyGO/TTGO_TWatch_Library) and use *Sketch → Include
    Library → Add .ZIP Library*.
-4. Open `twatch_voxball/twatch_voxball.ino`. Keep all four files in the folder:
-   `twatch_voxball.ino`, `config.h`, `dsp.h`, `dsp.cpp`. (The `test/` subfolder is host-only
-   and is ignored by the Arduino build.)
+4. Open `twatch_voxball/twatch_voxball.ino`. Keep all six files in the folder:
+   `twatch_voxball.ino`, `config.h`, `dsp.h`, `dsp.cpp`, `ui.h`, `ui.cpp`. (The `test/`
+   subfolder is host-only and is ignored by the Arduino build.)
 5. Select board **"TTGO T-Watch"**, set **Board Revision → "T-Watch-2020-V3"**, choose your
    port, and click **Upload**.
 
 `config.h` already sets `#define LILYGO_WATCH_2020_V3` before including the library, so the
 correct (V3) pin map and microphone support are compiled in.
 
-> Both the on-device firmware and the shared DSP are compile-checked in CI on every push
+> Both the on-device firmware and the hardware-free logic are checked in CI on every push
 > (`.github/workflows/twatch-build.yml`): a fast host build runs the DSP unit tests
-> (`test/dsp_host_test.cpp`), and a full Arduino build (esp32 core 2.0.14 + the TTGO library,
-> pinned) catches breakage before you flash.
+> (`test/dsp_host_test.cpp`) and the UI model unit tests (`test/ui_host_test.cpp`), and a full
+> Arduino build (esp32 core 2.0.14 + the TTGO library, pinned) catches breakage before you
+> flash.
 
 ## Power-on self-test
 
 On boot the screen flashes **soft teal** (mirroring the orb sketch's self-test), then shows
-*"Vox Ball — calibrating mic…"*. Use the splash to sanity-check the build *before* speaking:
+*"ProsodyBall — calibrating mic…"*. Use the splash to sanity-check the build *before* speaking:
 
 - Nothing lights up → check the board is powered/charged and the correct board is selected.
-- It boots but never leaves "Calibrating… stay quiet" → the mic isn't producing data; see
-  *Tuning & troubleshooting*.
+- **"Startup failed"** → the microphone or the audio task didn't come up; the mic is the usual
+  cause. See *Tuning & troubleshooting*.
+- It boots but the status bar never stops reading *CALIBRATING* → the mic isn't producing
+  data; see *Tuning & troubleshooting*.
 
 ## Using it
 
-1. After the splash, the firmware spends ~1 second measuring the room's **noise floor** —
-   stay quiet during "Calibrating… stay quiet".
-2. Speak. The ball rises with pitch, hops on each syllable, and shifts blue → pink.
-3. **Train toward the target band.** Two dashed lines mark a target pitch range. When your
-   voice sits inside it, the ball **glows green, the motor buzzes once**, and the bottom HUD
-   tracks your **% of voiced time on target** for the session.
+1. **First boot shows a four-card walkthrough** of the gestures. Tap the right half for the
+   next card, the left half to go back, *Skip* to dismiss it. It never appears again — reopen
+   it any time from **Settings → How to use**.
+2. After the splash, the firmware spends ~1 second measuring the room's **noise floor** —
+   stay quiet while the status bar reads *CALIBRATING*.
+3. Speak. The ball rises with pitch, hops on each syllable, and shifts blue → pink, leaving a
+   trace of the last ~1.2 s behind it. The mic-level line under the status bar moves whenever
+   the microphone hears anything — if it never moves, the mic is the problem, not your voice.
+4. **Train toward the target band.** Two dashed lines mark a target pitch range. When your
+   voice sits inside it, the ball **glows green**, the trace turns green, the motor **buzzes
+   once**, and the bar above the readout fills with your **% of voiced time on target**.
 
 ### Controls
 
-**Short tap** (while running):
+Four gestures, and the watch tells you about all of them: the walkthrough on first boot, a
+hint overlay that fades in the first few seconds of each session, and a toast confirming every
+action.
 
-| Tap zone | Action |
-|----------|--------|
-| **Top third** | Raise the target band (+5 Hz) |
-| **Bottom third** | Lower the target band (−5 Hz) |
-| **Middle third** | Re-run noise-floor calibration **and** reset the session score |
+| Gesture | Action |
+|---------|--------|
+| **Tap top third** | Raise the target band (+5 Hz) — *Ball view with the band on* |
+| **Tap bottom third** | Lower the target band (−5 Hz) — *Ball view with the band on* |
+| **Tap middle** | Open the **quick menu** |
+| **Swipe left / right** | Switch between the **Ball** and **Color** views |
+| **Long press** (~0.7 s) | Jump straight to **Settings** |
 
-The band defaults to **145–175 Hz** (the androgynous zone) and keeps a constant width.
+The band defaults to **145–175 Hz** (the androgynous zone) and keeps a constant width as you
+move it, right up to the ends of the analysed range. When the band is switched off — or you
+are in Color view, where it isn't drawn — *any* tap opens the quick menu instead, so a tap
+never silently changes something you cannot see.
 
-**Long press** (hold ~0.8 s) opens **Settings** (two pages — tap *More settings ›* / *‹ Back*
-to switch). Tap a row to cycle its value; tap **Done** to save and exit (settings persist
-across reboots via flash/NVS):
+### Quick menu
+
+Six finger-sized buttons; it closes itself after 10 s if you walk away.
+
+| Button | Action |
+|--------|--------|
+| **View** | Switch Ball ⇄ Color (the button relabels itself so you can see what you got) |
+| **Recalibrate** | Re-measure the room's noise floor |
+| **Reset score** | Start the session scoreboard over |
+| **Stats** | Session summary — on-target %, best ever, average pitch, range, voiced time, syllables/min |
+| **Settings** | Full settings |
+| **Close** | Back to the visualisation |
+
+### Settings
+
+Tap a row to cycle its value (each row shows its value and a **›** chevron); the footer has
+**‹ ›** to page and **Done** to save and exit. Swiping left/right pages too. Settings persist
+across reboots via flash/NVS.
+
+**Rows are filtered to what applies right now** — the Color rows are hidden in Ball view, the
+Ball rows are hidden in Color view, and the haptic threshold only appears for the triggers
+that use one. That is what keeps a 15-option menu down to two short pages.
 
 | Row | Options |
 |-----|---------|
-| **Mode** | Vox Ball / Color |
-| **Color from** | Pitch / Brightness / Bounce / Loudness / **Gender** / **Weight** *(Color mode)* |
-| **Preset** | Gradient presets — Trans, Fire, Ocean, Forest, Sunset, Mono, Candy (sets both colours) |
-| **Low color / High color** | 14 colours: Blue, Teal, Green, Purple, Red, Orange, Pink, White, Cyan, Magenta, Yellow, Lime, Indigo, Rose |
-| **Effect** | None / Pulse / Gradient / Meter *(Color mode visual effect)* |
-| **Haptics** | Off / On-target / Syllables / Bright / Loud |
-| **Haptic thr** | 25 / 50 / 75% (threshold for the Bright/Loud triggers) |
+| **View** | Vox Ball / Color |
+| **Color from** | Pitch / Brightness / Bounce / Loudness / **Gender** / **Weight** *(Color view)* |
+| **Preset** | Gradient presets — Trans, Fire, Ocean, Forest, Sunset, Mono, Candy (sets both colours) *(Color view)* |
+| **Low color / High color** | 14 colours: Blue, Teal, Green, Purple, Red, Orange, Pink, White, Cyan, Magenta, Yellow, Lime, Indigo, Rose *(Color view)* |
+| **Effect** | None / Pulse / Gradient / Meter *(Color view)* |
+| **Target band** | On / Off (training guides, glow, on-target score) *(Ball view)* |
+| **Pitch trace** | On / Off (the scrolling pitch history) *(Ball view)* |
+| **Buzz on** | Off / On target / Syllables / Bright / Loud |
+| **Buzz above** | 25 / 50 / 75% *(only for the Bright and Loud triggers)* |
+| **Brightness** | Low / Medium / High (backlight) |
 | **Auto-dim** | On / Off (screen dimming + tilt-wake) |
-| **Target band** | On / Off (training guides, glow, on-target score) |
-| **HUD text** | On / Off (bottom readout — turn off for pure visuals) |
-| **Orb (BLE)** | On / Off (drive the LED orb — see *BLE companion* below) |
+| **Text + bars** | On / Off (status bar, readout and meters — turn off for pure visuals) |
+| **LED orb** | On / Off (drive the LED orb — see *BLE companion* below) |
+| **How to use** | Replay the walkthrough |
 
 ### Color-mode effects
 *None* — flat fill. *Pulse* — whole-screen brightness pulse that quickens with loudness and
@@ -112,24 +153,25 @@ flashes on each syllable. *Gradient* — vertical low→high colour gradient wit
 line at the current metric. *Meter* — a bottom-up level bar whose height tracks the metric.
 
 ### BLE companion (drive the LED orb)
-Turn **Orb (BLE)** on (Settings, page 2) to have the watch also drive the DIY LED orb in
+Turn **LED orb** on in Settings to have the watch also drive the DIY LED orb in
 [`../prosodyball_orb`](../prosodyball_orb) — no phone needed. The watch acts as a BLE
 **client**: it scans for `ProsodyBall-Orb`, connects, and streams 5-byte `[R,G,B,Res,Weight]`
 packets at ~20 Hz from its own DSP — the orb's colour, its **pulse** (from brightness), and
-its **body** (from vocal weight) all follow your live voice. A small dot at the top-right
-shows link status (grey = searching, green = connected). The protocol matches
+its **body** (from vocal weight) all follow your live voice. A dot in the status bar shows
+link status (grey = searching, green = connected). The protocol matches
 `prosodyball_orb.ino` exactly, so the same orb works from either the browser or the watch
 (one at a time). *Note:* enabling BLE brings up the Bluetooth stack (extra RAM); leave it
 **Off** if you don't use the orb.
 
-Every feature can be turned **off**: haptics (Off), auto-dim, the target band/training, and
-the HUD text all have toggles, so you can run anything from full-feedback training down to a
-silent, text-free colour field.
+Every feature can be turned **off**: haptics, auto-dim, the target band/training, the pitch
+trace, and all text and meters have toggles, so you can run anything from full-feedback
+training down to a silent, text-free colour field.
 
 ### Haptic feedback
 The vibration motor buzzes once on the chosen trigger: entering the target band
-(*On-target*), each syllable onset (*Syllables*), or when brightness/loudness crosses the
-*Haptic thr* (*Bright* / *Loud*). Set **Off** for silent training.
+(*On target*), each syllable onset (*Syllables*), or when brightness/loudness crosses
+*Buzz above* (*Bright* / *Loud*). Set **Off** for silent training. UI taps get their own,
+much shorter tick so they never feel like training feedback.
 
 ## How it works
 
@@ -137,12 +179,27 @@ The vibration motor buzzes once on the chosen trigger: entering the target band
 |-------|------|-------|
 | Mic capture + DSP (core 0) | `twatch_voxball.ino` `audioTask` | I2S PDM @ 16 kHz, 1024-sample frames |
 | DSP (pitch/energy/bounce/syllable/brightness/formants/gender/weight) | `dsp.cpp` / `dsp.h` | port of `app.js` / `dsp-utils.js` |
-| Settings + persistence (NVS) | `twatch_voxball.ino` `Settings` | `Preferences` namespace `voxball` |
-| Visualisation + input (core 1) | `twatch_voxball.ino` `loop` | Vox Ball / Color, touch + long-press |
+| UI model — settings, menus, gestures, toasts, scoreboard | `ui.cpp` / `ui.h` | pure C++, no hardware; host-tested |
+| Rendering + hardware (core 1) | `twatch_voxball.ino` `loop` | screens, touch, TFT, PMU, RTC, haptics |
+| Persistence (NVS) | `twatch_voxball.ino` `loadSettings`/`saveSettings` | `Preferences` namespace `voxball` |
 | BLE companion (core 1) | `twatch_voxball.ino` `bleTask` | client → orb, 5-byte `[R,G,B,Res,Weight]` |
 
 The two cores hand off through a 1-slot queue (`xQueueOverwrite`) — the same
 producer/consumer shape as the orb sketch's `colorQueue`.
+
+### Why `ui.cpp` exists
+`ui.cpp` is split out for the same reason `dsp.cpp` is: it holds no hardware, so the exact
+translation unit the watch runs also compiles and runs on a normal computer. The bugs that
+hurt in a watch UI are not the pixels — they're the rules underneath. Which menu rows apply
+right now, whether a smeared finger counted as a tap or a swipe, whether a byte from NVS is
+in range before it indexes a table, whether the scoreboard adds up, whether the target band
+keeps its width at the ends of the pitch range. `test/ui_host_test.cpp` checks all of that in
+CI, in seconds, with no watch involved.
+
+The screen is redrawn **incrementally**: the ball and the pitch trace are erased stroke for
+stroke rather than by clearing the plot, the readout only repaints when its text actually
+changes, and the status bar polls the I2C clock and PMU at 1 Hz. Only the Color view fills a
+large area per frame, and even that leaves the status bar and readout strips alone.
 
 ### DSP fidelity
 `dsp.cpp` reuses the web app's **proven** algorithms and **identically-named constants** so
@@ -171,11 +228,19 @@ All tunables are grouped near the top of each file:
 - **Brightness mapping** — `VOX_BRIGHT_MIN_HZ` / `VOX_BRIGHT_MAX_HZ` (`dsp.h`) set the
   spectral-centroid range mapped to brightness 0..1.
 - **Feel** — spring `K`/`DAMP`, hop strength, and `smoothHue`/`smoothR` rates in
-  `updateBallPhysics()`; the colour palette is the `PALETTE[]` table in the sketch.
-- **Ball never moves / always "speak"** — confirm the mic by temporarily adding
+  `updateBallPhysics()`; the colour palette is the `PALETTE[]` table in `ui.cpp`.
+- **Layout / gestures** — the screen geometry (`UI_PLOT_TOP`, `UI_BALL_X`, `UI_TRACE_*`, …),
+  the long-press and swipe thresholds (`UI_LONG_PRESS_MS`, `UI_SWIPE_MIN_PX`,
+  `UI_TAP_SLOP_PX`) and the toast duration are all constants at the top of `ui.h`. The host
+  tests assert the layout stays self-consistent, so a bad edit fails in CI rather than on the
+  wrist.
+- **Ball never moves / always "speak"** — check the mic-level line under the status bar
+  first: if it never moves, no audio is arriving. Confirm with
   `Serial.printf("rms %.4f\n", res.rms);` in `audioTask`; values should rise when you speak.
 - **Pitch reads wrong/jumpy** — `Serial.printf` `res.pitchHz`; hum a low vs. high note and
   compare against the web app's reading for the same voice.
+- **Settings look wrong / a row is missing** — rows are filtered by context, so a Color row
+  genuinely does not exist while you are in Ball view. Switch views and look again.
 
 ## Power saving
 The screen **auto-dims after ~20 s** of no activity and brightens again on **touch, voice,
@@ -184,7 +249,9 @@ or a wrist tilt** (BMA423 accelerometer). Tune `DIM_AFTER_MS`, `DIM_LEVEL`, and
 draws; deeper light-sleep is a future addition.
 
 ## Roadmap
-More visualisations and deeper sleep. *(Done: brightness/resonance cue, harmonic-envelope
-formants + perceived-gender, H1–H2 vocal-weight cue, Color mode with palettes/presets/effects,
-on-device customisation, persistence, auto-dim + tilt-wake, per-feature on/off toggles, and a
-BLE companion mode that drives the LED orb.)*
+More visualisations, a longer-term progress history, and deeper sleep. *(Done:
+brightness/resonance cue, harmonic-envelope formants + perceived-gender, H1–H2 vocal-weight
+cue, Color view with palettes/presets/effects, on-device customisation, persistence, auto-dim
++ tilt-wake, per-feature on/off toggles, a BLE companion mode that drives the LED orb, and the
+UX pass: status bar, pitch axis + trace, first-run walkthrough, quick menu, stats screen,
+swipe-to-switch, toasts, context-filtered settings, and a host-tested UI model.)*
