@@ -90,6 +90,21 @@ export function clamp01(v) {
   return Math.max(0, Math.min(1, v));
 }
 
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  try {
+    const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+    const parsedUrl = new URL(String(url), base);
+    const protocol = parsedUrl.protocol.toLowerCase();
+    if (['javascript:', 'vbscript:', 'data:'].includes(protocol)) {
+      return 'about:blank';
+    }
+    return String(url);
+  } catch (e) {
+    return 'about:blank';
+  }
+}
+
 export function normalizeAgainstRange(value, min, max) {
   const denom = Math.max(1e-6, max - min);
   return clamp01((value - min) / denom);
