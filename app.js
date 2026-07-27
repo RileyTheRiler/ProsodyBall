@@ -3421,8 +3421,15 @@ class VoxBallGame {
     const t1 = series[series.length - 1].t;
     const spanT = Math.max(0.001, t1 - t0);
     // Semitone scaling so equal musical moves get equal height anywhere in the range.
-    const sts = voiced.map((p) => 12 * Math.log2(p.hz / 100));
-    let stLo = Math.min(...sts), stHi = Math.max(...sts);
+    // Performance optimization: Avoid mapping to an intermediate array and spreading into Math.min/max
+    // which can overflow the call stack on long inputs and allocates unnecessary memory.
+    let stLo = Infinity;
+    let stHi = -Infinity;
+    for (let i = 0; i < voiced.length; i++) {
+      const st = 12 * Math.log2(voiced[i].hz / 100);
+      if (st < stLo) stLo = st;
+      if (st > stHi) stHi = st;
+    }
     if (stHi - stLo < 2) { const mid = (stLo + stHi) / 2; stLo = mid - 1; stHi = mid + 1; }
     const pad = 6;
     const x = (t) => pad + ((t - t0) / spanT) * (cssW - 2 * pad);
