@@ -3247,13 +3247,17 @@ class VoxBallGame {
     const idx = this.practice.index;
     const def = PRACTICE_PHRASES[idx];
     const results = this.practice.stage === 'results';
-    // The panel scrolls (results can be taller than the game area); a new
-    // phrase or stage should start at the top rather than mid-scroll.
+    // Results stage grows the phone sheet to full height (see .has-results) so
+    // the word-by-word breakdown gets the screen instead of a sliver.
     const panel = document.getElementById('practicePanel');
+    panel?.classList.toggle('has-results', results);
+    // The panel body scrolls (results can be taller than the screen); a new
+    // phrase or stage should start at the top rather than mid-scroll.
+    const body = document.getElementById('practiceBody');
     const key = `${idx}:${this.practice.stage}`;
-    if (panel && this._practiceViewKey !== key) {
+    if (body && this._practiceViewKey !== key) {
       this._practiceViewKey = key;
-      panel.scrollTop = 0;
+      body.scrollTop = 0;
     }
     const progress = document.getElementById('practiceProgress');
     if (progress) progress.textContent = `Phrase ${idx + 1} of ${PRACTICE_PHRASES.length}`;
