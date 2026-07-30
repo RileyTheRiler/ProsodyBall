@@ -3653,34 +3653,39 @@
     /* Guided phrase practice panel: shows one phrase at a time; each take is saved
        as a labeled clip in the Recordings drawer for per-clip metric review. */
     .practice-panel {
-      position: absolute;
-      top: 18%;
+      /* Fixed to the viewport (not the game area) so the analysis can use the
+         full screen height on a phone instead of the canvas strip. */
+      position: fixed;
+      top: 14vh;
       left: 50%;
       transform: translateX(-50%);
       background: var(--bg-surface);
       border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 12px;
-      /* No bottom padding: the sticky action row below supplies it, so it can
-         sit flush against the panel's bottom edge while the body scrolls. */
-      padding: 18px 22px 0;
-      max-width: 480px;
-      width: 92vw;
-      /* .game-area clips overflow, so a tall results list (long phrase = many
-         word cards) used to run off the bottom with no way to reach it. Cap the
-         panel inside the game area and scroll its body instead. */
-      max-height: calc(82% - 18px);
-      overflow-y: auto;
-      overscroll-behavior: contain;
-      -webkit-overflow-scrolling: touch;
-      touch-action: pan-y;
+      width: min(92vw, 480px);
+      max-height: 72vh;
+      overflow: hidden;
       z-index: var(--z-dropdown);
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
       display: none;
+      flex-direction: column;
       text-align: center;
     }
 
     .practice-panel.show {
-      display: block;
+      display: flex;
+    }
+
+    /* The only scroller in the panel: keeps the action row parked while a long
+       results list (long phrase = many word cards) scrolls under it. */
+    .practice-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
+      padding: 18px 22px 0;
     }
 
     .practice-progress {
@@ -3710,11 +3715,11 @@
       flex-wrap: wrap;
       gap: 8px;
       justify-content: center;
-      /* Pinned to the bottom of the scrolling panel so Record / Next / Exit stay
-         reachable however long the results list is. */
-      position: sticky;
-      bottom: 0;
-      padding: 10px 0 18px;
+      /* Parked at the bottom of the panel so Record / Next / Exit stay reachable
+         however long the results list is. */
+      position: relative;
+      flex: 0 0 auto;
+      padding: 10px 22px 18px;
       background: var(--bg-surface);
     }
 
@@ -3863,20 +3868,55 @@
        in the shared mobile block above, which the later base rules would win
        against on equal specificity. */
     @media (max-width: 600px) {
+      /* Phones: full-width sheet under the toolbars. While reading the phrase it
+         only grows as tall as it needs to, leaving the ball and the live meters
+         below it visible. */
       .practice-panel {
-        top: 8px;
-        width: calc(100vw - 16px);
-        max-width: 520px;
-        max-height: calc(100% - 16px);
+        top: max(8px, env(safe-area-inset-top, 0px));
+        left: 8px;
+        right: 8px;
+        width: auto;
+        transform: none;
+        max-height: calc(100dvh - 16px);
+        border-radius: 16px;
+      }
+
+      /* Results stage: pin the bottom too, so the sheet fills the screen and the
+         word-by-word breakdown gets the height instead of a 100px sliver — that
+         is the whole point of this stage, and nothing behind it is live. The
+         second shadow is a scrim for what still shows past the sheet's edges,
+         drawn as an outset shadow so it doesn't tint the sheet itself. */
+      .practice-panel.has-results {
+        bottom: max(8px, env(safe-area-inset-bottom, 0px));
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 100vmax rgba(6, 6, 12, 0.72);
+      }
+
+      .practice-body {
         padding: 14px 14px 0;
       }
 
-      .practice-actions {
-        padding: 10px 0 14px;
+      /* In the results stage the phrase is just context for the breakdown below
+         it, so it doesn't need to be the biggest thing on the screen. */
+      .practice-panel.has-results .practice-phrase {
+        font-size: 1.05rem;
+        margin: 8px 0;
       }
 
+      .practice-panel.has-results .practice-hint {
+        margin-bottom: 10px;
+      }
+
+      .practice-actions {
+        padding: 10px 14px 14px;
+        gap: 6px;
+      }
+
+      /* Tighter buttons: five of them wrap to two rows in the results stage, and
+         every pixel they give back goes to the analysis above. */
       .practice-actions .btn {
         min-height: 44px;
+        padding: 8px 12px;
+        font-size: 0.85rem;
       }
 
       /* Fit an extra word card per row on narrow screens */
@@ -3888,8 +3928,16 @@
     /* Landscape phones: almost no vertical room, so use all of it */
     @media (max-width: 900px) and (max-height: 500px) and (orientation: landscape) {
       .practice-panel {
-        top: 6px;
-        max-height: calc(100% - 12px);
+        top: max(6px, env(safe-area-inset-top, 0px));
+        max-height: calc(100dvh - 12px);
+      }
+
+      .practice-panel.has-results {
+        bottom: max(6px, env(safe-area-inset-bottom, 0px));
+        max-height: none;
+      }
+
+      .practice-body {
         padding: 10px 14px 0;
       }
 
@@ -3903,7 +3951,7 @@
       }
 
       .practice-actions {
-        padding: 8px 0 10px;
+        padding: 8px 14px 10px;
       }
     }
 
@@ -5106,20 +5154,26 @@
         </div>
       </div>
 
-      <div class="practice-panel" id="practicePanel" role="dialog" aria-label="Guided phrase practice">
+    </div>
+
+    <!-- Practice panel lives outside .game-area: that container clips overflow and
+         takes a transform while vibrating, either of which would trap/clip a tall
+         analysis list inside the small canvas strip on a phone. -->
+    <div class="practice-panel" id="practicePanel" role="dialog" aria-label="Guided phrase practice">
+      <div class="practice-body" id="practiceBody">
         <div class="practice-progress" id="practiceProgress">Phrase 1 of 6</div>
         <div class="practice-phrase" id="practicePhrase"></div>
         <div class="practice-hint" id="practiceHint">Press Record, read the phrase aloud, then press Done.</div>
         <div class="practice-results" id="practiceResults" hidden></div>
-        <div class="practice-actions">
-          <button class="btn practice-record" id="practiceRecordBtn"><span class="rec-dot"></span>&nbsp;Record</button>
-          <button class="btn" id="practiceSkipBtn">Skip</button>
-          <button class="btn" id="practicePlayBtn" hidden>▶ Play</button>
-          <button class="btn" id="practiceSpeakBtn" hidden aria-label="Hear a spoken summary of your results">🔊 Hear feedback</button>
-          <button class="btn" id="practiceRetryBtn" hidden>Retry</button>
-          <button class="btn practice-record" id="practiceNextBtn" hidden>Next phrase</button>
-          <button class="btn" id="practiceExitBtn">Exit</button>
-        </div>
+      </div>
+      <div class="practice-actions">
+        <button class="btn practice-record" id="practiceRecordBtn"><span class="rec-dot"></span>&nbsp;Record</button>
+        <button class="btn" id="practiceSkipBtn">Skip</button>
+        <button class="btn" id="practicePlayBtn" hidden>▶ Play</button>
+        <button class="btn" id="practiceSpeakBtn" hidden aria-label="Hear a spoken summary of your results">🔊 Hear feedback</button>
+        <button class="btn" id="practiceRetryBtn" hidden>Retry</button>
+        <button class="btn practice-record" id="practiceNextBtn" hidden>Next phrase</button>
+        <button class="btn" id="practiceExitBtn">Exit</button>
       </div>
     </div>
 
