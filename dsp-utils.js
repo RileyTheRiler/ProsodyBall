@@ -90,6 +90,20 @@ export function clamp01(v) {
   return Math.max(0, Math.min(1, v));
 }
 
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  try {
+    const parsed = new URL(url, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+    const safeProtocols = ['http:', 'https:', 'mailto:', 'tel:', 'blob:', 'file:'];
+    if (safeProtocols.includes(parsed.protocol)) {
+      return parsed.href;
+    }
+  } catch (e) {
+    // Invalid URL format
+  }
+  return 'about:blank';
+}
+
 export function normalizeAgainstRange(value, min, max) {
   const denom = Math.max(1e-6, max - min);
   return clamp01((value - min) / denom);
