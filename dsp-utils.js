@@ -4,6 +4,21 @@ export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
 
+export function sanitizeUrl(url) {
+  if (!url) return '';
+  const urlStr = String(url);
+  try {
+    const parsed = new URL(urlStr, 'http://localhost');
+    const safeProtocols = ['http:', 'https:', 'mailto:', 'tel:', 'file:', 'blob:'];
+    if (safeProtocols.includes(parsed.protocol)) {
+      return urlStr;
+    }
+    return 'about:blank';
+  } catch (e) {
+    return 'about:blank';
+  }
+}
+
 export function computeRawProsody(metrics) {
   return (
     metrics.bounce * 0.50 +
