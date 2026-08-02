@@ -4,8 +4,22 @@ import {
   computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError,
   computeFrameReliability, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction,
   steadyStateWeight, selectResonanceMethod,
-  SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX, STEADY_WEIGHT_FLOOR
+  SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX, STEADY_WEIGHT_FLOOR,
+  sanitizeUrl
 } from './dsp-utils.js';
+
+test('sanitizeUrl allows safe protocols and blocks unsafe ones', () => {
+  assert.equal(sanitizeUrl('https://example.com'), 'https://example.com');
+  assert.equal(sanitizeUrl('http://example.com'), 'http://example.com');
+  assert.equal(sanitizeUrl('mailto:a@b.com'), 'mailto:a@b.com');
+  assert.equal(sanitizeUrl('tel:123'), 'tel:123');
+  assert.equal(sanitizeUrl('blob:http://localhost/123'), 'blob:http://localhost/123');
+  assert.equal(sanitizeUrl('file:///tmp/test'), 'file:///tmp/test');
+  assert.equal(sanitizeUrl('/relative/path'), '/relative/path');
+  assert.equal(sanitizeUrl('javascript:alert(1)'), 'about:blank#blocked');
+  assert.equal(sanitizeUrl('data:text/html,<script>alert(1)</script>'), 'about:blank#blocked');
+  assert.equal(sanitizeUrl(''), 'about:blank#blocked');
+});
 
 test('computeRawProsody applies weighted sum', () => {
   const metrics = { bounce: 1, vowel: 0.5, articulation: 0.5 };
