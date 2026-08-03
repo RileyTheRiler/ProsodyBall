@@ -427,37 +427,59 @@ export function pitchHzToLogPosition(hz, minHz = 80, maxHz = 400) {
 // log domain — the mean is a geometric mean in Hz and the spread is in semitones — so a
 // wobbly low voice and a wobbly high voice report comparable spread. Returns null when empty.
 export function summarizeVoiceCloud(points) {
-  const pts = Array.isArray(points) ? points.filter((p) => p && p.hz > 0) : [];
-  const n = pts.length;
-  if (n === 0) return null;
-  let wSum = 0, logSum = 0, resSum = 0;
-  for (const p of pts) {
-    const w = Math.max(1e-6, p.w != null ? p.w : 1);
-    wSum += w;
-    logSum += Math.log2(p.hz) * w;
-    resSum += clamp01(p.res) * w;
+  if (!Array.isArray(points)) return null;
+
+  // ⚡ Bolt: Replace filter and map(...).sort() with single loop and Float32Array sort for faster median calculation and reduce allocation
+  const pts = [];
+  let n = 0, wSum = 0, logSum = 0, resSum = 0;
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    if (p && p.hz > 0) {
+      pts.push(p);
+      n++;
+      const w = Math.max(1e-6, p.w != null ? p.w : 1);
+      wSum += w;
+      logSum += Math.log2(p.hz) * w;
+      resSum += clamp01(p.res) * w;
+    }
   }
+
+  if (n === 0) return null;
+
   const meanLog = logSum / wSum;
   const meanRes = resSum / wSum;
   let varLog = 0, varRes = 0;
-  for (const p of pts) {
+
+  for (let i = 0; i < n; i++) {
+    const p = pts[i];
     const w = Math.max(1e-6, p.w != null ? p.w : 1);
     const dl = Math.log2(p.hz) - meanLog;
     const dr = clamp01(p.res) - meanRes;
     varLog += dl * dl * w;
     varRes += dr * dr * w;
   }
+
+  const hzArray = new Float32Array(n);
+  const resArray = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    hzArray[i] = pts[i].hz;
+    resArray[i] = clamp01(pts[i].res);
+  }
+  hzArray.sort();
+  resArray.sort();
+
   const mid = (arr) => (arr.length % 2
     ? arr[(arr.length - 1) / 2]
     : (arr[arr.length / 2 - 1] + arr[arr.length / 2]) / 2);
+
   return {
     n,
     meanHz: Math.pow(2, meanLog),                    // geometric mean
     sdSemitones: Math.sqrt(varLog / wSum) * 12,      // log2-octaves → semitones
     meanRes,
     sdRes: Math.sqrt(varRes / wSum),
-    medianHz: mid(pts.map((p) => p.hz).sort((a, b) => a - b)),
-    medianRes: mid(pts.map((p) => clamp01(p.res)).sort((a, b) => a - b)),
+    medianHz: mid(hzArray),
+    medianRes: mid(resArray),
   };
 }
 
