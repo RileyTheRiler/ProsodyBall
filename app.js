@@ -3410,8 +3410,22 @@ class VoxBallGame {
   // Draw the take's pitch contour (semitone-scaled) with word-boundary ticks.
   // Returns false when there are too few voiced points to be worth drawing.
   _drawPhraseSpark(canvas, series, words) {
-    const voiced = series.filter((p) => p.hz != null);
-    if (voiced.length < 4) return false;
+    // ⚡ Bolt: Use a single loop to avoid multiple allocations (.filter, .map)
+    // and prevent stack overflows from Math.min(...array) on large inputs.
+    let voicedCount = 0;
+    let stLo = Infinity;
+    let stHi = -Infinity;
+    for (let i = 0; i < series.length; i++) {
+      const hz = series[i].hz;
+      if (hz != null) {
+        voicedCount++;
+        const st = 12 * Math.log2(hz / 100);
+        if (st < stLo) stLo = st;
+        if (st > stHi) stHi = st;
+      }
+    }
+    if (voicedCount < 4) return false;
+
     const dpr = window.devicePixelRatio || 1;
     const cssW = canvas.clientWidth || canvas.parentElement?.clientWidth || 300;
     const cssH = 56;
@@ -3424,9 +3438,8 @@ class VoxBallGame {
     const t0 = series[0].t;
     const t1 = series[series.length - 1].t;
     const spanT = Math.max(0.001, t1 - t0);
-    // Semitone scaling so equal musical moves get equal height anywhere in the range.
-    const sts = voiced.map((p) => 12 * Math.log2(p.hz / 100));
-    let stLo = Math.min(...sts), stHi = Math.max(...sts);
+
+    // Semitone scaling bounds calculated in the loop above.
     if (stHi - stLo < 2) { const mid = (stLo + stHi) / 2; stLo = mid - 1; stHi = mid + 1; }
     const pad = 6;
     const x = (t) => pad + ((t - t0) / spanT) * (cssW - 2 * pad);
