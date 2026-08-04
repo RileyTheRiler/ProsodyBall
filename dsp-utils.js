@@ -793,6 +793,18 @@ export function summarizeWordMetrics(samples, slots, { tickSec = 512 / 44100, mi
 // summarize, and extend the whole-clip summary with phrase-level stats (duration, speech
 // vs pause time, pace, pitch range, coarse contour). Returns overall: null (and
 // segmentation 'fallback') for an all-silent take, mirroring summarizeClipMetrics.
+export function sanitizeUrl(url) {
+  try {
+    const parsed = new URL(url, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+    const allowedProtocols = ['http:', 'https:', 'mailto:', 'tel:', 'blob:', 'file:'];
+    if (allowedProtocols.includes(parsed.protocol)) {
+      return url;
+    }
+  } catch (e) {
+  }
+  return 'about:blank';
+}
+
 export function summarizePhraseTake(samples, phrase, { tickSec = 512 / 44100, noiseFloor = 0, seg = {} } = {}) {
   const all = Array.isArray(samples) ? samples : [];
   // Keep letters/digits/apostrophes/hyphens; drops bare punctuation tokens like "—".
