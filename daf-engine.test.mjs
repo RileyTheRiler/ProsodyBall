@@ -3,10 +3,13 @@ import assert from 'node:assert/strict';
 import {
   DafEngine,
   clampDelaySeconds,
+  outputLatencyMs,
+  describeEffectiveDelay,
   DAF_MAX_DELAY_SEC,
   DAF_OUTPUT_GAIN,
   DAF_FILTER_ON_HZ,
   DAF_FILTER_OFF_HZ,
+  DAF_EFFECTIVE_MAX_MS,
 } from './daf-engine.js';
 
 // ── Minimal Web Audio mock ────────────────────────────────────────────────
@@ -85,6 +88,89 @@ test('clampDelaySeconds converts ms to seconds and bounds the range', () => {
   assert.equal(clampDelaySeconds(99999), DAF_MAX_DELAY_SEC, 'never exceeds DelayNode capacity');
   assert.equal(clampDelaySeconds(undefined), 0);
   assert.equal(clampDelaySeconds('120'), 0.12);
+});
+
+// ── Effective delay accounting ────────────────────────────────────────────
+
+test('outputLatencyMs reads the sink latency and converts to ms', () => {
+  assert.equal(outputLatencyMs({ outputLatency: 0.006 }), 6, 'wired sink');
+  assert.equal(outputLatencyMs({ outputLatency: 0.184 }), 184, 'Bluetooth sink');
+  assert.equal(outputLatencyMs({ outputLatency: 0 }), 0);
+});
+
+test('outputLatencyMs reports null rather than guessing when unavailable', () => {
+  assert.equal(outputLatencyMs(null), null);
+  assert.equal(outputLatencyMs(undefined), null);
+  assert.equal(outputLatencyMs({}), null, 'Safari does not implement outputLatency');
+  assert.equal(outputLatencyMs({ outputLatency: NaN }), null);
+  assert.equal(outputLatencyMs({ outputLatency: -1 }), null);
+});
+
+test('outputLatencyMs never substitutes baseLatency for a missing outputLatency', () => {
+  // baseLatency is graph-internal buffering only and is blind to the sink, so
+  // falling back to it would report ~10ms for headphones that really add 200.
+  assert.equal(outputLatencyMs({ baseLatency: 0.01 }), null);
+});
+
+test('a wired sink leaves the slider setting roughly honest', () => {
+  const d = describeEffectiveDelay(75, 6);
+  assert.equal(d.total, 81);
+  assert.equal(d.wireless, false);
+  assert.equal(d.status, 'good');
+});
+
+test('Bluetooth latency pushes a normal setting out of the useful range', () => {
+  const d = describeEffectiveDelay(75, 184);
+  assert.equal(d.total, 259);
+  assert.equal(d.wireless, true);
+  assert.equal(d.status, 'long');
+  assert.match(d.text, /259 ms/);
+  assert.match(d.text, /16 ms or less/, 'there is still slider headroom at 184ms');
+  assert.match(d.text, /already supply the whole delay/,
+    'a sink past the minimum is doing the DAF itself — explain why the number is so small');
+});
+
+test('a moderately slow sink is reported as fixable by lowering the slider', () => {
+  const d = describeEffectiveDelay(200, 120);
+  assert.equal(d.status, 'long');
+  assert.equal(d.wireless, true);
+  assert.match(d.text, /80 ms or less/, 'suggests the headroom that is left');
+});
+
+test('a sink under the useful minimum gets plain "drag it down" advice', () => {
+  const d = describeEffectiveDelay(200, 30);
+  assert.equal(d.status, 'long');
+  assert.equal(d.wireless, false);
+  assert.match(d.text, /170 ms or less/);
+  assert.doesNotMatch(d.text, /already supply/, 'the sink is not dominating here');
+});
+
+test('a sink slower than the whole window cannot be rescued by the slider', () => {
+  const d = describeEffectiveDelay(0, 260);
+  assert.equal(d.status, 'long');
+  assert.ok(260 > DAF_EFFECTIVE_MAX_MS);
+  assert.match(d.text, /Wired or USB-C/);
+});
+
+test('zero delay on a fast sink is flagged as too short, not as fine', () => {
+  const d = describeEffectiveDelay(0, 5);
+  assert.equal(d.total, 5);
+  assert.equal(d.status, 'short');
+  assert.match(d.text, /45 ms or more/);
+});
+
+test('an unmeasurable sink says so instead of implying the slider is the truth', () => {
+  const d = describeEffectiveDelay(75, null);
+  assert.equal(d.total, null);
+  assert.equal(d.status, 'unknown');
+  assert.match(d.text, /won’t report output latency/);
+  assert.match(d.text, /Bluetooth/);
+});
+
+test('describeEffectiveDelay tolerates junk slider values', () => {
+  assert.equal(describeEffectiveDelay(undefined, 10).total, 10);
+  assert.equal(describeEffectiveDelay(-40, 10).total, 10, 'negative delay clamps to 0');
+  assert.equal(describeEffectiveDelay('75', 10).total, 85);
 });
 
 // ── Graph construction ────────────────────────────────────────────────────

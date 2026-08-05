@@ -15,7 +15,7 @@ import {
 import { ModalFocusManager } from './ui-dialog-manager.js';
 import { exportPortableSettings, importPortableSettings, resetPortableSettings } from './settings-transfer.js';
 import { SessionWakeLock, registerPwa } from './pwa.js';
-import { DafEngine } from './daf-engine.js';
+import { DafEngine, outputLatencyMs, describeEffectiveDelay } from './daf-engine.js';
 
 function escapeHtml(text) {
   if (!text) return text;
@@ -3048,6 +3048,66 @@ class VoxBallGame {
     return this.daf.active;
   }
 
+  /**
+   * Refresh the "what you actually hear" line under the delay slider.
+   *
+   * The slider sets the DelayNode, but a Bluetooth sink buffers 150-250ms on
+   * top of it, which is what makes DAF feel broken on wireless headphones —
+   * the delay is real, it is just far past the window where it does anything.
+   * `outputLatency` is the only part of that we can measure, so show it rather
+   * than let the slider imply a number it does not deliver.
+   */
+  _updateDafLatencyReadout() {
+    const el = document.getElementById('dafLatencyReadout');
+    if (!el) return;
+
+    if (!this.dafEnabled) {
+      el.textContent = '';
+      el.className = 'daf-latency';
+      return;
+    }
+
+    // Only meaningful against a live context — a closed/absent one reports
+    // nothing useful, and guessing there would be worse than saying nothing.
+    const ctx = this.analyzer?.audioCtx;
+    if (!ctx || ctx.state === 'closed') {
+      el.textContent = 'Start a session to see the delay you actually hear.';
+      el.className = 'daf-latency';
+      return;
+    }
+
+    const { status, text } = describeEffectiveDelay(this.dafDelayMs, outputLatencyMs(ctx));
+    el.textContent = text;
+    el.className = `daf-latency is-${status}`;
+  }
+
+  /**
+   * Poll the readout while the DAF panel is open — headphones can connect or
+   * drop mid-session, which changes the sink latency under us.
+   *
+   * Self-terminates when the panel closes so the many places that hide the
+   * panel (outside click, Escape, opening another panel, session stop) don't
+   * each need to remember to stop the timer.
+   */
+  _startDafLatencyWatch() {
+    this._stopDafLatencyWatch();
+    this._updateDafLatencyReadout();
+    this._dafLatencyTimer = setInterval(() => {
+      if (!document.getElementById('dafPanel')?.classList.contains('show')) {
+        this._stopDafLatencyWatch();
+        return;
+      }
+      this._updateDafLatencyReadout();
+    }, 1500);
+  }
+
+  _stopDafLatencyWatch() {
+    if (this._dafLatencyTimer) {
+      clearInterval(this._dafLatencyTimer);
+      this._dafLatencyTimer = null;
+    }
+  }
+
   _encodeWAV(samples, sampleRate) {
     // PCM 16-bit mono WAV
     const numChannels = 1;
@@ -5445,6 +5505,9 @@ class VoxBallGame {
         setSimplePanelVisibility(helpTooltip, helpBtn, false);
         setSimplePanelVisibility(recordingsDrawer, recordingsBtn, false);
         if (settingsPanel?.classList.contains('show')) toggleSettings(false);
+        this._startDafLatencyWatch();
+      } else {
+        this._stopDafLatencyWatch();
       }
     });
 
@@ -5456,6 +5519,7 @@ class VoxBallGame {
         if (this.dafEnabled) this.startDAF();
         else this.stopDAF();
       }
+      this._updateDafLatencyReadout();
     });
 
     document.getElementById('dafDelaySlider')?.addEventListener('input', (e) => {
@@ -5463,6 +5527,7 @@ class VoxBallGame {
       localStorage.setItem('vox:daf:delayMs', String(this.dafDelayMs));
       document.getElementById('dafDelayLabel').textContent = `${this.dafDelayMs}ms`;
       this.daf.setDelayMs(this.dafDelayMs);
+      this._updateDafLatencyReadout();
     });
 
     document.getElementById('dafBassFilterToggle')?.addEventListener('change', (e) => {
