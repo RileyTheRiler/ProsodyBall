@@ -47,6 +47,15 @@ const VOWEL_CONNECTED_SATURATION_SECS = 0.20; // Saturation time for connected-s
 const VOWEL_CONNECTED_DECAY_RATE = 0.92; // Per-frame decay for connected-speech mode
 const VOWEL_SUSTAIN_MULT = 0.4;          // Energy percentile multiplier for vowel detection threshold
 const ARTIC_SENSITIVITY_GAIN = 1.2;      // Gain applied to articulation normalisation
+const MIN_NOISE_PROFILE_FRAMES = 8;      // Ambient frames needed before a per-bin noise profile is trusted
+// Reported SNR is bounded before smoothing. Trust (snrToConfidence) and the over-subtraction
+// factor both saturate at SNR_GREEN_DB, so readings past these edges carry no extra
+// information — but an unbounded power ratio swings tens of dB per frame against near-digital
+// silence (a hard noise gate, a clean recording's gaps), which makes the smoothed value, the
+// tier, and the ball's vividness flap. Clamping keeps the tiers steady without touching the
+// 10-20 dB region the ramp actually reads.
+const SNR_DB_FLOOR = -10;
+const SNR_DB_CEIL = 45;
 const SYLLABLE_DEBOUNCE_SECS = 0.08;     // Minimum seconds between syllable onsets
 const SYLLABLE_ON_MULT = 0.6;            // Energy range multiplier for syllable-on threshold
 const SYLLABLE_OFF_MULT = 0.15;          // Energy range multiplier for syllable-off threshold
@@ -248,6 +257,10 @@ export class VoiceAnalyzer {
     this.snrConfidence = 1;     // 0..1 trust derived from SNR; folds into the gate
     this.snrTier = 'green';     // 'green' | 'yellow' | 'red' for UI/haptics
     this.overSubFactor = 1.5;   // SNR-adaptive spectral over-subtraction (was hardcoded 1.5)
+    // Scalar voice-band noise power, learned on pause frames. Only used when there is no
+    // per-bin noise profile (calibration skipped/cancelled), so the fallback still measures
+    // SNR over the same 300-3500 Hz band the calibrated path does. 0 = not yet learned.
+    this.voiceBandNoisePow = 0;
 
     this.metrics = {
       bounce: 0, vowel: 0,
@@ -502,6 +515,79 @@ export class VoiceAnalyzer {
     this.noiseCalibrationTimer = 0;
     this.isCalibrated = false;
     this.noiseSpectralProfile = null;
+    this.voiceBandNoisePow = 0;
+  }
+
+  /**
+   * Close out noise calibration from whatever ambient samples were collected, and flip
+   * isCalibrated on. update() calls this when its timer completes; the wizard's
+   * skip/cancel/timeout paths call it too, so they can never mark the analyzer calibrated
+   * while noiseSpectralProfile still holds the raw per-bin SUM that this step averages.
+   * An un-averaged sum reads N x too loud: it pinned SNR to the red tier (leaving the ball
+   * permanently grey) and made spectral subtraction floor the whole spectrum.
+   *
+   * Below MIN_NOISE_PROFILE_FRAMES ambient frames the room is not characterised well enough
+   * to trust a per-bin profile at all, so the profile is dropped and the session runs on the
+   * scalar voice-band fallback instead — no profile beats a bad one.
+   */
+  finalizeNoiseCalibration() {
+    if (this.isCalibrated) return;
+    const samples = this.noiseCalibrationSamples;
+    const n = samples.length;
+
+    if (n >= MIN_NOISE_PROFILE_FRAMES) {
+      let sum = 0, sqSum = 0;
+      for (let i = 0; i < n; i++) {
+        sum += samples[i];
+        sqSum += samples[i] * samples[i];
+      }
+      const mean = sum / n;
+      // Optimize standard deviation with single pass: Math.sqrt(E[X^2] - (E[X])^2)
+      const std = Math.sqrt(Math.max(0, (sqSum / n) - (mean * mean)));
+
+      // Set floor at mean + 4*std — aggressively above ambient noise (fans, AC, etc)
+      this.noiseFloor = Math.max(0.01, mean + std * 4);
+
+      // HF noise floor — mean + 2*std of HF energy during silence
+      const hfSamples = this.hfCalibrationSamples;
+      let hfSum = 0, hfSqSum = 0;
+      for (let i = 0; i < hfSamples.length; i++) {
+        hfSum += hfSamples[i];
+        hfSqSum += hfSamples[i] * hfSamples[i];
+      }
+      const hfMean = hfSamples.length ? hfSum / hfSamples.length : 0;
+      const hfStd = hfSamples.length
+        ? Math.sqrt(Math.max(0, (hfSqSum / hfSamples.length) - (hfMean * hfMean)))
+        : 0;
+      this.hfNoiseFloor = hfMean + hfStd * 2;
+
+      if (this.micCalibrationTiltSamples.length > 0) {
+        const sorted = [...this.micCalibrationTiltSamples].sort((a, b) => a - b);
+        this.micTiltBaselineDb = sorted[Math.floor(sorted.length / 2)];
+      }
+
+      // Average the accumulated spectral profile
+      if (this.noiseSpectralProfile) {
+        for (let i = 0; i < this.noiseSpectralProfile.length; i++) {
+          this.noiseSpectralProfile[i] /= n;
+        }
+      }
+      // A real calibration replaces the thresholds outright, so recalibrating into a
+      // quieter room can lower them again.
+      this.syllableThreshold = this.noiseFloor * 1.2;
+      this.sustainedThreshold = this.noiseFloor * 1.5;
+      console.log(`Noise calibrated: floor=${(this.noiseFloor * 1000).toFixed(1)}mRMS, hfFloor=${this.hfNoiseFloor.toFixed(4)}, micTilt=${this.micTiltBaselineDb.toFixed(1)}dB, frames=${n}`);
+    } else {
+      // Nothing measured — only raise the thresholds toward the fallback floor, never
+      // lower ones an earlier calibration had already established.
+      this.noiseSpectralProfile = null;
+      this.noiseFloor = Math.max(0.008, this.noiseFloor || 0.01);
+      this.syllableThreshold = Math.max(this.syllableThreshold || 0, this.noiseFloor * 1.2);
+      this.sustainedThreshold = Math.max(this.sustainedThreshold || 0, this.noiseFloor * 1.5);
+      console.log(`Noise calibration incomplete (${n} frames) — using scalar voice-band SNR fallback.`);
+    }
+
+    this.isCalibrated = true;
   }
 
   /**
@@ -890,47 +976,7 @@ export class VoiceAnalyzer {
       if (isFinite(rawTiltDb)) this.micCalibrationTiltSamples.push(rawTiltDb);
 
       if (this.noiseCalibrationTimer >= this.noiseCalibrationDuration) {
-        const samples = this.noiseCalibrationSamples;
-        let sum = 0, sqSum = 0;
-        for (let i = 0; i < samples.length; i++) {
-          sum += samples[i];
-          sqSum += samples[i] * samples[i];
-        }
-        const mean = sum / samples.length;
-        // Optimize standard deviation with single pass: Math.sqrt(E[X^2] - (E[X])^2)
-        const std = Math.sqrt(Math.max(0, (sqSum / samples.length) - (mean * mean)));
-
-        // Set floor at mean + 4*std — aggressively above ambient noise (fans, AC, etc)
-        this.noiseFloor = Math.max(0.01, mean + std * 4);
-        this.syllableThreshold = this.noiseFloor * 1.2;
-        this.sustainedThreshold = this.noiseFloor * 1.5;
-
-        // HF noise floor — mean + 2*std of HF energy during silence
-        const hfSamples = this.hfCalibrationSamples;
-        let hfSum = 0, hfSqSum = 0;
-        for (let i = 0; i < hfSamples.length; i++) {
-          hfSum += hfSamples[i];
-          hfSqSum += hfSamples[i] * hfSamples[i];
-        }
-        const hfMean = hfSum / hfSamples.length;
-        const hfStd = Math.sqrt(Math.max(0, (hfSqSum / hfSamples.length) - (hfMean * hfMean)));
-
-        this.hfNoiseFloor = hfMean + hfStd * 2;
-        this.isCalibrated = true;
-
-        if (this.micCalibrationTiltSamples.length > 0) {
-          const sorted = [...this.micCalibrationTiltSamples].sort((a, b) => a - b);
-          this.micTiltBaselineDb = sorted[Math.floor(sorted.length / 2)];
-        }
-
-        // Average the accumulated spectral profile
-        if (this.noiseSpectralProfile) {
-          for (let i = 0; i < this.noiseSpectralProfile.length; i++) {
-            this.noiseSpectralProfile[i] /= this.noiseCalibrationSamples.length;
-          }
-        }
-
-        console.log(`Noise calibrated: floor=${(this.noiseFloor * 1000).toFixed(1)}mRMS, hfFloor=${this.hfNoiseFloor.toFixed(4)}, micTilt=${this.micTiltBaselineDb.toFixed(1)}dB`);
+        this.finalizeNoiseCalibration();
       }
       // During calibration, don't trigger any metrics
       return;
@@ -1059,10 +1105,36 @@ export class VoiceAnalyzer {
       }
       this.snrDb = aPosterioriSnrDb(snrSigPow, snrNoisePow);
     } else {
-      // Pre-calibration / calibration-skipped fallback: broadband amplitude ratio
-      // (rms is amplitude, hence 20·log10) against the scalar noise floor.
-      this.snrDb = 20 * Math.log10(Math.max(rms, 1e-6) / Math.max(this.noiseFloor, 1e-6));
+      // Pre-calibration / calibration-skipped fallback. Measure the SAME voice-band
+      // a-posteriori SNR the calibrated path does, but against a scalar voice-band noise
+      // power learned on pause frames instead of a per-bin profile.
+      //
+      // This used to be a broadband amplitude ratio (rms / noiseFloor), which compared the
+      // whole spectrum — rumble, handling noise, HVAC — against a scalar floor that itself
+      // has a hard 0.01 minimum. Ordinary conversational speech scored ~6-14 dB that way and
+      // so never cleared the 20 dB green threshold, leaving snrConfidence near zero and the
+      // ball grey for the entire session whenever the calibration wizard was skipped.
+      let snrSigPow = 0;
+      for (let i = 0; i < this.frequencyData.length; i++) {
+        const fHz = i * snrBinHz;
+        if (fHz < SNR_LO_HZ) continue;
+        if (fHz > SNR_HI_HZ) break;
+        const signalMag = Math.pow(10, this.frequencyData[i] / 20);
+        snrSigPow += signalMag * signalMag;
+      }
+      if (profileRate > 0 && snrSigPow > 0) {
+        // Pause frame: seed on the first one, then track the room like the per-bin profile does.
+        this.voiceBandNoisePow = this.voiceBandNoisePow > 0
+          ? this.voiceBandNoisePow + (snrSigPow - this.voiceBandNoisePow) * profileRate
+          : snrSigPow;
+      }
+      this.snrDb = this.voiceBandNoisePow > 0
+        // Until a pause has been observed there is no voice-band noise estimate yet, so keep
+        // the old broadband ratio for those first frames rather than inventing a number.
+        ? aPosterioriSnrDb(snrSigPow, this.voiceBandNoisePow)
+        : 20 * Math.log10(Math.max(rms, 1e-6) / Math.max(this.noiseFloor, 1e-6));
     }
+    this.snrDb = Math.max(SNR_DB_FLOOR, Math.min(SNR_DB_CEIL, this.snrDb));
     this.snrDbSmoothed += (this.snrDb - this.snrDbSmoothed) * 0.2;
     this.snrConfidence = snrToConfidence(this.snrDbSmoothed);
     this.snrTier = snrTier(this.snrDbSmoothed);
@@ -1476,8 +1548,9 @@ export class VoiceAnalyzer {
     const hfCeiling = this.hfEnergyWindow.length >= 8
       ? Math.max(this.hfPercentiles.p90, this.hfNoiseFloor + 0.02)
       : Math.max(this.hfNoiseFloor + 0.02, this.hfNoiseFloor * 3.5);
+    // Smoothed toward a *gated* target further down, once this frame's reliability gates
+    // are known — see the articulation update below computeFrameReliability().
     const articTarget = normalizeAgainstPercentiles(hfEnergy, this.hfNoiseFloor, hfCeiling, ARTIC_SENSITIVITY_GAIN);
-    this.metrics.articulation += (articTarget - this.metrics.articulation) * 0.3;
 
     // Energy rise rate (per second) — feeds the Vocal Attack onset-hardness metric.
     const riseRate = Math.max(0, gatedRms - this.prevGatedRms) / Math.max(1e-3, dt);
@@ -1562,7 +1635,12 @@ export class VoiceAnalyzer {
       this.metrics.bounce *= confidenceGate * pitchGate;
     }
 
-    this.metrics.articulation *= Math.max(0.25, voicedGate * 0.8 + confidenceGate * 0.2);
+    // Articulation eases toward the gated target. The gate is applied to the TARGET, not to
+    // the smoothed value: multiplying the EMA state itself each frame compounded, settling at
+    // 0.3·T·g/(1−0.7g) instead of g·T — roughly 40-70% of the intended level even on clean
+    // frames, which quietly drained the prosody score (and with it the ball's saturation).
+    const articGate = Math.max(0.25, voicedGate * 0.8 + confidenceGate * 0.2);
+    this.metrics.articulation += (articTarget * articGate - this.metrics.articulation) * 0.3;
     this.metrics.attack *= Math.max(0.2, voicedGate);
 
     const pitchRange = Math.max(50, this.pitchProfile.max - this.pitchProfile.min);
@@ -4336,13 +4414,12 @@ class VoxBallGame {
       }
 
       // If the wizard was skipped/timed out, don't leave the analyzer in the
-      // pre-calibration state where update() early-returns forever.
+      // pre-calibration state where update() early-returns forever. finalizeNoiseCalibration()
+      // owns this: it averages (or discards) whatever partial per-bin noise profile the
+      // cancelled room-check accumulated, so the session can't start with a profile that is
+      // N frames too loud — which used to pin SNR red and grey the ball for the whole session.
       if (!this.analyzer.isCalibrated) {
-        const fallbackFloor = Math.max(0.008, this.analyzer.noiseFloor || 0.01);
-        this.analyzer.noiseFloor = fallbackFloor;
-        this.analyzer.syllableThreshold = Math.max(this.analyzer.syllableThreshold || 0, fallbackFloor * 1.2);
-        this.analyzer.sustainedThreshold = Math.max(this.analyzer.sustainedThreshold || 0, fallbackFloor * 1.5);
-        this.analyzer.isCalibrated = true;
+        this.analyzer.finalizeNoiseCalibration();
       }
 
       this.scrollX = 0;
@@ -5989,10 +6066,18 @@ class VoxBallGame {
     // "uncertain" rather than as a confident voice change. We smooth snrConfidence again
     // here (it is already smoothed in the analyzer) so the ball eases, never strobes, and
     // we drive saturation + luminance (not hue) so the cue survives colorblind mode.
+    //
+    // This is a TOP-UP, not the whole cue: snrConfidence already multiplies into
+    // confidenceGate (dsp-utils computeFrameReliability), which gates bounce and
+    // articulation — 70% of the prosody score that set ballSat above. A full 0.30..1.0
+    // multiply here applied SNR a third time, so a merely-marginal room (~14 dB) collapsed
+    // the ball to ~29% saturation and read as "you were monotone" rather than "I can't hear
+    // you well". The gentler ramp still desaturates visibly (≈63% → ≈30% across the tiers)
+    // without double-charging the same measurement.
     const snrConf = this.analyzer.metrics.snrConfidence;
     this.trustVividness += (snrConf - this.trustVividness) * Math.min(1, dt * 4); // ~250ms
     const trust = this.trustVividness;
-    this.ballSat *= 0.30 + 0.70 * trust;
+    this.ballSat *= 0.70 + 0.30 * trust;
     this.ballLit *= 0.70 + 0.30 * trust;
     this._lowTrustSecs = this.analyzer.metrics.snrTier === 'red'
       ? Math.min(6, this._lowTrustSecs + dt)

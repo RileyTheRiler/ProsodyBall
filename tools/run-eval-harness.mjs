@@ -185,7 +185,14 @@ const GOLDEN = {
   avgPitch: [95, 113],
   avgF1: [340, 500],
   avgF2: [2000, 2450],
-  avgSnrDb: [7.5, 12.5],
+  // Rebaselined when the uncalibrated fallback stopped measuring SNR as a broadband
+  // rms/noiseFloor amplitude ratio and started measuring voice-band a-posteriori SNR like
+  // the calibrated path. This harness pre-sets isCalibrated with no per-bin noise profile,
+  // so it exercises exactly that fallback. The old [7.5, 12.5] band was the bug: clean
+  // read-aloud speech scored in the red/yellow tier, so snrConfidence sat near zero. The
+  // fixture's pauses are digitally silent, so the true SNR is very high and the measurement
+  // is bounded by SNR_DB_CEIL on speech frames.
+  avgSnrDb: [24, 34],
   avgResonance: [0.2, 0.45],
 };
 
