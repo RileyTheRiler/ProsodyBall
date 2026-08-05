@@ -4903,6 +4903,14 @@
           <label for="autoGainToggle">Auto gain control</label>
           <label class="toggle-switch"><input id="autoGainToggle" type="checkbox" aria-label="Toggle auto gain control"><span class="toggle-slider"></span></label>
         </div>
+        <div class="settings-row">
+          <label for="speechGateToggle">Measure voice only</label>
+          <label class="toggle-switch"><input id="speechGateToggle" type="checkbox" aria-label="Toggle voice-only measurement"><span class="toggle-slider"></span></label>
+        </div>
+        <p class="settings-hint" style="margin:4px 0">
+          Ignores fans, hum, traffic and clatter so only your voice moves the meters.
+          Sustained vowels still count. Turn off if it ever stops responding to you.
+        </p>
       </div>
 
       <div id="phoneMicPanel" class="settings-group" style="display:none" aria-live="polite">

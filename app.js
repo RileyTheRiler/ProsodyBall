@@ -1,5 +1,6 @@
 import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake } from './dsp-utils.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
+import { SpeechGate } from './speech-gate.js';
 import { PRACTICE_PHRASES, scorePhraseTake, buildContourSeries } from './phrase-coach.js';
 import { buildPhraseSpeechSummary } from './speech-feedback.js';
 import { PerformanceMonitor } from './performance-monitor.js';
@@ -283,6 +284,14 @@ export class VoiceAnalyzer {
     };
     this.pitchZoneLabel = 'Ambiguous';
     this.frameConfidence = 0; // overall frame confidence for game-level gating
+
+    // Optional speech-only gate (see speech-gate.js). Off by default: it is a
+    // second opinion layered on top of the SNR/confidence gate, and a user in a
+    // quiet room gains nothing from it.
+    this.speechGateEnabled = false;
+    this.speechGate = new SpeechGate();
+    this.isSpeechFrame = true;   // permissive when the gate is off
+    this.speechLikelihood = 1;
     this.wasLastFrameReliable = false;
     this.noiseSpectralProfile = null;
   }
@@ -1040,7 +1049,12 @@ export class VoiceAnalyzer {
         this.smoothPitchHz += (pitch - this.smoothPitchHz) * lerpRate;
 
         // --- ADAPTIVE PITCH RANGE LEARNING ---
-        if (!this.pitchProfile.isLearned) {
+        // Gated on the speech decision: this range is fixed once and then used
+        // all session, so a fan tone captured here mis-scales the pitch meter
+        // permanently. `isSpeechFrame` is one frame stale at this point (the
+        // gate needs the subtracted spectrum, computed further down), which is
+        // immaterial against the gate's 8-frame hangover.
+        if (!this.pitchProfile.isLearned && this.isSpeechFrame) {
           this.pitchProfile.samples.push(pitch);
           this.pitchProfile.voicedTime += dt;
           if (this.pitchProfile.voicedTime >= this.pitchProfile.learningDuration || this.pitchProfile.samples.length > 200) {
@@ -1147,6 +1161,27 @@ export class VoiceAnalyzer {
     this.snrTier = snrTier(this.snrDbSmoothed);
     this.metrics.snrDb = this.snrDbSmoothed;
     this.metrics.snrConfidence = this.snrConfidence;
+
+    // --- Optional speech-only gate ---
+    // Evaluated here because this is the first point where frequencyData holds
+    // the noise-subtracted spectrum. The SNR gate above answers "is this signal
+    // clean?"; this one answers the different question "is this a voice at all?"
+    // — which is what rejects a loud fan or a fridge hum rather than merely
+    // distrusting them.
+    if (this.speechGateEnabled) {
+      const { isSpeech, likelihood } = this.speechGate.update({
+        magnitudesDb: this.frequencyData,
+        binHz: snrBinHz,
+        pitchHz: pitch,
+        harmonicity: this.pitchConfidence,
+      });
+      this.isSpeechFrame = isSpeech;
+      this.speechLikelihood = likelihood;
+    } else {
+      this.isSpeechFrame = true;
+      this.speechLikelihood = 1;
+    }
+    this.metrics.speechLikelihood = this.speechLikelihood;
     this.metrics.snrTier = this.snrTier;
     const fData = this.frequencyData;
 
@@ -1624,7 +1659,7 @@ export class VoiceAnalyzer {
 
     const voicedStrength = normalizeAgainstPercentiles(gatedRms, this.energyPercentiles.p50, this.energyPercentiles.p90, 1);
     const pitchGate = pitch > 0 ? 1 : 0.35;
-    const { confidenceGate, voicedGate, reliableFrame } = computeFrameReliability({
+    const reliability = computeFrameReliability({
       pitchConfidence: this.pitchConfidence,
       formantConfidence: this.formantConfidence,
       voicedStrength,
@@ -1632,6 +1667,12 @@ export class VoiceAnalyzer {
       snrConfidence: this.snrConfidence,
       wasLastFrameReliable: this.wasLastFrameReliable
     });
+    const { voicedGate } = reliability;
+    // A frame the speech gate rejected is not merely low-confidence, it is the
+    // wrong kind of sound — so it is forced unreliable outright rather than
+    // being blended in at reduced weight.
+    const reliableFrame = reliability.reliableFrame && this.isSpeechFrame;
+    const confidenceGate = this.isSpeechFrame ? reliability.confidenceGate : 0;
     this.wasLastFrameReliable = reliableFrame;
 
     // Stricter confidence gating
@@ -1693,8 +1734,11 @@ export class VoiceAnalyzer {
     }
     this.metrics.weight = this.weightSmoothed;
 
-    // Expose overall frame confidence so the game loop can gate the prosody score
-    this.frameConfidence = reliableFrame ? confidenceGate : 0.15;
+    // Expose overall frame confidence so the game loop can gate the prosody score.
+    // The 0.15 floor keeps the ball responsive through ordinary unreliable frames;
+    // a gate-rejected frame gets 0 instead, because that floor is what would let a
+    // running fan keep nudging the meters all session.
+    this.frameConfidence = reliableFrame ? confidenceGate : (this.isSpeechFrame ? 0.15 : 0);
   }
 
   // Fix the personal resonance span from the collected held-vowel samples. Each axis uses a
@@ -2327,6 +2371,8 @@ class VoxBallGame {
     this.dafDelayMs = parseInt(localStorage.getItem('vox:daf:delayMs') || '75');
     // Default OFF so DAF plays back the full raw voice band instead of cutting bass.
     this.dafBassFilter = localStorage.getItem('vox:daf:bassFilter') === 'true';
+    // Optional voice-only measurement gate; see speech-gate.js. Default off.
+    this.speechGateEnabled = localStorage.getItem('vox:speechGate') === 'true';
     // '' means system default. Only honoured where setSinkId exists.
     this.dafOutputDeviceId = localStorage.getItem('vox:daf:outputDeviceId') || '';
     // Native Web Audio delay line; see daf-engine.js for why it is not a JS buffer loop.
@@ -3995,6 +4041,7 @@ class VoxBallGame {
     const echoCancelToggle = document.getElementById('echoCancelToggle');
     const noiseSuppressToggle = document.getElementById('noiseSuppressToggle');
     const autoGainToggle = document.getElementById('autoGainToggle');
+    const speechGateToggle = document.getElementById('speechGateToggle');
     const pitchProfileLearned = document.getElementById('pitchProfileLearned');
     const tiltProfileLearned = document.getElementById('tiltProfileLearned');
     const resonanceProfileLearned = document.getElementById('resonanceProfileLearned');
@@ -4101,6 +4148,7 @@ class VoxBallGame {
       if (echoCancelToggle) echoCancelToggle.checked = this.micInputPreferences.echoCancellation;
       if (noiseSuppressToggle) noiseSuppressToggle.checked = this.micInputPreferences.noiseSuppression;
       if (autoGainToggle) autoGainToggle.checked = this.micInputPreferences.autoGainControl;
+      if (speechGateToggle) speechGateToggle.checked = this.speechGateEnabled;
       if (micDeviceSelect) micDeviceSelect.value = this.micInputPreferences.deviceId || 'default';
       const phoneMicPanel = document.getElementById('phoneMicPanel');
       if (phoneMicPanel) phoneMicPanel.style.display = this.micInputPreferences.deviceId === 'phone-mic' ? '' : 'none';
@@ -4614,6 +4662,10 @@ class VoxBallGame {
       startBtn.classList.add('active');
       recBtn.classList.add('visible');
       this.isRunning = true;
+      // Push the speech-gate preference onto the freshly built analyzer, and
+      // clear any gate state left over from the previous session.
+      this.analyzer.speechGateEnabled = this.speechGateEnabled;
+      this.analyzer.speechGate.reset();
       this.wakeLock.request();
       if (this.dafEnabled) this.startDAF();
       this.lastTime = performance.now();
@@ -4877,6 +4929,17 @@ class VoxBallGame {
     autoGainToggle?.addEventListener('change', (e) => {
       this.micInputPreferences.autoGainControl = !!e.target.checked;
       localStorage.setItem('vox:autoGainControl', String(this.micInputPreferences.autoGainControl));
+    });
+
+    speechGateToggle?.addEventListener('change', (e) => {
+      this.speechGateEnabled = !!e.target.checked;
+      localStorage.setItem('vox:speechGate', String(this.speechGateEnabled));
+      // Applies live — no restart needed. Reset so a stale open/closed state
+      // from earlier in the session doesn't carry over.
+      if (this.analyzer) {
+        this.analyzer.speechGateEnabled = this.speechGateEnabled;
+        this.analyzer.speechGate.reset();
+      }
     });
 
     // Tap-to-advance for the teleprompter (mobile tap + desktop click)
