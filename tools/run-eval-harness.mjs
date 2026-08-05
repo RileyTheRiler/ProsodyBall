@@ -122,6 +122,14 @@ export async function runEval({ verbose = false } = {}) {
   // selectResonanceMethod's unit tests.
   analyzer.resonanceMethod = 'harmonic';
 
+  // Run the optional speech gate alongside the normal pipeline so its behaviour
+  // on real speech is measured, not assumed. It does not affect the other stats:
+  // the gate only ever forces frames unreliable, and on this fixture it stays
+  // open, so the golden ranges below are the same either way. Enabling it here
+  // is what pins the "does not reject the user's own voice" property.
+  analyzer.speechGateEnabled = true;
+  analyzer.speechGate.reset();
+
   const chunkSize = 4096;
   const dt = chunkSize / sampleRate;
   const voicedPitch = [], f1s = [], f2s = [], snrDbs = [], resonances = [];
@@ -131,16 +139,19 @@ export async function runEval({ verbose = false } = {}) {
   // number: lower jitter == the live estimate chasing onsets/glides less.
   let prevF1 = 0, prevF2 = 0, prevWasFormant = false;
   let jitF1Sum = 0, jitF2Sum = 0, jitN = 0;
+  let gateOpenFrames = 0, voicedFramesGated = 0;
 
   for (let i = 0; i + chunkSize <= audioData.length; i += chunkSize) {
     analyzer.audioCtx._currentChunk = audioData.subarray(i, i + chunkSize);
     analyzer.update(dt);
     frames++;
     snrDbs.push(analyzer.snrDbSmoothed);
+    if (analyzer.isSpeechFrame) gateOpenFrames++;
     if (analyzer.pitchConfidence > 0.5 && analyzer.lastPitch > 50) {
       voicedFrames++;
       voicedPitch.push(analyzer.lastPitch);
       resonances.push(analyzer.smoothResonance);
+      if (!analyzer.isSpeechFrame) voicedFramesGated++;
     }
     const isFormant = analyzer.formantConfidence > 0.4 && analyzer.smoothF1 > 0 && analyzer.smoothF2 > 0;
     if (isFormant) {
@@ -168,6 +179,8 @@ export async function runEval({ verbose = false } = {}) {
     avgResonance: +mean(resonances).toFixed(3),
     jitterF1: +(jitN ? jitF1Sum / jitN : 0).toFixed(1),
     jitterF2: +(jitN ? jitF2Sum / jitN : 0).toFixed(1),
+    gateOpenFrames,
+    voicedFramesGated,
   };
   if (verbose) console.log(JSON.stringify(stats, null, 2));
   return stats;
@@ -194,6 +207,18 @@ const GOLDEN = {
   // is bounded by SNR_DB_CEIL on speech frames.
   avgSnrDb: [24, 34],
   avgResonance: [0.2, 0.45],
+  // Speech gate on real speech. The failure that matters is the gate silencing
+  // the user's own voice, so this is the tripwire for it.
+  //
+  // An earlier revision required spectral energy above 1 kHz to reject a tonal
+  // hum. It scored well on synthetic vowels and threw away 4 of this fixture's
+  // 31 voiced frames, because a ~104 Hz voice often has nothing measurable up
+  // there. Synthetic spectra could not have caught that; this range does.
+  //
+  // The one frame allowed through is the gate's 2-frame attack delay at the very
+  // start of the file, not a rejection of speech.
+  gateOpenFrames: [50, 54],
+  voicedFramesGated: [0, 1],
 };
 
 export function checkGolden(stats) {

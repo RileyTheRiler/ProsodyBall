@@ -1,5 +1,6 @@
 import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake } from './dsp-utils.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
+import { SpeechGate } from './speech-gate.js';
 import { PRACTICE_PHRASES, scorePhraseTake, buildContourSeries } from './phrase-coach.js';
 import { buildPhraseSpeechSummary } from './speech-feedback.js';
 import { PerformanceMonitor } from './performance-monitor.js';
@@ -15,7 +16,14 @@ import {
 import { ModalFocusManager } from './ui-dialog-manager.js';
 import { exportPortableSettings, importPortableSettings, resetPortableSettings } from './settings-transfer.js';
 import { SessionWakeLock, registerPwa } from './pwa.js';
-import { DafEngine } from './daf-engine.js';
+import {
+  DafEngine,
+  outputLatencyMs,
+  describeEffectiveDelay,
+  supportsOutputSelection,
+  browserSupportsOutputSelection,
+  diagnoseSilentOutput,
+} from './daf-engine.js';
 
 function escapeHtml(text) {
   if (!text) return text;
@@ -276,6 +284,14 @@ export class VoiceAnalyzer {
     };
     this.pitchZoneLabel = 'Ambiguous';
     this.frameConfidence = 0; // overall frame confidence for game-level gating
+
+    // Optional speech-only gate (see speech-gate.js). Off by default: it is a
+    // second opinion layered on top of the SNR/confidence gate, and a user in a
+    // quiet room gains nothing from it.
+    this.speechGateEnabled = false;
+    this.speechGate = new SpeechGate();
+    this.isSpeechFrame = true;   // permissive when the gate is off
+    this.speechLikelihood = 1;
     this.wasLastFrameReliable = false;
     this.noiseSpectralProfile = null;
   }
@@ -1033,7 +1049,12 @@ export class VoiceAnalyzer {
         this.smoothPitchHz += (pitch - this.smoothPitchHz) * lerpRate;
 
         // --- ADAPTIVE PITCH RANGE LEARNING ---
-        if (!this.pitchProfile.isLearned) {
+        // Gated on the speech decision: this range is fixed once and then used
+        // all session, so a fan tone captured here mis-scales the pitch meter
+        // permanently. `isSpeechFrame` is one frame stale at this point (the
+        // gate needs the subtracted spectrum, computed further down), which is
+        // immaterial against the gate's 8-frame hangover.
+        if (!this.pitchProfile.isLearned && this.isSpeechFrame) {
           this.pitchProfile.samples.push(pitch);
           this.pitchProfile.voicedTime += dt;
           if (this.pitchProfile.voicedTime >= this.pitchProfile.learningDuration || this.pitchProfile.samples.length > 200) {
@@ -1140,6 +1161,27 @@ export class VoiceAnalyzer {
     this.snrTier = snrTier(this.snrDbSmoothed);
     this.metrics.snrDb = this.snrDbSmoothed;
     this.metrics.snrConfidence = this.snrConfidence;
+
+    // --- Optional speech-only gate ---
+    // Evaluated here because this is the first point where frequencyData holds
+    // the noise-subtracted spectrum. The SNR gate above answers "is this signal
+    // clean?"; this one answers the different question "is this a voice at all?"
+    // — which is what rejects a loud fan or a fridge hum rather than merely
+    // distrusting them.
+    if (this.speechGateEnabled) {
+      const { isSpeech, likelihood } = this.speechGate.update({
+        magnitudesDb: this.frequencyData,
+        binHz: snrBinHz,
+        pitchHz: pitch,
+        harmonicity: this.pitchConfidence,
+      });
+      this.isSpeechFrame = isSpeech;
+      this.speechLikelihood = likelihood;
+    } else {
+      this.isSpeechFrame = true;
+      this.speechLikelihood = 1;
+    }
+    this.metrics.speechLikelihood = this.speechLikelihood;
     this.metrics.snrTier = this.snrTier;
     const fData = this.frequencyData;
 
@@ -1617,7 +1659,7 @@ export class VoiceAnalyzer {
 
     const voicedStrength = normalizeAgainstPercentiles(gatedRms, this.energyPercentiles.p50, this.energyPercentiles.p90, 1);
     const pitchGate = pitch > 0 ? 1 : 0.35;
-    const { confidenceGate, voicedGate, reliableFrame } = computeFrameReliability({
+    const reliability = computeFrameReliability({
       pitchConfidence: this.pitchConfidence,
       formantConfidence: this.formantConfidence,
       voicedStrength,
@@ -1625,6 +1667,12 @@ export class VoiceAnalyzer {
       snrConfidence: this.snrConfidence,
       wasLastFrameReliable: this.wasLastFrameReliable
     });
+    const { voicedGate } = reliability;
+    // A frame the speech gate rejected is not merely low-confidence, it is the
+    // wrong kind of sound — so it is forced unreliable outright rather than
+    // being blended in at reduced weight.
+    const reliableFrame = reliability.reliableFrame && this.isSpeechFrame;
+    const confidenceGate = this.isSpeechFrame ? reliability.confidenceGate : 0;
     this.wasLastFrameReliable = reliableFrame;
 
     // Stricter confidence gating
@@ -1686,8 +1734,11 @@ export class VoiceAnalyzer {
     }
     this.metrics.weight = this.weightSmoothed;
 
-    // Expose overall frame confidence so the game loop can gate the prosody score
-    this.frameConfidence = reliableFrame ? confidenceGate : 0.15;
+    // Expose overall frame confidence so the game loop can gate the prosody score.
+    // The 0.15 floor keeps the ball responsive through ordinary unreliable frames;
+    // a gate-rejected frame gets 0 instead, because that floor is what would let a
+    // running fan keep nudging the meters all session.
+    this.frameConfidence = reliableFrame ? confidenceGate : (this.isSpeechFrame ? 0.15 : 0);
   }
 
   // Fix the personal resonance span from the collected held-vowel samples. Each axis uses a
@@ -2320,6 +2371,10 @@ class VoxBallGame {
     this.dafDelayMs = parseInt(localStorage.getItem('vox:daf:delayMs') || '75');
     // Default OFF so DAF plays back the full raw voice band instead of cutting bass.
     this.dafBassFilter = localStorage.getItem('vox:daf:bassFilter') === 'true';
+    // Optional voice-only measurement gate; see speech-gate.js. Default off.
+    this.speechGateEnabled = localStorage.getItem('vox:speechGate') === 'true';
+    // '' means system default. Only honoured where setSinkId exists.
+    this.dafOutputDeviceId = localStorage.getItem('vox:daf:outputDeviceId') || '';
     // Native Web Audio delay line; see daf-engine.js for why it is not a JS buffer loop.
     this.daf = new DafEngine({ delayMs: this.dafDelayMs, bassFilter: this.dafBassFilter });
     this.smoothGenderScore = 0.5; // EMA of the 0..1 perceived-gender score (0.5 = androgynous)
@@ -3036,7 +3091,12 @@ class VoxBallGame {
   // buffer loop. These wrappers just bind it to the analyzer's live graph.
   startDAF() {
     const a = this.analyzer;
-    this.daf.start(a?.audioCtx, a?.source);
+    const started = this.daf.start(a?.audioCtx, a?.source);
+    // Reapply the saved sink: a fresh context always comes up on the system
+    // default, so without this the choice silently reverts every session.
+    if (started && this.dafOutputDeviceId) {
+      this.daf.setOutputDevice(this.dafOutputDeviceId).catch(() => {});
+    }
   }
 
   stopDAF() {
@@ -3046,6 +3106,115 @@ class VoxBallGame {
   /** True while the DAF delay line is live in the audio graph. */
   get dafActive() {
     return this.daf.active;
+  }
+
+  /**
+   * Refresh the "what you actually hear" line under the delay slider.
+   *
+   * The slider sets the DelayNode, but a Bluetooth sink buffers 150-250ms on
+   * top of it, which is what makes DAF feel broken on wireless headphones —
+   * the delay is real, it is just far past the window where it does anything.
+   * `outputLatency` is the only part of that we can measure, so show it rather
+   * than let the slider imply a number it does not deliver.
+   */
+  _updateDafLatencyReadout() {
+    const el = document.getElementById('dafLatencyReadout');
+    if (!el) return;
+
+    if (!this.dafEnabled) {
+      el.textContent = '';
+      el.className = 'daf-latency';
+      return;
+    }
+
+    // Only meaningful against a live context — a closed/absent one reports
+    // nothing useful, and guessing there would be worse than saying nothing.
+    const ctx = this.analyzer?.audioCtx;
+    if (!ctx || ctx.state === 'closed') {
+      el.textContent = 'Start a session to see the delay you actually hear.';
+      el.className = 'daf-latency';
+      return;
+    }
+
+    const { status, text } = describeEffectiveDelay(this.dafDelayMs, outputLatencyMs(ctx));
+    el.textContent = text;
+    el.className = `daf-latency is-${status}`;
+  }
+
+  /**
+   * Fill the DAF output picker and explain what to do when nothing is audible.
+   *
+   * Output selection is far less available than input selection: Android Chrome
+   * enumerates no audiooutput devices at all, and Safari exposes none either.
+   * An empty list is the normal case on a phone, not an error, so the hint has
+   * to carry the explanation instead of the dropdown.
+   */
+  async _refreshDafOutputs() {
+    const select = document.getElementById('dafOutputSelect');
+    const hint = document.getElementById('dafOutputHint');
+    if (!select || !hint) return;
+
+    // Fall back to the prototype probe: the panel opens before any session, and
+    // asking a null context would wrongly report the browser as incapable.
+    const ctx = this.analyzer?.audioCtx;
+    const canSelectSink = ctx ? supportsOutputSelection(ctx) : browserSupportsOutputSelection();
+
+    let outputs = [];
+    if (canSelectSink && navigator.mediaDevices?.enumerateDevices) {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        outputs = devices.filter((d) => d.kind === 'audiooutput');
+      } catch (e) {
+        outputs = [];
+      }
+    }
+
+    select.textContent = '';
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = 'System Default';
+    select.appendChild(defaultOption);
+    outputs.forEach((out, idx) => {
+      const option = document.createElement('option');
+      option.value = out.deviceId;
+      option.textContent = out.label || `Output ${idx + 1}`;
+      select.appendChild(option);
+    });
+    select.value = this.dafOutputDeviceId || '';
+    select.disabled = !canSelectSink || outputs.length === 0;
+
+    hint.textContent = diagnoseSilentOutput({
+      canSelectSink,
+      outputDeviceCount: outputs.length,
+      echoCancellation: this.micInputPreferences?.echoCancellation,
+    }).text;
+  }
+
+  /**
+   * Poll the readout while the DAF panel is open — headphones can connect or
+   * drop mid-session, which changes the sink latency under us.
+   *
+   * Self-terminates when the panel closes so the many places that hide the
+   * panel (outside click, Escape, opening another panel, session stop) don't
+   * each need to remember to stop the timer.
+   */
+  _startDafLatencyWatch() {
+    this._stopDafLatencyWatch();
+    this._updateDafLatencyReadout();
+    this._dafLatencyTimer = setInterval(() => {
+      if (!document.getElementById('dafPanel')?.classList.contains('show')) {
+        this._stopDafLatencyWatch();
+        return;
+      }
+      this._updateDafLatencyReadout();
+    }, 1500);
+  }
+
+  _stopDafLatencyWatch() {
+    if (this._dafLatencyTimer) {
+      clearInterval(this._dafLatencyTimer);
+      this._dafLatencyTimer = null;
+    }
   }
 
   _encodeWAV(samples, sampleRate) {
@@ -3872,6 +4041,7 @@ class VoxBallGame {
     const echoCancelToggle = document.getElementById('echoCancelToggle');
     const noiseSuppressToggle = document.getElementById('noiseSuppressToggle');
     const autoGainToggle = document.getElementById('autoGainToggle');
+    const speechGateToggle = document.getElementById('speechGateToggle');
     const pitchProfileLearned = document.getElementById('pitchProfileLearned');
     const tiltProfileLearned = document.getElementById('tiltProfileLearned');
     const resonanceProfileLearned = document.getElementById('resonanceProfileLearned');
@@ -3978,6 +4148,7 @@ class VoxBallGame {
       if (echoCancelToggle) echoCancelToggle.checked = this.micInputPreferences.echoCancellation;
       if (noiseSuppressToggle) noiseSuppressToggle.checked = this.micInputPreferences.noiseSuppression;
       if (autoGainToggle) autoGainToggle.checked = this.micInputPreferences.autoGainControl;
+      if (speechGateToggle) speechGateToggle.checked = this.speechGateEnabled;
       if (micDeviceSelect) micDeviceSelect.value = this.micInputPreferences.deviceId || 'default';
       const phoneMicPanel = document.getElementById('phoneMicPanel');
       if (phoneMicPanel) phoneMicPanel.style.display = this.micInputPreferences.deviceId === 'phone-mic' ? '' : 'none';
@@ -4491,6 +4662,10 @@ class VoxBallGame {
       startBtn.classList.add('active');
       recBtn.classList.add('visible');
       this.isRunning = true;
+      // Push the speech-gate preference onto the freshly built analyzer, and
+      // clear any gate state left over from the previous session.
+      this.analyzer.speechGateEnabled = this.speechGateEnabled;
+      this.analyzer.speechGate.reset();
       this.wakeLock.request();
       if (this.dafEnabled) this.startDAF();
       this.lastTime = performance.now();
@@ -4754,6 +4929,17 @@ class VoxBallGame {
     autoGainToggle?.addEventListener('change', (e) => {
       this.micInputPreferences.autoGainControl = !!e.target.checked;
       localStorage.setItem('vox:autoGainControl', String(this.micInputPreferences.autoGainControl));
+    });
+
+    speechGateToggle?.addEventListener('change', (e) => {
+      this.speechGateEnabled = !!e.target.checked;
+      localStorage.setItem('vox:speechGate', String(this.speechGateEnabled));
+      // Applies live — no restart needed. Reset so a stale open/closed state
+      // from earlier in the session doesn't carry over.
+      if (this.analyzer) {
+        this.analyzer.speechGateEnabled = this.speechGateEnabled;
+        this.analyzer.speechGate.reset();
+      }
     });
 
     // Tap-to-advance for the teleprompter (mobile tap + desktop click)
@@ -5445,6 +5631,42 @@ class VoxBallGame {
         setSimplePanelVisibility(helpTooltip, helpBtn, false);
         setSimplePanelVisibility(recordingsDrawer, recordingsBtn, false);
         if (settingsPanel?.classList.contains('show')) toggleSettings(false);
+        this._startDafLatencyWatch();
+        this._refreshDafOutputs();
+      } else {
+        this._stopDafLatencyWatch();
+      }
+    });
+
+    document.getElementById('dafOutputSelect')?.addEventListener('change', async (e) => {
+      this.dafOutputDeviceId = e.target.value || '';
+      localStorage.setItem('vox:daf:outputDeviceId', this.dafOutputDeviceId);
+      const hint = document.getElementById('dafOutputHint');
+      const ok = await this.daf.setOutputDevice(this.dafOutputDeviceId);
+      if (hint && !ok) {
+        hint.textContent = 'Could not switch to that output. It may have disconnected.';
+      } else if (hint && ok) {
+        hint.textContent = 'Output switched. Press Test sound to check it.';
+      }
+    });
+
+    document.getElementById('dafTestToneBtn')?.addEventListener('click', () => {
+      const hint = document.getElementById('dafOutputHint');
+      if (!hint) return;
+      if (!this.isRunning) {
+        hint.textContent = 'Start the ball first — the test tone uses the live DAF output.';
+        return;
+      }
+      if (!this.dafEnabled) {
+        hint.textContent = 'Turn DAF on first — the test tone plays through its output.';
+        return;
+      }
+      if (this.daf.playTestTone()) {
+        hint.textContent = 'Playing a beep through the DAF output. Hear it in your headphones? '
+          + 'Then the output is fine and the problem is the mic. Nothing at all? '
+          + 'The audio is not reaching them — see above.';
+      } else {
+        hint.textContent = 'DAF is not running, so there is no output path to test.';
       }
     });
 
@@ -5456,6 +5678,7 @@ class VoxBallGame {
         if (this.dafEnabled) this.startDAF();
         else this.stopDAF();
       }
+      this._updateDafLatencyReadout();
     });
 
     document.getElementById('dafDelaySlider')?.addEventListener('input', (e) => {
@@ -5463,6 +5686,7 @@ class VoxBallGame {
       localStorage.setItem('vox:daf:delayMs', String(this.dafDelayMs));
       document.getElementById('dafDelayLabel').textContent = `${this.dafDelayMs}ms`;
       this.daf.setDelayMs(this.dafDelayMs);
+      this._updateDafLatencyReadout();
     });
 
     document.getElementById('dafBassFilterToggle')?.addEventListener('change', (e) => {

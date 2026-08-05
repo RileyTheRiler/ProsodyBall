@@ -48,6 +48,205 @@ export const DAF_LIMIT_RATIO = 12;
 export const DAF_LIMIT_ATTACK_SEC = 0.003;
 export const DAF_LIMIT_RELEASE_SEC = 0.12;
 
+// ── Effective delay accounting ────────────────────────────────────────────
+//
+// The delay the user *hears* is not the number on the slider. It is:
+//
+//     slider delay  +  output path latency  +  input path latency
+//
+// On a wired sink the last two are a few milliseconds and the slider is a good
+// approximation. Over Bluetooth the output path alone is 100-250 ms, because
+// A2DP buffers heavily to survive a lossy radio link — that buffering is the
+// codec's whole reason for existing and no amount of app-side work removes it.
+// So a 75 ms slider setting over Bluetooth is really ~250 ms in the ear, past
+// the window where DAF does anything useful.
+//
+// Web Audio exposes the output half of that via `AudioContext.outputLatency`,
+// which reports the real sink latency including the device's own buffers. The
+// input half has no equivalent API, so the totals below are a floor, not an
+// exact figure.
+
+/** Output latency at or above this is a wireless sink; wired is single digits. */
+export const DAF_WIRELESS_LATENCY_MS = 40;
+
+/** The band where delayed feedback actually changes speech timing. */
+export const DAF_EFFECTIVE_MIN_MS = 50;
+export const DAF_EFFECTIVE_MAX_MS = 200;
+
+/**
+ * Measured output latency in ms, or null when the browser will not report it.
+ *
+ * Deliberately does NOT fall back to `baseLatency`: that covers only the audio
+ * graph's internal buffering (~10 ms) and is blind to the sink, so reporting it
+ * for a Bluetooth device would confidently state ~10 ms when the truth is 200.
+ * Null means "unknown", which the UI can say honestly.
+ */
+export function outputLatencyMs(audioCtx) {
+  const secs = audioCtx?.outputLatency;
+  if (typeof secs !== 'number' || !Number.isFinite(secs) || secs < 0) return null;
+  return Math.round(secs * 1000);
+}
+
+/**
+ * Describe the delay actually reaching the ear, given the slider setting and a
+ * measured output latency (null when unmeasurable).
+ *
+ * Returns { total, wireless, status, text } where status is one of
+ * 'unknown' | 'short' | 'good' | 'long'.
+ */
+export function describeEffectiveDelay(delayMs, measuredOutputMs) {
+  const set = Math.max(0, Math.round(Number(delayMs) || 0));
+
+  if (measuredOutputMs === null || measuredOutputMs === undefined) {
+    return {
+      total: null,
+      wireless: false,
+      status: 'unknown',
+      text: `Set to ${set} ms. This browser won’t report output latency — on Bluetooth `
+        + `the delay you hear can be 150-250 ms longer than this.`,
+    };
+  }
+
+  const out = Math.max(0, Math.round(measuredOutputMs));
+  const total = set + out;
+  const wireless = out >= DAF_WIRELESS_LATENCY_MS;
+  const path = wireless ? `${out} ms wireless output` : `${out} ms output`;
+
+  if (total > DAF_EFFECTIVE_MAX_MS) {
+    const headroom = DAF_EFFECTIVE_MAX_MS - out;
+    const lead = `You hear about ${total} ms (${set} ms + ${path}).`;
+
+    // The sink alone blows the window — no slider position helps.
+    if (headroom <= 0) {
+      return {
+        total,
+        wireless,
+        status: 'long',
+        text: `${lead} Your headphones alone add ${out} ms, so no delay setting gets under `
+          + `${DAF_EFFECTIVE_MAX_MS} ms. Wired or USB-C headphones are the only fix.`,
+      };
+    }
+
+    // Lowering the slider still lands in range — but if the sink is already
+    // supplying a full DAF's worth on its own, say that too. "Drag to 16 ms" is
+    // correct and useless-sounding without the reason behind it.
+    const dominated = out >= DAF_EFFECTIVE_MIN_MS;
+    return {
+      total,
+      wireless,
+      status: 'long',
+      text: dominated
+        ? `${lead} Your headphones already supply the whole delay on their own — drag the `
+          + `setting down to ${headroom} ms or less. Wired headphones would give you real `
+          + `control over the amount.`
+        : `${lead} Too long — drag the delay down to about ${headroom} ms or less.`,
+    };
+  }
+
+  if (total < DAF_EFFECTIVE_MIN_MS) {
+    return {
+      total,
+      wireless,
+      status: 'short',
+      text: `You hear about ${total} ms (${set} ms + ${path}) — too short to slow speech. `
+        + `Raise the delay to about ${DAF_EFFECTIVE_MIN_MS - out} ms or more.`,
+    };
+  }
+
+  return {
+    total,
+    wireless,
+    status: 'good',
+    text: `You hear about ${total} ms (${set} ms + ${path}) — in the useful range.`,
+  };
+}
+
+// ── Output routing ────────────────────────────────────────────────────────
+//
+// Why Bluetooth headphones can go completely silent while DAF is running:
+//
+// Holding a live getUserMedia track puts the device's audio into *communication*
+// mode. On Android that means output goes out the VOICE_COMMUNICATION stream,
+// which reaches Bluetooth only over HFP/SCO — the call profile. A2DP, the music
+// profile, does not carry it. iOS does the same thing via the PlayAndRecord
+// audio session category.
+//
+// So headphones that only expose A2DP (plenty of "music" headphones, most BT
+// transmitters, earbuds sitting in music mode) are not a valid destination at
+// all while the mic is open. The audio does not go to them quietly or badly —
+// it does not go to them. It lands on the phone speaker or nowhere.
+//
+// `echoCancellation` makes this much more likely, since AEC all but requires
+// the communication path. That is why it defaults off in this app.
+//
+// What a web page can actually do about it is limited: `setSinkId` where the
+// browser implements it (desktop Chrome/Edge), and otherwise an honest
+// explanation. Android Chrome does not enumerate output devices at all.
+
+/** True when this AudioContext lets a page choose its output device. */
+export function supportsOutputSelection(audioCtx) {
+  return typeof audioCtx?.setSinkId === 'function';
+}
+
+/**
+ * Same capability, probed from the constructor prototype so it answers before
+ * any context exists. The DAF panel can be opened before a session starts, and
+ * asking a null context would report "unsupported" on a browser that supports
+ * it perfectly well.
+ */
+export function browserSupportsOutputSelection(globalObj = globalThis) {
+  const Ctor = globalObj?.AudioContext || globalObj?.webkitAudioContext;
+  return typeof Ctor?.prototype?.setSinkId === 'function';
+}
+
+/**
+ * Explain a silent output and say whether the page can fix it.
+ *
+ * Ordered by how actionable the lead is, not by likelihood: echo cancellation
+ * is the one cause the user can toggle off and immediately retest.
+ */
+export function diagnoseSilentOutput({
+  canSelectSink = false,
+  outputDeviceCount = 0,
+  echoCancellation = false,
+} = {}) {
+  if (echoCancellation) {
+    return {
+      cause: 'echo-cancellation',
+      canFix: true,
+      text: 'Echo cancellation is on. It forces audio into call mode, which Bluetooth '
+        + 'headphones in music mode cannot receive — that alone can silence them. '
+        + 'Turn it off in Settings → Microphone and start again.',
+    };
+  }
+
+  if (canSelectSink && outputDeviceCount > 0) {
+    return {
+      cause: 'sink-selectable',
+      canFix: true,
+      text: 'Pick your headphones in the Output list below. If they are missing there, '
+        + 'the system is not offering them as a playback device.',
+    };
+  }
+
+  if (canSelectSink) {
+    return {
+      cause: 'no-devices-listed',
+      canFix: false,
+      text: 'This browser can choose an output device, but the system is listing none. '
+        + 'Reconnect the headphones, then reopen this panel.',
+    };
+  }
+
+  return {
+    cause: 'no-sink-control',
+    canFix: false,
+    text: 'This browser cannot choose an output device. While the mic is open, audio goes '
+      + 'out the call path, and Bluetooth headphones that only do music (A2DP) get nothing. '
+      + 'Wired or USB-C headphones will work.',
+  };
+}
+
 /** setTargetAtTime reaches ~95% of target after 3 time constants. */
 const timeConstant = (seconds) => seconds / 3;
 
@@ -147,6 +346,55 @@ export class DafEngine {
       return;
     }
     setTimeout(teardown, DAF_FADE_SEC * 1000 * 2);
+  }
+
+  /**
+   * Move playback to a specific output device. Resolves false when the browser
+   * has no setSinkId, so the caller can say so rather than silently no-op.
+   */
+  async setOutputDevice(deviceId) {
+    if (!supportsOutputSelection(this.ctx)) return false;
+    try {
+      // '' is the spec's "system default"; a real id selects that device.
+      await this.ctx.setSinkId(deviceId || '');
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
+   * Play a short tone through the live DAF chain.
+   *
+   * This is the one test that separates the two failure modes: it feeds the
+   * exact same graph the voice takes, so a tone you can hear means the output
+   * path reaches your ears and the problem is upstream at the mic, while
+   * silence means the output is not arriving at the headphones at all.
+   */
+  playTestTone({ freq = 440, durationSec = 0.35, level = 0.25 } = {}) {
+    if (!this.active || !this.ctx) return false;
+
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+
+    // Envelope the tone — a bare oscillator start/stop is a click at both ends,
+    // which is exactly what the rest of this file exists to avoid.
+    const env = ctx.createGain();
+    env.gain.value = 0;
+    env.gain.setTargetAtTime(level, now, timeConstant(0.02));
+    env.gain.setTargetAtTime(0, now + durationSec, timeConstant(0.03));
+
+    osc.connect(env);
+    env.connect(this.input);
+    osc.start(now);
+    osc.stop(now + durationSec + 0.2);
+    osc.onended = () => {
+      try { osc.disconnect(); env.disconnect(); } catch (e) { /* context gone */ }
+    };
+    return true;
   }
 
   /** Glide to a new delay time — a step change in delayTime clicks. */
