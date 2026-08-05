@@ -1,5 +1,32 @@
 import * as DSP_CONST from './dsp-constants.generated.js';
 
+export function sanitizeUrl(url) {
+  try {
+    const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+    // Test if the URL is inherently invalid or has no explicit protocol
+    // by attempting to parse it without a base first.
+    let isRelative = false;
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      isRelative = true;
+      parsed = new URL(url, base);
+    }
+
+    const safeProtocols = ['http:', 'https:', 'mailto:', 'tel:', 'file:', 'blob:'];
+    if (safeProtocols.includes(parsed.protocol)) {
+      // If it parsed as relative, ensure the string doesn't start with suspicious characters
+      // masquerading as a protocol-relative or invalid protocol
+      if (isRelative && url.trim().startsWith('://')) return 'about:blank';
+      return url;
+    }
+    return 'about:blank';
+  } catch (e) {
+    return 'about:blank';
+  }
+}
+
 export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
