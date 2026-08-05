@@ -800,6 +800,16 @@
     }
 
     .daf-latency:empty { display: none; }
+
+    .daf-output-block {
+      margin-bottom: 12px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
     .daf-latency.is-good { color: #6ee7b7; }
     .daf-latency.is-long { color: #fca5a5; }
     .daf-latency.is-short { color: #fcd34d; }
@@ -5150,6 +5160,14 @@
             <span>0ms</span><span>200ms</span>
           </div>
           <div id="dafLatencyReadout" class="daf-latency" role="status" aria-live="polite"></div>
+        </div>
+
+        <div class="daf-output-block">
+          <label for="dafOutputSelect" style="color:var(--text-primary);font-size:0.88rem;font-weight:600">Output</label>
+          <select id="dafOutputSelect" class="theme-select btn-fill" aria-label="DAF playback output device"></select>
+          <button class="btn btn-help" id="dafTestToneBtn" type="button"
+            aria-label="Play a test tone through the DAF output">🔊 Test sound</button>
+          <div id="dafOutputHint" class="daf-latency" role="status" aria-live="polite"></div>
         </div>
         <div class="settings-row">
           <label for="dafBassFilterToggle" style="font-size:0.88rem">Cut bass below 150 Hz</label>

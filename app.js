@@ -15,7 +15,14 @@ import {
 import { ModalFocusManager } from './ui-dialog-manager.js';
 import { exportPortableSettings, importPortableSettings, resetPortableSettings } from './settings-transfer.js';
 import { SessionWakeLock, registerPwa } from './pwa.js';
-import { DafEngine, outputLatencyMs, describeEffectiveDelay } from './daf-engine.js';
+import {
+  DafEngine,
+  outputLatencyMs,
+  describeEffectiveDelay,
+  supportsOutputSelection,
+  browserSupportsOutputSelection,
+  diagnoseSilentOutput,
+} from './daf-engine.js';
 
 function escapeHtml(text) {
   if (!text) return text;
@@ -2320,6 +2327,8 @@ class VoxBallGame {
     this.dafDelayMs = parseInt(localStorage.getItem('vox:daf:delayMs') || '75');
     // Default OFF so DAF plays back the full raw voice band instead of cutting bass.
     this.dafBassFilter = localStorage.getItem('vox:daf:bassFilter') === 'true';
+    // '' means system default. Only honoured where setSinkId exists.
+    this.dafOutputDeviceId = localStorage.getItem('vox:daf:outputDeviceId') || '';
     // Native Web Audio delay line; see daf-engine.js for why it is not a JS buffer loop.
     this.daf = new DafEngine({ delayMs: this.dafDelayMs, bassFilter: this.dafBassFilter });
     this.smoothGenderScore = 0.5; // EMA of the 0..1 perceived-gender score (0.5 = androgynous)
@@ -3036,7 +3045,12 @@ class VoxBallGame {
   // buffer loop. These wrappers just bind it to the analyzer's live graph.
   startDAF() {
     const a = this.analyzer;
-    this.daf.start(a?.audioCtx, a?.source);
+    const started = this.daf.start(a?.audioCtx, a?.source);
+    // Reapply the saved sink: a fresh context always comes up on the system
+    // default, so without this the choice silently reverts every session.
+    if (started && this.dafOutputDeviceId) {
+      this.daf.setOutputDevice(this.dafOutputDeviceId).catch(() => {});
+    }
   }
 
   stopDAF() {
@@ -3079,6 +3093,55 @@ class VoxBallGame {
     const { status, text } = describeEffectiveDelay(this.dafDelayMs, outputLatencyMs(ctx));
     el.textContent = text;
     el.className = `daf-latency is-${status}`;
+  }
+
+  /**
+   * Fill the DAF output picker and explain what to do when nothing is audible.
+   *
+   * Output selection is far less available than input selection: Android Chrome
+   * enumerates no audiooutput devices at all, and Safari exposes none either.
+   * An empty list is the normal case on a phone, not an error, so the hint has
+   * to carry the explanation instead of the dropdown.
+   */
+  async _refreshDafOutputs() {
+    const select = document.getElementById('dafOutputSelect');
+    const hint = document.getElementById('dafOutputHint');
+    if (!select || !hint) return;
+
+    // Fall back to the prototype probe: the panel opens before any session, and
+    // asking a null context would wrongly report the browser as incapable.
+    const ctx = this.analyzer?.audioCtx;
+    const canSelectSink = ctx ? supportsOutputSelection(ctx) : browserSupportsOutputSelection();
+
+    let outputs = [];
+    if (canSelectSink && navigator.mediaDevices?.enumerateDevices) {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        outputs = devices.filter((d) => d.kind === 'audiooutput');
+      } catch (e) {
+        outputs = [];
+      }
+    }
+
+    select.textContent = '';
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = 'System Default';
+    select.appendChild(defaultOption);
+    outputs.forEach((out, idx) => {
+      const option = document.createElement('option');
+      option.value = out.deviceId;
+      option.textContent = out.label || `Output ${idx + 1}`;
+      select.appendChild(option);
+    });
+    select.value = this.dafOutputDeviceId || '';
+    select.disabled = !canSelectSink || outputs.length === 0;
+
+    hint.textContent = diagnoseSilentOutput({
+      canSelectSink,
+      outputDeviceCount: outputs.length,
+      echoCancellation: this.micInputPreferences?.echoCancellation,
+    }).text;
   }
 
   /**
@@ -5506,8 +5569,41 @@ class VoxBallGame {
         setSimplePanelVisibility(recordingsDrawer, recordingsBtn, false);
         if (settingsPanel?.classList.contains('show')) toggleSettings(false);
         this._startDafLatencyWatch();
+        this._refreshDafOutputs();
       } else {
         this._stopDafLatencyWatch();
+      }
+    });
+
+    document.getElementById('dafOutputSelect')?.addEventListener('change', async (e) => {
+      this.dafOutputDeviceId = e.target.value || '';
+      localStorage.setItem('vox:daf:outputDeviceId', this.dafOutputDeviceId);
+      const hint = document.getElementById('dafOutputHint');
+      const ok = await this.daf.setOutputDevice(this.dafOutputDeviceId);
+      if (hint && !ok) {
+        hint.textContent = 'Could not switch to that output. It may have disconnected.';
+      } else if (hint && ok) {
+        hint.textContent = 'Output switched. Press Test sound to check it.';
+      }
+    });
+
+    document.getElementById('dafTestToneBtn')?.addEventListener('click', () => {
+      const hint = document.getElementById('dafOutputHint');
+      if (!hint) return;
+      if (!this.isRunning) {
+        hint.textContent = 'Start the ball first — the test tone uses the live DAF output.';
+        return;
+      }
+      if (!this.dafEnabled) {
+        hint.textContent = 'Turn DAF on first — the test tone plays through its output.';
+        return;
+      }
+      if (this.daf.playTestTone()) {
+        hint.textContent = 'Playing a beep through the DAF output. Hear it in your headphones? '
+          + 'Then the output is fine and the problem is the mic. Nothing at all? '
+          + 'The audio is not reaching them — see above.';
+      } else {
+        hint.textContent = 'DAF is not running, so there is no output path to test.';
       }
     });
 

@@ -5,6 +5,9 @@ import {
   clampDelaySeconds,
   outputLatencyMs,
   describeEffectiveDelay,
+  supportsOutputSelection,
+  browserSupportsOutputSelection,
+  diagnoseSilentOutput,
   DAF_MAX_DELAY_SEC,
   DAF_OUTPUT_GAIN,
   DAF_FILTER_ON_HZ,
@@ -63,6 +66,16 @@ class FakeCtx {
     const n = new FakeNode('biquad');
     n.type = 'lowpass';
     n.frequency = new FakeParam(350);
+    return this._track(n);
+  }
+  createOscillator() {
+    const n = new FakeNode('oscillator');
+    n.type = 'sine';
+    n.frequency = new FakeParam(440);
+    n.started = null;
+    n.stopped = null;
+    n.start = (t) => { n.started = t; };
+    n.stop = (t) => { n.stopped = t; };
     return this._track(n);
   }
   createDynamicsCompressor() {
@@ -171,6 +184,131 @@ test('describeEffectiveDelay tolerates junk slider values', () => {
   assert.equal(describeEffectiveDelay(undefined, 10).total, 10);
   assert.equal(describeEffectiveDelay(-40, 10).total, 10, 'negative delay clamps to 0');
   assert.equal(describeEffectiveDelay('75', 10).total, 85);
+});
+
+// ── Output routing ────────────────────────────────────────────────────────
+
+test('supportsOutputSelection detects setSinkId', () => {
+  assert.equal(supportsOutputSelection({ setSinkId: () => {} }), true);
+  assert.equal(supportsOutputSelection({}), false, 'Safari and Firefox lack it');
+  assert.equal(supportsOutputSelection(null), false);
+  assert.equal(supportsOutputSelection({ setSinkId: 'nope' }), false);
+});
+
+test('browserSupportsOutputSelection answers without a live context', () => {
+  // The panel can be opened before any session exists; probing a null context
+  // there would report a capable browser as incapable.
+  const capable = { AudioContext: function () {} };
+  capable.AudioContext.prototype.setSinkId = () => {};
+  assert.equal(browserSupportsOutputSelection(capable), true);
+
+  const bare = { AudioContext: function () {} };
+  assert.equal(browserSupportsOutputSelection(bare), false);
+
+  assert.equal(browserSupportsOutputSelection({}), false, 'no AudioContext at all');
+  assert.equal(browserSupportsOutputSelection(undefined), false);
+});
+
+test('browserSupportsOutputSelection checks the webkit-prefixed constructor too', () => {
+  const legacy = { webkitAudioContext: function () {} };
+  legacy.webkitAudioContext.prototype.setSinkId = () => {};
+  assert.equal(browserSupportsOutputSelection(legacy), true);
+});
+
+test('echo cancellation is called out first — it is the one toggle that may fix it', () => {
+  const d = diagnoseSilentOutput({
+    echoCancellation: true, canSelectSink: true, outputDeviceCount: 3,
+  });
+  assert.equal(d.cause, 'echo-cancellation');
+  assert.equal(d.canFix, true);
+  assert.match(d.text, /call mode/);
+});
+
+test('a browser with sink control and devices points at the picker', () => {
+  const d = diagnoseSilentOutput({ canSelectSink: true, outputDeviceCount: 2 });
+  assert.equal(d.cause, 'sink-selectable');
+  assert.equal(d.canFix, true);
+});
+
+test('sink control but an empty device list is a reconnect prompt', () => {
+  const d = diagnoseSilentOutput({ canSelectSink: true, outputDeviceCount: 0 });
+  assert.equal(d.cause, 'no-devices-listed');
+  assert.equal(d.canFix, false);
+});
+
+test('no sink control explains the A2DP dead end and names the real fix', () => {
+  const d = diagnoseSilentOutput({ canSelectSink: false });
+  assert.equal(d.cause, 'no-sink-control');
+  assert.equal(d.canFix, false);
+  assert.match(d.text, /A2DP/);
+  assert.match(d.text, /Wired or USB-C/);
+});
+
+test('diagnoseSilentOutput defaults to the phone case when told nothing', () => {
+  assert.equal(diagnoseSilentOutput().cause, 'no-sink-control');
+});
+
+test('setOutputDevice resolves false when the browser has no setSinkId', async () => {
+  const ctx = new FakeCtx();
+  const daf = new DafEngine();
+  daf.start(ctx, new FakeNode('source'));
+  assert.equal(await daf.setOutputDevice('abc'), false);
+});
+
+test('setOutputDevice forwards the id, and maps empty to system default', async () => {
+  const ctx = new FakeCtx();
+  const calls = [];
+  ctx.setSinkId = async (id) => { calls.push(id); };
+  const daf = new DafEngine();
+  daf.start(ctx, new FakeNode('source'));
+
+  assert.equal(await daf.setOutputDevice('headphones-1'), true);
+  assert.equal(await daf.setOutputDevice(''), true);
+  assert.deepEqual(calls, ['headphones-1', '']);
+});
+
+test('setOutputDevice reports failure instead of throwing at the caller', async () => {
+  const ctx = new FakeCtx();
+  ctx.setSinkId = async () => { throw new Error('device vanished'); };
+  const daf = new DafEngine();
+  daf.start(ctx, new FakeNode('source'));
+  assert.equal(await daf.setOutputDevice('gone'), false);
+});
+
+test('playTestTone feeds the live chain, not the destination directly', () => {
+  const ctx = new FakeCtx();
+  const daf = new DafEngine();
+  daf.start(ctx, new FakeNode('source'));
+
+  assert.equal(daf.playTestTone(), true);
+  const osc = ctx.created.find((n) => n.kind === 'oscillator');
+  assert.ok(osc, 'an oscillator was created');
+
+  // Tone → envelope → input, so it traverses delay/filter/limiter/gain exactly
+  // as the voice does. That is what makes it a valid output-path test.
+  const env = osc.outputs[0];
+  assert.equal(env.kind, 'gain');
+  assert.ok(env.outputs.includes(daf.input), 'envelope lands on the DAF input');
+  assert.ok(!env.outputs.includes(ctx.destination), 'must not shortcut to destination');
+});
+
+test('playTestTone envelopes the tone rather than clicking it on and off', () => {
+  const ctx = new FakeCtx();
+  const daf = new DafEngine();
+  daf.start(ctx, new FakeNode('source'));
+  daf.playTestTone({ durationSec: 0.5 });
+
+  const osc = ctx.created.find((n) => n.kind === 'oscillator');
+  const env = osc.outputs[0];
+  assert.equal(env.gain.value, 0, 'starts silent');
+  assert.equal(env.gain.automations.length, 2, 'ramps up, then back down');
+  assert.ok(env.gain.automations.every((a) => a.type === 'setTargetAtTime'));
+  assert.ok(osc.stopped > ctx.currentTime + 0.5, 'stops after the fade completes');
+});
+
+test('playTestTone is a no-op when DAF is not running', () => {
+  const daf = new DafEngine();
+  assert.equal(daf.playTestTone(), false, 'no graph means no output path to test');
 });
 
 // ── Graph construction ────────────────────────────────────────────────────
