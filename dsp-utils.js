@@ -4,6 +4,33 @@ export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
 
+// Security enhancement: Prevent DOM-based XSS by validating URLs and rejecting
+// unsafe protocols like 'javascript:' or 'data:' before assigning to .href
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  const strUrl = String(url).trim();
+
+  let isAbsolute = false;
+  let parsed;
+  try {
+    parsed = new URL(strUrl);
+    isAbsolute = true;
+  } catch (err) {
+    try {
+      parsed = new URL(strUrl, 'http://localhost');
+    } catch (e) {
+      return 'about:blank';
+    }
+  }
+
+  const allowedProtocols = ['http:', 'https:', 'mailto:', 'tel:', 'blob:', 'file:'];
+  if (isAbsolute && !allowedProtocols.includes(parsed.protocol)) {
+    return 'about:blank';
+  }
+
+  return strUrl;
+}
+
 export function computeRawProsody(metrics) {
   return (
     metrics.bounce * 0.50 +
