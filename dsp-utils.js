@@ -1,5 +1,33 @@
 import * as DSP_CONST from './dsp-constants.generated.js';
 
+// Security enhancement: sanitize URLs to prevent DOM-based XSS
+// when rendering untrusted or dynamically constructed URLs to .href properties.
+export function sanitizeUrl(urlStr, base) {
+  if (typeof urlStr !== 'string') return 'about:blank';
+  let urlObj;
+  try {
+    urlObj = new URL(urlStr);
+  } catch (e) {
+    try {
+      urlObj = new URL(urlStr, base || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost'));
+    } catch (e2) {
+      return 'about:blank';
+    }
+  }
+
+  const safeProtocols = ['http:', 'https:', 'mailto:', 'tel:', 'blob:', 'file:'];
+  if (!safeProtocols.includes(urlObj.protocol)) {
+    return 'about:blank';
+  }
+
+  // To prevent inherently invalid URLs from erroneously passing as relative paths
+  if (urlStr.startsWith('://')) {
+    return 'about:blank';
+  }
+
+  return urlStr;
+}
+
 export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
