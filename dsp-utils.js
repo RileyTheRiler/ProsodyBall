@@ -4,6 +4,19 @@ export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
 
+export function sanitizeUrl(url) {
+  try {
+    const parsed = new URL(url, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+    const safeProtocols = ['http:', 'https:', 'mailto:', 'tel:', 'blob:', 'file:'];
+    if (safeProtocols.includes(parsed.protocol)) {
+      return url;
+    }
+    return 'about:blank';
+  } catch (e) {
+    return 'about:blank';
+  }
+}
+
 export function computeRawProsody(metrics) {
   return (
     metrics.bounce * 0.50 +
