@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError,
+  computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError, sanitizeUrl,
   computeFrameReliability, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction,
   steadyStateWeight, selectResonanceMethod,
   SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX, STEADY_WEIGHT_FLOOR
@@ -150,4 +150,18 @@ test('selectResonanceMethod picks LPC clean, cepstral mid, centroid noisy', () =
   assert.equal(selectResonanceMethod(15), 'cepstral');          // between the tiers
   assert.equal(selectResonanceMethod(SNR_YELLOW_DB), 'cepstral');// yellow edge inclusive
   assert.equal(selectResonanceMethod(5), 'centroid');           // below yellow
+});
+
+// ---------- url sanitization ----------
+
+test('sanitizeUrl handles dangerous and safe protocols correctly', () => {
+  assert.equal(sanitizeUrl('http://example.com'), 'http://example.com');
+  assert.equal(sanitizeUrl('https://example.com/path?q=1'), 'https://example.com/path?q=1');
+  assert.equal(sanitizeUrl('mailto:test@example.com'), 'mailto:test@example.com');
+  assert.equal(sanitizeUrl('tel:+1234567890'), 'tel:+1234567890');
+  assert.equal(sanitizeUrl('file:///path/to/file'), 'file:///path/to/file');
+  assert.equal(sanitizeUrl('javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('data:text/html,<script>alert(1)</script>'), 'about:blank');
+  assert.equal(sanitizeUrl('vbscript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('phone.html?room=123'), 'phone.html?room=123'); // relative path
 });
