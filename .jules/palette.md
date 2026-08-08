@@ -24,3 +24,6 @@
 ## $(date +%Y-%m-%d) - [Inaccessible custom toggle switches due to duplicate IDs]
 **Learning:** Discovered that custom toggle switches built with `<label class="toggle-switch">` wrapping an `<input type="checkbox">` were failing because the `id` on the `<input>` was duplicated elsewhere in the DOM. This breaks the `<label for="[id]">` association, rendering the toggle invisible to screen readers and difficult to click.
 **Action:** Ensure custom toggle `<input>` elements have strictly unique IDs across the entire document so they correctly link with their `<label>` elements.
+## 2026-06-28 - [Missing Confirmation on Destructive Actions]
+**Learning:** Found that individual recording deletions could be executed with a single click, lacking a confirmation dialog, unlike the "clear all recordings" action. This mismatch in destructive action handling can lead to accidental data loss.
+**Action:** Always enforce explicit confirmation dialogs (e.g., using `window.confirm()`) before executing any destructive actions, including deleting individual items, to prevent accidental data loss and ensure consistent user experience.
