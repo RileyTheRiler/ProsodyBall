@@ -3860,7 +3860,9 @@ class VoxBallGame {
       } else if (action === 'download') {
         this.downloadRecording(idx);
       } else if (action === 'delete') {
-        this.deleteRecording(idx);
+        if (window.confirm('Are you sure you want to delete this recording? This cannot be undone.')) {
+          this.deleteRecording(idx);
+        }
       }
     };
   }
