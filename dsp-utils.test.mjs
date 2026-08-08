@@ -1,11 +1,39 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError,
+  sanitizeUrl, computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError,
   computeFrameReliability, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction,
   steadyStateWeight, selectResonanceMethod,
   SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX, STEADY_WEIGHT_FLOOR
 } from './dsp-utils.js';
+
+test('sanitizeUrl allows safe protocols', () => {
+  assert.equal(sanitizeUrl('http://example.com'), 'http://example.com');
+  assert.equal(sanitizeUrl('https://example.com'), 'https://example.com');
+  assert.equal(sanitizeUrl('mailto:test@example.com'), 'mailto:test@example.com');
+  assert.equal(sanitizeUrl('tel:+1234567890'), 'tel:+1234567890');
+  assert.equal(sanitizeUrl('file:///path/to/file'), 'file:///path/to/file');
+  assert.equal(sanitizeUrl('blob:http://localhost/1234'), 'blob:http://localhost/1234');
+});
+
+test('sanitizeUrl handles relative paths', () => {
+  assert.equal(sanitizeUrl('/foo/bar'), '/foo/bar');
+  assert.equal(sanitizeUrl('foo.html'), 'foo.html');
+});
+
+test('sanitizeUrl blocks dangerous protocols', () => {
+  assert.equal(sanitizeUrl('javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('  javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('JaVaScRiPt:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('data:text/html,<script>alert(1)</script>'), 'about:blank');
+  assert.equal(sanitizeUrl('vbscript:alert(1)'), 'about:blank');
+});
+
+test('sanitizeUrl handles edge cases', () => {
+  assert.equal(sanitizeUrl(null), '');
+  assert.equal(sanitizeUrl(''), '');
+  assert.equal(sanitizeUrl(undefined), '');
+});
 
 test('computeRawProsody applies weighted sum', () => {
   const metrics = { bounce: 1, vowel: 0.5, articulation: 0.5 };
