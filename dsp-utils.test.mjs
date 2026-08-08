@@ -3,9 +3,18 @@ import assert from 'node:assert/strict';
 import {
   computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError,
   computeFrameReliability, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction,
-  steadyStateWeight, selectResonanceMethod,
+  steadyStateWeight, selectResonanceMethod, sanitizeUrl,
   SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX, STEADY_WEIGHT_FLOOR
 } from './dsp-utils.js';
+
+test('sanitizeUrl handles dangerous and safe protocols correctly', () => {
+  assert.equal(sanitizeUrl('http://example.com'), 'http://example.com/');
+  assert.equal(sanitizeUrl('https://example.com'), 'https://example.com/');
+  assert.equal(sanitizeUrl('blob:http://localhost/abc'), 'blob:http://localhost/abc');
+  assert.equal(sanitizeUrl('javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('data:text/html,<script>alert(1)</script>'), 'about:blank');
+  assert.equal(sanitizeUrl('invalid-url'), 'http://localhost/invalid-url');
+});
 
 test('computeRawProsody applies weighted sum', () => {
   const metrics = { bounce: 1, vowel: 0.5, articulation: 0.5 };

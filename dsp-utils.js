@@ -1,5 +1,18 @@
 import * as DSP_CONST from './dsp-constants.generated.js';
 
+export function sanitizeUrl(urlStr) {
+  try {
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+    const parsed = new URL(urlStr, origin);
+    if (['http:', 'https:', 'blob:'].includes(parsed.protocol)) {
+      return parsed.href;
+    }
+  } catch (e) {
+    // If it can't be parsed, it's unsafe
+  }
+  return 'about:blank';
+}
+
 export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
