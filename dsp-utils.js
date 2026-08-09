@@ -1007,3 +1007,24 @@ export function computeGenderScoreMulti({
   const score = clamp01(0.5 + (blended - 0.5) * (1 - uncertainty) * DECISIVENESS);
   return { score, uncertainty };
 }
+
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  const str = String(url).trim();
+  try {
+    const parsed = new URL(str);
+    const allowed = ['http:', 'https:', 'mailto:', 'tel:', 'blob:', 'file:'];
+    if (!allowed.includes(parsed.protocol)) return 'about:blank';
+    return str;
+  } catch (e) {
+    try {
+      const parsed = new URL(str, 'http://localhost');
+      // If it looks like a scheme or parses strangely without being a true relative path, reject it.
+      // E.g., '://invalid' becomes 'http://localhost/://invalid'
+      if (/^[a-zA-Z0-9+.-]+:/.test(str) || str.startsWith('://')) return 'about:blank';
+      return str;
+    } catch (err) {
+      return 'about:blank';
+    }
+  }
+}
