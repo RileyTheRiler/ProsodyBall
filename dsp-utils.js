@@ -1,5 +1,28 @@
 import * as DSP_CONST from './dsp-constants.generated.js';
 
+// Security enhancement: sanitize untrusted URLs to prevent DOM-based XSS
+// Validates protocol against a safe allowlist and safely handles relative URLs
+export function sanitizeUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const protocol = parsed.protocol.toLowerCase();
+    if (['http:', 'https:', 'mailto:', 'tel:', 'blob:', 'file:'].includes(protocol)) {
+      return url;
+    }
+  } catch (e) {
+    try {
+      const parsedWithBase = new URL(url, 'http://localhost');
+      const protocol = parsedWithBase.protocol.toLowerCase();
+      // Relative URL without scheme, we allow it. Inherently invalid URLs like `://invalid`
+      // can erroneously parse as relative paths to the base, so we check indexOf(':') === -1.
+      if (['http:', 'https:'].includes(protocol) && url.indexOf(':') === -1) {
+          return url;
+      }
+    } catch (e) { }
+  }
+  return 'about:blank';
+}
+
 export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
