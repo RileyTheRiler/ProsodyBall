@@ -4,6 +4,29 @@ export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
 
+// Security enhancement: Add sanitizeUrl to prevent DOM-based XSS when assigning dynamic URLs to element hrefs.
+export function sanitizeUrl(url) {
+  try {
+    const parsed = new URL(url, 'http://localhost');
+    if (!['http:', 'https:', 'mailto:', 'tel:', 'blob:', 'file:'].includes(parsed.protocol)) {
+      return 'about:blank';
+    }
+    if (/^([a-zA-Z0-9+\-.]*:|:\/\/)/i.test(url)) {
+        try {
+            const withoutBase = new URL(url);
+            if (!['http:', 'https:', 'mailto:', 'tel:', 'blob:', 'file:'].includes(withoutBase.protocol)) {
+                return 'about:blank';
+            }
+        } catch (e) {
+            return 'about:blank';
+        }
+    }
+    return url;
+  } catch (e) {
+    return 'about:blank';
+  }
+}
+
 export function computeRawProsody(metrics) {
   return (
     metrics.bounce * 0.50 +
