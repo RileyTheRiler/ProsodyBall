@@ -431,11 +431,19 @@ export function summarizeVoiceCloud(points) {
   const n = pts.length;
   if (n === 0) return null;
   let wSum = 0, logSum = 0, resSum = 0;
+  // ⚡ Bolt: Pre-allocate Float64Array for fast numerical sorting without intermediate object allocations
+  const hzArr = new Float64Array(n);
+  const resArr = new Float64Array(n);
+  let idx = 0;
   for (const p of pts) {
     const w = Math.max(1e-6, p.w != null ? p.w : 1);
     wSum += w;
     logSum += Math.log2(p.hz) * w;
-    resSum += clamp01(p.res) * w;
+    const resVal = clamp01(p.res);
+    resSum += resVal * w;
+    hzArr[idx] = p.hz;
+    resArr[idx] = resVal;
+    idx++;
   }
   const meanLog = logSum / wSum;
   const meanRes = resSum / wSum;
@@ -447,6 +455,8 @@ export function summarizeVoiceCloud(points) {
     varLog += dl * dl * w;
     varRes += dr * dr * w;
   }
+  hzArr.sort();
+  resArr.sort();
   const mid = (arr) => (arr.length % 2
     ? arr[(arr.length - 1) / 2]
     : (arr[arr.length / 2 - 1] + arr[arr.length / 2]) / 2);
@@ -456,8 +466,8 @@ export function summarizeVoiceCloud(points) {
     sdSemitones: Math.sqrt(varLog / wSum) * 12,      // log2-octaves → semitones
     meanRes,
     sdRes: Math.sqrt(varRes / wSum),
-    medianHz: mid(pts.map((p) => p.hz).sort((a, b) => a - b)),
-    medianRes: mid(pts.map((p) => clamp01(p.res)).sort((a, b) => a - b)),
+    medianHz: mid(hzArr),
+    medianRes: mid(resArr),
   };
 }
 
