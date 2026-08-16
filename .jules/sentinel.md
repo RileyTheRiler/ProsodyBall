@@ -51,3 +51,8 @@
 **Vulnerability:** Safe DOM construction using `document.createDocumentFragment()` and `.append()` was not consistently applied in `app.js` (e.g. `_showSessionSummary`, `renderTeleprompter`) or `calibration-wizard.js`. This allowed potential injection if dynamic data was ever used within loops with string concatenation, and led to conflicts with `innerHTML`.
 **Learning:** Relying on `innerHTML` for UI construction is inherently risky. Furthermore, manual DOM mocks in tests (like `MockEl`) require robust state initialization (e.g., `this.childNodes`) to correctly support safe DOM traversal methods like `.append()`.
 **Prevention:** Replace all complex `innerHTML` assignments with safe programmatic elements (`DocumentFragment`, `.createElement()`, `.textContent`). Ensure any manual DOM mocks fully implement necessary Node properties.
+
+## 2024-05-30 - [DOM-based XSS Risk via window.location.href in anchor tags]
+**Vulnerability:** Found multiple instances in `app.js` where `window.location.href` (or a URL derived from it) was assigned directly to anchor tag `.href` attributes without sanitization. Even when constructed dynamically, untrusted `location` parameters could masquerade as malicious protocols (like `javascript:`).
+**Learning:** `window.location.href` is fundamentally a tainted source. Directly applying it or URLs derived from it to navigation or execution contexts introduces DOM-based XSS vulnerabilities, particularly if manipulated via crafted framing or parameters.
+**Prevention:** Always wrap dynamically generated or location-derived URLs with a robust `sanitizeUrl` function that uses the native `URL` parser to explicitly whitelist safe protocols before assigning them to DOM attributes or returning them.

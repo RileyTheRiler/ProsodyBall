@@ -1007,3 +1007,25 @@ export function computeGenderScoreMulti({
   const score = clamp01(0.5 + (blended - 0.5) * (1 - uncertainty) * DECISIVENESS);
   return { score, uncertainty };
 }
+
+// Security enhancement: Prevent DOM-based XSS by validating that dynamic URLs
+// parse cleanly and restrict to known-safe protocols.
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  const urlStr = String(url);
+  try {
+    const parsed = new URL(urlStr);
+    const safeProtocols = ['http:', 'https:', 'mailto:', 'tel:', 'blob:', 'file:'];
+    if (safeProtocols.includes(parsed.protocol)) {
+      return urlStr;
+    }
+    return 'about:blank';
+  } catch (e) {
+    try {
+      new URL(urlStr, 'http://localhost');
+      return urlStr;
+    } catch (e2) {
+      return 'about:blank';
+    }
+  }
+}
