@@ -4,6 +4,24 @@ export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
 
+// Security enhancement: Sanitize untrusted URLs to prevent DOM-based XSS
+export function sanitizeUrl(url) {
+  try {
+    const safe = ['http:', 'https:', 'mailto:', 'tel:', 'blob:', 'file:'];
+    try {
+      const parsed = new URL(url);
+      if (safe.includes(parsed.protocol)) return url;
+    } catch {
+      // Valid URL strings like `://invalid` masquerade as protocol paths when parsed with a base.
+      if (/^[^/:]*?:/.test(url) || url.startsWith('://')) return 'about:blank#blocked';
+
+      const parsedWithBase = new URL(url, window.location.origin);
+      if (safe.includes(parsedWithBase.protocol)) return url;
+    }
+  } catch (e) {}
+  return 'about:blank#blocked';
+}
+
 export function computeRawProsody(metrics) {
   return (
     metrics.bounce * 0.50 +
