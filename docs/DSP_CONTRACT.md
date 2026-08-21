@@ -283,6 +283,18 @@ Second, the UI offers all four from one dropdown as if they were interchangeable
 four estimators' confidences are calibrated onto one scale (`formantEstimateConfidence`) so
 switching estimator no longer silently changes how much the app trusts itself.
 
+## Resonance construct redesign
+
+The measurement *method* documented above (adaptive-ceiling LPC → uniform-tube ΔF fit) is
+sound and matches the published recommendation. The *construct* — collapsing one frame's
+F1–F3 into a single 0–1 number — is not: measured against Peterson & Barney norms with
+ground-truth formants, vowel identity moves the score ~3x more than speaker sex does, and the
+nominal 55/25/20 weighting double-counts F1 and F2. See
+[`RESONANCE_REDESIGN.md`](./RESONANCE_REDESIGN.md) for the evidence, the target architecture
+(tract scale + tract shape, kept separate), and the phased plan. That document supersedes this
+one on what `resonanceScore` should mean; this one remains the cross-port contract for how it
+is computed and kept in step.
+
 ## Known drift to clean up (tracked here, not fixed yet)
 
 - `docs/ANALYZER_API.md` references `voice-analyzer-core.js` (does not exist);
