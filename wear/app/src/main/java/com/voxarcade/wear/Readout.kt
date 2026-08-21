@@ -7,12 +7,12 @@ import kotlin.math.roundToInt
 /** How the live pitch value is represented in the readout. */
 enum class PitchDisplay { HZ, NOTE, RANGE }
 
-/** How the live resonance value is represented in the readout. */
-enum class ResDisplay { PERCENT, FORMANTS }
+/** How the live spectral-brightness value is represented in the readout. */
+enum class BrightnessDisplay { PERCENT, FORMANTS }
 
 /**
  * Pure readout formatting (milestone 6) — mirrors the desktop app's per-metric
- * display selectors so the user can choose how pitch and resonance are *shown*
+ * display selectors so the user can choose how pitch and brightness are *shown*
  * (independently of how they're measured). No Android/DSP deps, so it's trivially
  * testable and reusable.
  */
@@ -50,11 +50,11 @@ object Readout {
         }
     }
 
-    /** Format resonance as a brightness % or as raw F1/F2 formants (Hz). */
-    fun resonance(pct: Float, f1: Float, f2: Float, mode: ResDisplay): String =
+    /** Format spectral brightness as a % or as raw F1/F2 formants (Hz). */
+    fun spectralBrightness(pct: Float, f1: Float, f2: Float, mode: BrightnessDisplay): String =
         when (mode) {
-            ResDisplay.FORMANTS ->
+            BrightnessDisplay.FORMANTS ->
                 if (f1 > 0f && f2 > 0f) "${f1.roundToInt()}/${f2.roundToInt()}" else "—"
-            ResDisplay.PERCENT -> "${pct.roundToInt()}%"
+            BrightnessDisplay.PERCENT -> "${pct.roundToInt()}%"
         }
 }

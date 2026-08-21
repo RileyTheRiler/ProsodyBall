@@ -143,7 +143,7 @@ On launch you pick a mode:
 
 - **Necklace** (eyes-free): the screen goes dark. Wear the watch on a lanyard so
   the mic is near your mouth. Tap the big circle to start listening (**one buzz =
-  on**). It **buzzes when your pitch (150–250 Hz) or resonance (30–70%) drifts out
+  on**). It **buzzes when your pitch (150–250 Hz) or spectral brightness (30–70%) drifts out
   of range**. Tap again to stop (**two buzzes = off**, mic released). **⚙ Alerts**
   lets you change which metric/threshold triggers.
 - **Vox Ball** (visual): the ball reacts to your voice's pitch and rhythm.

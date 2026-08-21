@@ -23,9 +23,9 @@ object DspConstants {
     const val STEADY_PITCH_ST: Double = 1.5
     /** Combined frame-to-frame |dF1|/F1 + |dF2|/F2 at which the steady-state weight's formant term hits 0 (coarticulatory transition). */
     const val STEADY_FORMANT_REL_DELTA: Double = 0.25
-    /** Lower bound of the steady-state weight so transition frames still nudge the live resonance estimate (down-weighted, not discarded). */
+    /** Lower bound of the steady-state weight so transition frames still nudge the live resonance/brightness estimate (down-weighted, not discarded). */
     const val STEADY_WEIGHT_FLOOR: Double = 0.3
-    /** Confidence at/above which the resonance estimate updates (D4). */
+    /** Confidence at/above which the resonance/brightness estimate updates (D4). */
     const val UPDATE_CONF_GATE: Double = 0.4
     /** Confidence at/above which directional feedback (haptic/UI) fires (D4); stricter than UPDATE_CONF_GATE. */
     const val ALERT_CONF_GATE: Double = 0.45

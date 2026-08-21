@@ -55,11 +55,28 @@ frozen previous output to be checked against. It pins:
 
 - **Validity** — resonance rises monotonically with vocal-tract shortening; measured ΔF
   recovers the synthesized tract length within 15%; each estimator lands within its recorded
-  bias of the hand-computed true score; changing F0 does not move the score (resonance is a
-  filter property, which is the whole reason it outranks pitch in the gender blend).
+  bias of the hand-computed true score; under controlled F0 manipulation on these synthetic
+  vowels, changing F0 does not move the score.
 - **Reliability** — the four estimators agree within 0.20 of the 0–1 scale (0.12 for the three
   the SNR ladder can auto-select); every estimator clears the confidence gates that admit a
   frame to the readout; identical input gives byte-identical output; a held vowel reads steady.
+
+**What the F0 result does and does not say.** The score is *designed* to measure the filter
+independently of the source, and on synthetic vowels with a fixed tract it is close to
+invariant across 110–220 Hz. That is not the same as F0-independence in real speech: LPC
+formant estimation carries a known F0-dependent error — with sparse harmonic sampling the
+poles are drawn toward individual harmonics rather than the underlying resonance ("harmonic
+attraction"), and the error grows as F0 rises, which is worst exactly in the range
+transfeminine users train into. F0 belongs in the confidence model rather than being claimed
+away.
+
+**What the resonance score is not.** It is a 0–1 position between a longer/darker and a
+shorter/brighter vocal tract, not a measure of effort or strain — nothing in the signal chain
+measures phonatory effort — and not a verdict about gender: F0 and formants overlap
+substantially between gender groups, and ASHA is explicit that there is no single acoustic
+definition of voice feminization. Vowel identity also moves the current score about three
+times more than speaker sex does; see
+[`docs/RESONANCE_REDESIGN.md`](./docs/RESONANCE_REDESIGN.md) for the evidence and the plan.
 
 See [`docs/DSP_CONTRACT.md`](./docs/DSP_CONTRACT.md) for the measured per-estimator accuracy
 table and the cross-port golden-vector status.

@@ -278,8 +278,11 @@ export function computeGenderScore({
   const fc = clamp01(formantConfidence);
 
   // Base weights ~0.5/0.5, then scale each cue by its confidence so unreliable
-  // cues defer to the confident one. Resonance gets a slight intrinsic edge — it is
-  // the harder-to-fake gender cue and the whole point of this mode.
+  // cues defer to the confident one. Resonance carries a slight intrinsic edge (×1.1).
+  // PROVISIONAL: that edge is a product choice — resonance is what this mode is built to
+  // train — not an evidence-derived weighting. F0 is the strongest single predictor of
+  // perceived gender in the literature, so the edge is not justified by accuracy, and it
+  // is not a claim that resonance is harder to fake or falsify.
   const wPitch = 0.5 * (0.35 + 0.65 * pc);
   const wRes = 0.5 * (0.35 + 0.65 * fc) * 1.1;
   const totalW = wPitch + wRes;
@@ -313,14 +316,32 @@ export function genderScoreToHue(score, colorblind = false) {
 // (Hillenbrand 1995; Fitch 1997; Gelfer 2000; sibilant CoG literature).
 
 // Goal-specific cue weights.
+//
+// PROVISIONAL HEURISTICS — not evidence-derived. These numbers were chosen by hand to feel
+// right in the app; no listener-rating study, regression, or published weighting produced
+// them, and none of them has been validated against perceived gender. Treat them as a
+// starting configuration, not as a finding.
+//
+// What the evidence does say: **F0 is the strongest single predictor of perceived gender**,
+// across both the 2018 meta-analysis and the 2025 review. It is necessary but not sufficient
+// — Hillenbrand & Clark found that shifting F0 *or* formants alone was usually ineffective
+// while both together reached ~82% — but nothing in that literature supports ranking a
+// formant-derived cue *above* F0. The feminization ordering below (resonance 0.35 >
+// pitchZone 0.30) is therefore **unsupported**: it inverts the one ordering the evidence is
+// clear about. It is left in place here because Phase 0 changes no numbers; re-deriving the
+// weights from published norms is Phase 4 work (see docs/RESONANCE_REDESIGN.md §3.3, which
+// also explains why fitting them to listener ratings is out of reach for a client-side,
+// no-data-collection app).
+//
+// Structure notes:
 // - Dispersion and CPP are absorbed into Resonance and Weight respectively, so they
 //   are no longer standalone cues in the combiner.
 // - pitchZone replaces modalF0 + pitch: it is the absolute F0 position (110–230 Hz → 0–1),
 //   computed from modal F0 so it reflects habitual pitch, not a momentary note.
 // - weight (vocal heaviness/breathiness) is now a scored gender cue, not just biofeedback.
 export const FEMINIZATION_CUE_WEIGHTS = {
-  resonance: 0.35,  // aVTL-primary, vowel-robust
-  pitchZone: 0.30,  // absolute F0 position; necessary but not sufficient
+  resonance: 0.35,  // aVTL-primary; provisional, and ranked above F0 without support
+  pitchZone: 0.30,  // absolute F0 position; the best-evidenced single cue, necessary not sufficient
   weight: 0.15,     // lower weight (breathier) = more feminine
   sibilant: 0.10,   // /s/ COG; higher = more feminine
   intonation: 0.10, // ST variance; contested cue, kept low
@@ -328,7 +349,7 @@ export const FEMINIZATION_CUE_WEIGHTS = {
 
 export const MASCULINIZATION_CUE_WEIGHTS = {
   pitchZone: 0.40,  // F0 is the dominant transmasculine cue (T passively lowers it)
-  resonance: 0.30,  // aVTL
+  resonance: 0.30,  // aVTL; provisional
   weight: 0.15,     // higher weight (pressed/modal) = more masculine
   intonation: 0.10,
   sibilant: 0.05,   // /s/ stays fronted despite testosterone; never penalise a high /s/
@@ -1019,6 +1040,36 @@ export function voiceMapZoneFromRules(rules) {
   return { pitchMinHz, pitchMaxHz, resMin, resMax };
 }
 
+// Cap the blended feminization score when the two strongest cues disagree: a high absolute
+// pitch sitting on top of a dark (long-tract) resonance reading. High F0 alone must not
+// produce a fully-feminine score when the filter has not moved with it.
+//
+// NAMING — this is `incongruencePenalty`, deliberately not "strainGuard". What it detects is
+// *acoustic incongruence between two measured cues*. It is not a strain detector: strain is a
+// phonatory construct (effortful or hyperfunctional voicing, laryngeal tension) that this app
+// does not measure at all — there is no EGG, no contact quotient, no perceptual effort rating,
+// and nothing in the signal chain that distinguishes an effortfully produced high F0 from a
+// comfortable one. Calling it a strain guard would tell the user the app can see something it
+// cannot, and could pathologise a voice that is merely mid-transition.
+//
+// PROVISIONAL: the trigger thresholds (0.7 / 0.35) and the ceiling shape (0.5 + 0.5·resonance)
+// are hand-tuned, not derived from listener data. They are recorded here so the next revision
+// changes a named, documented rule rather than an anonymous inline `if`.
+//
+// Returns `blended` unchanged when the rule does not apply, so it is a no-op on every path it
+// does not explicitly cap.
+export function incongruencePenalty(blended, { goalMode = 'feminization', pitchCue, resonanceCue } = {}) {
+  if (goalMode !== 'feminization') return blended;
+  if (!pitchCue || !resonanceCue) return blended;
+  const pitchPull = clamp01(pitchCue.value) * clamp01(pitchCue.confidence);
+  const resonancePull = clamp01(resonanceCue.value) * clamp01(resonanceCue.confidence);
+  if (pitchPull > 0.7 && resonancePull < 0.35) {
+    const ceiling = 0.5 + resonancePull * 0.5;
+    return Math.min(blended, ceiling);
+  }
+  return blended;
+}
+
 // Combine per-cue {value, confidence} into a final 0..1 score plus an uncertainty (0..1).
 // enabledMap[id] must be truthy for a cue to contribute (absent => disabled).
 // goalMode: 'feminization' | 'masculinization' (default 'feminization').
@@ -1062,20 +1113,11 @@ export function computeGenderScoreMulti({
   if (sumW <= 1e-6) return { score: 0.5, uncertainty: 1 };
   let blended = sumWV / sumW;
 
-  // Incongruence guard (feminization): high absolute pitch + masculine resonance is a
-  // "male falsetto" pattern — high F0 alone must not yield a fully-feminine reading.
-  if (goalMode === 'feminization') {
-    const pitchCue = cues.pitchZone;
-    const resCue = cues.resonance;
-    if (pitchCue && resCue) {
-      const pitchPull = clamp01(pitchCue.value) * clamp01(pitchCue.confidence);
-      const resonancePull = clamp01(resCue.value) * clamp01(resCue.confidence);
-      if (pitchPull > 0.7 && resonancePull < 0.35) {
-        const guard = 0.5 + resonancePull * 0.5;
-        blended = Math.min(blended, guard);
-      }
-    }
-  }
+  blended = incongruencePenalty(blended, {
+    goalMode,
+    pitchCue: cues.pitchZone,
+    resonanceCue: cues.resonance,
+  });
 
   let varAcc = 0;
   for (const c of contribs) varAcc += c.w * (c.value - blended) * (c.value - blended);

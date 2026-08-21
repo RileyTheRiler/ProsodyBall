@@ -271,7 +271,7 @@ export class VoiceAnalyzer {
       samples: [],      // {f1, f2, disp} from clean held-vowel frames
       f1Min: 300, f1Max: 900,     // fixed-anchor fallbacks (mirror the old formulas)
       f2Min: 1000, f2Max: 2400,
-      dispMin: 1029, dispMax: 1250, // dispersion (Hz) at VTL 17 cm → 14 cm
+      dispMin: 1029, dispMax: 1250, // dispersion (Hz) at aVTL 17 cm (longer/darker) → 14 cm (shorter/brighter)
       isLearned: false,
       voicedTime: 0,
       learningDuration: 6.0
@@ -1498,10 +1498,22 @@ export class VoiceAnalyzer {
           : dispFit.deltaF;
       }
 
-      // --- Resonance score: aVTL-primary (vowel-robust), with F1 and gated F2 ---
-      // Primary: apparent vocal-tract length from formant dispersion (ΔF). Vowel-robust because
-      // ΔF is fitted across F1–F3, which is much less vowel-dependent than raw F2 alone.
-      // Anchors: 17 cm (male, score 0) → 14 cm (female, score 1).
+      // --- Resonance score: aVTL-primary, with F1 and gated F2 ---
+      // Primary: apparent vocal-tract length from formant dispersion (ΔF), fitted across F1–F3,
+      // which is steadier across vowels than raw F2 alone.
+      //
+      // NOT vowel-robust, and this comment used to claim it was. Measured against Peterson &
+      // Barney adult-male means fed as ground truth (no estimator, no noise, no smoothing), one
+      // nominal tract's apparent length ranges 13.8 cm (/i/) to 21.7 cm (/u/) and this score
+      // swings 73 points across the vowel set — while the male→female norm shift moves it 23.
+      // Vowel identity moves the reading about three times more than speaker sex does. Praat's
+      // own documentation says the same independently. Decomposing scale from shape is
+      // docs/RESONANCE_REDESIGN.md Phase 1; nothing here changes it yet.
+      //
+      // Anchors: aVTL 17 cm → score 0 (longer tract, darker), 14 cm → score 1 (shorter tract,
+      // brighter). These are tract-length anchors, not male/female anchors: F0 and formants
+      // overlap substantially between gender groups, and ASHA is explicit that there is no
+      // single acoustic definition of a feminine or masculine voice.
       const aVTL_cm = this.formantDispersionHz > 0 ? 35000 / (2 * this.formantDispersionHz) : 0;
       const rp = this.resonanceProfile;
       let vtlScore, f1Score, f2Score;
@@ -1519,9 +1531,12 @@ export class VoiceAnalyzer {
           : vtlScore;
       } else {
         // Fixed-anchor fallback — byte-identical to the pre-calibration behaviour the golden
-        // eval asserts on. Anchors: 17 cm (male, score 0) → 14 cm (female, score 1).
+        // eval asserts on. Anchors: 17 cm (longer/darker, score 0) → 14 cm (shorter/brighter,
+        // score 1).
         vtlScore = aVTL_cm > 0 ? clamp01((17 - aVTL_cm) / 3) : 0;
-        // F1 (25%): high F1 is decisive for "not male" (open, forward resonance).
+        // F1 (25%): higher F1 reads brighter/more open (open, forward resonance). It is also
+        // one of the two formants that *define the vowel*, so much of this term's movement is
+        // vowel identity rather than tract configuration.
         f1Score = Math.max(0, Math.min(1, (this.smoothF1 - 300) / 600));
         // Vowel-normalized F2 (20%): only used when a vowel-like frame is detected; otherwise
         // fold into vtlScore to avoid penalising back vowels (/u/ F2 ≈ 1000 Hz).
@@ -1759,8 +1774,11 @@ export class VoiceAnalyzer {
     this.metrics.pitchEffort = pitch > 0 ? Math.max(0, Math.min(1, (pitch - this.pitchProfile.min) / pitchRange)) : this.metrics.pitchEffort * 0.95;
     // Legacy alias so existing UI reads of metrics.pitch still work.
     this.metrics.pitch = this.metrics.pitchEffort;
-    // pitchZone: absolute position across the perceptual gender boundary (110 Hz → 230 Hz).
-    // 0 = reliably masculine, 1 = reliably feminine, independent of the user's own range.
+    // pitchZone: absolute position across the F0 range where perceived gender shifts
+    // (110 Hz → 230 Hz), independent of the user's own range. 0 = the low end of that range,
+    // 1 = the high end. F0 is the strongest single predictor of perceived gender, but the
+    // distributions overlap substantially, so a position on this axis is a tendency, not a
+    // verdict about a speaker.
     if (this.modalF0Hz > 0) {
       this.metrics.pitchZone = clamp01((this.modalF0Hz - 110) / 120);
       const hz = this.modalF0Hz;
@@ -6476,7 +6494,8 @@ class VoxBallGame {
     // Build per-cue {value (0..1 femininity), confidence}.
     // pitchZone: absolute F0 position (110–230 Hz → 0–1) from modal F0 — no longer relative
     //   to the user's own range, so it carries real gender-perceptual information.
-    // resonance: aVTL-primary score (vowel-robust).
+    // resonance: aVTL-primary score. Not vowel-robust — vowel identity moves it about 3x more
+    //   than speaker sex does (see the resonance-score comment in VoiceAnalyzer.update).
     // weight: lower = lighter/breathier (more feminine); higher = heavier/pressed (more masculine).
     // dispersion and cpp are now absorbed into resonance and weight respectively.
     const cues = {
