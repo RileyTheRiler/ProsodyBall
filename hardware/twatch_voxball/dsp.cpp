@@ -290,6 +290,33 @@ static float dispersionToFemininity(float meanSpacingHz) {
   return clamp01f((meanSpacingHz - 900.0f) / (1200.0f - 900.0f));
 }
 
+// fitFormantDispersion() from dsp-utils.js. Fits the uniform-tube series F_i = (2i-1)*dF/2 by
+// least squares through the origin over whichever formants were measured:
+//     dF = sum(x_i * F_i) / sum(x_i^2),  x_i = (2i-1)/2
+//
+// The formant's SLOT is what matters, so a zero means "F2 was not found this frame", not
+// "there are only two formants". This replaces a two-branch rule that used (F3-F1)/2 with all
+// three and fell back to (F2-F1) with only two. That fallback is the bug: F2-F1 is one of the
+// most vowel-dependent quantities in the spectrum (~2200 Hz on /i/, ~700 Hz on /u/), so on any
+// frame where F3 went missing the necklace's "vocal-tract length" was really reporting which
+// vowel was being spoken — and it drives the haptics the user is training against. It also
+// came out roughly double the true spacing, pushing resonance toward the feminine rail.
+// DSP_CONTRACT D1 requires this to match the web definition, which is now the same fit.
+float voxFitFormantDispersion(float f1, float f2, float f3) {
+  const float freqs[3] = { f1, f2, f3 };
+  float sxy = 0.0f, sxx = 0.0f;
+  int n = 0;
+  for (int i = 0; i < 3; i++) {
+    if (!(freqs[i] > 0)) continue;
+    float x = (2.0f * (float)(i + 1) - 1.0f) * 0.5f;   // F1 -> 0.5, F2 -> 1.5, F3 -> 2.5
+    sxy += x * freqs[i];
+    sxx += x * x;
+    n++;
+  }
+  if (n < 2 || sxx <= 0.0f) return 0.0f;               // one formant cannot fix a tract length
+  return sxy / sxx;
+}
+
 // computeGenderScore(pitch + resonance blend, confidence-weighted) from dsp-utils.js.
 static float computeGenderScore(float pitchHz, float resonance, float pitchConf, float formantConf) {
   float pitchNorm = pitchHz > 0
@@ -459,9 +486,7 @@ VoxResult VoxDsp::process(const float* frame, size_t n, float dtSecs) {
 
   // Formants -> resonance (vocal-tract length via formant dispersion) -> perceived gender.
   computeFormants(hz, &r.f1, &r.f2, &r.f3, &r.formantConf);
-  float meanSpacing = 0.0f;
-  if (r.f1 > 0 && r.f2 > 0 && r.f3 > 0) meanSpacing = (r.f3 - r.f1) * 0.5f;
-  else if (r.f1 > 0 && r.f2 > 0)        meanSpacing = (r.f2 - r.f1);
+  float meanSpacing = voxFitFormantDispersion(r.f1, r.f2, r.f3);
   r.resonance = dispersionToFemininity(meanSpacing);
 
   // Vocal weight (breathy/light .. pressed/heavy) from H1-H2.

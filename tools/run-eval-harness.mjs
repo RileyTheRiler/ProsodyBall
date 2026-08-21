@@ -34,7 +34,7 @@ function fft(re, im) {
 // chunk, so the analyzer's frequency-domain features (centroid, tilt, SNR, the formant
 // gate) get real data instead of a flat -100 dB spectrum. Size-aware: each analyser asks
 // for fftSize/2 bins, and we FFT the matching number of trailing samples.
-class MockAudioContext {
+export class MockAudioContext {
   constructor() {
     this.sampleRate = 44100;
     this.state = 'running';
@@ -95,9 +95,20 @@ global.window = {
 };
 Object.defineProperty(global, 'navigator', { value: global.window.navigator, writable: true, configurable: true });
 
+// The app's loop runs on requestAnimationFrame; 60 fps at the fixture's 44.1 kHz is 735 samples.
+const LIVE_HOP_SAMPLES = 735;
+
 function mean(xs) { return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0; }
 
-export async function runEval({ verbose = false } = {}) {
+// `hopSamples` decouples how far the harness advances per update() from the 4096-sample
+// analysis window. The app drives analyzer.update() from requestAnimationFrame — a ~16.7 ms
+// hop over an overlapping window — while this harness historically walked non-overlapping
+// 4096-sample chunks, a 93 ms hop. Every EMA rate, steady-state tolerance and profile-learning
+// duration in the analyzer is expressed per frame, so those two operating points are not the
+// same pipeline: measured at 93 ms the four resonance estimators disagreed by 0.63 of the 0-1
+// scale on identical audio, and at the live rate by 0.11. The 93 ms pass is kept as the
+// historical regression net; LIVE_GOLDEN below covers the rate users actually run at.
+export async function runEval({ verbose = false, hopSamples = null } = {}) {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const wavPath = path.join(__dirname, '..', 'fixtures', 'audio-eval', 'rainbow_passage.wav');
   const result = wav.decode(fs.readFileSync(wavPath));
@@ -130,8 +141,9 @@ export async function runEval({ verbose = false } = {}) {
   analyzer.speechGateEnabled = true;
   analyzer.speechGate.reset();
 
-  const chunkSize = 4096;
-  const dt = chunkSize / sampleRate;
+  const chunkSize = 4096;                          // analysis window
+  const hop = hopSamples || chunkSize;             // how far update() advances per frame
+  const dt = hop / sampleRate;
   const voicedPitch = [], f1s = [], f2s = [], snrDbs = [], resonances = [];
   let frames = 0, voicedFrames = 0, formantFrames = 0;
   // Frame-to-frame F1/F2 jitter, accumulated only across *adjacent* formant frames so
@@ -141,7 +153,7 @@ export async function runEval({ verbose = false } = {}) {
   let jitF1Sum = 0, jitF2Sum = 0, jitN = 0;
   let gateOpenFrames = 0, voicedFramesGated = 0;
 
-  for (let i = 0; i + chunkSize <= audioData.length; i += chunkSize) {
+  for (let i = 0; i + chunkSize <= audioData.length; i += hop) {
     analyzer.audioCtx._currentChunk = audioData.subarray(i, i + chunkSize);
     analyzer.update(dt);
     frames++;
@@ -221,25 +233,60 @@ const GOLDEN = {
   voicedFramesGated: [0, 1],
 };
 
-export function checkGolden(stats) {
+// Golden ranges for the SAME fixture driven at the app's real frame rate: a ~16.7 ms
+// requestAnimationFrame hop over the same 4096-sample window, instead of one 93 ms
+// non-overlapping chunk per update.
+//
+// This is not a re-scaling of the pass above — it is a different operating point, and the
+// analyzer behaves measurably differently at it. Frames that clear the formant gate go from
+// 20% of the pass to 64%; F1 reads 507 Hz here against 428 Hz there, F2 1764 against 2107.
+// Every EMA rate and steady-state tolerance in the resonance stage is per frame, so at 93 ms
+// they run 5.6x slower than they ever do in the app: the steady-state weight sat pinned at its
+// 0.3 floor (making it a constant, not a weighting), the personal resonance-range learner could
+// not reach its formantSteadiness > 0.5 gate at all, and the four estimators disagreed by 0.63
+// of the 0-1 scale rather than 0.11. None of that was visible from the 93 ms pass alone.
+const LIVE_GOLDEN = {
+  frames: [298, 298],
+  voicedFrames: [190, 230],
+  formantFrames: [160, 220],
+  avgPitch: [88, 104],
+  avgF1: [440, 570],
+  avgF2: [1620, 1900],
+  avgSnrDb: [21, 29],
+  avgResonance: [0.33, 0.51],
+  gateOpenFrames: [280, 298],
+  voicedFramesGated: [0, 5],
+};
+
+export function checkGolden(stats, ranges = GOLDEN) {
   const failures = [];
-  for (const [key, [lo, hi]] of Object.entries(GOLDEN)) {
+  for (const [key, [lo, hi]] of Object.entries(ranges)) {
     const v = stats[key];
     if (!(v >= lo && v <= hi)) failures.push(`${key}=${v} expected [${lo}, ${hi}]`);
   }
   return failures;
 }
 
-// CLI: run the pipeline and assert the golden ranges (used by `npm run test:all` / CI).
+// CLI: run the pipeline at both operating points and assert each one's golden ranges
+// (used by `npm run test:all` / CI).
 if (import.meta.url === `file://${process.argv[1]}`) {
-  runEval({ verbose: true })
-    .then((stats) => {
-      const failures = checkGolden(stats);
+  (async () => {
+    const passes = [
+      { name: 'chunked (93 ms hop, historical net)', opts: {}, ranges: GOLDEN },
+      { name: 'live (rAF hop, production rate)', opts: { hopSamples: LIVE_HOP_SAMPLES }, ranges: LIVE_GOLDEN },
+    ];
+    let failed = false;
+    for (const pass of passes) {
+      const stats = await runEval(pass.opts);
+      console.log(`\n--- ${pass.name} ---`);
+      console.log(JSON.stringify(stats, null, 2));
+      const failures = checkGolden(stats, pass.ranges);
       if (failures.length) {
-        console.error(`\nFAIL: pipeline golden out of range:\n - ${failures.join('\n - ')}`);
-        process.exit(1);
+        console.error(`FAIL (${pass.name}):\n - ${failures.join('\n - ')}`);
+        failed = true;
       }
-      console.log('SUCCESS: full-pipeline aggregates within golden ranges.');
-    })
-    .catch((e) => { console.error(e); process.exit(1); });
+    }
+    if (failed) process.exit(1);
+    console.log('\nSUCCESS: full-pipeline aggregates within golden ranges at both frame rates.');
+  })().catch((e) => { console.error(e); process.exit(1); });
 }

@@ -45,6 +45,17 @@
 #define VOX_GENDER_PITCH_MIN_HZ 110.0f
 #define VOX_GENDER_PITCH_MAX_HZ 220.0f
 
+// Formant dispersion (ΔF): the least-squares fit of the uniform-tube series
+// F_i = (2i-1)*ΔF/2 over whichever of F1/F2/F3 were measured this frame. Pass 0 for a formant
+// the estimator did not find — array SLOT is the formant number, so a missing F2 must not be
+// mistaken for "F1 and F3 are adjacent". Returns 0 when fewer than two formants are available.
+//
+// Exposed (rather than kept file-static in dsp.cpp) so the host test can assert the same
+// input->output vectors dsp-golden.test.mjs pins on the web side. Per DSP_CONTRACT D1 the
+// resonance scale must mean the same thing on the watch as on the ball, and constant codegen
+// alone cannot catch a formula diverging — only shared golden vectors can.
+float voxFitFormantDispersion(float f1, float f2, float f3);
+
 // Per-frame analysis result.
 struct VoxResult {
   float rms;             // raw RMS energy of the frame (0..~1)

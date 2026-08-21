@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  computeFormantDispersion, dispersionToVtlCm, computeSpectralCentroid,
+  computeFormantDispersion, fitFormantDispersion, dispersionToVtlCm, computeSpectralCentroid,
   computeModalF0Femininity, dispersionToFemininity, computeSibilantFemininity,
   computeGenderScore, genderScoreToHue, computeCepstrum, computeCPP,
 } from './dsp-utils.js';
@@ -20,12 +20,33 @@ function near(actual, expected, tol = TOL) {
 }
 
 test('golden: formant dispersion (ΔF) and apparent vocal-tract length', () => {
+  // Ideal uniform-tube series: the least-squares fit and the old mean-adjacent-spacing
+  // definition agree exactly, so this anchor is unchanged.
   near(computeFormantDispersion([500, 1500, 2500]), 1000);   // ~male spacing
-  near(computeFormantDispersion([650, 1800, 2900]), 1125);   // wider → more feminine
-  near(computeFormantDispersion([500]), 0);                  // <2 valid formants
-  near(computeFormantDispersion([500, 0, 2500]), 2000);      // zeros filtered out
+  // Rebaselined from 1125. The old estimator was (F3-F1)/2, which discards F2 entirely; the
+  // fit uses all three, and these formants sit slightly above the tube series F2 implies.
+  near(computeFormantDispersion([650, 1800, 2900]), 10275 / 8.75); // wider → more feminine
+  near(computeFormantDispersion([500]), 0);                  // <2 measured formants → no fit
+  // A missing formant is a missing SLOT, not a shorter list. Rebaselined from 2000, which was
+  // the bug: compacting [F1, —, F3] treated F1 and F3 as adjacent and doubled ΔF, halving the
+  // apparent tract length and pinning resonance at "maximally feminine" off one dropout.
+  near(computeFormantDispersion([500, 0, 2500]), 1000);      // F2 dropped, F1/F3 keep their slots
+  near(computeFormantDispersion([500, 1500, 0]), 1000);      // F3 dropped
+  near(computeFormantDispersion([0, 1500, 2500]), 1000);     // F1 dropped
   near(dispersionToVtlCm(1000), 17.5);                       // male ≈ 17.5 cm
   near(dispersionToVtlCm(1250), 14.0);                       // female ≈ 14 cm
+});
+
+test('golden: dispersion fit quality separates a tube-like frame from a scrambled one', () => {
+  const clean = fitFormantDispersion([500, 1500, 2500]);
+  assert.equal(clean.n, 3);
+  near(clean.residualHz, 0);
+  near(clean.fitQuality, 1);
+  // Formants that do not lie on any uniform-tube series: the ΔF they imply is meaningless,
+  // and fitQuality is what lets callers discount it instead of trusting it equally.
+  const scrambled = fitFormantDispersion([900, 1000, 3800]);
+  assert.ok(scrambled.fitQuality < 0.5,
+    `expected a poor fit, got ${scrambled.fitQuality} (residual ${scrambled.residualHz})`);
 });
 
 test('golden: spectral centroid (full band and band-limited)', () => {

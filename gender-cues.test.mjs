@@ -41,13 +41,26 @@ test('sibilant femininity: high centroid -> feminine, low -> masculine', () => {
 });
 
 // ---------- Formant dispersion / VTL ----------
-test('formant dispersion is mean adjacent spacing', () => {
+test('formant dispersion fits the uniform-tube series F_i = (2i-1)ΔF/2', () => {
+  // On an ideal tube series the fit and the old mean-adjacent-spacing definition coincide.
   assert.equal(computeFormantDispersion([500, 1500, 2500]), 1000);
-  assert.equal(computeFormantDispersion([700, 1700]), 1000);
+  // They part company off the ideal, and the fit is the one to keep. F1=700/F2=1700 lie on no
+  // single tube — F1 implies ΔF=1400, F2 implies ΔF=1133 — so the answer is a compromise
+  // (1160), not the gap between them. The old estimator returned that gap, F2-F1, which is
+  // among the most vowel-dependent quantities in the spectrum (~2200 Hz for /i/, ~700 Hz for
+  // /u/); reporting it as "vocal-tract length" made the resonance score swing on vowel
+  // identity, the exact confound ΔF is chosen to avoid.
+  assert.equal(computeFormantDispersion([700, 1700]), 2900 / 2.5);
 });
-test('dispersion ignores missing formants', () => {
-  assert.equal(computeFormantDispersion([500, 0, 2500]), 2000);
+test('a missing formant is a missing slot, not a shorter list', () => {
+  // Array position IS the formant number. Compacting [F1, —, F3] to [F1, F3] treated the two
+  // as adjacent and doubled ΔF, halving apparent tract length and pinning resonance at
+  // "maximally feminine" off a single dropped frame. Keeping F3 in slot 3 recovers the truth.
+  assert.equal(computeFormantDispersion([500, 0, 2500]), 1000);
+  assert.equal(computeFormantDispersion([500, 1500, 0]), 1000);
+  assert.equal(computeFormantDispersion([0, 1500, 2500]), 1000);
   assert.equal(computeFormantDispersion([0]), 0);
+  assert.equal(computeFormantDispersion([500]), 0);  // one formant cannot fix a tract length
 });
 test('wide dispersion (short VTL) reads feminine; narrow reads masculine', () => {
   assert.ok(dispersionToFemininity(1250) > 0.8); // short tract
