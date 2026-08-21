@@ -89,11 +89,17 @@ not across platforms.
 
 ## Per-platform `resonanceScore` today (for reference)
 
-- **Web** (`app.js:1080-1089`): `aVTL` from formant dispersion → `vtlScore`, then
-  `vtlScore*0.55 + f1Score*0.25 + f2Score*0.20`.
-- **C++** (`hardware/*/dsp.h`, `VoxResult.resonance`): dispersion/VTL-based.
+- **Web** (`app.js`, `VoiceAnalyzer.update`): `aVTL` from the uniform-tube ΔF fit →
+  `vtlScore`, then `vtlScore*0.55 + f1Score*0.25 + f2Score*0.20`. ΔF is now computed *before*
+  the score each frame (it used to lag one frame behind) and seeds on its first usable fit
+  rather than climbing from 0, which used to clamp `vtlScore` — the 55% term — to a constant 0
+  for the opening seconds of a session. Formants that the estimator has stopped finding are
+  aged out (`FORMANT_STALE_FRAMES`) and withheld from the fit rather than passed in frozen at
+  their initialisation defaults.
+- **C++** (`hardware/*/dsp.h`, `VoxResult.resonance`): same uniform-tube ΔF fit
+  (`voxFitFormantDispersion`), golden-tested against the web vectors.
 - **Kotlin** (`ResonanceEstimator.kt:142`): `0.65*formantScore + 0.35*brightness`,
-  `brightness = 0.55*tilt + 0.45*centroidScore`.
+  `brightness = 0.55*tilt + 0.45*centroidScore` — still the pre-D1 brightness-primary formula.
 
 ## Decisions (resolved 2026-06-22)
 
@@ -154,14 +160,50 @@ the same threshold drives web ball vividness and watch haptic tiers.
 
 ## Golden-test contract
 
-**Status: both JS legs landed.** (1) `dsp-golden.test.mjs` — frozen input→output vectors
-for the pure canonical-feature functions (dispersion/VTL, centroid, femininity cues, gender
-score, cepstrum/CPP). (2) `tools/run-eval-harness.mjs` — the full audio→packet pipeline run
-through the real `VoiceAnalyzer` over the Rainbow Passage, using a real-FFT mock Web Audio
-context so the frequency-domain features get real data; asserts golden ranges on aggregate
-pitch/F1/F2/SNR/resonance (catches e.g. formants collapsing to defaults). Both run in
-`test:all`/CI. Still to do: the Kotlin/C++ legs that run the same vectors through those ports
-(needs the native toolchains), and per-field tolerance tiers for them.
+**Status: both JS legs landed; the C++ ΔF leg landed.** (1) `dsp-golden.test.mjs` — frozen
+input→output vectors for the pure canonical-feature functions (dispersion/VTL, centroid,
+femininity cues, gender score, cepstrum/CPP). (2) `tools/run-eval-harness.mjs` — the full
+audio→packet pipeline run through the real `VoiceAnalyzer` over the Rainbow Passage, using a
+real-FFT mock Web Audio context so the frequency-domain features get real data; asserts golden
+ranges on aggregate pitch/F1/F2/SNR/resonance (catches e.g. formants collapsing to defaults).
+(3) `hardware/twatch_voxball/test/dsp_host_test.cpp` — the **first cross-port leg**: it asserts
+`voxFitFormantDispersion()` against the same five ΔF vectors `dsp-golden.test.mjs` pins on the
+JS side, and both now return identical values (1000, 1174.286, 1000, 1000, 0). It compiles the
+same translation unit the watch flashes, and already runs in `.github/workflows/twatch-build.yml`.
+(4) `resonance-reliability.test.mjs` — drives the real `VoiceAnalyzer` over **synthesized**
+vowels whose F1/F2/F3 are known by construction, so the resonance score has a ground truth to
+be right or wrong about, at the live frame rate.
+
+**This is the mechanism that caught the semantic drift the doc predicted it would.** The web
+and C++ ports were both computing ΔF as the endpoint difference over a *compacted* formant list
+(`(last - first) / (count - 1)`), with C++ additionally substituting `F2 - F1` whenever F3 went
+missing. Both are the same class of bug: array position was being read as adjacency rather than
+as formant number, so a dropped F2 doubled ΔF (halving apparent tract length, pinning resonance
+at the feminine rail off one bad frame) and a dropped F3 silently swapped in one of the most
+vowel-dependent quantities in the spectrum (F2−F1 is ~2200 Hz on /i/, ~700 Hz on /u/) as a
+"vocal-tract length". Constant codegen could not have caught either. Both ports now fit the
+uniform-tube series `F_i = (2i-1)·ΔF/2` by least squares through the origin over whichever
+formants are present, which agrees with mean-adjacent-spacing on ideal data, degrades correctly
+on a dropout, and carries ~4.4× less variance against per-formant error (measured: aVTL standard
+error ±1.38 cm → ±0.68 cm at σ=120 Hz per formant).
+
+Still to do: the Kotlin leg (needs the Android toolchain, and D1's VTL unification has not
+landed there yet — `ResonanceEstimator.kt` is still brightness-primary), the remaining C++
+fields beyond ΔF, and per-field tolerance tiers.
+
+### Frame-rate fidelity
+
+The harness now runs **two passes** over the same fixture: the historical non-overlapping
+4096-sample walk (93 ms hop) and a `LIVE_GOLDEN` pass at the app's real requestAnimationFrame
+hop (~16.7 ms), each with its own ranges. They are different operating points, not a rescaling —
+every EMA rate, steady-state tolerance and profile-learning duration in the analyzer is
+expressed *per frame*, so at 93 ms they all run 5.6× slower than any user ever sees. Measured
+differences on the same audio: formant-gated frames 20% of the pass vs 64%; F1 428 Hz vs 507 Hz;
+F2 2107 Hz vs 1764 Hz. At the 93 ms rate the steady-state weight sat pinned at its
+`STEADY_WEIGHT_FLOOR`, making it a constant rather than a weighting, the personal
+resonance-range learner could never reach its `formantSteadiness > 0.5` gate, and the four
+estimators disagreed by 0.63 of the 0–1 scale instead of 0.11. A single-rate harness could not
+see any of that.
 
 The existing fixture (`fixtures/audio-eval/reference-frames.json`) feeds **pre-computed
 confidence scalars** and asserts **gating** outputs — it does *not* go from audio to
@@ -218,6 +260,29 @@ generated outputs.
 6. Align Kotlin/C++ extractor bands to the canonical one (D2).
 7. Golden-value cross-port tests (extend the fixture above).
 
+## Measured per-estimator accuracy (web)
+
+Against a synthesized vowel with F1/F2/F3 = 570/1710/2850 Hz (ΔF 1140 Hz, apparent tract
+15.35 cm, true resonance score 0.516), at the live frame rate. Recorded and enforced by
+`resonance-reliability.test.mjs`:
+
+| estimator | ΔF error | resonance error | note |
+|---|---|---|---|
+| `lpc` | −0% | −0.3 pts | root-solved; the reference |
+| `cepstral` | −1% | −1.7 pts | |
+| `centroid` | +2% | +5.0 pts | F1/F2 only — it cannot resolve F3 |
+| `harmonic` | −4% | −11.9 pts | envelope sampled at F0 spacing; quantises F2/F3 to the nearest harmonic |
+
+Two things follow. First, `vtlScore` is a **very high-gain** mapping: it spans its whole 0–1
+range over ΔF ∈ [1029, 1250] Hz — a 21% band — so a 1% error in ΔF moves the reported score by
+about 5 points. Small formant disagreements are amplified into large score disagreements, which
+is why the estimators need explicit agreement bounds rather than an assumption of equivalence.
+Second, the UI offers all four from one dropdown as if they were interchangeable, and the
+`auto` ladder switches between three of them mid-session on room noise. The ladder now has
+2 dB of hysteresis so an SNR resting on a tier edge stops re-selecting every frame, and the
+four estimators' confidences are calibrated onto one scale (`formantEstimateConfidence`) so
+switching estimator no longer silently changes how much the app trusts itself.
+
 ## Known drift to clean up (tracked here, not fixed yet)
 
 - `docs/ANALYZER_API.md` references `voice-analyzer-core.js` (does not exist);
@@ -229,3 +294,21 @@ generated outputs.
   constructor default of off.
 - Centroid normalization ranges differ (Kotlin 700–2200 vs C++ 400–2200) — fine as
   presentation, but should be explicit in the spec.
+- **Kotlin has not adopted D1.** `ResonanceEstimator.kt` is still brightness-primary while web
+  and C++ are both on the uniform-tube ΔF fit, so "resonance 50%" still means a different vocal
+  target on the watch than on the ball a user learned it from. This is the highest-value
+  remaining port item; it needs the Android toolchain to verify.
+- **`harmonic` carries a −11.9 point bias** (see the accuracy table above) and the UI offers it
+  in the same dropdown as `lpc`, which is accurate to −0.3 points. Either the dropdown should
+  say so or `harmonic` should stop being offered as a peer. It is not reachable from `auto`.
+- **The personal resonance-range learner is method-dependent.** Its conjunction of four gates
+  (`conf > 0.4`, `formantSteadiness > 0.5`, `vowelLikelihood > 0.4`, non-zero ΔF) is reached
+  under `lpc`/`cepstral`/`centroid` but not under `harmonic` on the Rainbow Passage, so whether
+  a user ever gets a personal 0–100% span depends on which estimator the room's SNR selected.
+  It also changes what the score *means* mid-session (population anchors → the speaker's own
+  span) without recording which scale a stored reading was taken on, so session summaries can
+  average across two different scales.
+- **`vtlScore` is a high-gain mapping**: full 0–1 travel over ΔF ∈ [1029, 1250] Hz, ~5 score
+  points per 1% of ΔF error. That is a deliberate consequence of the 17 cm → 14 cm
+  physiological anchors, but it means pre-calibration readings carry a wide confidence interval
+  that the meter does not currently draw.

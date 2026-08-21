@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, computeFormantDispersion, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, fitFormantDispersion, formantEstimateConfidence, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake } from './dsp-utils.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { SpeechGate } from './speech-gate.js';
 import { PRACTICE_PHRASES, scorePhraseTake, buildContourSeries } from './phrase-coach.js';
@@ -68,6 +68,31 @@ const SYLLABLE_DEBOUNCE_SECS = 0.08;     // Minimum seconds between syllable ons
 const SYLLABLE_ON_MULT = 0.6;            // Energy range multiplier for syllable-on threshold
 const SYLLABLE_OFF_MULT = 0.15;          // Energy range multiplier for syllable-off threshold
 const SYLLABLE_IMPULSE_DECAY = 0.88;     // Per-frame decay of syllable impulse
+// Estimator frames a formant may go unmeasured before it is dropped from the ΔF fit. Counted
+// in frames where the estimator actually RAN (voiced + vowel-like), so ordinary silence never
+// ages a formant out — only an estimator that keeps failing to find one does. ~12 frames is
+// 0.2 s of continuous phonation at the rAF frame rate.
+const FORMANT_STALE_FRAMES = 12;
+// Per-estimator calibration onto the shared confidence scale (see formantEstimateConfidence).
+// Calibrated so all four report a comparable median confidence on clean read speech, measured
+// against fixtures/audio-eval/rainbow_passage.wav at the live frame rate; the parity is locked
+// by resonance-reliability.test.mjs so this can't silently drift apart again. These express
+// scale only — between-method PRECISION is expressed once, in RESONANCE_METHOD_TRUST below.
+const FORMANT_CONF_GAIN = {
+  harmonic: 1.0,   // reference: peak prominence over the harmonic envelope's dynamic range
+  cepstral: 1.0,   // same prominence currency as harmonic
+  lpc: 2.1,        // pole-bandwidth score runs low; replaces an ad-hoc inline ×2.5
+  centroid: 3.0,   // spectral concentration runs lowest of the four
+};
+// Measurement precision per estimator, used ONLY as the Kalman measurement-noise scale. Kept
+// separate from FORMANT_CONF_GAIN so "how sure am I this frame has formants" and "how precise
+// is this estimator when it is sure" stay distinct quantities.
+const RESONANCE_METHOD_TRUST = {
+  lpc: 1.0,      // precise root-solved values -> low measurement noise
+  harmonic: 0.7, // good but harmonic-resolution limited
+  cepstral: 0.5, // smooth but broad
+  centroid: 0.3, // conflates pitch
+};
 const WEIGHT_TILT_BASE = 0.45;           // Baseline blend weight for spectral-tilt heaviness
 const WEIGHT_H1H2_BLEND = 0.25;          // Max blend weight for the H1-H2 breathiness cue (× confidence)
 const WEIGHT_CPP_BLEND = 0.30;           // Blend weight for CPP breathiness cue (× confidence); source-only, no filter contamination
@@ -134,6 +159,16 @@ export class VoiceAnalyzer {
     this.formantSteadiness = 1;  // smoothed steady-state weight [floor..1] for the live score
     this._prevResF1 = 0;         // last accepted raw F1 candidate (for frame-to-frame delta)
     this._prevResF2 = 0;         // last accepted raw F2 candidate
+    // Frames since each formant was last actually MEASURED (not merely coasted). smoothF1/2/3
+    // hold their defaults until an estimator supplies a value and hold their last value when
+    // one stops finding it — so without this, ΔF (55% of the resonance score) can be driven by
+    // a constant 2700 Hz F3 the mic never saw. Anything past FORMANT_STALE_FRAMES is dropped
+    // from the ΔF fit, which degrades to the F1/F2 pair instead of trusting a frozen number.
+    this._f1Age = Infinity;
+    this._f2Age = Infinity;
+    this._f3Age = Infinity;
+    this.dispersionFitQuality = 0;  // 0..1 goodness-of-fit of the last uniform-tube ΔF fit
+    this.dispersionFormantsUsed = 0; // how many formants that fit actually used
 
     // ====== PERCEIVED-GENDER CUES (multi-cue model) ======
     // Modal (habitual median) pitch over a voiced window, not the momentary note.
@@ -464,6 +499,13 @@ export class VoiceAnalyzer {
     this.formantSteadiness = 1;
     this._prevResF1 = 0;
     this._prevResF2 = 0;
+    // Infinity, not 0: after a restart no formant has been measured yet, so none may be trusted
+    // into the ΔF fit until an estimator actually supplies one.
+    this._f1Age = Infinity;
+    this._f2Age = Infinity;
+    this._f3Age = Infinity;
+    this.dispersionFitQuality = 0;
+    this.dispersionFormantsUsed = 0;
     // Perceived-gender cue state
     this.modalF0Buf = [];
     this.modalF0Hz = 0;
@@ -1345,7 +1387,9 @@ export class VoiceAnalyzer {
       // number leans on whichever method degrades least in the current noise; otherwise honour
       // the explicit selection. activeResonanceMethod feeds methodTrust + the UI/metrics.
       const effectiveMethod = this.resonanceMethod === 'auto'
-        ? selectResonanceMethod(this.snrDbSmoothed)
+        // Pass the incumbent so the ladder has hysteresis: an SNR parked on a tier edge would
+        // otherwise swap estimators every frame, and each swap steps the reported resonance.
+        ? selectResonanceMethod(this.snrDbSmoothed, { current: this.activeResonanceMethod })
         : this.resonanceMethod;
       this.activeResonanceMethod = effectiveMethod;
 
@@ -1409,13 +1453,7 @@ export class VoiceAnalyzer {
       // During pitch slides, velocity tracks the true formant trajectory
       // and rejects harmonic-locked outliers.
       
-      const methodTrustMap = {
-        lpc: 1.0,      // precise root-solved values -> low measurement noise
-        harmonic: 0.7, // good but harmonic-resolution limited
-        cepstral: 0.5, // smooth but broad
-        centroid: 0.3  // conflates pitch
-      };
-      const methodTrust = methodTrustMap[effectiveMethod] || methodTrustMap.harmonic;
+      const methodTrust = RESONANCE_METHOD_TRUST[effectiveMethod] || RESONANCE_METHOD_TRUST.harmonic;
 
       // Adaptive measurement noise: low confidence = large R (trust prediction more).
       // Steady-state weight folds in here too so jumpy transition frames inflate R (and are
@@ -1424,15 +1462,46 @@ export class VoiceAnalyzer {
       const R_scale = Math.max(0.1, conf * methodTrust * this.formantSteadiness);
       const R = R_base / (R_scale * R_scale);
 
-      if (f1Candidate > 0) this.smoothF1 = this._kalmanUpdate(this._kalmanF1, f1Candidate, R);
-      if (f2Candidate > 0) this.smoothF2 = this._kalmanUpdate(this._kalmanF2, f2Candidate, R);
-      if (f3Candidate > 0) this.smoothF3 = this._kalmanUpdate(this._kalmanF3, f3Candidate, R);
+      // Age every formant this estimator frame, then reset the ones it actually measured. A
+      // formant the estimator keeps missing goes stale and stops contributing to ΔF.
+      this._f1Age++; this._f2Age++; this._f3Age++;
+      if (f1Candidate > 0) { this.smoothF1 = this._kalmanUpdate(this._kalmanF1, f1Candidate, R); this._f1Age = 0; }
+      if (f2Candidate > 0) { this.smoothF2 = this._kalmanUpdate(this._kalmanF2, f2Candidate, R); this._f2Age = 0; }
+      if (f3Candidate > 0) { this.smoothF3 = this._kalmanUpdate(this._kalmanF3, f3Candidate, R); this._f3Age = 0; }
       this.formantConfidence += (conf - this.formantConfidence) * 0.15;
+
+      // --- Formant dispersion (ΔF) -> apparent vocal-tract length gender cue ---
+      // Computed BEFORE the resonance score, not after: ΔF is the score's largest single term,
+      // and updating it afterwards meant every frame's resonance was built on the previous
+      // frame's tract-length estimate (and, on the first voiced frame of a session, on 0).
+      //
+      // Stale formants are withheld rather than passed in frozen — the fit then falls back to
+      // the F1/F2 pair, which is a real (if noisier) measurement, instead of a value the mic
+      // never produced. fitQuality reports how well the surviving formants actually lie on a
+      // uniform-tube series; a frame that fits no tube gets its ΔF down-weighted below.
+      const dispFit = fitFormantDispersion([
+        this._f1Age <= FORMANT_STALE_FRAMES ? this.smoothF1 : 0,
+        this._f2Age <= FORMANT_STALE_FRAMES ? this.smoothF2 : 0,
+        this._f3Age <= FORMANT_STALE_FRAMES ? this.smoothF3 : 0,
+      ]);
+      this.dispersionFitQuality = dispFit.fitQuality;
+      this.dispersionFormantsUsed = dispFit.n;
+      if (dispFit.deltaF > 0) {
+        // Goodness-of-fit joins confidence and steadiness in the EMA step, so a frame whose
+        // formants don't describe a plausible tract nudges ΔF instead of moving it.
+        const dispRate = (0.05 + conf * 0.08) * this.formantSteadiness * (0.25 + 0.75 * dispFit.fitQuality);
+        this.formantDispersionHz = this.formantDispersionHz > 0
+          ? this.formantDispersionHz + (dispFit.deltaF - this.formantDispersionHz) * dispRate
+          // Seed on the first usable fit rather than crawling up from 0. Starting at zero meant
+          // ΔF spent the opening seconds of a session far below any real vocal tract, which
+          // clamped vtlScore — the 55% term — to a constant 0 for that whole stretch.
+          : dispFit.deltaF;
+      }
 
       // --- Resonance score: aVTL-primary (vowel-robust), with F1 and gated F2 ---
       // Primary: apparent vocal-tract length from formant dispersion (ΔF). Vowel-robust because
-      // ΔF is the mean adjacent formant spacing across F1–F3, which is much less vowel-dependent
-      // than raw F2 alone.  Anchors: 17 cm (male, score 0) → 14 cm (female, score 1).
+      // ΔF is fitted across F1–F3, which is much less vowel-dependent than raw F2 alone.
+      // Anchors: 17 cm (male, score 0) → 14 cm (female, score 1).
       const aVTL_cm = this.formantDispersionHz > 0 ? 35000 / (2 * this.formantDispersionHz) : 0;
       const rp = this.resonanceProfile;
       let vtlScore, f1Score, f2Score;
@@ -1465,12 +1534,6 @@ export class VoiceAnalyzer {
       // their reading; transition frames only nudge it (floor), so the live number settles on
       // vowel targets rather than chasing onsets/glides.
       this.smoothResonance += (rawResonance - this.smoothResonance) * (0.05 + conf * 0.08) * this.formantSteadiness;
-
-      // --- Formant dispersion (ΔF) -> apparent vocal-tract length gender cue ---
-      const rawDispersion = computeFormantDispersion([this.smoothF1, this.smoothF2, this.smoothF3]);
-      if (rawDispersion > 0) {
-        this.formantDispersionHz += (rawDispersion - this.formantDispersionHz) * (0.05 + conf * 0.08) * this.formantSteadiness;
-      }
 
       // --- ADAPTIVE RESONANCE RANGE LEARNING ---
       // Collect F1 / F2 / dispersion from clean, steady, vowel-like frames over the first few
@@ -1940,7 +2003,12 @@ export class VoiceAnalyzer {
     if (specRange > 1) {
       const f1P = f1 > 0 ? Math.min(1, (f1Amp - specMin) / specRange) : 0.1;
       const f2P = f2 > 0 ? Math.min(1, (f2Amp - specMin) / specRange) : 0.1;
-      conf = Math.min(1, ((f1P + f2P) / 2) * this.pitchConfidence * (this.vowelLikelihood + 0.3));
+      conf = formantEstimateConfidence({
+        structure: (f1P + f2P) / 2,
+        gain: FORMANT_CONF_GAIN.cepstral,
+        pitchConfidence: this.pitchConfidence,
+        vowelLikelihood: this.vowelLikelihood,
+      });
     }
     if (f1 === 0) f1 = 500;
     if (f2 === 0) f2 = 1500;
@@ -2042,7 +2110,7 @@ export class VoiceAnalyzer {
     // --- Root-solving via companion matrix eigenvalues ---
     // Find roots of A(z) = 1 - a[1]z^-1 - a[2]z^-2 - ...
     // Equivalent polynomial: z^order - a[1]z^(order-1) - ... - a[order] = 0
-    const { rootsRe, rootsIm } = this._findLPCRoots(a, order);
+    const { rootsRe, rootsIm, converged } = this._findLPCRoots(a, order);
 
     // Extract formants from roots: each complex conjugate pair with positive
     // imaginary part gives a formant frequency and bandwidth
@@ -2079,7 +2147,15 @@ export class VoiceAnalyzer {
     if (f1 > 0) bwScore += Math.max(0, 1 - f1Bw / 400);
     if (f2 > 0) bwScore += Math.max(0, 1 - f2Bw / 400);
     bwScore = nFound > 0 ? bwScore / Math.min(2, nFound) : 0;
-    const conf = Math.min(1, (nFound / 3) * bwScore * this.pitchConfidence * (this.vowelLikelihood + 0.3) * 2.5);
+    const conf = formantEstimateConfidence({
+      // A non-converged root solve still produces numbers; it does not produce the LPC model's
+      // poles. Halve the structure term rather than discard the frame outright, so a hard frame
+      // degrades toward the Kalman prediction instead of dropping out of the estimate entirely.
+      structure: (nFound / 3) * bwScore * (converged ? 1 : 0.5),
+      gain: FORMANT_CONF_GAIN.lpc,
+      pitchConfidence: this.pitchConfidence,
+      vowelLikelihood: this.vowelLikelihood,
+    });
 
     if (f1 === 0) f1 = 500;
     if (f2 === 0) f2 = 1500;
@@ -2093,13 +2169,21 @@ export class VoiceAnalyzer {
     const rootsRe = this._getBuffer('lpcRootsRe', Float64Array, order);
     const rootsIm = this._getBuffer('lpcRootsIm', Float64Array, order);
 
+    // Deterministic seeding. This used to jitter the start radius with Math.random(), which
+    // made the app's most precise formant estimator non-reproducible: the same audio frame
+    // could yield different F1/F2/F3 from one run to the next, and neither the golden harness
+    // nor a user comparing two takes could tell a real change from re-seeding noise. Durand-
+    // Kerner only needs the initial points to be distinct and off the real axis, so a fixed
+    // irrational-angle spiral serves the same purpose reproducibly.
+    const PHI = 0.6180339887498949; // golden ratio conjugate — spreads radii without repeating
     for (let k = 0; k < order; k++) {
       const angle = 2 * Math.PI * (k + 0.5) / order;
-      const radius = 0.9 + 0.05 * Math.random();
+      const radius = 0.9 + 0.05 * (((k + 1) * PHI) % 1);
       rootsRe[k] = radius * Math.cos(angle);
       rootsIm[k] = radius * Math.sin(angle);
     }
 
+    let converged = false;
     for (let iter = 0; iter < 50; iter++) {
       let maxDelta = 0;
       for (let k = 0; k < order; k++) {
@@ -2134,10 +2218,14 @@ export class VoiceAnalyzer {
         rootsIm[k] = zIm - deltaIm;
         maxDelta = Math.max(maxDelta, Math.hypot(deltaRe, deltaIm));
       }
-      if (maxDelta < 1e-8) break;
+      if (maxDelta < 1e-8) { converged = true; break; }
     }
 
-    return { rootsRe, rootsIm };
+    // Report convergence instead of silently returning half-solved roots. A polynomial the
+    // solver did not finish gives formant frequencies and bandwidths that are not the LPC
+    // model's — treating them as equal to a converged solve is how a confident-looking
+    // number gets built on nothing.
+    return { rootsRe, rootsIm, converged };
   }
 
   // ============================================
@@ -2184,13 +2272,31 @@ export class VoiceAnalyzer {
 
     const b1 = bandAnalysis(200, 1100);
     const b2 = bandAnalysis(900, 3500);
-    const b3 = bandAnalysis(2200, 4200);
 
-    // Confidence from concentration × voicing quality
+    // Confidence from concentration × voicing quality, on the shared scale. Spectral
+    // concentration is the lowest-reading of the four structure measures, so without the
+    // calibration gain this estimator's confidence could not clear even the 0.2 gate that
+    // admits a frame to the resonance readout — the method the SNR ladder falls back to in
+    // noise reported a frozen number that nothing downstream would display.
     const avgConcentration = (b1.concentration + b2.concentration) / 2;
-    const conf = Math.min(1, avgConcentration * this.pitchConfidence * (this.vowelLikelihood + 0.3));
+    const conf = formantEstimateConfidence({
+      structure: avgConcentration,
+      gain: FORMANT_CONF_GAIN.centroid,
+      pitchConfidence: this.pitchConfidence,
+      vowelLikelihood: this.vowelLikelihood,
+    });
 
-    return { f1: b1.centroid, f2: b2.centroid, f3: b3.centroid, confidence: conf };
+    // No F3. A band centroid is a weighted average, so it is pulled toward the centre of its
+    // own band whenever the spectrum inside it is not sharply peaked — and the F3 band is the
+    // widest and least peaked of the three, overlapping F2's upper skirt below and fricative
+    // energy above. Measured against a synthesized vowel with F3 at 2850 Hz, the 2200-4200 Hz
+    // centroid read 3149 Hz: +11%, which the ΔF fit turns into +8% on apparent tract length and
+    // +21 points on the resonance score, because F3 carries the most leverage in that fit.
+    //
+    // Returning 0 declares F3 unmeasured rather than guessing it. The ΔF fit then works from
+    // F1/F2 alone — both within 2% here — which is what its slot-aware form is for. This is the
+    // method's honest resolution: it is the noise-tolerant fallback, not a formant tracker.
+    return { f1: b1.centroid, f2: b2.centroid, f3: 0, confidence: conf };
   }
 
   // Shared formant peak-picking for harmonic envelope methods (A)
@@ -2289,7 +2395,12 @@ export class VoiceAnalyzer {
       const f2P = usedF2Fallback ? 0.2 : Math.min(1, (f2Amp - envMin) / envRange);
       prominence = (f1P + f2P) / 2;
     }
-    const confidence = Math.min(1, prominence * this.pitchConfidence * (this.vowelLikelihood + 0.3));
+    const confidence = formantEstimateConfidence({
+      structure: prominence,
+      gain: FORMANT_CONF_GAIN.harmonic,
+      pitchConfidence: this.pitchConfidence,
+      vowelLikelihood: this.vowelLikelihood,
+    });
 
     return { f1, f2, f3, confidence };
   }
@@ -7103,7 +7214,13 @@ class VoxBallGame {
       B.pitch.push({ t, v: a.smoothPitchHz });
     }
     if (a.formantConfidence > 0.2 && m.energy > 0.05) {
-      B.resonance.push({ t, f1: a.smoothF1, f2: a.smoothF2, res: a.smoothResonance });
+      // Carry the frame's confidence so the readout can weight by it. The 0.2 gate admits a
+      // frame; it does not make a 0.21-confidence frame worth as much as a 0.95 one, and the
+      // Voice Map cloud has always weighted its samples this way (summarizeVoiceCloud).
+      B.resonance.push({
+        t, f1: a.smoothF1, f2: a.smoothF2, res: a.smoothResonance,
+        w: clamp01(a.formantConfidence) * (0.4 + 0.6 * clamp01(a.dispersionFitQuality)),
+      });
     }
     if (m.attack > 0.02) {
       B.attack.push({ t, v: m.attack, rise: a.attackRiseHardness, abrupt: a.attackAbruptness });
@@ -7187,21 +7304,50 @@ class VoxBallGame {
       } else this._avgCache.pitch = null;
     }
 
-    // Resonance — mean of the adaptive 0-1 resonance score (same score that drives the meter
-    // bar position), bucketed into a plain-language 5-tier descriptor. F1/F2 are kept only as
-    // supporting detail, not shown as raw numbers to the user.
+    // Resonance — CONFIDENCE-WEIGHTED mean of the adaptive 0-1 resonance score (the same score
+    // that drives the meter bar position), bucketed into a plain-language 5-tier descriptor.
+    // F1/F2 are kept only as supporting detail, not shown as raw numbers to the user.
+    //
+    // Also reports how much that descriptor is worth. Two things separate a settled reading
+    // from a lucky one, and neither was visible before:
+    //   - `effectiveN` (Kish): the number of full-confidence frames this window is *equivalent*
+    //     to. Twenty barely-admitted frames are not twenty measurements.
+    //   - `sd`: the weighted spread. A window straddling a tier edge reports a descriptor that
+    //     will flip on the next frame; one sitting inside a tier reports a stable one.
     {
       const s = within(B.resonance);
       if (s.length >= MIN_N) {
-        let f1 = 0, f2 = 0, res = 0;
-        for (const p of s) { f1 += p.f1; f2 += p.f2; res += p.res; }
-        const meanF1 = f1 / s.length, meanF2 = f2 / s.length, meanRes = res / s.length;
+        let wSum = 0, wSqSum = 0, f1 = 0, f2 = 0, res = 0;
+        for (const p of s) {
+          const w = Math.max(1e-6, p.w != null ? p.w : 1);
+          wSum += w; wSqSum += w * w;
+          f1 += p.f1 * w; f2 += p.f2 * w; res += p.res * w;
+        }
+        const meanF1 = f1 / wSum, meanF2 = f2 / wSum, meanRes = res / wSum;
+        let varRes = 0;
+        for (const p of s) {
+          const w = Math.max(1e-6, p.w != null ? p.w : 1);
+          const d = p.res - meanRes;
+          varRes += d * d * w;
+        }
+        const sdRes = Math.sqrt(varRes / wSum);
+        const effectiveN = wSqSum > 0 ? (wSum * wSum) / wSqSum : 0;
         const descriptor = meanRes >= 0.8 ? 'Bright'
           : meanRes >= 0.6 ? 'Bright Mid'
           : meanRes >= 0.4 ? 'Mid'
           : meanRes >= 0.2 ? 'Dark Mid'
           : 'Dark';
-        this._avgCache.resonance = { n: s.length, meanF1, meanF2, meanRes, descriptor };
+        // Distance to the nearest tier edge, in units of the reading's own spread. Below ~1 the
+        // descriptor is inside the noise and should not be presented as settled.
+        const edges = [0.2, 0.4, 0.6, 0.8];
+        const edgeGap = Math.min(...edges.map((e) => Math.abs(meanRes - e)));
+        const margin = sdRes > 1e-6 ? edgeGap / sdRes : Infinity;
+        const reliability = (effectiveN >= 8 && margin >= 1) ? 'settled'
+          : (effectiveN >= 4) ? 'provisional'
+          : 'unsettled';
+        this._avgCache.resonance = {
+          n: s.length, effectiveN, meanF1, meanF2, meanRes, sd: sdRes, margin, reliability, descriptor,
+        };
       } else this._avgCache.resonance = null;
     }
 
@@ -7244,10 +7390,21 @@ class VoxBallGame {
     }
   }
 
-  _resonanceReadout() {
+  // Plain-language tier: Bright / Bright Mid / Mid / Dark Mid / Dark.
+  //
+  // A tier label is a strong claim — five buckets across the whole scale, so landing in one
+  // asserts the reading is accurate to about a tenth of the range. It frequently is not: near a
+  // bucket edge, or on a handful of low-confidence frames, the label flips while the voice does
+  // nothing. Rather than present that as a firm reading, mark it. `~` prefixes a provisional
+  // tier; an unsettled one shows no tier at all, because a wrong tier is worse than none in an
+  // app whose users are trying to hold a target.
+  _resonanceReadout(rich = false) {
     const s = this._avgSummary('resonance');
     if (!s) return '—';
-    return s.descriptor; // plain-language tier: Bright / Bright Mid / Mid / Dark Mid / Dark
+    if (s.reliability === 'unsettled') return rich ? 'Listening…' : '…';
+    const tier = s.reliability === 'provisional' ? `~${s.descriptor}` : s.descriptor;
+    if (!rich) return tier;
+    return `${tier} · ${Math.round(s.meanRes * 100)}% ±${Math.round(s.sd * 100)}`;
   }
 
   _attackReadout() {
@@ -7336,7 +7493,17 @@ class VoxBallGame {
       const pEl = document.getElementById('expValPitch');
       if (pEl) pEl.textContent = this._pitchReadout(true);
       const rEl = document.getElementById('expValResonance');
-      if (rEl) rEl.textContent = this._resonanceReadout();
+      if (rEl) {
+        rEl.textContent = this._resonanceReadout(true);
+        const rs = this._avgSummary('resonance');
+        // Say what the number is built on, so a reading taken from four shaky frames is not
+        // presented with the same authority as one taken from a held vowel.
+        rEl.title = rs
+          ? `${rs.reliability} · ${rs.effectiveN.toFixed(1)} effective frames · ` +
+            `F1 ${Math.round(rs.meanF1)} Hz, F2 ${Math.round(rs.meanF2)} Hz · ` +
+            `method ${this.analyzer.activeResonanceMethod}`
+          : 'no confident formant frames yet';
+      }
       const atkEl = document.getElementById('expValAttack');
       if (atkEl) atkEl.textContent = this._attackReadout();
       const wtEl = document.getElementById('expValWeight');
@@ -7866,7 +8033,7 @@ class VoxBallGame {
 
     switch (metric) {
       case 'pitch': el.textContent = this._pitchReadout(true); break;
-      case 'resonance': el.textContent = this._resonanceReadout(); break;
+      case 'resonance': el.textContent = this._resonanceReadout(true); break;
       // Bounce/Vowels: percentage readouts removed — the chart below is the readout.
       case 'bounce': el.textContent = ''; break;
       case 'vowels': el.textContent = ''; break;

@@ -42,6 +42,27 @@ See [`IMPROVEMENT_SUGGESTIONS.md`](./IMPROVEMENT_SUGGESTIONS.md) for a prioritiz
 
 - Run `npm run test:audio-fixtures` to validate reference analyzer frame fixtures.
 - Run `npm run test:all` for unit tests + fixture drift checks.
+- `npm run test:eval-pipeline` runs the full audio→features pipeline over the Rainbow Passage
+  at **two frame rates**: the historical 93 ms chunked walk and the app's real
+  requestAnimationFrame hop. They are different operating points — every EMA rate and
+  steady-state tolerance in the analyzer is per frame — so both are asserted.
+
+### Resonance validity and reliability
+
+`resonance-reliability.test.mjs` drives the real analyzer over **synthesized** vowels whose
+F1/F2/F3 are known by construction, so the resonance score has a ground truth rather than a
+frozen previous output to be checked against. It pins:
+
+- **Validity** — resonance rises monotonically with vocal-tract shortening; measured ΔF
+  recovers the synthesized tract length within 15%; each estimator lands within its recorded
+  bias of the hand-computed true score; changing F0 does not move the score (resonance is a
+  filter property, which is the whole reason it outranks pitch in the gender blend).
+- **Reliability** — the four estimators agree within 0.20 of the 0–1 scale (0.12 for the three
+  the SNR ladder can auto-select); every estimator clears the confidence gates that admit a
+  frame to the readout; identical input gives byte-identical output; a held vowel reads steady.
+
+See [`docs/DSP_CONTRACT.md`](./docs/DSP_CONTRACT.md) for the measured per-estimator accuracy
+table and the cross-port golden-vector status.
 
 
 ## Accessibility and device ergonomics

@@ -178,14 +178,60 @@ export function steadyStateWeight({
   return floor + (1 - floor) * steadiness;
 }
 
+// Shared confidence assembly for the four resonance estimators.
+//
+// Each estimator measures "how much formant structure is in this frame" in its own currency:
+// harmonic/cepstral use peak prominence against the envelope's dynamic range, LPC uses pole
+// bandwidth, centroid uses spectral concentration. Those numbers are NOT comparable — measured
+// on clean read speech the same frame scored ~0.69 (harmonic), ~0.33 (LPC before its ad-hoc
+// ×2.5), ~0.70 (cepstral) and ~0.23 (centroid). They all fed one `formantConfidence` and the
+// same downstream gates, so switching estimator silently changed how much the app trusted
+// itself: the centroid could not clear even the 0.2 display gate, which left the whole
+// resonance readout frozen for anyone the SNR ladder routed to it.
+//
+// `gain` maps each estimator's native structure measure onto the shared scale, and is the ONLY
+// place that calibration lives. Between-method *precision* is expressed once, separately, by
+// the Kalman measurement-noise trust factor — previously precision was double-counted here and
+// there, inconsistently and in opposite directions.
+export function formantEstimateConfidence({
+  structure = 0,          // 0..1, method-native "formant structure present" measure
+  gain = 1,               // per-method calibration onto the shared scale
+  pitchConfidence = 0,    // periodicity — no periodicity, no formant estimate worth having
+  vowelLikelihood = 0,    // vowel-like spectra are where formants are measurable
+} = {}) {
+  const s = Math.max(0, structure) * Math.max(0, gain);
+  return clamp01(s * clamp01(pitchConfidence) * (clamp01(vowelLikelihood) + 0.3));
+}
+
 // SNR-driven resonance-method selection for the 'auto' mode. Each of the four estimators
 // degrades differently in noise: LPC root-solving is most precise in clean signal but its
 // roots get unstable as noise rises; the cepstral envelope is smoother/more robust mid-SNR;
 // the spectral centroid is the most noise-tolerant (no peak-picking) when SNR collapses.
-export function selectResonanceMethod(snrDb, { greenDb = SNR_GREEN_DB, yellowDb = SNR_YELLOW_DB } = {}) {
-  if (snrDb >= greenDb) return 'lpc';        // clean: root-solved precision
-  if (snrDb >= yellowDb) return 'cepstral';  // moderate noise: smooth, robust
-  return 'centroid';                          // heavy noise: most noise-tolerant
+// `current` + `hysteresisDb` add switching hysteresis. Without it the thresholds are exact
+// equalities, so an SNR sitting on a tier edge — which is precisely what an ordinary room does
+// — flips the estimator every frame. The estimators do not agree perfectly (each carries its
+// own bias), so every flip is a visible step in the reported resonance that the speaker did
+// nothing to cause. Requiring the SNR to clear a threshold by a margin before switching turns
+// that chatter into a single deliberate handover. Called without `current` it is the plain
+// memoryless mapping, which is what the golden/unit tests pin.
+export function selectResonanceMethod(snrDb, { greenDb = SNR_GREEN_DB, yellowDb = SNR_YELLOW_DB, hysteresisDb = 2, current = null } = {}) {
+  const plain = snrDb >= greenDb ? 'lpc'      // clean: root-solved precision
+    : snrDb >= yellowDb ? 'cepstral'          // moderate noise: smooth, robust
+    : 'centroid';                             // heavy noise: most noise-tolerant
+  if (!current || current === plain) return plain;
+  const h = Math.max(0, hysteresisDb);
+  if (h === 0) return plain;
+  // Hold the incumbent until the SNR clears the boundary it would have to cross by `h` dB.
+  const rank = { centroid: 0, cepstral: 1, lpc: 2 };
+  if (rank[current] === undefined) return plain;
+  if (rank[plain] > rank[current]) {
+    // Promoting (cleaner): require SNR above the upper edge of the incumbent's band + margin.
+    const edge = current === 'centroid' ? yellowDb : greenDb;
+    return snrDb >= edge + h ? plain : current;
+  }
+  // Demoting (noisier): require SNR below the lower edge of the incumbent's band - margin.
+  const edge = current === 'lpc' ? greenDb : yellowDb;
+  return snrDb <= edge - h ? plain : current;
 }
 
 export function computeWeightTarget({ tiltHeaviness = 0.5, tiltWeight = 1, h1h2Heaviness = 0.5, h1h2Weight = 0, cppHeaviness = 0.5, cppWeight = 0 }) {
@@ -322,24 +368,62 @@ export function computeSibilantFemininity(centroidHz, { min = 4000, max = 8500 }
 }
 
 // Mean adjacent formant spacing (dispersion, ΔF) from F1..Fn. Proxy for vocal-tract length.
+//
+// ARRAY POSITION IS THE FORMANT NUMBER. `formants[i]` is F(i+1); a 0/NaN entry means that
+// formant was not measured this frame, NOT that the list is shorter. This distinction is the
+// whole point: the previous implementation compacted the array and took (last-first)/(count-1),
+// so a dropped F2 in [F1, 0, F3] was read as two *adjacent* formants and returned F3-F1 —
+// exactly double the true spacing, which halves the apparent vocal-tract length and pins the
+// resonance score at "maximally feminine" off a single dropout. It also ignored F2 entirely
+// whenever all three were present, leaving the app's primary resonance driver hostage to F3,
+// the least reliably estimated of the three.
+//
+// Instead, fit the uniform-tube model F_i = (2i-1)·ΔF/2 (Fitch/Reby) by least squares through
+// the origin over whichever formants are present:
+//
+//     ΔF = Σ(x_i · F_i) / Σ(x_i²),  x_i = (2i-1)/2
+//
+// This uses every measured formant, weights them by the model's own leverage, degrades
+// gracefully when one is missing (the surviving formants keep their true slot numbers), and
+// on ideal data agrees exactly with the mean-adjacent-spacing definition. Against independent
+// per-formant error it carries roughly a quarter of the endpoint estimator's variance.
 export function computeFormantDispersion(formants) {
-  if (!Array.isArray(formants)) return 0;
-  // Performance optimization: Avoid allocation (.filter) and O(N) loop operations.
-  // The sum of adjacent differences is a telescoping series that algebraically
-  // simplifies to (last - first). We can find first, last, and count in one pass.
-  let first = -1;
-  let last = -1;
-  let count = 0;
+  return fitFormantDispersion(formants).deltaF;
+}
+
+// Full fit behind computeFormantDispersion: the ΔF estimate plus the diagnostics needed to
+// tell a trustworthy reading from a lucky one. `n` is how many formants were actually
+// measured; `residualHz` is the RMS deviation of those formants from the fitted uniform-tube
+// series, and `fitQuality` maps it to 0..1 (1 = the formants sit exactly on the model).
+// A frame whose formants don't fit a tube at all is a frame whose ΔF means nothing, so
+// callers fold fitQuality into confidence rather than trusting every ΔF equally.
+export function fitFormantDispersion(formants, { residualToleranceHz = 350 } = {}) {
+  const empty = { deltaF: 0, n: 0, residualHz: 0, fitQuality: 0 };
+  if (!Array.isArray(formants)) return empty;
+  let sxy = 0, sxx = 0, n = 0;
   for (let i = 0; i < formants.length; i++) {
-    const v = formants[i];
-    if (v > 0) {
-      if (first === -1) first = v;
-      last = v;
-      count++;
-    }
+    const f = formants[i];
+    if (!(f > 0)) continue;          // 0/NaN/undefined = this formant was not measured
+    const x = (2 * (i + 1) - 1) / 2; // F1 -> 0.5, F2 -> 1.5, F3 -> 2.5, ...
+    sxy += x * f;
+    sxx += x * x;
+    n++;
   }
-  if (count < 2) return 0;
-  return (last - first) / (count - 1);
+  // One formant cannot distinguish tract length from vowel identity — F1 alone is mostly a
+  // statement about jaw opening. Require two.
+  if (n < 2 || sxx <= 0) return empty;
+  const deltaF = sxy / sxx;
+  let sq = 0;
+  for (let i = 0; i < formants.length; i++) {
+    const f = formants[i];
+    if (!(f > 0)) continue;
+    const predicted = ((2 * (i + 1) - 1) / 2) * deltaF;
+    const d = f - predicted;
+    sq += d * d;
+  }
+  const residualHz = Math.sqrt(sq / n);
+  const fitQuality = clamp01(1 - residualHz / Math.max(1e-6, residualToleranceHz));
+  return { deltaF, n, residualHz, fitQuality };
 }
 
 // Formant dispersion -> femininity. Wider spacing = shorter tract = feminine.

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError,
   computeFrameReliability, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction,
-  steadyStateWeight, selectResonanceMethod,
+  steadyStateWeight, selectResonanceMethod, formantEstimateConfidence,
   SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX, STEADY_WEIGHT_FLOOR
 } from './dsp-utils.js';
 
@@ -143,6 +143,61 @@ test('steadyStateWeight treats sign of deviation symmetrically', () => {
 });
 
 // ---------- SNR-driven method selection ----------
+
+test('selectResonanceMethod holds the incumbent until the SNR clears the edge by the margin', () => {
+  // Without hysteresis the thresholds are exact equalities, so an SNR resting on a tier edge —
+  // an ordinary room — reselects every frame. The estimators carry different biases, so each
+  // flip steps the reported resonance while the speaker does nothing.
+  const H = 2;
+  // Sitting just above green: a running 'cepstral' is NOT promoted until greenDb + margin.
+  assert.equal(selectResonanceMethod(20.5, { current: 'cepstral', hysteresisDb: H }), 'cepstral');
+  assert.equal(selectResonanceMethod(22.0, { current: 'cepstral', hysteresisDb: H }), 'lpc');
+  // Sitting just below green: a running 'lpc' is NOT demoted until greenDb - margin.
+  assert.equal(selectResonanceMethod(19.5, { current: 'lpc', hysteresisDb: H }), 'lpc');
+  assert.equal(selectResonanceMethod(18.0, { current: 'lpc', hysteresisDb: H }), 'cepstral');
+  // Same at the yellow edge, in both directions.
+  assert.equal(selectResonanceMethod(9.5, { current: 'cepstral', hysteresisDb: H }), 'cepstral');
+  assert.equal(selectResonanceMethod(8.0, { current: 'cepstral', hysteresisDb: H }), 'centroid');
+  assert.equal(selectResonanceMethod(10.5, { current: 'centroid', hysteresisDb: H }), 'centroid');
+  assert.equal(selectResonanceMethod(12.0, { current: 'centroid', hysteresisDb: H }), 'cepstral');
+  // An unknown incumbent (e.g. a manual 'harmonic' selection before switching to auto) must not
+  // wedge the ladder — it falls through to the memoryless mapping.
+  assert.equal(selectResonanceMethod(30, { current: 'harmonic', hysteresisDb: H }), 'lpc');
+});
+
+test('a dithering SNR selects once with hysteresis where it would flip every frame without', () => {
+  // 21 frames oscillating across the green edge.
+  const trace = Array.from({ length: 21 }, (_, i) => 20 + (i % 2 ? 0.4 : -0.4));
+  const count = (useHysteresis) => {
+    let cur = null, switches = 0;
+    for (const snr of trace) {
+      const next = selectResonanceMethod(snr, useHysteresis ? { current: cur } : {});
+      if (cur !== null && next !== cur) switches++;
+      cur = next;
+    }
+    return switches;
+  };
+  assert.ok(count(false) >= 10, `expected the memoryless ladder to chatter, got ${count(false)} switches`);
+  assert.equal(count(true), 0, 'hysteresis should hold one estimator across the dither');
+});
+
+test('formantEstimateConfidence puts the four estimators on one scale', () => {
+  // Same frame quality, different native structure scales: the gain is what makes them
+  // comparable, and it is the only place that calibration lives.
+  const frame = { pitchConfidence: 0.9, vowelLikelihood: 0.7 };
+  const harmonic = formantEstimateConfidence({ ...frame, structure: 0.70, gain: 1.0 });
+  const centroid = formantEstimateConfidence({ ...frame, structure: 0.23, gain: 3.0 });
+  assert.ok(Math.abs(harmonic - centroid) < 0.05,
+    `calibrated estimators should agree: harmonic=${harmonic} centroid=${centroid}`);
+  // Bounded, and zero periodicity means zero confidence however much structure is claimed.
+  assert.equal(formantEstimateConfidence({ structure: 5, gain: 5, pitchConfidence: 1, vowelLikelihood: 1 }), 1);
+  assert.equal(formantEstimateConfidence({ structure: 1, gain: 1, pitchConfidence: 0, vowelLikelihood: 1 }), 0);
+  assert.equal(formantEstimateConfidence({ structure: 0, gain: 1, pitchConfidence: 1, vowelLikelihood: 1 }), 0);
+  // Monotonic in structure.
+  const lo = formantEstimateConfidence({ ...frame, structure: 0.2, gain: 1 });
+  const hi = formantEstimateConfidence({ ...frame, structure: 0.6, gain: 1 });
+  assert.ok(hi > lo);
+});
 
 test('selectResonanceMethod picks LPC clean, cepstral mid, centroid noisy', () => {
   assert.equal(selectResonanceMethod(30), 'lpc');               // well above green

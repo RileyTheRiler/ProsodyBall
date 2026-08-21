@@ -152,6 +152,33 @@ int main() {
     check("syllable: onset after quiet fires impulse", maxImpulse > 0.5f, "maxImpulse=" + f2s(maxImpulse));
   }
 
+  // --- Formant dispersion must match the web app's fit, vector for vector -----------------
+  // The same input->output pairs dsp-golden.test.mjs asserts on the JS side. This is the only
+  // mechanism that catches SEMANTIC drift between the ports: constant codegen keeps the numbers
+  // in step, but nothing except a shared vector catches the two ports computing ΔF by different
+  // formulas — which is exactly what had happened here (the watch substituted F2-F1 whenever F3
+  // went missing, so "resonance 50%" meant a different vocal target on the watch than on the
+  // ball the user learned it from).
+  {
+    auto nearHz = [](float actual, float expected) { return std::fabs(actual - expected) < 0.5f; };
+    check("dispersion: ideal tube series F1/F2/F3",
+          nearHz(voxFitFormantDispersion(500.0f, 1500.0f, 2500.0f), 1000.0f),
+          "dF=" + f2s(voxFitFormantDispersion(500.0f, 1500.0f, 2500.0f)));
+    check("dispersion: wider spacing reads wider",
+          nearHz(voxFitFormantDispersion(650.0f, 1800.0f, 2900.0f), 10275.0f / 8.75f),
+          "dF=" + f2s(voxFitFormantDispersion(650.0f, 1800.0f, 2900.0f)));
+    // A missing formant is a missing SLOT. Each of these used to be wrong on the watch.
+    check("dispersion: F2 missing keeps F1/F3 in their slots",
+          nearHz(voxFitFormantDispersion(500.0f, 0.0f, 2500.0f), 1000.0f),
+          "dF=" + f2s(voxFitFormantDispersion(500.0f, 0.0f, 2500.0f)));
+    check("dispersion: F3 missing falls back to the F1/F2 fit",
+          nearHz(voxFitFormantDispersion(500.0f, 1500.0f, 0.0f), 1000.0f),
+          "dF=" + f2s(voxFitFormantDispersion(500.0f, 1500.0f, 0.0f)));
+    check("dispersion: one formant cannot fix a tract length",
+          voxFitFormantDispersion(500.0f, 0.0f, 0.0f) == 0.0f,
+          "dF=" + f2s(voxFitFormantDispersion(500.0f, 0.0f, 0.0f)));
+  }
+
   std::printf("\n%s (%d failure%s)\n", g_failures == 0 ? "ALL PASS" : "FAILURES",
               g_failures, g_failures == 1 ? "" : "s");
   return g_failures == 0 ? 0 : 1;
