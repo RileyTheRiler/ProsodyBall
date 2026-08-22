@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, fitFormantDispersion, formantEstimateConfidence, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake, fitFormantScale, formantPatternResiduals, resonanceAbsoluteV2, poolFormantScale, resonanceScoreV1 } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, fitFormantDispersion, formantEstimateConfidence, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake, fitFormantScale, formantPatternResiduals, resonanceAbsoluteV2, poolFormantScale, resonanceScoreV1, classifyVowel, f2PositionFromResidual, normalizeResidualScale, VOWEL_TEMPLATE_FORMANTS, ResonanceAggregator } from './dsp-utils.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { SpeechGate } from './speech-gate.js';
 import { PRACTICE_PHRASES, scorePhraseTake, buildContourSeries } from './phrase-coach.js';
@@ -195,6 +195,26 @@ export class VoiceAnalyzer {
     this.formantScaleFitQuality = 0;
     this.formantScaleFormantsUsed = 0;
     this._scalePool = [];        // rolling window of per-frame weighted ΔF + confidence
+
+    // ------ Phase 2: vowel conditioning (docs/RESONANCE_REDESIGN.md §5) ------
+    // Also instrumented only. None of this reaches the interface: §6 is explicit that the
+    // user still sees one ring, and five internal variables is an implementation detail.
+    this.formantPatternNormalized = [];  // formantPattern on the scale-invariant frame
+    this.formantPatternScaleFactor = 0;  // ρ = ΔF_frame / ΔF_pooled. Phase 3's rhotic cue.
+    this.vowelId = null;         // classified vowel, or null for "no vowel this frame".
+                                 // null is a real answer, not a missing one — §6 requires
+                                 // this to degrade to abstention rather than guess.
+    this.vowelPosterior = 0;     // 0..1 confidence in that identity
+    this.vowelDistance = 0;      // distance to the nearest template, in across-vowel SDs
+    this.vowelAbstainReason = 'no-residuals';
+    this.f2PositionRatio = 0;    // F2 / expected F2 for this vowel at this speaker's scale.
+                                 // 0 = no reading; 1.0 = exactly on the published norm.
+    this._v2FrameIndex = 0;      // frame counter, so nucleus gaps are detectable
+    // Exercise mode drives what the ball would show; speech mode is what session statistics
+    // read (§5). Both run over the same stream so they can never be computed from two
+    // different frame sets and then compared.
+    this.v2Aggregator = new ResonanceAggregator();
+    this.f2PositionAggregator = new ResonanceAggregator();
 
     // ====== PERCEIVED-GENDER CUES (multi-cue model) ======
     // Modal (habitual median) pitch over a voiced window, not the momentary note.
@@ -543,6 +563,16 @@ export class VoiceAnalyzer {
     this.formantScaleFitQuality = 0;
     this.formantScaleFormantsUsed = 0;
     this._scalePool = [];
+    this.formantPatternNormalized = [];
+    this.formantPatternScaleFactor = 0;
+    this.vowelId = null;
+    this.vowelPosterior = 0;
+    this.vowelDistance = 0;
+    this.vowelAbstainReason = 'no-residuals';
+    this.f2PositionRatio = 0;
+    this._v2FrameIndex = 0;
+    this.v2Aggregator.reset();
+    this.f2PositionAggregator.reset();
     // Perceived-gender cue state
     this.modalF0Buf = [];
     this.modalF0Hz = 0;
@@ -1650,6 +1680,45 @@ export class VoiceAnalyzer {
         // above and through nothing else — no F1 or F2 term is added on top, which is the
         // double count §1.4 measures in v1.
         this.resonanceAbsoluteV2 = resonanceAbsoluteV2(pooled.deltaF);
+
+        // ---------------- Phase 2: vowel conditioning (§5) ----------------
+        // The residuals above are already scale-normalised, so naming the vowel from them is
+        // speaker-independent by construction rather than by calibration. Taken against the
+        // POOLED scale for the same reason Phase 1 took them there — and because it is only
+        // against a pooled scale that r₃ carries information at all (see the rank identity in
+        // dsp-utils.js). That third dimension is what separates /ɝ/.
+        // Normalised onto the scale-invariant frame first, so a sustained hold — where the
+        // pooling window collapses onto one vowel — and running speech both land in the same
+        // space. Without it a held vowel sits ~1.0 from its own template and the classifier
+        // abstains through the whole exercise. `scaleFactor` is the rhotic signal Phase 3
+        // inherits; it is measured here and deliberately not acted on (see dsp-utils.js).
+        const pattern = normalizeResidualScale(
+          this.formantPattern.slice(0, VOWEL_TEMPLATE_FORMANTS),
+          undefined, VOWEL_TEMPLATE_FORMANTS);
+        this.formantPatternNormalized = pattern.residuals;
+        this.formantPatternScaleFactor = pattern.scaleFactor;
+        const vc = classifyVowel(pattern.residuals, { preNormalized: true });
+        this.vowelId = vc.vowel;
+        this.vowelPosterior = vc.posterior;
+        this.vowelDistance = Number.isFinite(vc.distance) ? vc.distance : 0;
+        this.vowelAbstainReason = vc.reason;
+
+        // f2Position is defined only where a vowel was actually named. §6: a misclassified
+        // vowel produces a confidently wrong f2Position, which is the same failure as the
+        // centroid's fabricated F3, so an unnamed frame yields 0 — no reading — and never a
+        // fallback value that looks like a reading.
+        this.f2PositionRatio = this.vowelId
+          ? f2PositionFromResidual(pattern.residuals, this.vowelId)
+          : 0;
+
+        // Both aggregation modes, fed from one stream (§5). The ball reads exercise mode;
+        // session statistics read speech mode. Frames without a vowel still count as
+        // phonation for exercise mode but close any open nucleus for speech mode.
+        const aggWeight = Math.max(0, conf * this.formantSteadiness);
+        const aggSample = { weight: aggWeight, vowel: this.vowelId, index: this._v2FrameIndex };
+        this.v2Aggregator.push({ ...aggSample, value: this.resonanceAbsoluteV2 });
+        this.f2PositionAggregator.push({ ...aggSample, value: this.f2PositionRatio });
+        this._v2FrameIndex++;
       }
       // ============================ end v2 ========================================
 
@@ -1923,6 +1992,31 @@ export class VoiceAnalyzer {
     // a gate-rejected frame gets 0 instead, because that floor is what would let a
     // running fan keep nudging the meters all session.
     this.frameConfidence = reliableFrame ? confidenceGate : (this.isSpeechFrame ? 0.15 : 0);
+  }
+
+  // The Phase-2 session summary (docs/RESONANCE_REDESIGN.md §5), in both aggregation modes.
+  //
+  // Instrumented only, and deliberately not rendered: §6's second risk is that the
+  // decomposition leaks into the UI, and the answer is that the user still sees one ring.
+  // The summary screen's "Avg Resonance" is still v1's plain mean of `smoothResonance`,
+  // unchanged, byte for byte. This is what Phase 4 will switch that readout over to once
+  // there is a versioned metric to switch it to.
+  //
+  // §5 says session statistics use SPEECH mode and the ball keeps EXERCISE mode, so both are
+  // returned from one call over one frame stream: reading them from two places is how they
+  // would end up computed over two different sets of frames and then compared as though they
+  // were not.
+  resonanceV2Summary() {
+    return {
+      absolute: {
+        exercise: this.v2Aggregator.exercise(),
+        speech: this.v2Aggregator.speech(),
+      },
+      f2Position: {
+        exercise: this.f2PositionAggregator.exercise(),
+        speech: this.f2PositionAggregator.speech(),
+      },
+    };
   }
 
   // Fix the personal resonance span from the collected held-vowel samples. Each axis uses a
@@ -4891,6 +4985,12 @@ class VoxBallGame {
       this.session.prosodyHistory = [];
       this.session.prosodySampleTimer = 0;
       this.session.scrollAtStart = this.scrollX;
+      // Phase 2 (§5): "Session statistics use speech mode; the ball keeps exercise mode."
+      // The v2 aggregators are session-scoped, so a new session starts them over. They
+      // summarise the v2 stream only — v1's `resonanceSum` above is untouched and is still
+      // what the summary screen displays, because v2 is displayed nowhere until Phase 4.
+      this.analyzer.v2Aggregator.reset();
+      this.analyzer.f2PositionAggregator.reset();
 
       // Show session timer
       const timerEl = document.getElementById('sessionTimer');

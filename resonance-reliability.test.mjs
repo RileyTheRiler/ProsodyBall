@@ -35,45 +35,14 @@ const sd = (xs) => {
 };
 
 // ---------------------------------------------------------------------------
-// Synthetic vowel: a glottal pulse train through a cascade of Klatt resonators.
-// The point is that F1/F2/F3 are known exactly, so the resonance score has a ground truth to
-// be right or wrong about — which recorded speech, however realistic, cannot provide.
+// Synthetic vowel: a glottal pulse train through a cascade of Klatt resonators, with known
+// F1/F2/F3 so the resonance score has a ground truth to be right or wrong about.
+//
+// The generator moved to tools/synth-vowel.mjs when Phase 2's aggregation fixture needed the
+// same held vowel; the arithmetic is unchanged, and sharing it is what keeps that fixture and
+// this test measuring the same signal.
 // ---------------------------------------------------------------------------
-function klattResonator(input, freqHz, bwHz, sampleRate) {
-  const T = 1 / sampleRate;
-  const c = -Math.exp(-2 * Math.PI * bwHz * T);
-  const b = 2 * Math.exp(-Math.PI * bwHz * T) * Math.cos(2 * Math.PI * freqHz * T);
-  const a = 1 - b - c;
-  const out = new Float32Array(input.length);
-  let y1 = 0, y2 = 0;
-  for (let i = 0; i < input.length; i++) {
-    const y = a * input[i] + b * y1 + c * y2;
-    y2 = y1; y1 = y;
-    out[i] = y;
-  }
-  return out;
-}
-
-// Deterministic vowel. `formants` are the resonator centre frequencies in Hz.
-function synthVowel({ f0 = 150, formants = [570, 1710, 2850], seconds = 2.0, sampleRate = SAMPLE_RATE }) {
-  const n = Math.round(seconds * sampleRate);
-  // Glottal source: one decaying pulse per period. Broadband enough to excite F1-F3.
-  const src = new Float32Array(n);
-  const period = sampleRate / f0;
-  for (let i = 0; i < n; i++) {
-    const phase = (i % period) / period;
-    src[i] = Math.exp(-phase * 6) * (1 - phase) - 0.12;  // pulse minus DC
-  }
-  let sig = src;
-  const bandwidths = [70, 110, 170];
-  for (let k = 0; k < formants.length; k++) {
-    sig = klattResonator(sig, formants[k], bandwidths[Math.min(k, bandwidths.length - 1)], sampleRate);
-  }
-  let peak = 0;
-  for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(sig[i]));
-  if (peak > 0) for (let i = 0; i < n; i++) sig[i] = (sig[i] / peak) * 0.35;
-  return sig;
-}
+import { synthVowel } from './tools/synth-vowel.mjs';
 
 async function analyze(signal, { method = 'lpc', sampleRate = SAMPLE_RATE } = {}) {
   const a = new VoiceAnalyzer();

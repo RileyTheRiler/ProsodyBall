@@ -1354,3 +1354,459 @@ export function resonanceScoreV1({ deltaFHz = 0, f1 = 0, f2 = 0, vowelLike = fal
   const f2Score = vowelLike ? clamp01((f2 - 1000) / 1400) : vtlScore;
   return { score: vtlScore * 0.55 + f1Score * 0.25 + f2Score * 0.20, vtlScore, f1Score, f2Score, aVtlCm };
 }
+
+// ============================================================================
+// RESONANCE CONSTRUCT REDESIGN — Phase 2 (docs/RESONANCE_REDESIGN.md §5)
+//
+// Phase 1 split the construct into tract SIZE (`formantScale`) and tract SHAPE
+// (`formantPattern`). Phase 2 reads the shape: it names the vowel, and then uses that
+// name to condition F2. Still instrumented only — `smoothResonance` (v1) remains the
+// number the ball, HUD, haptics, gender score, necklace and bulb all read.
+//
+// §3.1 is the argument this phase exists to satisfy: raw F2 is the WORST measure on the
+// benchmark (d′ 0.38) because it mostly reports which vowel was spoken. The conditioning
+// is the entire feature, not a qualifier on it.
+// ============================================================================
+
+// --- How many dimensions the residual vector actually has -------------------
+//
+// Phase 1 handed Phase 2 a warning: r₃ ≈ 1.0 for every vowel and both sexes (0.963–1.035),
+// so "don't assume three dimensions of information; measure how many you actually have."
+// Measured, the answer is exact rather than approximate, and it depends on where ΔF came from.
+//
+// WHEN ΔF IS FITTED TO THE SAME FRAME'S FORMANTS, the residuals obey an algebraic identity.
+// The weighted zero-intercept fit is ΔF = Σ(w_i x_i F_i)/Σ(w_i x_i²) with x_i = i − 0.5, and
+// r_i = F_i/(x_i ΔF). Substituting,
+//
+//     Σ_i L_i · r_i ≡ 1,        L_i = w_i x_i² / Σ(w_j x_j²)
+//
+// — one exact linear constraint, verified to twelve decimal places on all ten P&B vowels in
+// resonance-dprime.test.mjs. So an n-formant residual vector carries exactly n−1 free
+// dimensions: F1–F3 gives TWO, F1–F4 gives THREE. r₃ is not merely uninformative there, it is
+// algebraically determined by r₁ and r₂. Principal components over the P&B set confirm it:
+// variance shares 62.8% / 37.2% / 0.0%, third eigenvalue −4.9e-17.
+//
+// WHEN ΔF IS POOLED OVER A WINDOW — which is what the app actually does (§5, and Phase 1's
+// rolling 100-frame weighted median) — the constraint is broken, because the scale no longer
+// comes from the frame being normalised. The third dimension opens up: variance shares become
+// 62.0% / 33.8% / 4.2%, and r₃ spans 0.695–1.244 instead of 0.963–1.035.
+//
+// That 4.2% is small but it is not noise, and it is where /ɝ/ lives. See VOWEL_TEMPLATES.
+// (`vowelDimsFor` below is where this becomes the classifier's dimension count.)
+
+// --- Making the residual independent of what the pooling window contained ----
+//
+// The identity above has a consequence that only shows up in the app, never on the benchmark.
+// ΔF is POOLED over a rolling window (Phase 1), so what a residual vector means depends on
+// what that window contained:
+//
+//   CONNECTED SPEECH — the window spans several vowels, ΔF is the speaker's, and each frame's
+//   residual carries both the vowel's shape AND how far that vowel's own apparent scale sits
+//   from the speaker's. Σ L_i r_i ranges 0.73–1.22 over the P&B set.
+//
+//   A SUSTAINED HOLD — the window contains one vowel, so ΔF converges on THAT VOWEL's own fit
+//   and the identity reasserts itself: Σ L_i r_i → 1 for every vowel.
+//
+// Both are first-class operating points — a held vowel is the exercise mode the ball runs —
+// and a classifier calibrated to one silently fails on the other. Measured: a held /i/ lands
+// 1.011 away from a pooled-window /i/ template, well outside any sane gate, so a classifier
+// built in the pooled frame abstains through most of a sustained vowel.
+//
+// The fix is to classify in the frame that does not depend on the window. A mismatch between
+// the pooled scale and the frame's own scale is a single multiplicative factor on every r_i —
+// it moves the vector along a ray through the origin — so dividing it out normalises the two
+// operating points onto each other:
+//
+//     ρ = Σ L_i r_i,      r′_i = r_i / ρ        (so Σ L_i r′_i ≡ 1)
+//
+// r′ is what the classifier matches. THE COST IS EXPLICIT AND IT IS /ɝ/: ρ is exactly the
+// dimension a rhotic's lowered F3 shows up in (0.73 against 0.90–1.22 for every other vowel),
+// and it is exactly the dimension a pooling-window mismatch also moves. They are the same
+// number, so a classifier cannot use one without being broken by the other. Reading /ɝ/ off ρ
+// requires knowing what the window contained — a frame-validity and estimator-discipline
+// question, which is Phase 3. It is not smuggled in here. §5's Phase 2 entry records both the
+// measurement (/ɝ/ is 1.18 from its nearest neighbour in the pooled frame, the most isolated
+// vowel in the set, against 0.40 in this one) and the hand-off.
+export function residualScaleFactor(residuals, weights = FORMANT_SCALE_WEIGHTS, limit = Infinity) {
+  if (!Array.isArray(residuals)) return 0;
+  let sxx = 0, acc = 0;
+  for (let i = 0; i < Math.min(residuals.length, limit); i++) {
+    const r = residuals[i];
+    const w = weights[i];
+    if (r == null || !(r > 0) || !(w > 0)) continue;
+    const x = (2 * (i + 1) - 1) / 2;
+    sxx += w * x * x;
+    acc += w * x * x * r;
+  }
+  return sxx > 0 ? acc / sxx : 0;
+}
+
+// Returns the vector normalised onto Σ L_i r′_i = 1, preserving nulls. `scaleFactor` is
+// returned alongside because it is not noise — it is the rhotic signal, and Phase 3 will want
+// it once it can tell a rhotic from a stale window.
+export function normalizeResidualScale(residuals, weights = FORMANT_SCALE_WEIGHTS, limit = Infinity) {
+  const rho = residualScaleFactor(residuals, weights, limit);
+  if (!(rho > 0)) return { residuals: [], scaleFactor: 0 };
+  return { residuals: residuals.map((r) => (r == null || !(r > 0) ? null : r / rho)), scaleFactor: rho };
+}
+
+// The classifier's frame is F1-F3 and nothing else, because that is what the templates measure:
+// Peterson & Barney published no F4, so there is no r₄ column and no honest way to invent one.
+//
+// This has to be pinned rather than left to whatever the frame happened to yield. Σ L_i r′_i = 1
+// is a DIFFERENT constraint surface for three formants than for four, so normalising a 4-element
+// residual and then matching it against 3-formant templates compares vectors that live on two
+// different surfaces. Measured cost of getting it wrong: under the `lpc` estimator, which
+// produces F4 on 92.4% of frames, the vowel was named on 40.8% of estimator frames instead of
+// 76.6% — the classifier was abstaining on most of a clean recording because its own input had
+// been normalised in the wrong frame.
+//
+// F4 keeps doing its Phase 1 job of sharpening `formantScale`; it simply cannot reach the
+// classifier, and §5's "improve or at least not degrade when F4 is present" is satisfied on the
+// "not degrade" side by construction. Phase 5's real-vowel validation is where a measured r₄
+// could come from.
+export const VOWEL_TEMPLATE_FORMANTS = 3;
+
+// --- Vowel templates in residual space --------------------------------------
+//
+// r′ for each Peterson & Barney vowel, averaged over the two sexes. Because r′ is normalised
+// onto Σ L_i r′ = 1, these are identical to the residuals of a scale fitted to each vowel
+// alone — which is what makes them the same whether the speaker is holding one vowel or
+// talking. resonance-dprime.test.mjs recomputes every number here from
+// fixtures/peterson-barney-1952.json, so they cannot drift from the norms they claim.
+//
+// The two sexes are averaged rather than kept apart because the residuals are very nearly the
+// same for both — Phase 1's measured result, and the whole reason a classifier built on them
+// is speaker-independent. The averaging is checked, not assumed: the test classifies one sex
+// using templates built ONLY from the other, across a 16.5% difference in pooled tract scale.
+export const VOWEL_TEMPLATES = {
+  i: [0.4663, 1.3595, 1.0174],
+  'ɪ': [0.7341, 1.3264, 1.0022],
+  'ɛ': [1.0307, 1.2511, 0.9870],
+  'æ': [1.3934, 1.1565, 0.9685],
+  'ɑ': [1.4778, 0.7212, 0.9825],
+  'ɔ': [1.1462, 0.5788, 1.0095],
+  'ʊ': [0.9429, 0.7509, 1.0146],
+  u: [0.7047, 0.6415, 1.0343],
+  'ʌ': [1.3351, 0.8236, 0.9869],
+  'ɝ': [1.3162, 1.3170, 0.9662],
+};
+
+// Per-dimension across-vowel SD over the template set. Distances are divided by these, so one
+// unit of distance is one across-vowel SD whichever dimension it is in.
+//
+// r₃'s SD is 0.0219 — two orders below r₁'s and r₂'s — which is the rank identity showing up
+// as a number: with three formants r₃ is not an observation, it is r₁ and r₂ rearranged. The
+// classifier therefore runs on TWO dimensions by default, and that is a derivation rather than
+// a tuning choice. A fourth formant makes r₃ a real observation again (four formants, three
+// free dimensions) and DEFAULT_VOWEL_DIMS rises with it.
+export const VOWEL_RESIDUAL_SD = [0.3325, 0.3092, 0.0219];
+
+// How many residual dimensions to match on, given how many formants the fit had. n formants,
+// n−1 free dimensions, capped at the three the templates cover.
+export function vowelDimsFor(nFormants) {
+  return Math.max(0, Math.min(3, nFormants - 1));
+}
+
+// The measured across-SPEAKER scatter: the mean distance, in the metric above, between the
+// male and female norms FOR THE SAME VOWEL. 0.195, against a mean nearest-other-vowel template
+// spacing of 0.50. This is the classifier's natural noise scale — how far a genuine production
+// of a vowel sits from the template because the speaker is a different person — so it is what
+// the posterior is widened by. A measurement, not a knob.
+export const VOWEL_SPEAKER_SCATTER = 0.195;
+
+// Abstention gates (§6: "It must degrade to 'no F2 feature this frame' rather than guess —
+// the same discipline applied to the centroid's fabricated F3"). Two independent ways to
+// decline, because there are two independent ways to be wrong:
+//
+//   DISTANCE — the vector is not near any vowel. Three across-speaker scatters from the
+//   nearest template is further than any genuine cross-speaker production was measured to sit.
+//   Beyond it the frame is a transition, a nasal, a fricative or a tracking failure, and
+//   naming a vowel would be fabrication.
+//
+//   POSTERIOR — the vector is near two vowels at once. 0.5 is the point where the winning
+//   vowel stops being more probable than every alternative combined.
+//
+// Neither was chosen by looking at the accuracy it produced. Both are stated in units that
+// mean something (scatters; probability), and the accuracy AND the abstention rate are
+// reported together — the only honest way to read a classifier that can decline.
+export const VOWEL_ABSTAIN_MAX_DISTANCE = 3 * VOWEL_SPEAKER_SCATTER;   // 0.585
+export const VOWEL_ABSTAIN_MIN_POSTERIOR = 0.5;
+
+// Distance between a residual vector and a template, in across-vowel SD units, averaged over
+// however many dimensions are present. Averaging rather than summing keeps a 2-dimension
+// frame's distances on the same scale as a 3-dimension frame's, so one set of thresholds
+// covers both.
+function residualDistance(r, template, dims) {
+  let s = 0, n = 0;
+  for (let i = 0; i < dims; i++) {
+    if (r[i] == null || !(r[i] > 0)) continue;
+    const d = (r[i] - template[i]) / VOWEL_RESIDUAL_SD[i];
+    s += d * d; n++;
+  }
+  return n > 0 ? { d: Math.sqrt(s / n), n } : { d: Infinity, n: 0 };
+}
+
+// --- The classifier ---------------------------------------------------------
+//
+// Nearest template in the normalised residual space, softened into a posterior so that
+// "which vowel" and "how sure" come out of the same arithmetic rather than being bolted
+// together afterwards.
+//
+// The input is normalised onto the scale-invariant frame first (`preNormalized: true` skips
+// that when the caller has already done it). Returns `vowel: null` — never a guess — whenever
+// either gate fires, with `reason` naming which, so the abstention RATE can be reported next
+// to the accuracy and the two failure modes told apart.
+export function classifyVowel(residuals, {
+  templates = VOWEL_TEMPLATES,
+  maxDistance = VOWEL_ABSTAIN_MAX_DISTANCE,
+  minPosterior = VOWEL_ABSTAIN_MIN_POSTERIOR,
+  scatter = VOWEL_SPEAKER_SCATTER,
+  dims = null,
+  preNormalized = false,
+} = {}) {
+  const none = (reason) => ({ vowel: null, posterior: 0, distance: Infinity, runnerUp: null, dims: 0, scaleFactor: 0, reason });
+  if (!Array.isArray(residuals)) return none('no-residuals');
+  const view = residuals.slice(0, VOWEL_TEMPLATE_FORMANTS);
+  const norm = preNormalized
+    ? { residuals: view, scaleFactor: 1 }
+    : normalizeResidualScale(view, FORMANT_SCALE_WEIGHTS, VOWEL_TEMPLATE_FORMANTS);
+  const r = norm.residuals;
+  if (!r.length) return none('no-residuals');
+  const nFormants = r.filter((x) => x != null && x > 0).length;
+  const useDims = dims == null ? vowelDimsFor(nFormants) : dims;
+  // Two residual dimensions is the floor: with one, every template is reachable by rescaling.
+  if (useDims < 2) return none('insufficient-dimensions');
+  const ranked = [];
+  for (const [v, t] of Object.entries(templates)) {
+    const { d } = residualDistance(r, t, useDims);
+    if (Number.isFinite(d)) ranked.push([v, d]);
+  }
+  if (!ranked.length) return none('insufficient-dimensions');
+  ranked.sort((a, b) => a[1] - b[1]);
+  const [best, bestD] = ranked[0];
+  const runnerUp = ranked.length > 1 ? ranked[1][0] : null;
+  const common = { distance: bestD, dims: useDims, scaleFactor: norm.scaleFactor };
+  if (bestD > maxDistance) {
+    return { vowel: null, posterior: 0, runnerUp: best, reason: 'not-a-vowel', ...common };
+  }
+  let z = 0;
+  for (const [, d] of ranked) z += Math.exp(-(d * d) / (2 * scatter * scatter));
+  const posterior = z > 0 ? Math.exp(-(bestD * bestD) / (2 * scatter * scatter)) / z : 0;
+  if (!(posterior >= minPosterior)) {
+    return { vowel: null, posterior, runnerUp, reason: 'ambiguous', ...common };
+  }
+  return { vowel: best, posterior, runnerUp, reason: 'ok', ...common };
+}
+
+// --- f2Position -------------------------------------------------------------
+//
+// §5: "`f2Position` = F2 relative to the expected F2 for that vowel at that speaker's scale."
+//
+//     expected F2 = r₂_template(vowel) · 1.5 · ΔF_scale
+//     f2Position  = F2_measured / expected F2
+//
+// 1.0 means "exactly where the published norms put this vowel for a tract of your size".
+// Above 1.0 is a fronter/brighter F2 than the vowel requires; below is backer/darker. It is
+// dimensionless and it is a RATIO of two frequencies, so it carries no tract length.
+//
+// THAT IS THE POINT, AND IT IS ALSO THE COST. Dividing by the speaker's own scale is what
+// makes this the trainable quantity: tract length is not trainable, tongue and lip posture is,
+// and the GAVT result §1.5 cites (F2 1847 → 1961 Hz) is a within-speaker change at a fixed
+// tract length. It is also what stops f2Position re-reporting what `formantScale` already
+// reports — the population-relative alternative (divide by a fixed reference ΔF instead of the
+// speaker's) correlates r = 0.95 with resonanceAbsoluteV2 across the P&B points, which is the
+// §1.4 double count coming back through a different door.
+//
+// The consequence, measured and NOT worked around: on the benchmark's male-vs-female contrast
+// f2Position scores d′ −0.29, below raw F2's 0.38, because P&B's two populations differ in
+// tract SIZE and barely in vowel POSTURE, and this feature has size divided out by
+// construction. Measured on the contrast it is actually for — the same published training
+// shift, through the same d′ arithmetic — it scores 2.09 against raw F2's 0.16. Both numbers
+// are asserted in resonance-dprime.test.mjs and printed by tools/resonance-benchmark.mjs.
+// See §5's Phase 2 entry for the full accounting.
+export function expectedF2Hz(vowel, deltaFFrameHz, templates = VOWEL_TEMPLATES) {
+  const t = templates[vowel];
+  if (!t || !(deltaFFrameHz > 0)) return 0;
+  return t[1] * 1.5 * deltaFFrameHz;
+}
+
+// `deltaFFrameHz` is THIS FRAME's own weighted ΔF, not the pooled one, for the same reason the
+// classifier normalises: it is the only choice that means the same thing during a sustained
+// hold and during running speech. The two agree wherever the pooled scale is valid — by the
+// identity ΔF_frame = ρ·ΔF_pooled, and the templates' own ρ is what converts between the two
+// frames — and only this one stays correct when the pooling window has collapsed onto a single
+// vowel. Equivalently, and this is how the app computes it: r′₂ / r₂_template(vowel).
+//
+// Returns 0 for "no reading", never a fabricated 1.0: an abstained frame and a frame whose F2
+// happens to sit exactly on the norm are different statements, and §6 requires them to stay
+// different. Callers test `> 0`.
+export function f2Position({ f2Hz = 0, vowel = null, deltaFFrameHz = 0, templates = VOWEL_TEMPLATES } = {}) {
+  if (!(f2Hz > 0) || !vowel) return 0;
+  const expected = expectedF2Hz(vowel, deltaFFrameHz, templates);
+  if (!(expected > 0)) return 0;
+  return f2Hz / expected;
+}
+
+// The same quantity straight from a scale-normalised residual vector, which is what the live
+// path already has in hand.
+export function f2PositionFromResidual(normalizedResiduals, vowel, templates = VOWEL_TEMPLATES) {
+  const t = templates[vowel];
+  if (!t || !Array.isArray(normalizedResiduals)) return 0;
+  const r2 = normalizedResiduals[1];
+  if (r2 == null || !(r2 > 0) || !(t[1] > 0)) return 0;
+  return r2 / t[1];
+}
+
+// Display mapping for later phases. f2Position is a ratio centred on 1.0; this puts it on the
+// app's 0..1 convention with 0.5 at the norm. The ±25% span is set from the measured range —
+// the P&B vowel set spans ±3% around its own templates and the GAVT training shift is +6.2%,
+// so ±25% holds every real reading well clear of the rails, which is what Phase 1's §5 note
+// about v1's clamping requires. Nothing displays this in Phase 2; d′ is invariant to any
+// affine rescaling that does not clamp, so this mapping cannot change a benchmark number.
+export const F2_POSITION_DISPLAY_SPAN = 0.25;
+export function f2PositionToDisplay(ratio, span = F2_POSITION_DISPLAY_SPAN) {
+  if (!(ratio > 0)) return 0;
+  return clamp01(0.5 + (ratio - 1) / (2 * span));
+}
+
+// --- Two aggregation modes (§5, §2.9) ---------------------------------------
+//
+// The same per-frame feature stream summarised two ways, because "how am I doing at this
+// exercise" and "how do I sound when I talk" are different questions and a single average
+// answers neither well.
+//
+//   EXERCISE — steady-state weighted, the app's current behaviour. Every frame contributes,
+//   scaled by how held it is. Holding a target for four seconds is the exercise, so four
+//   seconds of it SHOULD dominate: that is motor learning, and the ball keeps this mode.
+//
+//   SPEECH — one value per vowel nucleus, nuclei weighted equally. Connected speech is mostly
+//   transitions and short reduced vowels; a mode that rewards duration would report a person's
+//   ability to sustain a posture rather than their ability to use it while talking. §2.9's
+//   "ecological" aggregation. Session statistics use this mode.
+//
+// The difference is not cosmetic. A clip of one long hold plus running speech is the case that
+// separates them, and tools/resonance-aggregation.mjs builds exactly that clip and reports both
+// numbers: the hold is ~63% of exercise-mode weight and one nucleus in forty under speech mode.
+//
+// A NUCLEUS is a maximal run of consecutive frames carrying the same classified vowel. It ends
+// at a vowel change, at an abstention, or at a gap in the frame index — all three are the
+// boundary of "one vowel was produced here". Its value is the MEDIAN over the run, so the
+// onset and offset frames at its edges cannot drag it, and short runs are dropped rather than
+// admitted as noisy one-frame nuclei.
+export function aggregateExercise(samples) {
+  if (!Array.isArray(samples)) return { value: 0, n: 0, weight: 0 };
+  let sw = 0, sv = 0, n = 0;
+  for (const s of samples) {
+    if (!s || !(s.value > 0) || !(s.weight > 0)) continue;
+    sv += s.value * s.weight; sw += s.weight; n++;
+  }
+  return { value: sw > 0 ? sv / sw : 0, n, weight: sw };
+}
+
+// The single definition of "one vowel was produced here", shared by the array form below and
+// the streaming form further down so a session's numbers and a fixture's cannot diverge.
+export function nucleusFromRun(run, { minFrames = 3 } = {}) {
+  if (!Array.isArray(run) || run.length < minFrames) return null;
+  const vs = run.map((s) => s.value).sort((a, b) => a - b);
+  const mid = vs.length >> 1;
+  return {
+    vowel: run[0].vowel,
+    frames: run.length,
+    value: vs.length % 2 ? vs[mid] : (vs[mid - 1] + vs[mid]) / 2,
+    startIndex: run[0].index,
+  };
+}
+
+// True when `s` cannot continue the nucleus `prev` belongs to: a different vowel, or a gap in
+// the frame index (frames the caller never submitted are frames with no vowel in them).
+export function breaksNucleus(prev, s) {
+  if (!prev) return false;
+  return prev.vowel !== s.vowel || (s.index != null && prev.index != null && s.index !== prev.index + 1);
+}
+
+export function findVowelNuclei(samples, { minFrames = 3 } = {}) {
+  if (!Array.isArray(samples)) return [];
+  const nuclei = [];
+  let run = [];
+  const flush = () => {
+    const nuc = nucleusFromRun(run, { minFrames });
+    if (nuc) nuclei.push(nuc);
+    run = [];
+  };
+  for (const s of samples) {
+    if (!s || !s.vowel || !(s.value > 0)) { flush(); continue; }
+    if (breaksNucleus(run[run.length - 1], s)) flush();
+    run.push(s);
+  }
+  flush();
+  return nuclei;
+}
+
+export function aggregateSpeech(samples, { minFrames = 3 } = {}) {
+  const nuclei = findVowelNuclei(samples, { minFrames });
+  if (!nuclei.length) return { value: 0, n: 0, nuclei: 0, heldFrames: 0 };
+  // Equal weight per nucleus — the whole point. A 240-frame hold and a 4-frame /ɪ/ in
+  // "the rain" each contribute exactly one number.
+  const value = nuclei.reduce((a, x) => a + x.value, 0) / nuclei.length;
+  return { value, n: nuclei.length, nuclei: nuclei.length, heldFrames: nuclei.reduce((a, x) => a + x.frames, 0) };
+}
+
+// Convenience: both modes over one stream, so a caller cannot accidentally compute them from
+// two different frame sets and then compare them.
+export function aggregateBothModes(samples, opts = {}) {
+  return { exercise: aggregateExercise(samples), speech: aggregateSpeech(samples, opts) };
+}
+
+// Streaming form of the two modes, for a live session that cannot buffer every frame.
+// An hour of speech is ~216,000 frames; this keeps O(1) state plus the nucleus currently
+// open, and produces the same numbers as the array functions above on the same stream —
+// asserted in resonance-aggregation.test.mjs rather than assumed, since a session summary
+// and a fixture report disagreeing would be exactly the kind of drift DSP_CONTRACT exists
+// to prevent.
+export class ResonanceAggregator {
+  constructor({ minFrames = 3 } = {}) {
+    this.minFrames = minFrames;
+    this.reset();
+  }
+
+  reset() {
+    this._exSum = 0; this._exWeight = 0; this._exN = 0;
+    this._spSum = 0; this._spN = 0; this._spFrames = 0;
+    this._run = [];
+  }
+
+  // `sample` = { value, weight, vowel, index }. A frame with no classified vowel still
+  // contributes to exercise mode (it is a frame of phonation) but closes any open nucleus,
+  // because §6 forbids carrying an unclassified frame into a vowel-conditioned statistic.
+  push(sample) {
+    if (!sample || !(sample.value > 0)) { this._closeRun(); return; }
+    if (sample.weight > 0) {
+      this._exSum += sample.value * sample.weight;
+      this._exWeight += sample.weight;
+      this._exN++;
+    }
+    if (!sample.vowel) { this._closeRun(); return; }
+    if (breaksNucleus(this._run[this._run.length - 1], sample)) this._closeRun();
+    this._run.push(sample);
+  }
+
+  _closeRun() {
+    const nuc = nucleusFromRun(this._run, { minFrames: this.minFrames });
+    if (nuc) { this._spSum += nuc.value; this._spN++; this._spFrames += nuc.frames; }
+    this._run = [];
+  }
+
+  // Reading the speech-mode value must not discard the nucleus in progress, and must not
+  // double-count it on the next read either, so the open run is summarised without closing.
+  exercise() {
+    return { value: this._exWeight > 0 ? this._exSum / this._exWeight : 0, n: this._exN, weight: this._exWeight };
+  }
+
+  speech() {
+    const open = nucleusFromRun(this._run, { minFrames: this.minFrames });
+    const sum = this._spSum + (open ? open.value : 0);
+    const n = this._spN + (open ? 1 : 0);
+    return { value: n > 0 ? sum / n : 0, n, nuclei: n, heldFrames: this._spFrames + (open ? open.frames : 0) };
+  }
+}

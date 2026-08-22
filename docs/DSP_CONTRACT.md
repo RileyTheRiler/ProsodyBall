@@ -71,7 +71,14 @@ Notes:
   weight derived from short-window pitch deviation (`STEADY_PITCH_ST`) and frame-to-frame
   `|dF1|/F1 + |dF2|/F2` (`STEADY_FORMANT_REL_DELTA`). Held-vowel targets dominate the score
   over onset/offset/coarticulation frames. The constants are in the shared spec so the Kotlin/
-  C++ ports can adopt it; the wiring is web-only today.
+  C++ ports can adopt it; the wiring is web-only today. Since Phase 2 of
+  `RESONANCE_REDESIGN.md` this is one of **two** aggregation modes rather than the only one:
+  it is *exercise* mode, where duration is the point, and it is what the ball reads. *Speech*
+  mode (`aggregateSpeech`) takes one value per vowel nucleus with nuclei weighted equally, so a
+  four-second hold counts once, like the 80 ms /ɪ/ in "the rain"; session statistics read that.
+  Both are Layer B presentation choices over the same Layer A frames, not two measurements —
+  which is why they are computed from one stream by one `ResonanceAggregator` and asserted to
+  agree with the array forms.
 - **SNR-driven method selection** (web-first; `selectResonanceMethod`): the `'auto'` resonance
   method resolves per-frame to `lpc` (≥`SNR_GREEN_DB`), `cepstral` (≥`SNR_YELLOW_DB`), or
   `centroid` (below) from the smoothed SNR, since the four extractors degrade differently in
@@ -206,7 +213,20 @@ d′ = (female mean − male mean) / pooled within-sex across-vowel SD. It pins 
 the §1.1 per-vowel table *and* d′ = 0.858 — so "the displayed metric did not move" is asserted
 rather than asserted-about, and states v2's criteria as inequalities against the redesign's
 thresholds. `npm run test:resonance-yield` is its companion reliability net: v2's formant
-yield on the Rainbow Passage must not fall below v1's under any of the four estimators.
+yield on the Rainbow Passage must not fall below v1's under any of the four estimators, and
+since Phase 2 it also reports how often the vowel is named and `f2Position` therefore exists
+(88.0% of estimator frames under `lpc`, 81.5% cepstral, 74.5% harmonic, 0% centroid — which
+resolves no F3 and so cannot reach the two residual dimensions a classification needs).
+(6) `tools/resonance-aggregation.mjs` (`npm run test:resonance-aggregation`) — the Phase 2
+aggregation-mode net. It builds a hold-plus-speech clip in source (a synthesized sustained vowel
+from `tools/synth-vowel.mjs` concatenated with the Rainbow Passage) and asserts that **exercise**
+and **speech** aggregation weight the hold differently by at least 5× and land on measurably
+different numbers. It also asserts the vowel is named on ≥80% of the sustained hold's frames,
+which guards the specific regression that was there: a classifier calibrated to connected speech
+abstains through an entire held vowel, and a held vowel is the mode the ball runs in.
+(7) `resonance-aggregation.test.mjs` — the same two modes as pure arithmetic, including that the
+streaming aggregator a live session uses and the array functions a fixture report uses produce
+identical numbers on the same stream.
 
 **This is the mechanism that caught the semantic drift the doc predicted it would.** The web
 and C++ ports were both computing ΔF as the endpoint difference over a *compacted* formant list
@@ -323,7 +343,11 @@ The measurement *method* documented above (adaptive-ceiling LPC → uniform-tube
 sound and matches the published recommendation. The *construct* — collapsing one frame's
 F1–F3 into a single 0–1 number — is not: measured against Peterson & Barney norms with
 ground-truth formants, vowel identity moves the score ~3x more than speaker sex does, and the
-nominal 55/25/20 weighting double-counts F1 and F2. See
+nominal 55/25/20 weighting double-counts F1 and F2. Phases 0–2 have landed: the score is
+decomposed into tract scale and tract shape, the shape now names the vowel, and F2 is reported
+relative to that vowel's own norm. All of it is instrumented and none of it is displayed —
+`smoothResonance` (v1) is still the only resonance number any user, port or piece of hardware
+sees, and its output is byte-identical. See
 [`RESONANCE_REDESIGN.md`](./RESONANCE_REDESIGN.md) for the evidence, the target architecture
 (tract scale + tract shape, kept separate), and the phased plan. That document supersedes this
 one on what `resonanceScore` should mean; this one remains the cross-port contract for how it
@@ -360,7 +384,26 @@ is computed and kept in step.
   frames on the Rainbow Passage); the cepstral, harmonic and centroid estimators do not, and
   neither port does. It feeds only the Phase-1 `formantScale`/`formantPattern` pair, which is
   instrumented and not displayed, so no cross-port contract depends on it yet. Extending the
-  golden vectors past ΔF to the scale/pattern split is Phase 6.
+  golden vectors past ΔF to the scale/pattern split is Phase 6. Phase 2's vowel classifier
+  deliberately does **not** consume F4: its templates are Peterson & Barney's F1–F3 and there is
+  no published r₄ to build a fourth column from, so `VOWEL_TEMPLATE_FORMANTS` pins the
+  classifier's frame at three. This is load-bearing, not incidental — the residual identity
+  `Σ L_i r_i ≡ 1` describes a *different* surface for four formants than for three, so
+  normalising a 4-element residual and matching it against 3-formant templates compares vectors
+  that do not live in the same space. Measured cost when that was live: vowel yield under `lpc`
+  fell from 88.0% to 40.8%.
+- **The vowel classifier's meaning depends on the pooling window, and that is only half solved.**
+  `formantPattern` is taken against the ΔF pooled over a rolling window, so what a residual means
+  depends on what that window held: several vowels (connected speech) or one (a sustained hold).
+  Phase 2 normalises the two onto a common scale-invariant frame, which makes the classifier work
+  in both — but the component it divides out (ρ) is exactly the component a rhotic /ɝ/ shows up
+  in. Reading /ɝ/ off ρ requires knowing what the window contained, which is Phase 3's frame-
+  validity work. Until then the classifier's one systematic error is /ɝ/ → /æ/, measured and
+  asserted rather than left to be discovered.
+- **Phase 2's features are web-only and unversioned.** `vowelId`, `f2Position`, and the two
+  aggregation modes exist on the web analyzer only, are not in the Layer A packet, and are not
+  displayed. Nothing on any port reads them. When they do become displayable (Phase 4), §3.5's
+  versioning applies to them the same as to `resonanceAbsolute`.
 - **`vtlScore` is a high-gain mapping**: full 0–1 travel over ΔF ∈ [1029, 1250] Hz, ~5 score
   points per 1% of ΔF error. That is a deliberate consequence of the 17 cm → 14 cm apparent
   tract-length anchors (**longer/darker → shorter/brighter**, not male → female: F0 and
