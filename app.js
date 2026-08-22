@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, fitFormantDispersion, formantEstimateConfidence, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, fitFormantDispersion, formantEstimateConfidence, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake, fitFormantScale, formantPatternResiduals, resonanceAbsoluteV2, poolFormantScale, resonanceScoreV1 } from './dsp-utils.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { SpeechGate } from './speech-gate.js';
 import { PRACTICE_PHRASES, scorePhraseTake, buildContourSeries } from './phrase-coach.js';
@@ -73,6 +73,15 @@ const SYLLABLE_IMPULSE_DECAY = 0.88;     // Per-frame decay of syllable impulse
 // ages a formant out — only an estimator that keeps failing to find one does. ~12 frames is
 // 0.2 s of continuous phonation at the rAF frame rate.
 const FORMANT_STALE_FRAMES = 12;
+// F4 admission bounds for the downsampled-LPC path (RESONANCE_REDESIGN.md §1.6). See the
+// assignment loop in _resonanceLPC for why they are tighter than the F1-F3 bounds.
+const F4_CEILING_HZ = 4800;
+const F4_MAX_BW_HZ = 500;
+
+// Rolling window the v2 formant scale is pooled over (RESONANCE_REDESIGN.md §5). 100 frames
+// is ~1.7 s at the app's 60 fps update rate: several vowel nuclei of connected speech, so the
+// shape excursion averages out, but short enough that a deliberate posture change still moves it.
+const FORMANT_SCALE_POOL_FRAMES = 100;
 // Per-estimator calibration onto the shared confidence scale (see formantEstimateConfidence).
 // Calibrated so all four report a comparable median confidence on clean read speech, measured
 // against fixtures/audio-eval/rainbow_passage.wav at the live frame rate; the parity is locked
@@ -170,6 +179,23 @@ export class VoiceAnalyzer {
     this.dispersionFitQuality = 0;  // 0..1 goodness-of-fit of the last uniform-tube ΔF fit
     this.dispersionFormantsUsed = 0; // how many formants that fit actually used
 
+    // ====== RESONANCE v2 (docs/RESONANCE_REDESIGN.md §5 — instrumented only) ======
+    // Computed alongside v1 every frame and displayed nowhere. v1 above remains the
+    // metric the ball, HUD, haptics, gender score, necklace and bulb all read.
+    this.smoothF4 = 0;           // 0 = F4 never measured. No default: unlike F1/F2/F3 there is
+                                 // no fallback value that is better than admitting absence,
+                                 // and F3/F4 carry the scale regression between them, so a
+                                 // fabricated F4 would be a fabricated tract length.
+    this._f4Age = Infinity;
+    this.formantScaleHz = 0;     // pooled, upper-formant-weighted ΔF (Hz) — the tract SIZE
+    this.formantScaleFrameHz = 0;// this frame's unpooled weighted ΔF, for divergence logging
+    this.apparentVtlV2Cm = 0;    // 35000 / (2·formantScaleHz)
+    this.formantPattern = [];    // r_i = F_i/((i-0.5)·ΔF) — the tract SHAPE. Phase 2 input.
+    this.resonanceAbsoluteV2 = 0;// the v2 score. Not displayed in Phase 1.
+    this.formantScaleFitQuality = 0;
+    this.formantScaleFormantsUsed = 0;
+    this._scalePool = [];        // rolling window of per-frame weighted ΔF + confidence
+
     // ====== PERCEIVED-GENDER CUES (multi-cue model) ======
     // Modal (habitual median) pitch over a voiced window, not the momentary note.
     this.modalF0Buf = [];
@@ -196,6 +222,7 @@ export class VoiceAnalyzer {
     this._kalmanF1 = initKalman();
     this._kalmanF2 = initKalman();
     this._kalmanF3 = initKalman();
+    this._kalmanF4 = initKalman();
 
     // Spectral tilt diagnostic (light vs heavy vocal weight)
     this.spectralTiltRawDb = -14;
@@ -506,6 +533,16 @@ export class VoiceAnalyzer {
     this._f3Age = Infinity;
     this.dispersionFitQuality = 0;
     this.dispersionFormantsUsed = 0;
+    this.smoothF4 = 0;
+    this._f4Age = Infinity;
+    this.formantScaleHz = 0;
+    this.formantScaleFrameHz = 0;
+    this.apparentVtlV2Cm = 0;
+    this.formantPattern = [];
+    this.resonanceAbsoluteV2 = 0;
+    this.formantScaleFitQuality = 0;
+    this.formantScaleFormantsUsed = 0;
+    this._scalePool = [];
     // Perceived-gender cue state
     this.modalF0Buf = [];
     this.modalF0Hz = 0;
@@ -526,6 +563,7 @@ export class VoiceAnalyzer {
     this._kalmanF1 = initKalman();
     this._kalmanF2 = initKalman();
     this._kalmanF3 = initKalman();
+    this._kalmanF4 = initKalman();
 
     this.spectralTiltRawDb = -14;
     this.spectralTiltSmoothedDb = -14;
@@ -1381,7 +1419,7 @@ export class VoiceAnalyzer {
         }
       }
 
-      let f1Candidate = 0, f2Candidate = 0, f3Candidate = 0, conf = 0;
+      let f1Candidate = 0, f2Candidate = 0, f3Candidate = 0, f4Candidate = 0, conf = 0;
 
       // In 'auto', resolve the estimator from the (slow-moving) smoothed SNR so the live
       // number leans on whichever method degrades least in the current noise; otherwise honour
@@ -1403,7 +1441,10 @@ export class VoiceAnalyzer {
             this._resonanceCepstral(pitch));
           break;
         case 'lpc':
-          ({ f1: f1Candidate, f2: f2Candidate, f3: f3Candidate, confidence: conf } =
+          // f4 defaults to 0 in the destructure: only the LPC path can produce one, and the
+          // other three estimators must not be made to look as though they abstained when
+          // they were never asked.
+          ({ f1: f1Candidate, f2: f2Candidate, f3: f3Candidate, f4: f4Candidate = 0, confidence: conf } =
             this._resonanceLPC());
           break;
         case 'centroid':
@@ -1464,10 +1505,14 @@ export class VoiceAnalyzer {
 
       // Age every formant this estimator frame, then reset the ones it actually measured. A
       // formant the estimator keeps missing goes stale and stops contributing to ΔF.
-      this._f1Age++; this._f2Age++; this._f3Age++;
+      this._f1Age++; this._f2Age++; this._f3Age++; this._f4Age++;
       if (f1Candidate > 0) { this.smoothF1 = this._kalmanUpdate(this._kalmanF1, f1Candidate, R); this._f1Age = 0; }
       if (f2Candidate > 0) { this.smoothF2 = this._kalmanUpdate(this._kalmanF2, f2Candidate, R); this._f2Age = 0; }
       if (f3Candidate > 0) { this.smoothF3 = this._kalmanUpdate(this._kalmanF3, f3Candidate, R); this._f3Age = 0; }
+      // F4 gets the same continuity treatment as F1-F3 and nothing more. It is tracked in its
+      // own filter so a missed F4 coasts rather than snapping, but it is never defaulted: if
+      // no estimator has ever produced one, smoothF4 stays 0 and the scale fit runs on F1-F3.
+      if (f4Candidate > 0) { this.smoothF4 = this._kalmanUpdate(this._kalmanF4, f4Candidate, R); this._f4Age = 0; }
       this.formantConfidence += (conf - this.formantConfidence) * 0.15;
 
       // --- Formant dispersion (ΔF) -> apparent vocal-tract length gender cue ---
@@ -1530,25 +1575,83 @@ export class VoiceAnalyzer {
           ? normalizeAgainstRange(this.smoothF2, rp.f2Min, rp.f2Max)
           : vtlScore;
       } else {
-        // Fixed-anchor fallback — byte-identical to the pre-calibration behaviour the golden
-        // eval asserts on. Anchors: 17 cm (longer/darker, score 0) → 14 cm (shorter/brighter,
-        // score 1).
-        vtlScore = aVTL_cm > 0 ? clamp01((17 - aVTL_cm) / 3) : 0;
-        // F1 (25%): higher F1 reads brighter/more open (open, forward resonance). It is also
-        // one of the two formants that *define the vowel*, so much of this term's movement is
-        // vowel identity rather than tract configuration.
-        f1Score = Math.max(0, Math.min(1, (this.smoothF1 - 300) / 600));
-        // Vowel-normalized F2 (20%): only used when a vowel-like frame is detected; otherwise
-        // fold into vtlScore to avoid penalising back vowels (/u/ F2 ≈ 1000 Hz).
-        f2Score = this.vowelLikelihood > 0.4
-          ? clamp01((this.smoothF2 - 1000) / 1400)
-          : vtlScore;
+        // Fixed-anchor fallback — the pre-calibration behaviour the golden eval asserts on.
+        // Anchors: 17 cm (longer/darker, score 0) → 14 cm (shorter/brighter, score 1). The
+        // arithmetic now lives in resonanceScoreV1() so the d′ benchmark scores Peterson &
+        // Barney means through the function users actually see, not a copy of it; the terms,
+        // the clamp order and the 55/25/20 weights are unchanged.
+        //
+        // F1 (25%): higher F1 reads brighter/more open. It is also one of the two formants
+        // that *define the vowel*, so much of this term's movement is vowel identity rather
+        // than tract configuration — and it has already been counted once inside vtlScore's
+        // ΔF fit. That double count is what §1.4 measures and what v2 below removes.
+        // F2 (20%): only when a vowel-like frame is detected; otherwise it folds into
+        // vtlScore to avoid penalising back vowels (/u/ F2 ≈ 1000 Hz).
+        ({ vtlScore, f1Score, f2Score } = resonanceScoreV1({
+          deltaFHz: this.formantDispersionHz,
+          f1: this.smoothF1,
+          f2: this.smoothF2,
+          vowelLike: this.vowelLikelihood > 0.4,
+        }));
       }
       const rawResonance = vtlScore * 0.55 + f1Score * 0.25 + f2Score * 0.20;
       // Steady-state weight scales the EMA step: held vowels move the score quickly toward
       // their reading; transition frames only nudge it (floor), so the live number settles on
       // vowel targets rather than chasing onsets/glides.
       this.smoothResonance += (rawResonance - this.smoothResonance) * (0.05 + conf * 0.08) * this.formantSteadiness;
+
+      // ================= resonanceAbsolute v2 — instrumented only ==================
+      // docs/RESONANCE_REDESIGN.md §5. Computed every frame beside v1 and displayed
+      // nowhere: `smoothResonance` above is still the number the ball, HUD, haptics,
+      // gender score, necklace and bulb read. Nothing below writes to it.
+      //
+      // The decomposition (§4): the same formants split into tract SIZE and tract SHAPE
+      // instead of being collapsed into one scalar.
+      const scaleInputs = [
+        this._f1Age <= FORMANT_STALE_FRAMES ? this.smoothF1 : 0,
+        this._f2Age <= FORMANT_STALE_FRAMES ? this.smoothF2 : 0,
+        this._f3Age <= FORMANT_STALE_FRAMES ? this.smoothF3 : 0,
+        // F4 is optional by design (§5 gates it on measured availability). When the LPC
+        // path did not produce one, or a non-LPC estimator is selected, the fit runs on
+        // F1-F3 and the scale is still defined — it just carries less upper-formant
+        // leverage. It is never substituted or defaulted.
+        this._f4Age <= FORMANT_STALE_FRAMES ? this.smoothF4 : 0,
+      ];
+      const scaleFit = fitFormantScale(scaleInputs);
+      this.formantScaleFrameHz = scaleFit.deltaF;
+      this.formantScaleFitQuality = scaleFit.fitQuality;
+      this.formantScaleFormantsUsed = scaleFit.n;
+
+      // Pooled over a rolling window, not per frame (§5). A frame is one vowel and one
+      // vowel is not a speaker: this is the §1.1 error in miniature, and pooling across a
+      // window that spans several vowels is what removes it. The window is ~1.7 s at the
+      // live 60 fps frame rate — long enough to cross several vowel nuclei in connected
+      // speech, short enough to follow a deliberate posture change.
+      if (scaleFit.deltaF > 0) {
+        this._scalePool.push({
+          deltaF: scaleFit.deltaF,
+          // Frames the estimator is unsure of, that aren't held, or whose formants don't
+          // lie on a tube at all, dilute the pool instead of voting in it.
+          weight: Math.max(1e-3, conf * this.formantSteadiness * scaleFit.fitQuality),
+        });
+        if (this._scalePool.length > FORMANT_SCALE_POOL_FRAMES) this._scalePool.shift();
+      }
+      const pooled = poolFormantScale(this._scalePool);
+      if (pooled.deltaF > 0) {
+        this.formantScaleHz = pooled.deltaF;
+        this.apparentVtlV2Cm = 35000 / (2 * pooled.deltaF);
+        // FORMANT PATTERN — the residuals Phase 2 classifies the vowel from. Taken against
+        // the POOLED scale, not this frame's: dividing a frame's formants by a scale fitted
+        // to those same formants would normalise away part of the shape it is meant to
+        // expose. Held as a vector; collapsing it to a scalar would discard the dimension
+        // vowel identity lives in.
+        this.formantPattern = formantPatternResiduals(scaleInputs, pooled.deltaF);
+        // One path in. Every formant reaches this number through the weighted regression
+        // above and through nothing else — no F1 or F2 term is added on top, which is the
+        // double count §1.4 measures in v1.
+        this.resonanceAbsoluteV2 = resonanceAbsoluteV2(pooled.deltaF);
+      }
+      // ============================ end v2 ========================================
 
       // --- ADAPTIVE RESONANCE RANGE LEARNING ---
       // Collect F1 / F2 / dispersion from clean, steady, vowel-like frames over the first few
@@ -2147,7 +2250,7 @@ export class VoiceAnalyzer {
 
     formants.sort((lhs, rhs) => lhs.freq - rhs.freq);
 
-    let f1 = 0; let f2 = 0; let f3 = 0;
+    let f1 = 0; let f2 = 0; let f3 = 0; let f4 = 0;
     let f1Bw = 999; let f2Bw = 999;
     const minSep = 200;
     for (const fm of formants) {
@@ -2157,6 +2260,21 @@ export class VoiceAnalyzer {
         f2 = fm.freq; f2Bw = fm.bw;
       } else if (f3 === 0 && fm.freq >= 2000 && fm.freq <= 4500 && fm.freq > f2 + minSep) {
         f3 = fm.freq;
+      } else if (f3 > 0 && f4 === 0 && fm.freq >= 3000 && fm.freq <= F4_CEILING_HZ
+                 && fm.freq > f3 + minSep && fm.bw < F4_MAX_BW_HZ) {
+        // --- F4 (docs/RESONANCE_REDESIGN.md §1.6, §5) ---
+        // F4 sits inside the band this path already analyses -- after 4x decimation the
+        // anti-alias cutoff is 0.45*11025 ~= 4961 Hz and the order-13 model carries 6 pole
+        // pairs -- but nothing was reading it out. This branch is purely additive: it runs
+        // only after F3 has been assigned, over poles the loop above had already discarded,
+        // so F1/F2/F3 and the confidence built from them are what they were.
+        //
+        // Two conditions beyond the F1-F3 pattern, because a wrong F4 is worse than no F4:
+        // F3 and F4 carry the scale regression between them. The ceiling stays
+        // below the anti-alias corner so a pole parked on the filter skirt cannot be read as
+        // a formant, and the bandwidth bound is tighter than the generic 600 Hz admission
+        // limit because broad spurious poles collect in exactly this band.
+        f4 = fm.freq;
       }
     }
 
@@ -2178,7 +2296,9 @@ export class VoiceAnalyzer {
     if (f1 === 0) f1 = 500;
     if (f2 === 0) f2 = 1500;
 
-    return { f1, f2, f3, confidence: conf };
+    // f4 is 0 when this frame did not yield one; it is never defaulted. Every other
+    // estimator omits it entirely, which is the same statement.
+    return { f1, f2, f3, f4, confidence: conf };
   }
 
   // Durand-Kerner root finding for LPC polynomial
