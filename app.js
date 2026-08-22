@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, fitFormantDispersion, formantEstimateConfidence, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake, fitFormantScale, formantPatternResiduals, resonanceAbsoluteV2, poolFormantScale, resonanceScoreV1, classifyVowel, f2PositionFromResidual, normalizeResidualScale, VOWEL_TEMPLATE_FORMANTS, ResonanceAggregator } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, fitFormantDispersion, formantEstimateConfidence, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake, fitFormantScale, formantPatternResiduals, resonanceAbsoluteV2, poolFormantScale, resonanceScoreV1, classifyVowel, f2PositionFromResidual, normalizeResidualScale, VOWEL_TEMPLATE_FORMANTS, ResonanceAggregator, frameValidity, formantMeasurementNoise, crossEstimatorAgreement, resonanceConfidence, RESONANCE_CONFIDENCE_FLOOR, spectralBrightness, windowHomogeneity, rhoticFromRho, residualScaleFactor, selectLpcCeiling, LPC_DEFAULT_CEILING_HZ, LPC_CEILING_CANDIDATES_HZ, LPC_CEILING_MIN_FRAMES, FORMANT_NOISE_F0_REF_HZ } from './dsp-utils.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { SpeechGate } from './speech-gate.js';
 import { PRACTICE_PHRASES, scorePhraseTake, buildContourSeries } from './phrase-coach.js';
@@ -76,6 +76,13 @@ const FORMANT_STALE_FRAMES = 12;
 // F4 admission bounds for the downsampled-LPC path (RESONANCE_REDESIGN.md §1.6). See the
 // assignment loop in _resonanceLPC for why they are tighter than the F1-F3 bounds.
 const F4_CEILING_HZ = 4800;
+// F3 admission floor. 2000 Hz is v1's, unchanged; the canonical path uses the lower one so a
+// rhotic F3 is reachable at all (P&B adult-male /ɝ/ F3 = 1690 Hz). 1500 Hz sits below every
+// published adult F3 including the rhotic and above every published adult F2 except /i/ and
+// /ɪ/, whose F2 is assigned before F3 is considered — so it widens the window for a rhotic
+// without opening one for an F2.
+const F3_FLOOR_HZ = 2000;
+const F3_RHOTIC_FLOOR_HZ = 1500;
 const F4_MAX_BW_HZ = 500;
 
 // Rolling window the v2 formant scale is pooled over (RESONANCE_REDESIGN.md §5). 100 frames
@@ -102,6 +109,45 @@ const RESONANCE_METHOD_TRUST = {
   cepstral: 0.5, // smooth but broad
   centroid: 0.3, // conflates pitch
 };
+// ============================================================
+// PHASE 3 — ESTIMATOR DISCIPLINE (docs/RESONANCE_REDESIGN.md §5)
+// ============================================================
+// How often the secondary estimators run as cross-checks. §3.4 is the whole reason this is a
+// number greater than 1: "three LPC solves per frame at 60 fps on a phone, a watch and an
+// ESP32 is not affordable". The cross-checks are cheap (both work off the FFT magnitudes the
+// frame already computed — no root solve), but they are still not free, and they are answering
+// a question that does not change frame to frame: "is the primary estimator describing the
+// same spectrum the other methods see?" Every 6th frame is 10 Hz at the 60 fps update rate,
+// which is faster than any real tracking failure develops.
+//
+// The two run on OPPOSITE frames rather than together, so the per-frame cost is one
+// cross-check, not two.
+// EXPRESSED IN SECONDS, NOT FRAMES, and that is not a stylistic choice. DSP_CONTRACT's
+// frame-rate fidelity section records what happens otherwise: "every EMA rate, steady-state
+// tolerance and profile-learning duration in the resonance stage is expressed per frame — so
+// the harness was validating the pipeline at an operating point no user ever runs at." A
+// cross-check cadence in frames has the same defect, and it showed up as a number: at the
+// 735-sample hop the reporting tools use (33 ms on the 22.05 kHz fixture) the pooled cepstral/
+// LPC ratio is 1.057 and 10% of clean frames are suppressed; at the rAF loop's true 60 fps the
+// same audio gives 1.275 and 33%. Same recording, same estimators, different statistic —
+// because a 16-reading pool covered 3.2 s at one rate and 1.6 s at the other.
+const CROSS_CHECK_PERIOD_SEC = 0.1;
+// Seconds of cross-check history each secondary pools. ~2 s, the same order as the scale's own
+// pooling window, which is the point: the two statistics have to describe the same stretch of
+// speech.
+const CROSS_CHECK_POOL_SEC = 2.0;
+const CROSS_CHECK_MIN_POOL = 6;
+// Frames between background re-checks of the LPC analysis ceiling. §5: "with a low-rate
+// background re-check during use". 900 frames is 15 s at 60 fps, and each re-check is ONE
+// extra LPC solve on ONE alternate ceiling — 1/900th of a solve per frame amortised, against
+// the per-frame multi-solve §3.4 rules out. The candidates are visited round-robin, so the
+// full five-ceiling sweep takes ~75 s of continuous phonation to complete once.
+const CEILING_RECHECK_PERIOD_FRAMES = 900;
+// Frames of validity history the validity RATE is computed over — the term that reaches
+// resonanceConfidence. One rejected frame is not a reason to stop showing a number; a run of
+// them is. ~0.5 s at 60 fps.
+const VALIDITY_HISTORY_FRAMES = 30;
+
 const WEIGHT_TILT_BASE = 0.45;           // Baseline blend weight for spectral-tilt heaviness
 const WEIGHT_H1H2_BLEND = 0.25;          // Max blend weight for the H1-H2 breathiness cue (× confidence)
 const WEIGHT_CPP_BLEND = 0.30;           // Blend weight for CPP breathiness cue (× confidence); source-only, no filter contamination
@@ -216,6 +262,70 @@ export class VoiceAnalyzer {
     this.v2Aggregator = new ResonanceAggregator();
     this.f2PositionAggregator = new ResonanceAggregator();
 
+    // ------ Phase 3: estimator discipline (docs/RESONANCE_REDESIGN.md §5) ------
+    // Still instrumented only. §6: the user sees one ring; five internal variables is an
+    // implementation detail and if it reaches the interface the redesign has failed.
+    //
+    // The canonical measurement. Root-solved LPC at this speaker's own analysis ceiling, run
+    // every frame regardless of `resonanceMethod`, with its own Kalman filters so that nothing
+    // downstream of it can be moved by which estimator the room's noise selected. v1 keeps its
+    // own smoothF1/F2/F3 above and is untouched.
+    this.canonicalF1 = 0;
+    this.canonicalF2 = 0;
+    this.canonicalF3 = 0;
+    this.canonicalF4 = 0;
+    this.canonicalConfidence = 0;
+    this.canonicalSteadiness = 1;
+    this._canF1Age = Infinity; this._canF2Age = Infinity;
+    this._canF3Age = Infinity; this._canF4Age = Infinity;
+    this._prevCanF1 = 0; this._prevCanF2 = 0;
+    // Per-user LPC analysis ceiling. null = not calibrated, use the published default, which is
+    // byte-identical to the pre-Phase-3 arithmetic. Set by calibrateLpcCeiling() (Phase 4 owns
+    // the guided vowel-set UI that would call it) and nudged by the background re-check.
+    this.lpcCeilingHz = null;
+    this.lpcCeilingSource = 'default';   // 'default' | 'calibrated' | 'background'
+    this._ceilingTracks = null;          // per-candidate frame history during a search
+    this._ceilingRecheckIdx = 0;
+    this._ceilingRecheckFrames = 0;
+    // Frame validity (§5). `frameValid` is this frame's verdict; the history behind it is what
+    // reaches confidence, because one bad frame is not a reason to stop showing a number.
+    this.frameValid = false;
+    this.frameInvalidReasons = [];
+    this.canonicalRaw = [0, 0, 0, 0];      // this frame's raw LPC solve, pre-gate
+    this.canonicalAccepted = [0, 0, 0, 0]; // what survived the gates
+    this.validityRate = 0;
+    this._validityHistory = [];
+    // The last VALID observation of EACH formant, so one rejected frame does not become the
+    // reference a whole run is judged against, and a valid frame that missed F3 does not wipe
+    // the F3 reference. Aged out on the same bound the scale fit uses.
+    this._lastValidRef = [0, 0, 0, 0];
+    this._lastValidRefAge = [Infinity, Infinity, Infinity, Infinity];
+    this._lpcSolveCount = 0;             // LPC solves this session; tools/estimator-budget.mjs
+    // Cross-estimator agreement (§3.4). The secondaries never redefine the scale; they produce
+    // this one number and nothing else.
+    this.crossEstimatorAgreement = null; // null = no check has run yet
+    this.crossCheckDeltaFHz = { cepstral: 0, harmonic: 0 };
+    this._crossPool = { cepstral: [], harmonic: [] };
+    this._crossCheckClock = 0;
+    this._crossCheckTurn = 0;
+    // The confidence model of §4's diagram, and the gate that suppresses the readout below it.
+    this.resonanceConfidenceV2 = 0;
+    this.resonanceSuppressionConfidence = 0;
+    this.resonanceSuppressed = true;
+    this.resonanceSuppressReason = 'no-reading';
+    // The demoted centroid (§5, D1). A secondary brightness feature, never a resonance
+    // substitute: it resolves no F3, so it cannot fit a tract or name a vowel.
+    this.spectralBrightness = 0;
+    // ρ, and whether this window makes it readable (Phase 2's hand-off).
+    this.windowHomogeneityCv = 0;
+    this.windowIsHomogeneous = true;
+    this.rhoticDetected = false;
+    this.rhoRelative = 0;
+    this.rhoReason = 'no-rho';
+    this._rhoWindow = [];                // recent (rho, vowel) for the running median
+    this._resFrameSeq = 0;
+    this._lpcCacheFrame = -1; this._lpcCacheCeiling = 0; this._lpcCache = null;
+
     // ====== PERCEIVED-GENDER CUES (multi-cue model) ======
     // Modal (habitual median) pitch over a voiced window, not the momentary note.
     this.modalF0Buf = [];
@@ -243,6 +353,14 @@ export class VoiceAnalyzer {
     this._kalmanF2 = initKalman();
     this._kalmanF3 = initKalman();
     this._kalmanF4 = initKalman();
+    // Phase 3: the canonical path tracks its own formants. Sharing v1's filters would make the
+    // canonical value depend on which estimator fed them, which is the whole thing this phase
+    // removes; and the canonical filters carry F0 in their measurement noise, which v1's must
+    // not, because v1's displayed output may not move.
+    this._kalmanCanF1 = initKalman();
+    this._kalmanCanF2 = initKalman();
+    this._kalmanCanF3 = initKalman();
+    this._kalmanCanF4 = initKalman();
 
     // Spectral tilt diagnostic (light vs heavy vocal weight)
     this.spectralTiltRawDb = -14;
@@ -573,6 +691,44 @@ export class VoiceAnalyzer {
     this._v2FrameIndex = 0;
     this.v2Aggregator.reset();
     this.f2PositionAggregator.reset();
+    // Phase 3 state. The selected ceiling is deliberately NOT reset: it is a property of the
+    // speaker, not of the session, and re-running a multi-ceiling search from scratch every
+    // time the mic restarts would throw away the one thing calibration produced.
+    this.canonicalF1 = 0; this.canonicalF2 = 0; this.canonicalF3 = 0; this.canonicalF4 = 0;
+    this.canonicalConfidence = 0;
+    this.canonicalSteadiness = 1;
+    this._canF1Age = Infinity; this._canF2Age = Infinity;
+    this._canF3Age = Infinity; this._canF4Age = Infinity;
+    this._prevCanF1 = 0; this._prevCanF2 = 0;
+    this._ceilingTracks = null;
+    this._ceilingRecheckFrames = 0;
+    this.frameValid = false;
+    this.frameInvalidReasons = [];
+    this.canonicalRaw = [0, 0, 0, 0];
+    this.canonicalAccepted = [0, 0, 0, 0];
+    this.validityRate = 0;
+    this._validityHistory = [];
+    this._lastValidRef = [0, 0, 0, 0];
+    this._lastValidRefAge = [Infinity, Infinity, Infinity, Infinity];
+    this._lpcSolveCount = 0;
+    this.crossEstimatorAgreement = null;
+    this.crossCheckDeltaFHz = { cepstral: 0, harmonic: 0 };
+    this._crossPool = { cepstral: [], harmonic: [] };
+    this._crossCheckClock = 0;
+    this._crossCheckTurn = 0;
+    this.resonanceConfidenceV2 = 0;
+    this.resonanceSuppressionConfidence = 0;
+    this.resonanceSuppressed = true;
+    this.resonanceSuppressReason = 'no-reading';
+    this.spectralBrightness = 0;
+    this.windowHomogeneityCv = 0;
+    this.windowIsHomogeneous = true;
+    this.rhoticDetected = false;
+    this.rhoRelative = 0;
+    this.rhoReason = 'no-rho';
+    this._rhoWindow = [];
+    this._resFrameSeq = 0;
+    this._lpcCacheFrame = -1; this._lpcCacheCeiling = 0; this._lpcCache = null;
     // Perceived-gender cue state
     this.modalF0Buf = [];
     this.modalF0Hz = 0;
@@ -594,6 +750,10 @@ export class VoiceAnalyzer {
     this._kalmanF2 = initKalman();
     this._kalmanF3 = initKalman();
     this._kalmanF4 = initKalman();
+    this._kalmanCanF1 = initKalman();
+    this._kalmanCanF2 = initKalman();
+    this._kalmanCanF3 = initKalman();
+    this._kalmanCanF4 = initKalman();
 
     this.spectralTiltRawDb = -14;
     this.spectralTiltSmoothedDb = -14;
@@ -1451,6 +1611,27 @@ export class VoiceAnalyzer {
 
       let f1Candidate = 0, f2Candidate = 0, f3Candidate = 0, f4Candidate = 0, conf = 0;
 
+      // ================= PHASE 3: the canonical estimator (§5, §3.4) =================
+      // ONE estimator defines the measurement. Root-solved downsampled LPC runs here, every
+      // frame, at this speaker's own analysis ceiling, and everything the v2 stream reports is
+      // built from it — whatever `resonanceMethod` says and whatever the room's noise is doing.
+      //
+      // §3.4's argument, restated as the reason this block exists: the four estimators carry
+      // systematic BIAS, not just noise (lpc −0.3, cepstral −1.7, centroid +5.0, harmonic −11.9
+      // score points against a vowel whose answer is known), and the `auto` ladder swaps between
+      // three of them mid-session. Every swap is a step in the reported resonance that the
+      // speaker did not cause. Hysteresis made the steps rarer; only this makes them stop.
+      //
+      // COST, measured rather than assumed (tools/estimator-budget.mjs): the cache below means
+      // an uncalibrated user on `lpc` — which is every current user, every fixture and every
+      // golden test — pays NOTHING, because v1's solve and the canonical solve are the same
+      // call. A second solve appears only for a user who has calibrated a non-default ceiling,
+      // or who has forced a non-LPC estimator for v1. That duplication exists solely because v1
+      // must stay byte-identical while it is still the displayed number; Phase 4 retires v1 and
+      // the second solve goes with it.
+      this._resFrameSeq++;
+      const canonical = this._lpcAtCeiling(this.lpcCeilingHz || LPC_DEFAULT_CEILING_HZ);
+
       // In 'auto', resolve the estimator from the (slow-moving) smoothed SNR so the live
       // number leans on whichever method degrades least in the current noise; otherwise honour
       // the explicit selection. activeResonanceMethod feeds methodTrust + the UI/metrics.
@@ -1474,8 +1655,13 @@ export class VoiceAnalyzer {
           // f4 defaults to 0 in the destructure: only the LPC path can produce one, and the
           // other three estimators must not be made to look as though they abstained when
           // they were never asked.
+          //
+          // ALWAYS at the DEFAULT ceiling, never at the per-user one. v1's displayed value may
+          // not move, and a chosen ceiling would move it — so calibrating the canonical path
+          // cannot reach v1 at all. Where the user has not calibrated, this is the same call
+          // the canonical path just made and the cache returns it for free.
           ({ f1: f1Candidate, f2: f2Candidate, f3: f3Candidate, f4: f4Candidate = 0, confidence: conf } =
-            this._resonanceLPC());
+            this._lpcAtCeiling(LPC_DEFAULT_CEILING_HZ));
           break;
         case 'centroid':
           ({ f1: f1Candidate, f2: f2Candidate, f3: f3Candidate, confidence: conf } =
@@ -1635,91 +1821,10 @@ export class VoiceAnalyzer {
       // nowhere: `smoothResonance` above is still the number the ball, HUD, haptics,
       // gender score, necklace and bulb read. Nothing below writes to it.
       //
-      // The decomposition (§4): the same formants split into tract SIZE and tract SHAPE
-      // instead of being collapsed into one scalar.
-      const scaleInputs = [
-        this._f1Age <= FORMANT_STALE_FRAMES ? this.smoothF1 : 0,
-        this._f2Age <= FORMANT_STALE_FRAMES ? this.smoothF2 : 0,
-        this._f3Age <= FORMANT_STALE_FRAMES ? this.smoothF3 : 0,
-        // F4 is optional by design (§5 gates it on measured availability). When the LPC
-        // path did not produce one, or a non-LPC estimator is selected, the fit runs on
-        // F1-F3 and the scale is still defined — it just carries less upper-formant
-        // leverage. It is never substituted or defaulted.
-        this._f4Age <= FORMANT_STALE_FRAMES ? this.smoothF4 : 0,
-      ];
-      const scaleFit = fitFormantScale(scaleInputs);
-      this.formantScaleFrameHz = scaleFit.deltaF;
-      this.formantScaleFitQuality = scaleFit.fitQuality;
-      this.formantScaleFormantsUsed = scaleFit.n;
-
-      // Pooled over a rolling window, not per frame (§5). A frame is one vowel and one
-      // vowel is not a speaker: this is the §1.1 error in miniature, and pooling across a
-      // window that spans several vowels is what removes it. The window is ~1.7 s at the
-      // live 60 fps frame rate — long enough to cross several vowel nuclei in connected
-      // speech, short enough to follow a deliberate posture change.
-      if (scaleFit.deltaF > 0) {
-        this._scalePool.push({
-          deltaF: scaleFit.deltaF,
-          // Frames the estimator is unsure of, that aren't held, or whose formants don't
-          // lie on a tube at all, dilute the pool instead of voting in it.
-          weight: Math.max(1e-3, conf * this.formantSteadiness * scaleFit.fitQuality),
-        });
-        if (this._scalePool.length > FORMANT_SCALE_POOL_FRAMES) this._scalePool.shift();
-      }
-      const pooled = poolFormantScale(this._scalePool);
-      if (pooled.deltaF > 0) {
-        this.formantScaleHz = pooled.deltaF;
-        this.apparentVtlV2Cm = 35000 / (2 * pooled.deltaF);
-        // FORMANT PATTERN — the residuals Phase 2 classifies the vowel from. Taken against
-        // the POOLED scale, not this frame's: dividing a frame's formants by a scale fitted
-        // to those same formants would normalise away part of the shape it is meant to
-        // expose. Held as a vector; collapsing it to a scalar would discard the dimension
-        // vowel identity lives in.
-        this.formantPattern = formantPatternResiduals(scaleInputs, pooled.deltaF);
-        // One path in. Every formant reaches this number through the weighted regression
-        // above and through nothing else — no F1 or F2 term is added on top, which is the
-        // double count §1.4 measures in v1.
-        this.resonanceAbsoluteV2 = resonanceAbsoluteV2(pooled.deltaF);
-
-        // ---------------- Phase 2: vowel conditioning (§5) ----------------
-        // The residuals above are already scale-normalised, so naming the vowel from them is
-        // speaker-independent by construction rather than by calibration. Taken against the
-        // POOLED scale for the same reason Phase 1 took them there — and because it is only
-        // against a pooled scale that r₃ carries information at all (see the rank identity in
-        // dsp-utils.js). That third dimension is what separates /ɝ/.
-        // Normalised onto the scale-invariant frame first, so a sustained hold — where the
-        // pooling window collapses onto one vowel — and running speech both land in the same
-        // space. Without it a held vowel sits ~1.0 from its own template and the classifier
-        // abstains through the whole exercise. `scaleFactor` is the rhotic signal Phase 3
-        // inherits; it is measured here and deliberately not acted on (see dsp-utils.js).
-        const pattern = normalizeResidualScale(
-          this.formantPattern.slice(0, VOWEL_TEMPLATE_FORMANTS),
-          undefined, VOWEL_TEMPLATE_FORMANTS);
-        this.formantPatternNormalized = pattern.residuals;
-        this.formantPatternScaleFactor = pattern.scaleFactor;
-        const vc = classifyVowel(pattern.residuals, { preNormalized: true });
-        this.vowelId = vc.vowel;
-        this.vowelPosterior = vc.posterior;
-        this.vowelDistance = Number.isFinite(vc.distance) ? vc.distance : 0;
-        this.vowelAbstainReason = vc.reason;
-
-        // f2Position is defined only where a vowel was actually named. §6: a misclassified
-        // vowel produces a confidently wrong f2Position, which is the same failure as the
-        // centroid's fabricated F3, so an unnamed frame yields 0 — no reading — and never a
-        // fallback value that looks like a reading.
-        this.f2PositionRatio = this.vowelId
-          ? f2PositionFromResidual(pattern.residuals, this.vowelId)
-          : 0;
-
-        // Both aggregation modes, fed from one stream (§5). The ball reads exercise mode;
-        // session statistics read speech mode. Frames without a vowel still count as
-        // phonation for exercise mode but close any open nucleus for speech mode.
-        const aggWeight = Math.max(0, conf * this.formantSteadiness);
-        const aggSample = { weight: aggWeight, vowel: this.vowelId, index: this._v2FrameIndex };
-        this.v2Aggregator.push({ ...aggSample, value: this.resonanceAbsoluteV2 });
-        this.f2PositionAggregator.push({ ...aggSample, value: this.f2PositionRatio });
-        this._v2FrameIndex++;
-      }
+      // Phase 3 moved this out of line and off the active estimator. It now runs on the
+      // canonical LPC solve and its own Kalman filters, so nothing in it can be moved by
+      // which estimator the room's noise selected — see _updateResonanceV2.
+      this._updateResonanceV2(canonical, pitch, pitchDevSt, dt);
       // ============================ end v2 ========================================
 
       // --- ADAPTIVE RESONANCE RANGE LEARNING ---
@@ -1770,6 +1875,24 @@ export class VoiceAnalyzer {
       }
       if (this._kalmanF3 && this._kalmanF3.initialized) {
         this.smoothF3 = this._kalmanUpdate(this._kalmanF3, this.smoothF3, 1e6);
+      }
+      // PHASE 3: past a real pause, the canonical stream stops reading rather than holding its
+      // last value. v1 coasts because a coasting displayed number is what it has always done and
+      // its output may not move; v2 has no such obligation, and §5 is explicit that below the
+      // floor the app shows NO resonance rather than a substitute — a value from before a pause
+      // presented as a live one is exactly the substitute that forbids.
+      //
+      // BUT ONLY PAST A REAL PAUSE. Connected speech is full of unvoiced frames inside words —
+      // stop closures, fricatives, the gap between two syllables — and clearing on every one of
+      // them is not honesty, it is a stutter: measured on the Rainbow Passage it cut the vowel
+      // yield from 87.0% to 57.6% by making the pooling window restart at every consonant. The
+      // formants age on exactly the bound the scale fit already uses, and the reading is cleared
+      // when they have all gone stale, which is ~0.2 s of continuous non-phonation.
+      this._canF1Age++; this._canF2Age++; this._canF3Age++; this._canF4Age++;
+      this.canonicalConfidence *= 0.95;
+      if (this._canF1Age > FORMANT_STALE_FRAMES && this._canF2Age > FORMANT_STALE_FRAMES
+        && this._canF3Age > FORMANT_STALE_FRAMES && this._canF4Age > FORMANT_STALE_FRAMES) {
+        this._decayCanonicalStream();
       }
     }
 
@@ -2225,10 +2348,604 @@ export class VoiceAnalyzer {
         vowelLikelihood: this.vowelLikelihood,
       });
     }
+    // `measured` is the pre-default vector, added for Phase 3's cross-check. A defaulted
+    // 500/1500 Hz is not a measurement, and a cross-check that compared against one would be
+    // scoring the canonical estimator against a constant.
+    const measured = [f1, f2, f3, 0];
     if (f1 === 0) f1 = 500;
     if (f2 === 0) f2 = 1500;
 
-    return { f1, f2, f3, confidence: conf };
+    return { f1, f2, f3, confidence: conf, measured };
+  }
+
+  // ==========================================================================
+  // PHASE 3 — THE CANONICAL RESONANCE PATH (docs/RESONANCE_REDESIGN.md §5)
+  // ==========================================================================
+  //
+  // Everything the v2 stream reports is computed here, from one estimator, with its own
+  // continuity filters and its own confidence. `resonanceMethod` does not reach this method at
+  // all. That is the whole of §5's first bullet — "LPC becomes the single scale-defining
+  // estimator; selectResonanceMethod no longer swaps the measurement" — and it is why the
+  // between-method spread on the v2 stream is not small but exactly zero: there is no branch
+  // for the estimator identity to take.
+  //
+  // Still instrumented only. v1's smoothResonance remains the sole displayed number, and §6's
+  // "the user should still see one ring" is not relaxed by any of this.
+
+  // Memoised LPC solve, keyed on (frame, ceiling). The canonical path and v1's `lpc` case share
+  // one solve whenever they want the same ceiling, which is the uncalibrated default — so the
+  // common case costs exactly what it cost before Phase 3.
+  _lpcAtCeiling(ceilingHz) {
+    if (this._lpcCacheFrame === this._resFrameSeq && this._lpcCacheCeiling === ceilingHz) {
+      return this._lpcCache;
+    }
+    const r = this._resonanceLPC({ ceilingHz });
+    this._lpcCacheFrame = this._resFrameSeq;
+    this._lpcCacheCeiling = ceilingHz;
+    this._lpcCache = r;
+    this._lpcSolveCount++;      // read by tools/estimator-budget.mjs; §5 requires the cost measured
+    return r;
+  }
+
+  _updateResonanceV2(canonical, pitchHz, pitchDevSt, frameSec) {
+    // The MEASUREMENT runs on the standard assignment. The rhotic-capable one (same solve, same
+    // poles, an F3 floor low enough for a rhotic to occupy the slot) is used further down as a
+    // DETECTOR only, and only where ρ corroborates it — see the rhotic block. Using it as the
+    // measurement is what the first attempt did and it does not survive measurement: it names
+    // /ɝ/ where /ɝ/ is, but at F0 180 it also reads /ɔ/ as /ɝ/ on 47 frames in 67 and /ɪ/ on 35,
+    // because at high F0 the pole set is sparse enough that something lands in the widened slot.
+    // A confidently wrong vowel is the failure §6 names by name.
+    const measured = (canonical && canonical.measured) || [0, 0, 0, 0];
+    const bandwidths = (canonical && canonical.bandwidths) || [];
+
+    // ---- 1. FRAME VALIDITY (§5) ------------------------------------------------------
+    // Five gates, each answering a different question, evaluated against the last VALID
+    // observation of each formant rather than against the last frame — one rejected frame must
+    // not become the reference a whole run of frames is then judged against.
+    const validity = frameValidity(measured, {
+      bandwidths,
+      previous: this._lastValidRef,
+      previousAgeFrames: this._lastValidRefAge,
+      residual: canonical.modelResidual,
+      // The caller's OWN frame interval, not an assumed one. The continuity bound is a velocity
+      // in Hz/s, so it needs the elapsed time to become a step in Hz — and the app's harnesses
+      // do not all run at 60 fps: fixtures/audio-eval/rainbow_passage.wav is 22.05 kHz, so the
+      // 735-sample hop the reporting tools call "the live rate" is 33 ms there, half the rate
+      // the rAF loop runs at on a 44.1 kHz context. Assuming 1/60 made the gate twice as strict
+      // as intended on every fixture measurement.
+      frameSec: frameSec > 0 ? frameSec : undefined,
+    });
+    // Fewer than two formants is ABSENCE, not invalidity, and is kept as its own category: a
+    // gate that counted "nothing to check" as "checked and failed" would report a precision it
+    // had not earned.
+    this.frameValid = validity.valid;
+    this.frameInvalidReasons = validity.nFormants < 2
+      ? ['too-few-formants']
+      : validity.failed.concat(validity.perFormant.flatMap((r, i) => r.map((x) => `F${i + 1}:${x}`)));
+    // The formants this frame is allowed to contribute, with the poles that failed their own
+    // gate withheld. A frame whose F3 jumped 900 Hz still has an F1 and an F2 worth having.
+    const accepted = validity.accepted;
+    // Instrumented for tools/frame-validity.mjs: the raw solve and what survived the gates.
+    // Reporting a gate's precision and recall is impossible without both.
+    this.canonicalRaw = measured;
+    this.canonicalAccepted = accepted;
+    this._validityHistory.push(this.frameValid ? 1 : 0);
+    if (this._validityHistory.length > VALIDITY_HISTORY_FRAMES) this._validityHistory.shift();
+    let vSum = 0;
+    for (const v of this._validityHistory) vSum += v;
+    this.validityRate = this._validityHistory.length ? vSum / this._validityHistory.length : 0;
+
+    // Update the per-formant continuity reference AFTER judging this frame against it, and age
+    // it out on the same bound the scale fit uses: a formant unseen for a fifth of a second is
+    // not evidence about this one.
+    if (validity.failed.length === 0) {
+      for (let i = 0; i < 4; i++) {
+        if (validity.accepted[i] > 0) { this._lastValidRef[i] = validity.accepted[i]; this._lastValidRefAge[i] = 0; }
+      }
+    }
+    for (let i = 0; i < 4; i++) {
+      if (++this._lastValidRefAge[i] > FORMANT_STALE_FRAMES) this._lastValidRef[i] = 0;
+    }
+
+    // ---- 2. Canonical steadiness ------------------------------------------------------
+    // The same steadyStateWeight v1 uses, but computed from the CANONICAL formants. Reusing
+    // v1's would make the canonical pool weights depend on the active estimator through the
+    // back door, which is exactly the dependency this phase exists to cut.
+    let canRelDelta = 0;
+    if (this._prevCanF1 > 0 && this._prevCanF2 > 0 && measured[0] > 0 && measured[1] > 0) {
+      canRelDelta = Math.abs(measured[0] - this._prevCanF1) / this._prevCanF1
+                  + Math.abs(measured[1] - this._prevCanF2) / this._prevCanF2;
+    }
+    if (measured[0] > 0) this._prevCanF1 = measured[0];
+    if (measured[1] > 0) this._prevCanF2 = measured[1];
+    const canSteady = steadyStateWeight({ pitchSemitoneDev: pitchDevSt, formantRelDelta: canRelDelta });
+    this.canonicalSteadiness += (canSteady - this.canonicalSteadiness) * 0.3;
+    this.canonicalConfidence += ((canonical.confidence || 0) - this.canonicalConfidence) * 0.15;
+
+    // ---- 3. Kalman continuity, with F0 IN THE MEASUREMENT NOISE (§5) -------------------
+    // The physical fact this encodes: LPC places a formant from the harmonics that fall near
+    // it, and as F0 rises the harmonics thin out and the pole is pulled toward whichever single
+    // harmonic is nearest. The error grows with the spacing, and the spacing is F0. So the
+    // variance rises as (F0/100 Hz)² — 4× the measurement variance at 200 Hz, which is the band
+    // transfeminine users are training into and precisely where the app has been trusting its
+    // formants as though nothing had changed.
+    //
+    // This is the ONLY place F0 enters the resonance measurement. It does not enter the SCORE:
+    // a score that moved with pitch would be reporting pitch twice. It enters how far the
+    // filter is willing to be moved by one frame, and how much the result is trusted.
+    //
+    // INVALID FRAMES DO NOT UPDATE THE FILTERS. That is what a validity gate is for; the
+    // formant coasts on the prediction and ages toward being dropped from the fit. The yield
+    // this costs is measured and reported (tools/frame-validity.mjs), not assumed away.
+    const R = formantMeasurementNoise({
+      confidence: canonical.confidence || 0,
+      steadiness: this.canonicalSteadiness,
+      methodTrust: RESONANCE_METHOD_TRUST.lpc,
+      f0Hz: pitchHz,
+    });
+    this._canF1Age++; this._canF2Age++; this._canF3Age++; this._canF4Age++;
+    if (validity.failed.length === 0) {
+      // Frame-level failures (order, model residual, swap) reject the whole frame — there is no
+      // single formant to blame. Formant-level failures reject only their own pole, which is
+      // already reflected in `accepted`.
+      if (accepted[0] > 0) { this.canonicalF1 = this._kalmanUpdate(this._kalmanCanF1, accepted[0], R); this._canF1Age = 0; }
+      if (accepted[1] > 0) { this.canonicalF2 = this._kalmanUpdate(this._kalmanCanF2, accepted[1], R); this._canF2Age = 0; }
+      if (accepted[2] > 0) { this.canonicalF3 = this._kalmanUpdate(this._kalmanCanF3, accepted[2], R); this._canF3Age = 0; }
+      if (accepted[3] > 0) { this.canonicalF4 = this._kalmanUpdate(this._kalmanCanF4, accepted[3], R); this._canF4Age = 0; }
+    }
+
+    // ---- 4. Scale, pooled over the rolling window -------------------------------------
+    const scaleInputs = [
+      this._canF1Age <= FORMANT_STALE_FRAMES ? this.canonicalF1 : 0,
+      this._canF2Age <= FORMANT_STALE_FRAMES ? this.canonicalF2 : 0,
+      this._canF3Age <= FORMANT_STALE_FRAMES ? this.canonicalF3 : 0,
+      this._canF4Age <= FORMANT_STALE_FRAMES ? this.canonicalF4 : 0,
+    ];
+    const scaleFit = fitFormantScale(scaleInputs);
+    this.formantScaleFrameHz = scaleFit.deltaF;
+    this.formantScaleFitQuality = scaleFit.fitQuality;
+    this.formantScaleFormantsUsed = scaleFit.n;
+
+    if (scaleFit.deltaF > 0 && this.frameValid) {
+      this._scalePool.push({
+        deltaF: scaleFit.deltaF,
+        weight: Math.max(1e-3, this.canonicalConfidence * this.canonicalSteadiness * scaleFit.fitQuality),
+      });
+      if (this._scalePool.length > FORMANT_SCALE_POOL_FRAMES) this._scalePool.shift();
+    }
+
+    // ---- 5. Cross-estimator check, at reduced rate (§3.4) -----------------------------
+    // The secondaries do not vote and never touch the value. They answer one question — is the
+    // primary describing the same spectrum the other methods see — and the answer lowers
+    // confidence when it is no. Run on alternating frames so the per-frame cost is one cheap
+    // FFT-domain check, never two, and never a second root solve.
+    //
+    // THE COMPARISON IS MASKED TO THE FORMANTS BOTH ESTIMATORS ACTUALLY PRODUCED, and it is
+    // made on this frame's RAW formants on both sides. Neither is fussiness. Comparing a
+    // Kalman-smoothed multi-frame canonical ΔF against a raw single-frame check ΔF measures the
+    // smoothing, not the estimators; and comparing a 3-formant fit against a 2-formant one
+    // compares different constraint surfaces, which is the same error that cost Phase 2 47
+    // points of yield when F4 reached the classifier. Measured on the Rainbow Passage,
+    // unmasked and unsmoothed the "disagreement" between LPC and cepstral is a median 28% —
+    // almost all of it the comparison's own construction rather than the estimators'.
+    // The two secondaries alternate on successive cross-check slots, so the per-slot cost is one
+    // cheap FFT-domain check and never two, and never a second root solve.
+    this._crossCheckClock += frameSec > 0 ? frameSec : 1 / 60;
+    if (this._crossCheckClock >= CROSS_CHECK_PERIOD_SEC) {
+      this._crossCheckClock = 0;
+      this._crossCheckTurn = (this._crossCheckTurn + 1) % 2;
+      const which = this._crossCheckTurn === 0 ? 'cepstral' : 'harmonic';
+      const r = which === 'cepstral'
+        ? this._resonanceCepstral(pitchHz)
+        : this._resonanceHarmonicEnvelope(pitchHz);
+      const check = (r && r.measured) || [0, 0, 0, 0];
+      const shared = [0, 1, 2, 3].map((i) => (measured[i] > 0 && check[i] > 0));
+      const nShared = shared.filter(Boolean).length;
+      const checkFit = nShared >= 2
+        ? fitFormantScale(check.map((f, i) => (shared[i] ? f : 0))) : { deltaF: 0 };
+      const primaryFit = nShared >= 2
+        ? fitFormantScale(measured.map((f, i) => (shared[i] ? f : 0))) : { deltaF: 0 };
+      this.crossCheckDeltaFHz[which] = checkFit.deltaF;
+      // AGREEMENT IS POOLED, NOT PER FRAME, and that is a correction to how this was first
+      // built rather than a convenience. The canonical value the app reports is pooled over the
+      // ~1.7 s window; the question a cross-check answers is "do the other methods put ΔF in
+      // the same place over that window", not "do a root solve and a harmonic envelope agree on
+      // one 16.7 ms hop". Measured per frame on the Rainbow Passage, median agreement is 0.38 —
+      // a residual 7.4% of ΔF that is genuine single-frame scatter between two very different
+      // algorithms, not evidence that the measurement is wrong, and reading it as such
+      // suppressed 62% of a clean recording of read speech.
+      //
+      // The pooled statistic is the MEDIAN RATIO of check to primary over the window. A median
+      // so one frame where a secondary lost F3 cannot swing it; a ratio so it is scale-free and
+      // the two secondaries' pools can be compared with each other.
+      if (primaryFit.deltaF > 0 && checkFit.deltaF > 0) {
+        const pool = this._crossPool[which];
+        pool.push(checkFit.deltaF / primaryFit.deltaF);
+        // Each secondary is checked on every other slot, so its own readings arrive at half the
+        // slot rate; the pool holds CROSS_CHECK_POOL_SEC of them either way.
+        const maxPool = Math.max(CROSS_CHECK_MIN_POOL,
+          Math.round(CROSS_CHECK_POOL_SEC / (2 * CROSS_CHECK_PERIOD_SEC)));
+        while (pool.length > maxPool) pool.shift();
+      }
+      const ratios = [];
+      for (const k of ['cepstral', 'harmonic']) {
+        const pool = this._crossPool[k];
+        if (pool.length < CROSS_CHECK_MIN_POOL) continue;
+        const sorted = pool.slice().sort((x, y) => x - y);
+        ratios.push([k, sorted[Math.floor(sorted.length / 2)]]);
+      }
+      if (ratios.length) {
+        // Both secondaries must agree with the primary; the WORSE of the two is the answer,
+        // because a check that fails is evidence and a check that passes is only the absence of
+        // that evidence. Averaging them would let a passing cepstral cover a failing harmonic.
+        let worst = 1;
+        for (const [k, ratio] of ratios) {
+          const a = crossEstimatorAgreement(1, ratio, { checkMethod: k, primaryMethod: 'lpc' });
+          if (a != null && a < worst) worst = a;
+        }
+        this.crossEstimatorAgreement = worst;
+      }
+    }
+
+    // ---- 6. spectralBrightness: the demoted centroid (§5, D1) -------------------------
+    // Never a resonance substitute. It is computed from the spectrum this frame already has,
+    // it resolves no F3, and nothing downstream of resonance reads it.
+    this.spectralBrightness = spectralBrightness(computeSpectralCentroid(
+      this.frequencyData, this.audioCtx.sampleRate / this.analyser.fftSize, 200, 4000));
+
+    // ---- 7. THE CONFIDENCE MODEL, AND THE SUPPRESSION GATE (§4, §5, D1) ---------------
+    // §4's diagram: F0 · SNR · path quality · fit residual · cross-estimator agreement. A
+    // product, not a weighted sum — these are independent necessary conditions, and a frame
+    // with perfect cross-estimator agreement and no SNR is not half-good, it is three
+    // estimators agreeing on noise.
+    const terms = {
+      snrConfidence: this.snrConfidence,
+      formantConfidence: this.canonicalConfidence,
+      validityRate: this.validityRate,
+      fitQuality: this.formantScaleFitQuality,
+      f0Hz: pitchHz,
+    };
+    // TWO NUMBERS, AND THE DIFFERENCE BETWEEN THEM IS THE CROSS-CHECK.
+    //
+    // `resonanceConfidenceV2` is the reported confidence — what a vividness or a progress bar
+    // would read — and the cross-estimator agreement is in it, as §3.4 and §5 require.
+    // `resonanceSuppressionConfidence` is what the floor tests, and it is NOT, because a
+    // cross-check cannot establish that the PRIMARY measurement failed.
+    //
+    // That is measured, not asserted. On the Rainbow Passage the cepstral estimator's F3
+    // differs from the canonical LPC's by a median 25.6% (F1 and F2 by ~8%), and the weighted
+    // scale fit puts leverage 1.00 on F3 against 0.06 and 0.04 on F1 and F2 — so essentially
+    // ALL of the ΔF disagreement between the two estimators is the secondary's own F3
+    // imprecision. The cepstral envelope is a smoothed spectral peak; F3 is where it is worst.
+    // Letting that suppress the primary is backwards, and it costs: with agreement in the
+    // suppression decision the app declined 26% of a clean recording of read speech and vowel
+    // yield fell from 87.0% to 71.2%. §5 is explicit — "if a gate costs more than it buys,
+    // report the number and leave it off". Seventeen points of yield for a term that is mostly
+    // reporting a known property of the CHECKER is more than it buys.
+    //
+    // It is not discarded. It stays in the reported confidence, where a coarse second opinion
+    // legitimately makes a reading less trustworthy without making it absent, and
+    // tools/frame-validity.mjs measures what it is worth there: on clean synthetic frames its
+    // lowest agreement quartile is 23.2% bad against 0.2% for its highest.
+    this.resonanceConfidenceV2 = resonanceConfidence({ ...terms, agreement: this.crossEstimatorAgreement });
+    this.resonanceSuppressionConfidence = resonanceConfidence(terms);
+
+    const pooled = poolFormantScale(this._scalePool);
+    const belowFloor = this.resonanceSuppressionConfidence < RESONANCE_CONFIDENCE_FLOOR;
+    if (belowFloor || !(pooled.deltaF > 0)) {
+      // §5: "below the SNR floor the app shows NO resonance rather than a substitute." Every
+      // v2 output is cleared, not frozen and not defaulted — a stale reading presented as a
+      // live one is the same lie as a fabricated one, and D1 is explicit that the low-SNR case
+      // is handled by suppressing feedback rather than by silently switching to a brightness
+      // number that is computable from noise but wrong.
+      this.resonanceSuppressed = true;
+      this.resonanceSuppressReason = !(pooled.deltaF > 0) ? 'no-pooled-scale' : this._weakestConfidenceTerm(pitchHz);
+      this.resonanceAbsoluteV2 = 0;
+      // The SCALE is cleared too, not just the score. "No reading" has to mean no reading:
+      // leaving formantScaleHz standing at its last value would let anything downstream — a
+      // report, a future display, the next phase — read a stale tract length as a live one,
+      // which is the same failure as showing a substitute.
+      this.formantScaleHz = 0;
+      this.apparentVtlV2Cm = 0;
+      this.formantPattern = [];
+      this.formantPatternNormalized = [];
+      this.formantPatternScaleFactor = 0;
+      this.vowelId = null;
+      this.vowelPosterior = 0;
+      this.vowelDistance = 0;
+      this.vowelAbstainReason = this.resonanceSuppressReason;
+      this.f2PositionRatio = 0;
+      this.rhoticDetected = false;
+      this.rhoRelative = 0;
+      this.rhoReason = 'suppressed';
+      // A suppressed frame closes any open nucleus rather than extending it: it is not a frame
+      // of a vowel, it is a frame the app declined to read.
+      this.v2Aggregator.push({ value: 0, weight: 0, vowel: null, index: this._v2FrameIndex });
+      this.f2PositionAggregator.push({ value: 0, weight: 0, vowel: null, index: this._v2FrameIndex });
+      this._v2FrameIndex++;
+      return;
+    }
+
+    this.resonanceSuppressed = false;
+    this.resonanceSuppressReason = 'ok';
+    this.formantScaleHz = pooled.deltaF;
+    this.apparentVtlV2Cm = 35000 / (2 * pooled.deltaF);
+    this.formantPattern = formantPatternResiduals(scaleInputs, pooled.deltaF);
+    this.resonanceAbsoluteV2 = resonanceAbsoluteV2(pooled.deltaF);
+
+    // ---- 8. Vowel, and ρ (Phase 2's hand-off, answered) --------------------------------
+    const pattern = normalizeResidualScale(
+      this.formantPattern.slice(0, VOWEL_TEMPLATE_FORMANTS), undefined, VOWEL_TEMPLATE_FORMANTS);
+    this.formantPatternNormalized = pattern.residuals;
+    this.formantPatternScaleFactor = pattern.scaleFactor;
+    const vc = classifyVowel(pattern.residuals, { preNormalized: true });
+
+    // ρ. Phase 2 measured that /ɝ/ is the most isolated vowel in the set along this dimension
+    // and refused to read it, because ρ is also what a pooling-window mismatch moves and Phase 2
+    // could not tell the two apart. Phase 3 can: the window's own homogeneity says whether ρ
+    // carries vowel information at all (in a sustained hold it does not — the window has
+    // collapsed onto one vowel and ρ → 1 by construction), the validity gates say whether this
+    // frame's F3 is a measurement or a tracking failure, and dividing by the window's running
+    // median ρ removes the composition effect, which scales every vowel's ρ by a common factor.
+    //
+    // Measured (tools/rho-rhotic.mjs): held out across P&B's two populations, this takes the
+    // classifier from 95% to 100% correct at 0% abstention and removes the /ɝ/→/æ/ confusion
+    // without introducing another. It holds down to three distinct vowels in the window and is
+    // gated off below that, where the median stops meaning anything.
+    const hom = windowHomogeneity(this._scalePool);
+    this.windowHomogeneityCv = hom.cv;
+    this.windowIsHomogeneous = hom.homogeneous;
+    if (vc.vowel && pattern.scaleFactor > 0) {
+      this._rhoWindow.push({ rho: pattern.scaleFactor, vowel: vc.vowel });
+      if (this._rhoWindow.length > FORMANT_SCALE_POOL_FRAMES) this._rhoWindow.shift();
+    }
+    const rhos = this._rhoWindow.map((e) => e.rho).sort((a, b) => a - b);
+    const medianRho = rhos.length ? rhos[Math.floor(rhos.length / 2)] : 1;
+    const distinctVowels = new Set(this._rhoWindow.map((e) => e.vowel)).size;
+    // TWO INDEPENDENT ROUTES TO A RHOTIC, and both have to be checked, because they fail in
+    // opposite directions:
+    //
+    //   ρ ON THE STANDARD ASSIGNMENT catches a rhotic whose F3 the extractor still resolved
+    //   above 2000 Hz — a weak or coarticulated one.
+    //
+    //   ρ ON THE RHOTIC-CAPABLE ASSIGNMENT catches the strong ones, where F3 has dropped below
+    //   the standard floor and the standard pass simply cannot see it. This is the case
+    //   Peterson & Barney's /ɝ/ actually is: their adult-male F3 is 1690 Hz, and before this
+    //   the live path named /ɝ/ correctly on 0.0% of frames of a synthesized /ɝ/ — it read as
+    //   /ʊ/ on 64 of 67 — because the extractor had no slot for the pole.
+    //
+    // The second route is admitted ONLY when ρ corroborates it. That is exactly the job Phase 2
+    // handed ρ: the low floor makes a rhotic F3 visible, and ρ decides whether to believe it.
+    // Without the corroboration the widened slot manufactures rhotics at high F0 (measured:
+    // /ɔ/ read as /ɝ/ on 47 frames in 67 at F0 180); with it, the widened slot only ever
+    // produces a rhotic when the frame's own apparent scale has collapsed the way a rhotic
+    // collapses it.
+    const rhoOpts = {
+      windowMedianRho: medianRho,
+      heterogeneous: !hom.homogeneous,
+      frameValid: this.frameValid,
+      windowFrames: this._rhoWindow.length,
+      windowVowels: distinctVowels,
+    };
+    let rh = rhoticFromRho(pattern.scaleFactor, rhoOpts);
+    if (!rh.rhotic) {
+      const rhoticRaw = (canonical && canonical.measuredRhotic) || [0, 0, 0, 0];
+      // Only when the widened slot actually found something the standard pass did not: a pole
+      // below the standard F3 floor. Otherwise the two assignments are the same vector and
+      // re-testing it is just the same test again.
+      if (rhoticRaw[2] > 0 && rhoticRaw[2] < F3_FLOOR_HZ && rhoticRaw[0] > 0 && rhoticRaw[1] > 0) {
+        const rhoticPattern = formantPatternResiduals(
+          [rhoticRaw[0], rhoticRaw[1], rhoticRaw[2]], pooled.deltaF);
+        const rhoRhotic = residualScaleFactor(rhoticPattern);
+        const alt = rhoticFromRho(rhoRhotic, rhoOpts);
+        if (alt.rhotic) rh = alt;
+      }
+    }
+    this.rhoticDetected = rh.rhotic;
+    this.rhoRelative = rh.rhoRelative;
+    this.rhoReason = rh.reason;
+
+    // THE RHOTIC READING IS INSTRUMENTED AND NOT ACTED ON. That is the measured answer to
+    // Phase 2's hand-off, and it is a "no" with three numbers behind it — see the block above
+    // this method and tools/rho-rhotic.mjs.
+    //
+    // ρ does what Phase 2 said it would ON THE NORMS: held out across P&B's two populations it
+    // takes the classifier from 95% to 100% correct at 0% abstention, removes the /ɝ/→/æ/
+    // confusion without introducing another, improves at every noise level tested, and survives
+    // window composition down to three distinct vowels.
+    //
+    // It does NOT survive the live path, and the failure is not marginal. Driven over
+    // synthesized vowels whose identity is known by construction, admitting ρ reads /ɪ/ as /ɝ/
+    // on 26 of 67 frames and, at F0 180, /ɔ/ as /ɝ/ on 47 of 67 — while recovering /ɝ/ itself on
+    // 0–12%. Two things cause it, and neither is a threshold that could be moved:
+    //
+    //   1. The live pooling window is ~1.7 s and rarely holds enough DISTINCT vowels for its
+    //      running median ρ to mean anything. ρ is defined relative to what the window held,
+    //      and a window holding two vowels has a median that is simply one of them.
+    //   2. The extractor cannot see the excursion ρ is supposed to read. The LPC assignment
+    //      admits a pole as F3 only above 2000 Hz and P&B's adult-male /ɝ/ has F3 = 1690 Hz, so
+    //      before Phase 3 the live path named a synthesized /ɝ/ correctly on 0.0% of frames — it
+    //      read as /ʊ/ on 64 of 67. Widening the slot (measuredRhotic, computed and exposed
+    //      here) makes /ɝ/ reachable — 92.5% at F0 110 — but at F0 180 the sparse pole set puts
+    //      something in the widened slot on most frames and manufactures rhotics.
+    //
+    // So the honest answer to "is ρ now usable for /ɝ/" is NO, and the blocker is not ρ. It is
+    // that the formant assignment has one policy, shared with v1, that cannot admit a rhotic F3
+    // without admitting spurious ones. Fixing it means a rhotic-aware assignment that v1 no
+    // longer constrains — which is Phase 4, when v1 retires — validated against real rhotic
+    // recordings rather than a Klatt cascade, which is Phase 5's ladder. Everything needed to do
+    // that is measured and exposed here; none of it is switched on.
+    this.vowelId = vc.vowel;
+    this.vowelPosterior = vc.posterior;
+    this.vowelDistance = Number.isFinite(vc.distance) ? vc.distance : 0;
+    this.vowelAbstainReason = this.vowelId ? 'ok' : vc.reason;
+
+    this.f2PositionRatio = this.vowelId
+      ? f2PositionFromResidual(pattern.residuals, this.vowelId)
+      : 0;
+
+    const aggWeight = Math.max(0, this.canonicalConfidence * this.canonicalSteadiness);
+    const aggSample = { weight: aggWeight, vowel: this.vowelId, index: this._v2FrameIndex };
+    this.v2Aggregator.push({ ...aggSample, value: this.resonanceAbsoluteV2 });
+    this.f2PositionAggregator.push({ ...aggSample, value: this.f2PositionRatio });
+    this._v2FrameIndex++;
+
+    // ---- 9. Background ceiling re-check (§5) -------------------------------------------
+    this._backgroundCeilingRecheck(canonical);
+  }
+
+  // Unvoiced or silent: no measurement was made, so there is nothing to report. Called from the
+  // resonance stage's else branch. It does NOT clear the pooling window — a pause between two
+  // phrases does not make the speaker's tract a different length, and the pool's own weights
+  // and the formant ages already handle a long enough silence — but it does clear everything
+  // that describes THIS frame, and it closes any open vowel nucleus.
+  _decayCanonicalStream() {
+    // The POOLING WINDOW IS NOT CLEARED. A pause between two phrases does not make the
+    // speaker's tract a different length, and the window is a rolling one — it ages out on its
+    // own. Clearing it forces an eight-frame refill at every pause and buys nothing, because the
+    // reading is already suppressed for as long as there is nothing to read.
+    this.frameValid = false;
+    this.frameInvalidReasons = ['not-voiced'];
+    this.resonanceSuppressed = true;
+    this.resonanceSuppressReason = 'not-voiced';
+    this.resonanceConfidenceV2 = 0;
+    this.resonanceSuppressionConfidence = 0;
+    this.resonanceAbsoluteV2 = 0;
+    this.formantScaleHz = 0;
+    this.formantScaleFrameHz = 0;
+    this.apparentVtlV2Cm = 0;
+    this.formantPattern = [];
+    this.formantPatternNormalized = [];
+    this.formantPatternScaleFactor = 0;
+    this.vowelId = null;
+    this.vowelPosterior = 0;
+    this.vowelDistance = 0;
+    this.vowelAbstainReason = 'not-voiced';
+    this.f2PositionRatio = 0;
+    this.rhoticDetected = false;
+    this.rhoRelative = 0;
+    this.rhoReason = 'not-voiced';
+    this.v2Aggregator.push({ value: 0, weight: 0, vowel: null, index: this._v2FrameIndex });
+    this.f2PositionAggregator.push({ value: 0, weight: 0, vowel: null, index: this._v2FrameIndex });
+    this._v2FrameIndex++;
+  }
+
+  // Which term of the confidence product collapsed. Reported rather than inferred, because
+  // "the app is showing you nothing" is a claim it should be able to justify to the user, and
+  // because "SNR too low" and "your pitch is above where this measurement is reliable" call for
+  // completely different advice.
+  _weakestConfidenceTerm(pitchHz) {
+    // The cross-estimator term is deliberately absent: it does not participate in the
+    // suppression decision (see the two-numbers note above), so it can never be the reason the
+    // app declined to show one.
+    const terms = {
+      'low-snr': this.snrConfidence,
+      'no-formant-structure': this.canonicalConfidence,
+      'frames-failing-validity': this.validityRate,
+      'formants-fit-no-tract': this.formantScaleFitQuality,
+      'f0-too-high-to-resolve-formants': pitchHz > FORMANT_NOISE_F0_REF_HZ ? FORMANT_NOISE_F0_REF_HZ / pitchHz : 1,
+    };
+    let worst = 'low-snr', worstVal = Infinity;
+    for (const [k, v] of Object.entries(terms)) {
+      if (v < worstVal) { worstVal = v; worst = k; }
+    }
+    return worst;
+  }
+
+  // ---- Per-user LPC analysis ceiling (§5) ---------------------------------------------
+  //
+  // CALIBRATION ENTRY POINT. Phase 3 owns the SEARCH; Phase 4 owns the guided vowel-set
+  // calibration UI that would run it, so this is deliberately a plain method with no UI
+  // attached — hand it audio and it returns a ceiling. Nothing in the app calls it yet. That is
+  // the stub the scope note asks to be declared: the search is real and measured
+  // (tools/lpc-ceiling.mjs), the thing missing is the screen that collects the audio.
+  //
+  // `segments` is an array of SEGMENTS, each an array of Float32Array analysis windows at
+  // this.audioCtx.sampleRate. A flat array of windows is accepted as a single segment. The
+  // distinction is load-bearing: Phase 4's calibration records a VOWEL SET, which is several
+  // separate productions, and running the continuity tracker straight across the boundary
+  // between two of them is a measurement of the boundary rather than of the ceiling. It also
+  // silently rigged the comparison — the tracker got stuck on the previous vowel's formants,
+  // every subsequent frame failed continuity, and the ceiling that had found FEWER formants
+  // (so had fewer to fail) scored best. Measured: it selected 4500 Hz with a per-formant yield
+  // of 0.775 against 0.306 for the ceiling that was actually three times more accurate.
+  //
+  // Each candidate ceiling is run over ALL the audio — the multi-solve §3.4 forbids per frame
+  // and permits here, because calibration is not real time.
+  calibrateLpcCeiling(segments, { candidates = LPC_CEILING_CANDIDATES_HZ } = {}) {
+    const segs = Array.isArray(segments) && segments.length && Array.isArray(segments[0])
+      ? segments : [segments];
+    if (!segs.length || !segs.some((seg) => Array.isArray(seg) && seg.length)) {
+      return { ceilingHz: LPC_DEFAULT_CEILING_HZ, selected: false, reason: 'no-audio', scored: [] };
+    }
+    const saved = this.timeDomainData;
+    const tracks = [];
+    for (const ceilingHz of candidates) {
+      const collected = [];
+      for (const seg of segs) {
+        if (!Array.isArray(seg)) continue;
+        // Fresh continuity state per segment, and the same ageing the live path uses, so a
+        // reference the tracker has lost cannot hold every later frame hostage.
+        const ref = [0, 0, 0, 0];
+        const refAge = [Infinity, Infinity, Infinity, Infinity];
+        for (const frame of seg) {
+          this.timeDomainData = frame;
+          const r = this._resonanceLPC({ ceilingHz });
+          const m = (r && r.measured) || [0, 0, 0, 0];
+          const v = frameValidity(m, {
+            bandwidths: r.bandwidths, previous: ref, previousAgeFrames: refAge,
+            residual: r.modelResidual,
+          });
+          if (v.failed.length === 0) {
+            for (let i = 0; i < 4; i++) {
+              if (v.accepted[i] > 0) { ref[i] = v.accepted[i]; refAge[i] = 0; }
+            }
+          }
+          for (let i = 0; i < 4; i++) {
+            if (++refAge[i] > FORMANT_STALE_FRAMES) ref[i] = 0;
+          }
+          collected.push({ formants: v.accepted, bandwidths: r.bandwidths, valid: v.valid });
+        }
+      }
+      tracks.push({ ceilingHz, frames: collected });
+    }
+    this.timeDomainData = saved;
+    const chosen = selectLpcCeiling(tracks);
+    if (chosen.selected) {
+      this.lpcCeilingHz = chosen.ceilingHz;
+      this.lpcCeilingSource = 'calibrated';
+    }
+    return chosen;
+  }
+
+  // The low-rate background re-check §5 asks for. One alternate ceiling, visited round-robin,
+  // once every CEILING_RECHECK_PERIOD_FRAMES — 1/900th of an LPC solve per frame amortised,
+  // against the per-frame multi-solve §3.4 rules out. It accumulates evidence over many
+  // re-checks and only moves the ceiling when an alternative wins on a full candidate set, so a
+  // single noisy stretch cannot swing the measurement the user is watching.
+  _backgroundCeilingRecheck(canonical) {
+    if (!this.frameValid) return;
+    if (++this._ceilingRecheckFrames < CEILING_RECHECK_PERIOD_FRAMES) return;
+    this._ceilingRecheckFrames = 0;
+    const current = this.lpcCeilingHz || LPC_DEFAULT_CEILING_HZ;
+    if (!this._ceilingTracks) {
+      this._ceilingTracks = LPC_CEILING_CANDIDATES_HZ.map((ceilingHz) => ({ ceilingHz, frames: [] }));
+    }
+    const track = this._ceilingTracks[this._ceilingRecheckIdx % this._ceilingTracks.length];
+    this._ceilingRecheckIdx++;
+    const r = track.ceilingHz === current ? canonical : this._lpcAtCeiling(track.ceilingHz);
+    const m = (r && r.measured) || [0, 0, 0, 0];
+    const v = frameValidity(m, { bandwidths: r.bandwidths, residual: r.modelResidual });
+    track.frames.push({ formants: v.accepted, bandwidths: r.bandwidths, valid: v.valid });
+    // Not enough evidence on every candidate yet: keep collecting rather than deciding from a
+    // partial sweep, which would systematically favour whichever candidate was sampled first.
+    if (this._ceilingTracks.some((t) => t.frames.length < LPC_CEILING_MIN_FRAMES)) return;
+    const chosen = selectLpcCeiling(this._ceilingTracks);
+    if (chosen.selected && chosen.ceilingHz !== current) {
+      this.lpcCeilingHz = chosen.ceilingHz;
+      this.lpcCeilingSource = 'background';
+    }
+    this._ceilingTracks = null;
   }
 
   // ============================================
@@ -2242,23 +2959,40 @@ export class VoiceAnalyzer {
   //    (gives exact frequency + bandwidth, not just spectral peak approx)
   //  - Formant bandwidth rejection (bandwidth > 500 Hz → likely not a real formant)
   // ============================================
-  _resonanceLPC() {
+  //
+  // PHASE 3: the ANALYSIS CEILING is a parameter, and it is a property of the SPEAKER.
+  // Praat calls it "maximum formant" and publishes two values for it — 5000 Hz "for men",
+  // 5500 Hz "for women" — which is a two-point lookup on a continuous property. A short tract
+  // puts its formants higher, so a ceiling chosen for a long one spends pole pairs on empty
+  // band and starves the region the formants are actually in. Choosing it per user is the
+  // FormantPath-style multi-ceiling search in calibrateLpcCeiling(); LIVE FRAMES USE THE ONE
+  // SELECTED CEILING, because §3.4 measured that a per-frame multi-solve is not affordable.
+  //
+  // AT THE DEFAULT CEILING THIS IS ARITHMETICALLY IDENTICAL TO WHAT IT WAS. 5512.5 Hz is
+  // 44100/4/2, so dsFactor is exactly 4, the resampler's targets land exactly on the samples
+  // the decimation loop used to take (including its offset of dsFactor−1), the anti-alias
+  // cutoff 0.9·ceiling is the old 0.45·dsRate, and the order rule is unchanged. That identity
+  // is what lets v1 stay byte-identical while the canonical path moves to a chosen ceiling,
+  // and it is asserted rather than argued: see resonance-estimator-discipline.test.mjs.
+  _resonanceLPC({ ceilingHz = LPC_DEFAULT_CEILING_HZ } = {}) {
     const td = this.timeDomainData;
     const N = td.length;
     const sampleRate = this.audioCtx.sampleRate;
 
-    // --- Downsample to ~11 kHz for proper formant resolution ---
-    // Factor = ceil(sampleRate / 11000)
-    const dsFactor = Math.max(1, Math.round(sampleRate / 11000));
-    const dsRate = sampleRate / dsFactor;
+    // --- Resample to 2·ceiling for proper formant resolution ---
+    // The model is asked to describe exactly the band up to the ceiling and nothing above it.
+    const dsRate = 2 * ceilingHz;
+    const dsFactor = sampleRate / dsRate;
+    // A ceiling above the input's own Nyquist cannot be analysed — there is no band there.
+    if (!(dsFactor >= 1)) return { f1: 0, f2: 0, f3: 0, confidence: 0, ceilingHz };
     const dsN = Math.floor(N / dsFactor);
-    if (dsN < 50) return { f1: 0, f2: 0, f3: 0, confidence: 0 };
+    if (dsN < 50) return { f1: 0, f2: 0, f3: 0, confidence: 0, ceilingHz };
 
     // Anti-aliasing filter before decimation: 2nd-order Butterworth low-pass
-    // Cutoff at dsRate/2 (Nyquist of target rate) to prevent spectral aliasing
-    // This is critical — without it, energy above dsRate/2 folds back into
-    // the formant region and corrupts F1/F2/F3 estimates
-    const cutoffHz = dsRate * 0.45; // slightly below Nyquist to avoid ringing
+    // Cutoff below the Nyquist of the target rate (which is the ceiling itself) to prevent
+    // spectral aliasing. This is critical — without it, energy above the ceiling folds back
+    // into the formant region and corrupts F1/F2/F3 estimates.
+    const cutoffHz = ceilingHz * 0.9; // slightly below Nyquist to avoid ringing
     const wc = Math.tan(Math.PI * cutoffHz / sampleRate);
     const wc2 = wc * wc;
     const sqrt2 = Math.SQRT2;
@@ -2267,19 +3001,28 @@ export class VoiceAnalyzer {
     const a1 = 2 * (wc2 - 1) * k;
     const a2 = (1 - sqrt2 * wc + wc2) * k;
 
-    // Apply filter + decimate in one pass
+    // Apply filter + resample in one pass. Output sample j is taken at input position
+    // (j+1)·dsFactor − 1, linearly interpolated when that position is not an integer. The
+    // offset is the decimation loop's own (it emitted on the dsFactor-th sample, i.e. index
+    // dsFactor−1), kept so that an integer dsFactor reproduces the old output exactly rather
+    // than shifting the window by three samples. Linear interpolation is adequate here
+    // precisely because the anti-alias filter above has already removed everything near the
+    // new Nyquist — there is nothing left for it to distort.
     let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
     const filtered = this._getBuffer('filtered', Float32Array, dsN);
-    let dsIdx = 0, sampleCount = 0;
-    for (let i = 0; i < N; i++) {
+    let dsIdx = 0;
+    let target = dsFactor - 1;
+    let yPrev = 0;
+    for (let i = 0; i < N && dsIdx < dsN; i++) {
       const x0 = td[i];
       const y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
       x2 = x1; x1 = x0; y2 = y1; y1 = y0;
-      sampleCount++;
-      if (sampleCount >= dsFactor) {
-        if (dsIdx < dsN) filtered[dsIdx++] = y0;
-        sampleCount = 0;
+      while (dsIdx < dsN && target <= i) {
+        const frac = i - target;                 // 0 at an exact hit, (0,1) between samples
+        filtered[dsIdx++] = frac > 0 ? y0 + (yPrev - y0) * frac : y0;
+        target = (dsIdx + 1) * dsFactor - 1;
       }
+      yPrev = y0;
     }
 
     // Pre-emphasis on filtered/downsampled signal
@@ -2321,6 +3064,11 @@ export class VoiceAnalyzer {
       E *= (1 - lambda * lambda);
       if (E < 1e-20) break;
     }
+    // Normalised LPC residual: the fraction of the frame's energy the all-pole model failed to
+    // predict. Phase 3's model-fit validity gate reads it. Near 0 on a clean voiced vowel at
+    // this order; toward 1 on a fricative, a click or noise, where an all-pole source-filter
+    // model is not describing the signal at all and its "formants" are an artefact of asking.
+    const modelResidual = R[0] > 0 ? Math.max(0, E) / R[0] : 1;
 
     // --- Root-solving via companion matrix eigenvalues ---
     // Find roots of A(z) = 1 - a[1]z^-1 - a[2]z^-2 - ...
@@ -2344,17 +3092,27 @@ export class VoiceAnalyzer {
 
     formants.sort((lhs, rhs) => lhs.freq - rhs.freq);
 
-    let f1 = 0; let f2 = 0; let f3 = 0; let f4 = 0;
-    let f1Bw = 999; let f2Bw = 999;
-    const minSep = 200;
-    for (const fm of formants) {
-      if (f1 === 0 && fm.freq >= 150 && fm.freq <= 1200) {
-        f1 = fm.freq; f1Bw = fm.bw;
-      } else if (f2 === 0 && fm.freq >= 600 && fm.freq <= 3500 && fm.freq > f1 + minSep) {
-        f2 = fm.freq; f2Bw = fm.bw;
-      } else if (f3 === 0 && fm.freq >= 2000 && fm.freq <= 4500 && fm.freq > f2 + minSep) {
-        f3 = fm.freq;
-      } else if (f3 > 0 && f4 === 0 && fm.freq >= 3000 && fm.freq <= F4_CEILING_HZ
+    // Slot assignment over the admitted poles. Factored into a function only so it can be run
+    // TWICE over the SAME pole list — see `assignRhotic` below. The expensive work (the LPC
+    // solve and the root find) has already happened; a second pass over at most a dozen poles
+    // costs nothing measurable, which is why this is not a second solve.
+    const assign = (f3FloorHz) => {
+      let f1 = 0, f2 = 0, f3 = 0, f4 = 0;
+      let f1Bw = 999, f2Bw = 999, f3Bw = 0, f4Bw = 0;
+      // The admission bands stay in Hz and are NOT scaled with the ceiling. They are physical
+      // bounds on where an adult formant can be, and the ceiling already truncates from above by
+      // construction — a root cannot sit past the resampled Nyquist, which is the ceiling itself.
+      // Scaling them would make the same voice admissible at one ceiling and not at another,
+      // which would corrupt the multi-ceiling comparison the search depends on.
+      const minSep = 200;
+      for (const fm of formants) {
+        if (f1 === 0 && fm.freq >= 150 && fm.freq <= 1200) {
+          f1 = fm.freq; f1Bw = fm.bw;
+        } else if (f2 === 0 && fm.freq >= 600 && fm.freq <= 3500 && fm.freq > f1 + minSep) {
+          f2 = fm.freq; f2Bw = fm.bw;
+        } else if (f3 === 0 && fm.freq >= f3FloorHz && fm.freq <= 4500 && fm.freq > f2 + minSep) {
+          f3 = fm.freq; f3Bw = fm.bw;
+        } else if (f3 > 0 && f4 === 0 && fm.freq >= 3000 && fm.freq <= F4_CEILING_HZ
                  && fm.freq > f3 + minSep && fm.bw < F4_MAX_BW_HZ) {
         // --- F4 (docs/RESONANCE_REDESIGN.md §1.6, §5) ---
         // F4 sits inside the band this path already analyses -- after 4x decimation the
@@ -2368,9 +3126,31 @@ export class VoiceAnalyzer {
         // below the anti-alias corner so a pole parked on the filter skirt cannot be read as
         // a formant, and the bandwidth bound is tighter than the generic 600 Hz admission
         // limit because broad spurious poles collect in exactly this band.
-        f4 = fm.freq;
+          f4 = fm.freq; f4Bw = fm.bw;
+        }
       }
-    }
+      return { f1, f2, f3, f4, f1Bw, f2Bw, f3Bw, f4Bw };
+    };
+
+    // v1's assignment, with the F3 floor it has always had.
+    const slots = assign(F3_FLOOR_HZ);
+    let { f1, f2, f3, f4 } = slots;
+    const { f1Bw, f2Bw, f3Bw, f4Bw } = slots;
+
+    // --- RHOTIC-CAPABLE ASSIGNMENT, for the canonical path only ---------------------------
+    // A 2000 Hz floor on F3 cannot see a rhotic. Peterson & Barney's adult-male /ɝ/ has
+    // F3 = 1690 Hz — a rhotic constriction lowers F3 by ~800 Hz, which is the entire reason
+    // /ɝ/ is the most isolated vowel in the residual space (§5's Phase 2 entry) — so the one
+    // vowel Phase 3 inherited the job of reaching is the one the extractor structurally cannot
+    // resolve an F3 for. Measured on the Rainbow Passage before this existed: the lowest F3 the
+    // canonical path ever reported was 2091 Hz, and ρ never came within 6% of the rhotic
+    // threshold, so the rhotic rule fired on 0 frames of connected speech while working
+    // perfectly on the P&B norms it was derived from.
+    //
+    // The lower floor is NOT applied to v1: v1's displayed output may not move, and this would
+    // move it. It is a second assignment over the pole list the solve already produced, so the
+    // real-time cost is a loop over a dozen numbers rather than another LPC.
+    const rhoticSlots = assign(F3_RHOTIC_FLOOR_HZ);
 
     const nFound = (f1 > 0 ? 1 : 0) + (f2 > 0 ? 1 : 0) + (f3 > 0 ? 1 : 0);
     let bwScore = 0;
@@ -2387,12 +3167,34 @@ export class VoiceAnalyzer {
       vowelLikelihood: this.vowelLikelihood,
     });
 
+    // The F1/F2 defaults below are v1's behaviour and stay exactly as they were. The canonical
+    // path must not see them: a defaulted 500/1500 Hz is not a measurement, and feeding it to a
+    // validity gate would have the gate certify a number the mic never produced. `measured`
+    // carries the pre-default values, so the two callers can want different things from the
+    // same solve without either being lied to.
+    const measured = [f1, f2, f3, f4];
+    const measuredRhotic = [rhoticSlots.f1, rhoticSlots.f2, rhoticSlots.f3, rhoticSlots.f4];
     if (f1 === 0) f1 = 500;
     if (f2 === 0) f2 = 1500;
 
     // f4 is 0 when this frame did not yield one; it is never defaulted. Every other
     // estimator omits it entirely, which is the same statement.
-    return { f1, f2, f3, f4, confidence: conf };
+    //
+    // `bandwidths`, `modelResidual`, `measured` and `ceilingHz` are Phase 3 additions read by
+    // the canonical path's validity gates and by the ceiling search. v1's call site destructures
+    // f1/f2/f3/f4/confidence and is unaffected by their presence.
+    return {
+      f1, f2, f3, f4, confidence: conf,
+      measured,
+      bandwidths: [f1Bw < 999 ? f1Bw : 0, f2Bw < 999 ? f2Bw : 0, f3Bw, f4Bw],
+      // The rhotic-capable assignment and its bandwidths, for the canonical path.
+      measuredRhotic,
+      bandwidthsRhotic: [rhoticSlots.f1Bw < 999 ? rhoticSlots.f1Bw : 0,
+        rhoticSlots.f2Bw < 999 ? rhoticSlots.f2Bw : 0, rhoticSlots.f3Bw, rhoticSlots.f4Bw],
+      modelResidual,
+      converged,
+      ceilingHz,
+    };
   }
 
   // Durand-Kerner root finding for LPC polynomial
@@ -2634,7 +3436,11 @@ export class VoiceAnalyzer {
       vowelLikelihood: this.vowelLikelihood,
     });
 
-    return { f1, f2, f3, confidence };
+    // `measured` is the pre-fallback vector, added for Phase 3's cross-check: the fallback F1/F2
+    // this path substitutes are inferences, not measurements, and a cross-check that scored the
+    // canonical estimator against them would be scoring it against its own assumptions.
+    const measured = [usedF1Fallback ? 0 : f1, usedF2Fallback ? 0 : f2, f3, 0];
+    return { f1, f2, f3, confidence, measured };
   }
 }
 

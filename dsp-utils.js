@@ -1810,3 +1810,630 @@ export class ResonanceAggregator {
     return { value: n > 0 ? sum / n : 0, n, nuclei: n, heldFrames: this._spFrames + (open ? open.frames : 0) };
   }
 }
+
+// ============================================================================
+// PHASE 3 — ESTIMATOR DISCIPLINE (docs/RESONANCE_REDESIGN.md §5)
+// ============================================================================
+//
+// Phase 1 split the construct, Phase 2 read the shape. Neither touched the question of WHICH
+// estimator produced the formants both were built on, and §3.4 says that question is not a
+// detail: the four estimators carry systematic bias (lpc −0.3, cepstral −1.7, centroid +5.0,
+// harmonic −11.9 score points against a known vowel), and `auto` swaps between three of them
+// mid-session on room noise. A user watching the ball cannot tell a posture change from a
+// handover. This section is the arithmetic that ends that.
+//
+// The rule, in one line: ONE estimator defines the measurement; the others check it.
+
+// --- Frame validity gates (§5) ----------------------------------------------
+//
+// Five independent ways an LPC frame can be wrong, each with its own test, because they fail
+// for different reasons and a single scalar "quality" cannot tell them apart:
+//
+//   ORDER      F1 < F2 < F3 < F4 with a minimum separation. A violation is not a bad
+//              measurement, it is a mis-ASSIGNMENT — the same poles in the wrong slots — and
+//              the scale fit reads it as a different tract, not as a noisier one.
+//   BANDWIDTH  A pole whose bandwidth is a large fraction of its own frequency is not a
+//              formant, it is the model spending a pole pair on spectral slope or on noise.
+//              The bound is proportional (Praat's own admission rule is of this shape)
+//              rather than a flat Hz cap, because a 400 Hz bandwidth means something very
+//              different at F1 = 300 Hz than at F4 = 3800 Hz.
+//   CONTINUITY Formants are the resonances of a physical tract with mass. They can move fast
+//              at a transition, but a step of tens of percent in 16.7 ms is a tracking
+//              failure, not an articulation.
+//   MODEL FIT  The Levinson residual: what fraction of the frame's energy the all-pole model
+//              failed to predict. High residual means the frame is not well described by an
+//              all-pole source-filter model at all — a fricative, a click, a noise burst.
+//   SWAP       The failure the continuity gate cannot see: the whole formant SET has shifted by
+//              one slot — F2 reading where F1 was, F3 where F2 was — so the ΔF fit has silently
+//              changed formant number while every individual pole still looks plausible. Stated
+//              as a COMPARISON rather than a threshold: the current formants match the previous
+//              ones better after a one-slot shift than they do in place. That has no constant
+//              in it to get wrong, and it is genuinely independent of the continuity bound,
+//              which the first draft of this gate was not — it required each formant's move to
+//              exceed the continuity bound as well, so it could never reject a frame continuity
+//              had not already rejected.
+//
+// The thresholds are stated in units that mean something and are NOT tuned against any
+// benchmark: the §5 constraint is explicit that a gate which costs more than it buys is
+// reported and left off, not narrowed until a number moves. tools/frame-validity.mjs reports
+// precision and recall for each gate separately, against synthetic frames whose true formants
+// are known, so the cost of each is visible next to its benefit.
+
+// Minimum separation between adjacent formants, Hz. Below this the two poles are not
+// resolvable as separate resonances at the analysis bandwidths this path uses.
+export const FORMANT_MIN_SEPARATION_HZ = 150;
+// A pole is admitted as formant i only if bw < max(BW_FLOOR_HZ, BW_FRACTION·freq + BW_OFFSET_HZ).
+//
+// The floor is Praat's published rejection rule — a flat 400 Hz at every formant — and the
+// proportional part only ever LOOSENS it, above 1000 Hz. That shape is measured rather than
+// assumed: on the Rainbow Passage the LPC bandwidths of F1 and F2 have nearly the same
+// distribution (median 155 and 154 Hz) while F3 and F4 run systematically wider (231 and
+// 260 Hz), so a flat cap that is right for F1 rejects real upper poles.
+//
+// The first draft of this gate dropped the 400 Hz floor and used the proportional part alone,
+// which made it TIGHTER than the published rule at F1 (250 Hz at F1 = 400 Hz) and rejected 19
+// frames of ordinary read speech on F1 bandwidths of 280–380 Hz — poles Praat's own criterion
+// admits. Being stricter than the established rule is not conservatism, it is a different rule
+// with no evidence behind it.
+export const FORMANT_MAX_BW_FRACTION = 0.25;
+export const FORMANT_MAX_BW_OFFSET_HZ = 150;
+export const FORMANT_MAX_BW_FLOOR_HZ = 400;
+// Largest formant velocity admitted as articulation rather than tracking failure, in Hz per
+// second. This is a RATE, not a fraction of the formant's own frequency, and the first draft of
+// this gate got that wrong at a measurable cost: a proportional bound is simultaneously far too
+// loose on F1 (25% of 400 Hz is 100 Hz) and far too tight on F2 (25% of 1500 Hz is 375 Hz,
+// which a real glide transition reaches), and on the Rainbow Passage it rejected 74% of frames
+// of ordinary read speech. Formant velocity is bounded by how fast tongue and lips can move,
+// which is a rate in Hz/s that does not scale with which formant is moving.
+//
+// 30 Hz/ms is set above the fastest published transitions — F2 in /j/ and /w/ glides is
+// reported at 10–25 Hz/ms — so no real articulation trips it, while a pole jumping to a
+// different formant (typically 500–1500 Hz in one frame) does. It is stated in Hz/s and
+// multiplied by the caller's own frame interval, so it means the same thing at the 60 fps live
+// rate and at the golden harness's 93 ms hop; the previous fraction meant different things at
+// the two rates without saying so.
+export const FORMANT_MAX_STEP_HZ_PER_SEC = 30000;
+// Frame interval assumed when the caller does not supply one: the app's 60 fps update rate.
+export const FORMANT_FRAME_SEC = 1 / 60;
+// Normalised LPC residual (E_final / E_0) above which the all-pole model is not describing this
+// frame. 0.5 is the point where the model fails to predict MORE THAN HALF the frame's energy,
+// which is a statement about the model rather than a level chosen from a distribution.
+//
+// The first draft used 0.35 on the claim that "a clean voiced vowel at order 13 sits well below
+// 0.1". Measured, that claim is false: on the Rainbow Passage the median residual over voiced
+// frames is 0.161 and the 90th percentile 0.337, so 0.35 was rejecting ordinary voiced speech
+// on a mis-stated expectation. At 0.5 the gate fires on ~1% of voiced frames, which is what a
+// gate meant to catch fricatives, clicks and noise bursts should do.
+export const LPC_MAX_RESIDUAL = 0.5;
+// A shifted alignment must beat the in-place one by this factor before the frame is called a
+// swap. Strictly greater than 1 so that near-ties — which is what a genuinely ambiguous frame
+// produces — are resolved in favour of believing the assignment rather than rejecting the
+// frame. 1.5 says "half again as good", which is the smallest margin that is not a tie.
+export const FORMANT_SWAP_MARGIN = 1.5;
+
+// Known systematic ΔF bias per estimator, as a fraction, from DSP_CONTRACT's measured
+// per-estimator accuracy table (lpc −0%, cepstral −1%, centroid +2%, harmonic −4% on a
+// synthesized vowel whose ΔF is known by construction).
+//
+// This has to be divided out before a cross-check is read as disagreement, and getting it
+// wrong is not a small error: the harmonic envelope quantises F2/F3 to the nearest harmonic and
+// therefore reports ΔF ~4% low BY CONSTRUCTION, so a working harmonic estimator scored against
+// an uncorrected LPC value looks like a 4% disagreement forever. Measured on the Rainbow
+// Passage, correcting for the published biases moves mean agreement from 0.29 to 0.71 — the
+// same estimators, the same audio; the 0.29 was reporting a bias the table had already measured.
+export const ESTIMATOR_DELTA_F_BIAS = { lpc: 0, cepstral: -0.01, centroid: 0.02, harmonic: -0.04 };
+
+// `formants` and `bandwidths` are indexed by formant NUMBER − 1, exactly as everywhere else in
+// this file: a 0/null entry means "not measured this frame", never "the list is shorter".
+// `previous` is the last VALID OBSERVATION of each formant (not the last frame's), so a single
+// rejected frame does not become the reference a whole run of frames is then judged against —
+// and `previousAgeFrames` says how old each of those observations is, because a velocity bound
+// applied to a reference several frames old is not a velocity bound. Getting that wrong is
+// measurable: judging a 12-frame-old reference against a one-frame step rejected half of the
+// Rainbow Passage's frames on its own.
+//
+// REJECTION IS PER FORMANT WHERE THE EVIDENCE IS PER FORMANT. A frame in which F3 jumped
+// 900 Hz still contains a perfectly good F1 and F2, and throwing them away because a different
+// pole misbehaved buys nothing: measured on the Rainbow Passage, a quarter of connected-speech
+// frames contain at least one formant step that cannot be articulation (F2/F3/F4 steps of
+// 500–1565 Hz in 16.7 ms, against an F1 that never exceeds 345 Hz), and rejecting all of them
+// wholesale cost 10 points of vowel yield for no gain in what was rejected.
+//
+// So the result has two levels:
+//   FRAME-level failures  — order, model residual, formant swap. These are statements about
+//                           the assignment or the model, and there is no single formant to
+//                           blame: if F2 < F1 + 150 Hz, which of the two is wrong?
+//   FORMANT-level failures — bandwidth, continuity. These name a pole, and only that pole is
+//                           withheld; the rest of the frame is still a measurement.
+//
+// Returns which gates fired rather than a single boolean, because "this frame was rejected" and
+// "this frame was rejected because the model does not fit voiced speech" support different
+// downstream decisions, and because the per-gate cost cannot be reported without it.
+export function frameValidity(formants, {
+  bandwidths = [],
+  previous = null,
+  previousAgeFrames = null,   // per formant; defaults to 1 frame (i.e. the immediately preceding)
+  residual = null,
+  minSeparationHz = FORMANT_MIN_SEPARATION_HZ,
+  maxBwFraction = FORMANT_MAX_BW_FRACTION,
+  maxBwOffsetHz = FORMANT_MAX_BW_OFFSET_HZ,
+  maxBwFloorHz = FORMANT_MAX_BW_FLOOR_HZ,
+  maxStepHzPerSec = FORMANT_MAX_STEP_HZ_PER_SEC,
+  frameSec = FORMANT_FRAME_SEC,
+  maxResidual = LPC_MAX_RESIDUAL,
+  swapMargin = FORMANT_SWAP_MARGIN,
+} = {}) {
+  const maxStepHz = maxStepHzPerSec * Math.max(1e-6, frameSec);
+  const failed = [];
+  const perFormant = [[], [], [], []];
+  const f = Array.isArray(formants) ? formants : [];
+  const present = [];
+  for (let i = 0; i < f.length; i++) if (f[i] > 0) present.push(i);
+
+  // ORDER — frame level. Over whichever formants are present, in formant-number order.
+  for (let k = 1; k < present.length; k++) {
+    const lo = f[present[k - 1]], hi = f[present[k]];
+    if (!(hi > lo + minSeparationHz)) { failed.push('order'); break; }
+  }
+
+  // MODEL FIT — frame level. Normalised prediction-error energy from the Levinson recursion.
+  if (residual != null && Number.isFinite(residual) && residual > maxResidual) failed.push('residual');
+
+  // BANDWIDTH — per formant. Only where a bandwidth was actually reported; a missing bandwidth
+  // is not a failure, and the cepstral and harmonic paths do not produce one at all.
+  for (const i of present) {
+    const bw = bandwidths[i];
+    if (bw == null || !(bw > 0)) continue;
+    if (bw > Math.max(maxBwFloorHz, maxBwFraction * f[i] + maxBwOffsetHz)) perFormant[i].push('bandwidth');
+  }
+
+  // CONTINUITY and SWAP both need a previous valid observation; on the first frame of a run
+  // there is nothing to be discontinuous with, and calling that invalid would mean the tracker
+  // could never start.
+  if (Array.isArray(previous)) {
+    const ageOf = (i) => {
+      const a = previousAgeFrames ? previousAgeFrames[i] : 1;
+      return Number.isFinite(a) && a >= 1 ? a : 1;
+    };
+    // CONTINUITY — per formant.
+    for (const i of present) {
+      const p = previous[i];
+      if (!(p > 0)) continue;
+      if (Math.abs(f[i] - p) > maxStepHz * ageOf(i)) perFormant[i].push('continuity');
+    }
+    // SWAP — frame level. Does the current set match the previous one better shifted by one
+    // slot than in place? Distances are in log-frequency so a 300 Hz discrepancy at F1 and at
+    // F4 are not treated as the same size of error.
+    const align = (shift) => {
+      let sum = 0, n = 0;
+      for (let i = 0; i < 4; i++) {
+        const cur = f[i + shift], prev = previous[i];
+        if (!(cur > 0) || !(prev > 0)) continue;
+        sum += Math.abs(Math.log(cur / prev)); n++;
+      }
+      return n >= 2 ? sum / n : null;
+    };
+    const inPlace = align(0), shiftedUp = align(1), shiftedDown = align(-1);
+    if (inPlace != null && inPlace > 0) {
+      if ((shiftedUp != null && shiftedUp * swapMargin < inPlace)
+        || (shiftedDown != null && shiftedDown * swapMargin < inPlace)) failed.push('swap');
+    }
+  }
+
+  const admitted = present.filter((i) => perFormant[i].length === 0);
+  // Two admitted formants is the floor, and it is the scale fit's floor rather than a new one:
+  // one formant cannot separate tract length from vowel identity.
+  const valid = failed.length === 0 && admitted.length >= 2;
+  return {
+    valid,
+    failed,
+    perFormant,
+    admitted,
+    nFormants: present.length,
+    // The formant vector with the rejected poles withheld — what the caller should actually
+    // measure from. Withheld, not zeroed-and-forgotten: 0 already means "not measured", which
+    // is exactly what a pole that failed its gate is.
+    accepted: [0, 1, 2, 3].map((i) => (f[i] > 0 && perFormant[i].length === 0 ? f[i] : 0)),
+  };
+}
+
+// --- F0 in the measurement noise (§5) ---------------------------------------
+//
+// The physical fact: LPC estimates a formant from the harmonics that happen to fall near it.
+// At F0 = 100 Hz an F1 of 500 Hz has harmonics at 400/500/600 to place it between; at
+// F0 = 250 Hz it has 250/500/750, and the pole is pulled toward whichever single harmonic is
+// nearest ("harmonic attraction"). The error is therefore not constant — it grows with the
+// harmonic spacing, and the spacing IS F0.
+//
+// The standard result is that the bias scales with the spacing relative to the formant's own
+// bandwidth, so the VARIANCE scales with F0². That is the model here, with no free parameter
+// beyond the reference: at F0_ref the F0 term contributes nothing extra, and above it the
+// variance rises as (F0/F0_ref)². At 200 Hz that is 4× the measurement variance of a 100 Hz
+// voice, i.e. 2× the standard deviation — which is the band transfeminine users train into
+// and precisely where the app has been trusting its formants as though nothing had changed.
+//
+// This is the ONLY place F0 enters the resonance measurement. It does not enter the score:
+// a score that moved with pitch would be reporting pitch twice (§1.4's double count in a
+// different costume). It enters how much the score is TRUSTED, which is the honest place for
+// a known measurement limitation to live.
+export const FORMANT_NOISE_F0_REF_HZ = 100;
+
+export function formantMeasurementNoise({
+  baseHz2 = 2500,          // Hz², the existing R_base
+  confidence = 0,
+  steadiness = 1,
+  methodTrust = 1,
+  f0Hz = 0,
+  f0RefHz = FORMANT_NOISE_F0_REF_HZ,
+  minScale = 0.1,
+} = {}) {
+  const scale = Math.max(minScale, confidence * methodTrust * steadiness);
+  const f0Factor = f0Hz > f0RefHz ? (f0Hz / f0RefHz) ** 2 : 1;
+  return (baseHz2 / (scale * scale)) * f0Factor;
+}
+
+// --- Multi-ceiling LPC search (§5) ------------------------------------------
+//
+// Praat's analysis ceiling ("maximum formant") sets how much spectrum the all-pole model is
+// asked to describe, and the right value is a property of the SPEAKER, not of the algorithm:
+// a short tract puts its formants higher, so a ceiling chosen for a 17 cm tract spends poles
+// on empty band above a 14 cm tract's F4 and starves the region where its formants actually
+// are. The published defaults — 5000 Hz "for men", 5500 Hz "for women" — are a two-point
+// lookup on a continuous property, and they are wrong for anyone whose tract is not one of
+// the two populations they were measured on. That is most of this app's users.
+//
+// FormantPath's answer, which this implements: run the analysis at several ceilings over the
+// same audio and pick the one whose formant tracks are most self-consistent. The criterion has
+// three terms, and each of them is a measurement the caller already has:
+//
+//   YIELD      how many of the four formants were found and admitted, counted PER FORMANT
+//              rather than per frame. A ceiling that puts F3 or F4 above the analysed band
+//              loses them, and that has to cost something.
+//   SMOOTHNESS mean |Δlog F| per formant per frame. THE core FormantPath term: a ceiling that
+//              mis-assigns poles produces tracks that jump between formant numbers, and that
+//              shows up as roughness even when every individual frame looks admissible.
+//   BANDWIDTH  each admitted pole's bandwidth as a fraction of the bound it had to clear.
+//              Praat's own diagnostic for a mismatched ceiling: the model spends pole pairs on
+//              empty band, and the poles it does place come out broad.
+//
+// Cost is a weighted sum, lower is better, and the weights are equal thirds because there is
+// no measurement that would justify making one of them larger — stating that plainly is
+// better than inventing a ratio.
+//
+// WHAT IS DELIBERATELY NOT IN THE COST. The first version used the uniform-tube fit quality as
+// its third term, and that term is BIASED: fitting three points to a two-parameter series is
+// always better than fitting four, so a ceiling scored better for LOSING F4. The bias is not
+// small — it is why an early run of tools/lpc-ceiling.mjs selected the lowest candidate,
+// 4500 Hz, for a speaker whose F4 sits near 3.9 kHz. Both replacement terms are per-pole
+// rather than per-frame, so neither can be improved by finding fewer formants.
+//
+// LIVE FRAMES USE THE ONE SELECTED CEILING. This search runs during calibration and at a low
+// background rate; it is explicitly NOT a per-frame multi-solve, because §3.4 measured that
+// three LPC solves per frame at 60 fps is not affordable on a phone, a watch or an ESP32.
+export const LPC_CEILING_CANDIDATES_HZ = [4500, 5000, 5512.5, 6000, 6500];
+// The ceiling the app has used since the downsampled-LPC path was written: 44100/4/2. It is
+// the fallback for any user who has not calibrated, and byte-identical to the pre-Phase-3
+// arithmetic (see _resonanceLPC's decimation).
+export const LPC_DEFAULT_CEILING_HZ = 5512.5;
+// A candidate must be scored on at least this many frames before it can win. Below it the
+// smoothness term is estimated from too few steps to separate ceilings.
+export const LPC_CEILING_MIN_FRAMES = 20;
+
+// `track` = { ceilingHz, frames: [{ formants:[F1..F4], bandwidths:[B1..B4], valid }] }
+export function scoreLpcCeiling(track) {
+  const frames = Array.isArray(track && track.frames) ? track.frames : [];
+  if (frames.length < LPC_CEILING_MIN_FRAMES) {
+    return { ceilingHz: track && track.ceilingHz, cost: Infinity, n: frames.length, reason: 'too-few-frames' };
+  }
+  const valid = frames.filter((fr) => fr && fr.valid && Array.isArray(fr.formants));
+  const frameYield = valid.length / frames.length;
+
+  let found = 0;
+  for (const fr of valid) for (let i = 0; i < 4; i++) if (fr.formants[i] > 0) found++;
+  const formantYield = found / (4 * frames.length);
+
+  // Smoothness over CONSECUTIVE valid frames only. Stepping across a rejected frame would
+  // charge the ceiling for a gap it did not cause.
+  let steps = 0, stepSum = 0;
+  for (let k = 1; k < frames.length; k++) {
+    const a = frames[k - 1], b = frames[k];
+    if (!a || !b || !a.valid || !b.valid) continue;
+    for (let i = 0; i < 4; i++) {
+      const fa = a.formants[i], fb = b.formants[i];
+      if (!(fa > 0) || !(fb > 0)) continue;
+      stepSum += Math.abs(Math.log(fb / fa));
+      steps++;
+    }
+  }
+  const roughness = steps > 0 ? stepSum / steps : 1;
+
+  let bwSum = 0, bwN = 0;
+  for (const fr of valid) {
+    const bws = fr.bandwidths || [];
+    for (let i = 0; i < 4; i++) {
+      const f = fr.formants[i], bw = bws[i];
+      if (!(f > 0) || !(bw > 0)) continue;
+      const bound = Math.max(FORMANT_MAX_BW_FLOOR_HZ, FORMANT_MAX_BW_FRACTION * f + FORMANT_MAX_BW_OFFSET_HZ);
+      bwSum += clamp01(bw / bound); bwN++;
+    }
+  }
+  const bwCost = bwN > 0 ? bwSum / bwN : 1;
+
+  // Each term on 0..1 where 0 is best. Roughness is divided by 0.05 — a 5% per-frame log step,
+  // which is the scale a well-tracked vowel actually sits at.
+  const cost = ((1 - formantYield) + Math.min(1, roughness / 0.05) + bwCost) / 3;
+  return { ceilingHz: track.ceilingHz, cost, n: frames.length, frameYield, formantYield, roughness, bwCost };
+}
+
+// Returns the winning ceiling plus every candidate's score, because "which ceiling won" is far
+// less useful than "by how much, and over what" when the answer has to be defended.
+export function selectLpcCeiling(tracks, { defaultCeilingHz = LPC_DEFAULT_CEILING_HZ } = {}) {
+  const scored = (Array.isArray(tracks) ? tracks : []).map(scoreLpcCeiling)
+    .sort((a, b) => a.cost - b.cost);
+  const best = scored.find((s) => Number.isFinite(s.cost));
+  if (!best) return { ceilingHz: defaultCeilingHz, selected: false, reason: 'no-usable-candidate', scored };
+  const runnerUp = scored.find((s) => s !== best && Number.isFinite(s.cost));
+  return {
+    ceilingHz: best.ceilingHz,
+    selected: true,
+    cost: best.cost,
+    margin: runnerUp ? runnerUp.cost - best.cost : Infinity,
+    scored,
+  };
+}
+
+// --- Cross-estimator agreement (§3.4) ---------------------------------------
+//
+// The cross-checks do not vote. §3.4 is explicit that a median of biased estimators is still
+// biased and that *which* estimator the median selects can change frame to frame, which is the
+// step-change problem restated. So the secondary estimators produce exactly one thing: a
+// number saying how far they are from the primary, which lowers confidence when they disagree
+// and never touches the value.
+//
+// Agreement is measured on ΔF rather than on the score, because ΔF is the quantity all four
+// estimators actually produce, and because the score's mapping is high-gain (~5 points per 1%
+// of ΔF, per DSP_CONTRACT) — measuring agreement after that amplification would report the
+// mapping's steepness as estimator disagreement.
+//
+// THE SCALE IS ONE FORMANT NUMBER, and arriving at that took getting it wrong first.
+//
+// The first version used the measured between-estimator spread on a clean synthetic vowel —
+// 4%, from DSP_CONTRACT's accuracy table (lpc −0%, cepstral −1%, centroid +2%, harmonic −4%) —
+// with agreement falling to 0 at three times that. That table is measured on a SUSTAINED
+// SYNTHETIC VOWEL with clean, well-separated formants. On connected speech the same estimators'
+// pooled ΔF differs by a median 7% (LPC vs cepstral) with the published bias already divided
+// out, which is not a failure of either — it is what two very different algorithms do on real
+// material. Scored against a 12% floor, that suppressed 88% of a clean recording of read
+// speech at the app's live frame rate. A gate that rejects nearly everything is not strict, it
+// is mis-scaled.
+//
+// The right scale comes from asking what a cross-check can actually detect. Two estimators
+// tracking the same tract disagree by their own precision; two estimators that have SLIPPED A
+// FORMANT NUMBER relative to each other disagree by roughly 1/n of ΔF, which for the three or
+// four formants this path fits is about a third. That is the failure worth suppressing a
+// reading for, it is a property of the measurement rather than of any recording, and no
+// fixture was consulted to pick it.
+//
+// The evidence for the cross-check is unaffected by this rescaling, which is why the rescaling
+// is not a retreat: tools/frame-validity.mjs measures the term's value by comparing its lowest
+// and highest QUARTILES (on clean synthetic frames, 23.2% bad against 0.2%), and a quartile
+// split is rank-based, so it is identical under any monotone change of scale.
+export const CROSS_ESTIMATOR_TOLERANCE = 1 / 9;   // ×3 below = agreement reaches 0 at 1/3 of ΔF
+
+export function crossEstimatorAgreement(primaryDeltaFHz, checkDeltaFHz, {
+  toleranceFraction = CROSS_ESTIMATOR_TOLERANCE,
+  checkMethod = null,        // when given, the check's published bias is divided out first
+  primaryMethod = 'lpc',
+  bias = ESTIMATOR_DELTA_F_BIAS,
+} = {}) {
+  if (!(primaryDeltaFHz > 0) || !(checkDeltaFHz > 0)) return null;   // null = no check ran
+  // Correct each side for its own MEASURED bias before comparing. A known bias is not a
+  // disagreement — it is a property the accuracy table already records, and leaving it in would
+  // mean a correctly-working harmonic estimator could never agree with a correctly-working LPC.
+  const bp = (bias && bias[primaryMethod]) || 0;
+  const bc = (checkMethod && bias && bias[checkMethod]) || 0;
+  const primary = primaryDeltaFHz / (1 + bp);
+  const check = checkDeltaFHz / (1 + bc);
+  const rel = Math.abs(check - primary) / primary;
+  return clamp01(1 - rel / (3 * toleranceFraction));
+}
+
+// --- resonanceConfidence (§4) -----------------------------------------------
+//
+// The architecture diagram's CONFIDENCE MODEL node: "F0 · SNR · path quality · fit residual ·
+// cross-estimator agreement". One number, built from named terms, so that when the app declines
+// to show a resonance it can say which term was responsible.
+//
+// IT IS A GEOMETRIC MEAN, NOT A PRODUCT, and that is a correction made after measuring what a
+// product does. The diagram's dots read as multiplication and the first implementation took
+// them literally, on the argument that these are independent necessary conditions rather than
+// competing evidence. Measured on the Rainbow Passage — a clean recording of read speech, the
+// case the app must not fail on — the six terms sit at 0.93 / 0.71 / 0.65 / 0.73 / 0.44 / 1.00
+// and their product is 0.137. Nothing has failed; the app would have suppressed 48% of it.
+//
+// The reason is that the terms are not probabilities of independent failures. They are six
+// correlated views of the same frame's quality, each on a 0..1 quality scale, and multiplying
+// six of those asserts a compounding that is not there. The geometric mean is the right
+// aggregator for several graded assessments of one thing on a common scale, and it keeps the
+// property the product was chosen for: ANY term at zero takes the whole thing to zero. A frame
+// with perfect cross-estimator agreement and no SNR still scores exactly 0 — it is not
+// half-good, it is three estimators agreeing on noise.
+//
+// A term that has not been measured yet (no cross-check has run) is EXCLUDED from the mean
+// rather than entered as 1.0, which would quietly raise the result for having measured less.
+//
+// The F0 term is the same physics as formantMeasurementNoise above, expressed as trust rather
+// than as variance: at the reference F0 it is 1, and it falls as the harmonic sampling thins.
+// It is deliberately gentler than the variance term (its square root) because F0 degrades
+// precision gradually, and a cliff at some pitch would suppress the readout for exactly the
+// users training toward a higher one.
+export function resonanceConfidence({
+  snrConfidence = 0,
+  formantConfidence = 0,
+  validityRate = 1,        // fraction of recent frames that passed the gates
+  fitQuality = 0,
+  agreement = null,        // null = no cross-check has run yet; do not penalise for that
+  f0Hz = 0,
+  f0RefHz = FORMANT_NOISE_F0_REF_HZ,
+} = {}) {
+  const f0Trust = f0Hz > f0RefHz ? f0RefHz / f0Hz : 1;
+  const terms = [snrConfidence, formantConfidence, validityRate, fitQuality, f0Trust]
+    .map((t) => clamp01(t));
+  if (agreement != null) terms.push(clamp01(agreement));
+  let logSum = 0;
+  for (const t of terms) {
+    if (!(t > 0)) return 0;      // any collapsed term collapses the whole reading
+    logSum += Math.log(t);
+  }
+  return clamp01(Math.exp(logSum / terms.length));
+}
+
+// Below this the app shows NO resonance rather than a substitute (§5's "below the SNR floor the
+// app shows no resonance rather than a substitute", and D1's "handled by the SNR/confidence
+// gate suppressing feedback — not by silently switching to a brightness number that's
+// computable from noise but wrong").
+//
+// 0.15 is a "something is definitely wrong" floor, not a quality bar. Under the geometric mean
+// it is very nearly a zero-detector, and that is deliberate: reaching it requires one term to
+// be within about a thousandth of zero while the rest are nominal, which is what a collapsed
+// SNR, a lost formant structure or a run of frames failing every validity gate actually looks
+// like. snrToConfidence returns exactly 0 below the red SNR threshold, so "below the SNR floor
+// the app shows no resonance" is exact rather than approximate.
+//
+// Frames between this and a good reading are shown with reduced vividness, which is what the
+// ball already does with confidence. The floor is for the case where showing anything at all
+// would be a lie.
+export const RESONANCE_CONFIDENCE_FLOOR = 0.15;
+
+// --- spectralBrightness: the demoted centroid (§5) ---------------------------
+//
+// The centroid is not a resonance estimator and Phase 3 stops it pretending to be one. It
+// resolves no F3 (measured: 0% F3 yield on the Rainbow Passage), so it cannot reach the two
+// residual dimensions a vowel classification needs, and it cannot fit a tract at all — it
+// reports where the spectrum's energy sits, which moves with microphone, loudness (Lombard
+// effect) and room as much as with the vocal tract.
+//
+// It survives as what it actually measures: a secondary brightness feature. D1: "Brightness
+// stays available only as an optional secondary display, never as the gate that fires
+// haptics."
+//
+// The 700–2200 Hz range is the Kotlin port's (DSP_CONTRACT records web/Kotlin/C++ disagreeing
+// on it); adopting one of the existing ranges rather than inventing a third is the cheapest
+// way to stop that particular drift widening.
+export const SPECTRAL_BRIGHTNESS_MIN_HZ = 700;
+export const SPECTRAL_BRIGHTNESS_MAX_HZ = 2200;
+
+export function spectralBrightness(centroidHz, {
+  minHz = SPECTRAL_BRIGHTNESS_MIN_HZ,
+  maxHz = SPECTRAL_BRIGHTNESS_MAX_HZ,
+} = {}) {
+  if (!(centroidHz > 0)) return 0;
+  return normalizeAgainstRange(centroidHz, minHz, maxHz);
+}
+
+// --- Pooling-window homogeneity, and whether ρ is usable (§5, Phase 2 hand-off) ---
+//
+// Phase 2 left this exactly here: /ɝ/ is the most isolated vowel in the set (1.18 from its
+// nearest neighbour) in the POOLED frame and tied with the closest pairs (0.40) in the
+// scale-invariant frame that ships, and the dimension that separates it — ρ = Σ L_i r_i — is
+// the same dimension a pooling-window mismatch moves. Using ρ requires knowing what the window
+// contained.
+//
+// This is that measurement. The window is HETEROGENEOUS when its frames' own per-frame scales
+// disagree — connected speech, several vowels, ρ carries vowel information — and HOMOGENEOUS
+// when they agree, which is a sustained hold, where the window has collapsed onto one vowel
+// and ρ → 1 by construction and carries nothing.
+//
+// Reported as the weighted coefficient of variation of the per-frame ΔF in the pool. Measured
+// on the Phase 2 fixtures: a 4 s held /i/ sits near 0 and the Rainbow Passage well above it.
+// The threshold below is placed between the two MEASURED values, not tuned against
+// classification accuracy — tools/rho-rhotic.mjs reports what admitting ρ does to every vowel,
+// not just to /ɝ/, so the trade is visible either way.
+export const WINDOW_HETEROGENEITY_CV = 0.05;
+
+export function windowHomogeneity(entries) {
+  const usable = (Array.isArray(entries) ? entries : []).filter((e) => e && e.deltaF > 0 && e.weight > 0);
+  if (usable.length < 2) return { cv: 0, n: usable.length, homogeneous: true };
+  const total = usable.reduce((s, e) => s + e.weight, 0);
+  const mean = usable.reduce((s, e) => s + e.deltaF * e.weight, 0) / total;
+  if (!(mean > 0)) return { cv: 0, n: usable.length, homogeneous: true };
+  const varW = usable.reduce((s, e) => s + e.weight * (e.deltaF - mean) ** 2, 0) / total;
+  const cv = Math.sqrt(varW) / mean;
+  return { cv, n: usable.length, mean, homogeneous: cv < WINDOW_HETEROGENEITY_CV };
+}
+
+// ρ for the ten P&B vowels in the pooled frame, i.e. Σ L_i r_i when the scale is the speaker's
+// pooled ΔF rather than that vowel's own. Recomputed from the committed fixture by
+// resonance-dprime.test.mjs, exactly as VOWEL_TEMPLATES is, so it cannot drift from the norms.
+//
+// /ɝ/ at 0.73 against 0.90–1.22 for everything else is the whole of Phase 2's hand-off, stated
+// as a number: the rhotic's lowered F3 cannot be absorbed by a scale fitted to the speaker's
+// OTHER vowels, so it lands in ρ and nowhere else.
+export const VOWEL_POOLED_RHO = {
+  i: 1.1882, 'ɪ': 1.0690, 'ɛ': 1.0565, 'æ': 1.0361, 'ɑ': 1.0204,
+  'ɔ': 0.9694, 'ʊ': 0.9246, u: 0.9053, 'ʌ': 1.0000, 'ɝ': 0.7212,
+};
+
+// ρ IS SPEAKER-INDEPENDENT WHERE IT MATTERS, and that is the result that makes the rest of
+// this possible. Across P&B's two populations — 16.5% apart in pooled tract scale — /ɝ/'s ρ is
+// 0.7255 (male) and 0.7169 (female): a 1.2% difference, against a 25% gap to the nearest
+// non-rhotic vowel. The rhotic signal survives the speaker change that Phase 2 was worried
+// about; what it does NOT survive untreated is a change in what the pooling WINDOW held.
+//
+// Because ρ_v = ΔF_v / ΔF_pooled, a window that happens to hold mostly front vowels raises
+// ΔF_pooled and scales EVERY vowel's ρ down by the same factor. An absolute threshold on ρ
+// would therefore call /u/ a rhotic during a stretch of /i/ and miss a real /ɝ/ during a
+// stretch of /ɑ/. The composition effect is a COMMON factor, though, so dividing it out is
+// exactly what a running median over the window's own frames does — and by the definition of
+// the pool (weighted median of the frames' own ΔF), that median is ≈ 1 whenever the window is
+// representative of itself.
+//
+// So the usable quantity is ρ relative to the window's own median ρ, not ρ. That is what
+// rhoticFromRho takes.
+//
+// The threshold sits at the geometric midpoint between /ɝ/ (0.7212) and the nearest
+// non-rhotic, /u/ (0.9053) — √(0.7212·0.9053) = 0.8080. It is placed between two measured
+// norms, not fitted to a classification score: tools/rho-rhotic.mjs sweeps it and reports the
+// whole curve, so the cost of moving it is visible without moving it.
+export const RHOTIC_RHO_THRESHOLD = 0.8080;
+
+// Reading /ɝ/ off ρ is legitimate only when three things hold at once, and this returns which
+// of them did not:
+//
+//   1. The pooling window is HETEROGENEOUS. In a sustained hold the window collapses onto one
+//      vowel, ρ → 1 by construction, and ρ carries no vowel information at all — so a hold on
+//      /ɝ/ is invisible in ρ and must not be guessed at from it either.
+//   2. The frame passed the validity gates. A swapped or mis-assigned F3 lowers ρ exactly the
+//      way a rhotic does; this is the whole reason Phase 2 refused to use ρ, and the gates are
+//      the answer to it.
+//   3. The window holds enough DISTINCT vowels for its median ρ to mean something. This one is
+//      measured rather than assumed: tools/rho-rhotic.mjs sweeps the window's vowel count and
+//      the detector holds down to three distinct vowels (0–1 false positives out of 800) and
+//      then breaks at two, where it produces 32 — a median over two points is whichever of them
+//      is larger, so /u/ and /ʊ/ start reading as rhotics. Three is the floor that measurement
+//      puts it at, not a round number.
+//
+// Returns { rhotic, rhoRelative, reason }. `rhotic: false` with a reason is the honest output
+// for "cannot tell", and the caller must not read it as "not a rhotic".
+export const RHOTIC_MIN_WINDOW_VOWELS = 3;
+
+export function rhoticFromRho(rho, {
+  windowMedianRho = 1,
+  heterogeneous = false,
+  frameValid = true,
+  windowFrames = 0,
+  windowVowels = Infinity,
+  minWindowFrames = 12,
+  minWindowVowels = RHOTIC_MIN_WINDOW_VOWELS,
+  threshold = RHOTIC_RHO_THRESHOLD,
+} = {}) {
+  if (!(rho > 0)) return { rhotic: false, rhoRelative: 0, reason: 'no-rho' };
+  if (!frameValid) return { rhotic: false, rhoRelative: 0, reason: 'invalid-frame' };
+  if (!heterogeneous) return { rhotic: false, rhoRelative: 0, reason: 'homogeneous-window' };
+  if (!(windowFrames >= minWindowFrames)) return { rhotic: false, rhoRelative: 0, reason: 'window-too-short' };
+  if (!(windowVowels >= minWindowVowels)) return { rhotic: false, rhoRelative: 0, reason: 'window-too-uniform' };
+  const med = windowMedianRho > 0 ? windowMedianRho : 1;
+  const rel = rho / med;
+  return { rhotic: rel < threshold, rhoRelative: rel, reason: rel < threshold ? 'rhotic' : 'not-rhotic' };
+}
+

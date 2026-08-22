@@ -227,6 +227,29 @@ abstains through an entire held vowel, and a held vowel is the mode the ball run
 (7) `resonance-aggregation.test.mjs` — the same two modes as pure arithmetic, including that the
 streaming aggregator a live session uses and the array functions a fixture report uses produce
 identical numbers on the same stream.
+(8) `resonance-estimator-discipline.test.mjs` + four reporting tools, added with Phase 3. The
+test pins the things that must hold exactly: the canonical v2 value is **frame-by-frame
+identical under all four `resonanceMethod` settings** (an equality, not a tolerance — the
+canonical path has no branch for the estimator identity to take); the ceiling-parameterised LPC
+is byte-identical to the pre-Phase-3 decimation at the default 5512.5 Hz, which is what lets a
+per-user ceiling exist without moving v1; a calibrated ceiling does not reach v1 at all; and
+below the floor every v2 output is *cleared* rather than frozen. The tools produce numbers that
+have to be read rather than passed, each with a `--check` in `test:all`:
+`tools/estimator-discipline.mjs` (between-estimator spread, LPC solves per frame against §3.4's
+budget, suppression rate at both of the repo's "live" hop sizes),
+`tools/frame-validity.mjs` (per-gate precision/recall on labelled synthetic frames, and the
+per-gate cost on the Rainbow Passage, which has no labels and is therefore reported as cost
+only), `tools/lpc-ceiling.mjs` (per-user ceiling vs the fixed default over four tract scales ×
+F0 100–300 Hz × three SNRs, calibrated and scored on disjoint vowel sets), and
+`tools/rho-rhotic.mjs` (whether ρ is usable for /ɝ/ — on the norms and through the live path,
+which give opposite answers).
+
+**A frame-rate caution these tools made concrete.** `fixtures/audio-eval/rainbow_passage.wav` is
+**22.05 kHz**, so the 735-sample hop the reporting tools call "the live rate" — correct at
+44.1 kHz — is 33 ms on it, i.e. 30 fps rather than 60. Every Phase 1 and Phase 2 yield number on
+that fixture is at 30 fps. Phase 3's suppression figures are reported at both rates for
+comparability, and the frame validity gates take the caller's own frame interval rather than
+assuming one, so a bound stated as a velocity means the same thing at either.
 
 **This is the mechanism that caught the semantic drift the doc predicted it would.** The web
 and C++ ports were both computing ΔF as the endpoint difference over a *compacted* formant list
@@ -327,6 +350,17 @@ Against a synthesized vowel with F1/F2/F3 = 570/1710/2850 Hz (ΔF 1140 Hz, appar
 | `centroid` | +2% | +5.0 pts | F1/F2 only — it cannot resolve F3 |
 | `harmonic` | −4% | −11.9 pts | envelope sampled at F0 spacing; quantises F2/F3 to the nearest harmonic |
 
+**These are measured on a SUSTAINED SYNTHETIC VOWEL with clean, well-separated formants, and
+they understate the disagreement on real material by several times.** Measured on the Rainbow
+Passage at the live frame rate, with the biases above already divided out and the comparison
+masked to the formants both estimators produced: the cepstral estimator's **F3 differs from
+root-solved LPC's by a median 25.6%** (F1 and F2 by ~8%), and the pooled ΔF by 6–38% depending on
+the stretch. Since the upper-formant-weighted scale fit puts leverage 1.00 on F3 against 0.06 and
+0.04 on F1 and F2, essentially all of the between-estimator ΔF disagreement on connected speech
+is F3. That is why Phase 3's cross-estimator check feeds the reported confidence but is not
+allowed to suppress a reading: a coarse second opinion's own F3 imprecision cannot establish that
+the primary measurement failed. See `RESONANCE_REDESIGN.md` §5, Phase 3.
+
 Two things follow. First, `vtlScore` is a **very high-gain** mapping: it spans its whole 0–1
 range over ΔF ∈ [1029, 1250] Hz — a 21% band — so a 1% error in ΔF moves the reported score by
 about 5 points. Small formant disagreements are amplified into large score disagreements, which
@@ -337,15 +371,24 @@ Second, the UI offers all four from one dropdown as if they were interchangeable
 four estimators' confidences are calibrated onto one scale (`formantEstimateConfidence`) so
 switching estimator no longer silently changes how much the app trusts itself.
 
+**Phase 3 removes the problem from the v2 stream entirely and leaves it on v1 by design.**
+`selectResonanceMethod` no longer reaches the canonical measurement: root-solved LPC runs every
+frame with its own continuity filters and its own confidence, so the between-estimator spread on
+`resonanceAbsoluteV2` is **exactly 0.0000** across all four settings (it was 0.0224). v1's spread
+is **unchanged at 0.1691 over the four and 0.0663 over the three `auto` can select**, because v1
+is still the displayed metric and its output must stay byte-identical until Phase 4 retires it.
+The ladder and the hysteresis therefore still matter, and will until then.
+
 ## Resonance construct redesign
 
 The measurement *method* documented above (adaptive-ceiling LPC → uniform-tube ΔF fit) is
 sound and matches the published recommendation. The *construct* — collapsing one frame's
 F1–F3 into a single 0–1 number — is not: measured against Peterson & Barney norms with
 ground-truth formants, vowel identity moves the score ~3x more than speaker sex does, and the
-nominal 55/25/20 weighting double-counts F1 and F2. Phases 0–2 have landed: the score is
-decomposed into tract scale and tract shape, the shape now names the vowel, and F2 is reported
-relative to that vowel's own norm. All of it is instrumented and none of it is displayed —
+nominal 55/25/20 weighting double-counts F1 and F2. Phases 0–3 have landed: the score is
+decomposed into tract scale and tract shape, the shape now names the vowel, F2 is reported
+relative to that vowel's own norm, and the measurement is defined by one estimator rather than by
+whichever one the room's noise selected. All of it is instrumented and none of it is displayed —
 `smoothResonance` (v1) is still the only resonance number any user, port or piece of hardware
 sees, and its output is byte-identical. See
 [`RESONANCE_REDESIGN.md`](./RESONANCE_REDESIGN.md) for the evidence, the target architecture
@@ -373,6 +416,25 @@ is computed and kept in step.
 - **`harmonic` carries a −11.9 point bias** (see the accuracy table above) and the UI offers it
   in the same dropdown as `lpc`, which is accurate to −0.3 points. Either the dropdown should
   say so or `harmonic` should stop being offered as a peer. It is not reachable from `auto`.
+  *(Still true of v1's dropdown. Post-Phase-3 the choice no longer reaches the v2 stream at all,
+  and the bias is now divided out before any cross-check reads it —
+  `ESTIMATOR_DELTA_F_BIAS` — because a published bias is not a disagreement.)*
+- **The canonical LPC path and v1 now disagree by design, and the divergence is bounded and
+  tested.** Post-Phase-3, `_resonanceLPC` is parameterised by analysis ceiling and returns two
+  formant assignments plus bandwidths and the model residual. v1 reads the assignment and the
+  default ceiling it always had, byte-identically; the canonical v2 path reads the pre-default
+  vector (so a fabricated F1 = 500 Hz never reaches it — the LPC finds no F1 on 4.9% of Rainbow
+  Passage frames and 10.0% of a synthesized vowel set at F0 180) at the per-user ceiling. Two
+  LPC solves per frame occur only when those two ceilings differ; the shared case is one, and
+  §3.4's three is never reached. This whole duplication exists because v1 must not move while it
+  is displayed and is retired with v1 in Phase 4.
+
+- **`spectralBrightness` replaces the centroid as a resonance estimator on web only.** D1's
+  "brightness stays available only as an optional secondary display" is now true of the v2
+  stream: the centroid is a 0–1 brightness feature there and nothing downstream of resonance
+  reads it. v1's `centroid` estimator option is unchanged, and the Kotlin port's
+  `SpectralBrightnessEstimator` is still brightness-primary (see D1 above).
+
 - **The personal resonance-range learner is method-dependent.** Its conjunction of four gates
   (`conf > 0.4`, `formantSteadiness > 0.5`, `vowelLikelihood > 0.4`, non-zero ΔF) is reached
   under `lpc`/`cepstral`/`centroid` but not under `harmonic` on the Rainbow Passage, so whether
@@ -392,14 +454,29 @@ is computed and kept in step.
   normalising a 4-element residual and matching it against 3-formant templates compares vectors
   that do not live in the same space. Measured cost when that was live: vowel yield under `lpc`
   fell from 88.0% to 40.8%.
+- **Rhotic F3 is unreachable by v1's formant assignment, and that is the real /ɝ/ blocker.**
+  The LPC assignment loop admits a pole as F3 only above 2000 Hz; Peterson & Barney's adult-male
+  /ɝ/ has F3 = 1690 Hz. Measured on the live path before Phase 3, a synthesized /ɝ/ was named
+  correctly on **0.0%** of frames (it read as /ʊ/ on 63 of 67), and the lowest F3 the canonical
+  path ever reported on the Rainbow Passage was 2091 Hz. Phase 3 computes a second, rhotic-capable
+  assignment over the poles the same solve already produced (`F3_RHOTIC_FLOOR_HZ`, no extra LPC),
+  which makes /ɝ/ reachable — 92.5% correct at F0 110 — but at F0 180 the sparse pole set fills
+  the widened slot on most frames and manufactures rhotics (/ɔ/ → /ɝ/ on 47 frames in 67). It is
+  therefore **computed and exposed, and not used**. Fixing it needs an assignment policy v1 no
+  longer constrains, which is Phase 4, validated on real rhotic recordings, which is Phase 5.
+
 - **The vowel classifier's meaning depends on the pooling window, and that is only half solved.**
   `formantPattern` is taken against the ΔF pooled over a rolling window, so what a residual means
   depends on what that window held: several vowels (connected speech) or one (a sustained hold).
   Phase 2 normalises the two onto a common scale-invariant frame, which makes the classifier work
   in both — but the component it divides out (ρ) is exactly the component a rhotic /ɝ/ shows up
-  in. Reading /ɝ/ off ρ requires knowing what the window contained, which is Phase 3's frame-
-  validity work. Until then the classifier's one systematic error is /ɝ/ → /æ/, measured and
-  asserted rather than left to be discovered.
+  in. **Phase 3 answered this and the answer is no.** ρ does what Phase 2 predicted on the
+  published norms — held out across P&B's two populations it takes the classifier from 95% to
+  100% correct at 0% abstention and removes the /ɝ/→/æ/ confusion — but through the live path it
+  reads /ɪ/ as /ɝ/ on 26 frames in 67 and, at F0 180, /ɔ/ on 47 of 67, because the ~1.7 s pooling
+  window rarely holds enough distinct vowels for its running median ρ to mean anything. It is
+  instrumented (`rhoticDetected`, `rhoRelative`, `rhoReason`, `windowHomogeneityCv`) and not
+  acted on, with a test pinning that. The classifier's one systematic error remains /ɝ/ → /æ/.
 - **Phase 2's features are web-only and unversioned.** `vowelId`, `f2Position`, and the two
   aggregation modes exist on the web analyzer only, are not in the Layer A packet, and are not
   displayed. Nothing on any port reads them. When they do become displayable (Phase 4), §3.5's
