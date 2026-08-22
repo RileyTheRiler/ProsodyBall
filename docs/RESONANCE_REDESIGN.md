@@ -471,6 +471,14 @@ aggregated and never read off one frame:
 Misclassification drops roughly fourfold and abstention overtakes it. Reducing the remainder is
 Phase 3's frame-validity work, not a threshold to move here.
 
+**Measured in Phase 3, and the frame-level answer is partly yes.** The gates Phase 3 added do
+reject frames that are worse than the ones they admit — 93.6% precision at 12 dB against an 82.3%
+base rate — and they removed a fabricated F1 the classifier had been consuming on ~5% of frames.
+What they do **not** do is close the specific hole this table describes: at 6 dB they stop
+discriminating entirely (82.7% precision against 82.6% base), and a residual thrown squarely onto
+a neighbouring vowel is still not a frame the gates can see. The nucleus rule remains what
+satisfies §6.
+
 #### F4, and frame yield
 
 F4 **does not degrade** classification (identical within sampling error at 0–100 Hz of formant
@@ -520,23 +528,297 @@ the criterion against a within-speaker contrast, since an absolute tract-size ax
 (`resonanceAbsolute`) and a trainable-posture axis (`f2Position`) should not both be scored on
 how well they separate two populations by tract length.
 
-### Phase 3 — Estimator discipline
+### Phase 3 — Estimator discipline — **LANDED** *(instrumented only; v1 still displayed)*
 
-- LPC becomes the single scale-defining estimator. `selectResonanceMethod` no longer swaps the
-  measurement.
-- Cepstral/harmonic run at reduced rate as cross-checks feeding `resonanceConfidence`; centroid
-  demoted to a `spectralBrightness` secondary feature, never a resonance substitute.
-- Per-user LPC ceiling chosen during calibration by a multi-ceiling search (FormantPath-style),
-  with a low-rate background re-check during use. **Live frames use the one selected ceiling** —
-  the real-time budget does not allow per-frame multi-solve.
-- Frame validity gates added: F1 < F2 < F3 < F4, bandwidth limits, trajectory continuity, LPC
-  residual/model-fit, formant-swap detection.
-- F0 enters the Kalman measurement noise: as F0 rises and harmonic sampling thins, measurement
-  variance rises.
+- **One estimator defines the measurement.** Root-solved downsampled LPC runs every frame and
+  everything the v2 stream reports is built from it, whatever `resonanceMethod` says. The
+  canonical path has its own Kalman filters, its own steadiness and its own confidence, so
+  nothing downstream can be reached by the estimator the room's noise selected.
+- **Cepstral/harmonic are cross-checks at reduced rate**, feeding confidence and never the
+  value. **Centroid is demoted** to `spectralBrightness`.
+- **Per-user LPC ceiling** by a FormantPath-style multi-ceiling search (`calibrateLpcCeiling`),
+  with a low-rate background re-check. Live frames use the one selected ceiling.
+- **Frame validity gates**: ordering, bandwidth, trajectory continuity, LPC model residual,
+  formant swap. Rejection is per formant where the evidence is per formant.
+- **F0 enters the Kalman measurement noise** as (F0/100 Hz)², and enters nothing else.
+- **v1 unchanged.** avgResonance 0.370 / 0.422, golden ranges and dsp-golden vectors untouched.
+
+#### Estimator identity no longer reaches the value
+
+Measured on the reference synthesized vowel, each estimator forced, against the same code on
+`main`:
+
+| | v1 (displayed) | v2 (canonical) |
+|---|---|---|
+| spread over all four estimators | 0.1691 → **0.1691** | 0.0224 → **0.0000** |
+| spread over the three `auto` can select | 0.0663 → **0.0663** | 0.0020 → **0.0000** |
+
+v1's spread is unchanged **by the same rule that froze it through Phases 1 and 2** — it is the
+displayed metric and its output must stay byte-identical until Phase 4 retires it. (§5's Phase 1
+entry quotes 0.111 for the ladder; measured on today's `main` it is 0.0663. The 0.111 predates
+the Phase 0 confidence-gain calibration. The comparison above is against `main` as it stands, so
+both columns are one measurement.)
+
+v2 is **exactly zero, not small**: there is no branch for the estimator identity to take. It is
+asserted as an equality, frame by frame, in `resonance-estimator-discipline.test.mjs`.
+
+#### Budget (§3.4 — measured, not assumed)
+
+3 s of held vowel at 60 fps. The frame budget is 16.67 ms; the ms column is the **whole**
+`update()`, not the LPC alone.
+
+| case | LPC solves/frame | ms/frame | % of budget |
+|---|---|---|---|
+| `lpc`, default ceiling — every user today | **0.994** | 4.73 | 28.4% |
+| `lpc`, per-user ceiling (post-calibration) | 1.989 | 4.63 | 27.8% |
+| v1 forced onto `harmonic` or `centroid` | 0.994 | 4.6 | 27.6% |
+
+The common case pays **nothing**: v1's `lpc` branch and the canonical path want the same ceiling
+and share one solve through a per-frame cache. The second solve appears only where v1 is pinned
+to a different ceiling than the canonical path — and it exists *solely* because v1 must not move
+while it is displayed. Phase 4 retires v1 and takes it with it. §3.4's three solves per frame is
+never reached at any setting. The cross-checks add no solve at all (both work off the FFT
+magnitudes the frame already has) and run at 10 Hz on alternating slots.
+
+#### Below the floor the app shows nothing
+
+Rainbow Passage under `auto`, at both rates the repo calls live — the 735-sample hop every
+Phase 1/2 yield number is measured at (33 ms on this 22.05 kHz fixture) and the rAF loop's true
+60 fps:
+
+| condition | 30 fps suppressed | 60 fps suppressed | what collapsed |
+|---|---|---|---|
+| clean | 11.4% | 4.5% | pool warm-up, brief pauses, 4 low-SNR frames |
+| +noise, 12 dB | 37.7% | 45.6% | fit quality, then pool |
+| +noise, 3 dB | **100%** | **100%** | nothing left to pool |
+
+**What the user sees is nothing.** A suppressed frame *clears* `resonanceAbsoluteV2`, the pooled
+scale, the apparent tract length, the vowel and `f2Position`; it does not freeze them, and it
+never substitutes a brightness number computable from noise but wrong — the trap D1 names. It
+also closes any open vowel nucleus. Past a real pause (all four formants stale, ~0.2 s of
+non-phonation) the same clearing happens without the resonance stage running at all, so a value
+from before a pause can never be read as a live one.
+
+Two things are deliberately **not** able to suppress. The cross-estimator agreement is one; see
+below. `spectralBrightness` is the other — it is computed and exposed and nothing downstream of
+resonance reads it.
+
+#### Frame validity gates: precision, recall, and cost
+
+Labelled on synthesized vowels (5 vowels × 3 tract scales × 4 F0s per condition); a frame is BAD
+when its raw-formant ΔF is more than 5% from the synthesized truth — a quarter of v1's meter, per
+DSP_CONTRACT's ~5 points per 1% of ΔF. Precision = of what it rejected, how much was bad.
+
+| condition | bad-frame base rate | gate | reject % | precision | recall |
+|---|---|---|---|---|---|
+| clean | 9.7% | bandwidth | 3.4% | **100%** | 35.3% |
+| | | continuity | 0.9% | 0% | 0% |
+| 20 dB | 80.5% | swap | 0.2% | 88.9% | 0.3% |
+| | | bandwidth | 8.1% | 77.4% | 7.8% |
+| | | frame-level, all | 1.4% | **90.6%** | 1.6% |
+| 12 dB | 82.3% | residual | 40.5% | **93.5%** | 46.1% |
+| | | bandwidth | 8.0% | 90.7% | 8.8% |
+| | | frame-level, all | 40.8% | **93.6%** | 46.4% |
+| 6 dB | 82.6% | frame-level, all | 85.7% | 82.7% | 85.8% |
+
+**At 6 dB the gates stop discriminating** — 82.7% precision against an 82.6% base rate is
+rejecting at random. That is not a gate failure, it is the SNR floor's job instead, and it is
+why the committed check asserts down to 12 dB and reports 6 dB without asserting it. A
+knife-edge assertion dressed as a claim is worse than a stated limit.
+
+**The continuity gate's benefit is not measurable on the corpus that can label frames, and this
+is stated rather than papered over.** Sustained synthetic vowels contain no formant transitions,
+so a continuity gate has nothing to catch there, and its 0% precision on clean audio is the
+corpus's limitation rather than the gate's. On connected speech, where it fires, there is no
+ground truth — but its effect is measurable: on the Rainbow Passage, **turning it off costs 6.0
+points of vowel yield** (85.3% → 79.3%). It does not cost yield, it buys it, by withholding a
+pole that jumped so the rest of the formant set stays coherent. What it catches is real: measured
+per-frame steps on that passage reach 1210 Hz on F2, 1565 on F3 and 1266 on F4 in 16.7 ms, while
+F1 never exceeds 345 — those are pole reassignments, not articulation.
+
+**The swap gate costs and buys nothing measurable on connected speech** (identical yield with it
+on and off, fires on 0% of passage frames once rejection is per formant), and earns its place
+only on the labelled corpus, at 88.9–100% precision. It is kept as a zero-cost invariant check
+and reported as exactly that. The **order** gate never fires at all, because the LPC assignment
+loop enforces ordering by construction; it is kept for the same reason.
+
+**Three gate thresholds were wrong on the first pass and were corrected against measurement, not
+against a benchmark.** Recorded because each was a mis-stated expectation rather than a tuning
+choice:
+
+| gate | first value | why it was wrong | corrected to |
+|---|---|---|---|
+| continuity | 25% of the formant's own frequency | a proportional bound is far too loose at F1 and too tight at F2; formant velocity is a rate, not a proportion. Rejected 74% of ordinary read speech | 30 Hz/ms, above the fastest published glide transitions (10–25 Hz/ms), **expressed in Hz/s and multiplied by the caller's own frame interval** |
+| bandwidth | `0.25·f + 150` | tighter than Praat's published flat 400 Hz at F1 — stricter than the established rule with no evidence behind it | `max(400, 0.25·f + 150)`: Praat's rule as a floor, loosened only above 1 kHz where F3/F4 bandwidths measurably run wider |
+| LPC residual | 0.35, on the claim that clean vowels sit "well below 0.1" | false. Measured median on the Rainbow Passage is 0.161, p90 0.337 | 0.5 — the point where the model fails to predict *more than half* the frame's energy |
+
+#### The confidence model is a geometric mean, and the cross-check does not suppress
+
+§4's diagram reads as a product and the first implementation took it literally. Measured on the
+Rainbow Passage the six terms sit at 0.93 / 0.71 / 0.65 / 0.73 / 0.44 / 1.00 and their product is
+**0.137** — nothing has failed and the app would have suppressed 48% of a clean recording of read
+speech. They are not independent failure probabilities; they are six correlated views of one
+frame's quality. The geometric mean is the right aggregator and keeps the property the product
+was chosen for: **any term at zero takes the whole thing to zero**, so "below the SNR floor the
+app shows no resonance" is exact rather than approximate (`snrToConfidence` returns exactly 0
+below the red threshold).
+
+**Cross-estimator agreement feeds the reported confidence and not the suppression decision**, and
+that is a measured call, not a compromise. On the Rainbow Passage the cepstral estimator's F3
+differs from the canonical LPC's by a **median 25.6%** (F1 and F2 by ~8%), and the weighted scale
+fit puts leverage 1.00 on F3 against 0.06 and 0.04 on F1 and F2 — so essentially all of the
+between-estimator ΔF disagreement is the *checker's* own F3 imprecision. Letting it suppress the
+primary is backwards, and it costs: with agreement in the suppression decision the app declined
+26% of clean read speech and vowel yield fell from 87.0% to 71.2%. §5's rule applies —
+seventeen points of yield for a term mostly reporting a known property of the checker is more
+than it buys. It is kept where it belongs: `tools/frame-validity.mjs` measures that on clean
+synthetic frames its lowest agreement quartile is **23.2% bad against 0.2%** for its highest.
+
+Two further corrections along the way, both worth recording because both were mis-scaled
+statistics rather than bad ideas:
+
+- **The comparison must be like for like.** Comparing a Kalman-smoothed multi-frame canonical ΔF
+  against a raw single-frame check measures the smoothing; comparing a 3-formant fit against a
+  2-formant one compares different constraint surfaces — the same error that cost Phase 2 47
+  points of yield when F4 reached the classifier. Unmasked and unsmoothed, the "disagreement"
+  between LPC and cepstral is a median 28%, almost all of it the comparison's own construction.
+- **The tolerance is one formant number, not one estimator's precision.** DSP_CONTRACT's 4%
+  spread is measured on a sustained synthetic vowel. Two estimators that have slipped a formant
+  number relative to each other disagree by ~1/n of ΔF — about a third — and that is the failure
+  worth suppressing for. The evidence for the term is unaffected by the rescaling: a quartile
+  split is rank-based.
+- **And the cadence must be in seconds.** A 16-reading pool at one check per 6 frames covers
+  3.2 s at 30 fps and 1.6 s at 60. Same recording, same estimators, pooled ratio 1.057 against
+  1.275 and 10% suppressed against 33%. Exactly the defect DSP_CONTRACT's frame-rate fidelity
+  section documents, reproduced in new code.
+
+#### Per-user ceiling vs a fixed one, on a high-F0 test set
+
+The existing fixtures cannot answer this: one speaker at 96–104 Hz with a pooled ΔF near
+1000 Hz is the speaker the published default was chosen for. The ceiling is a per-**speaker**
+parameter, so the set has to vary the speaker. `tools/lpc-ceiling.mjs` builds it — four tract
+scales (0.90–1.30 of P&B's adult male, i.e. ~19.5 cm down to ~13.4 cm apparent tract) × six F0s
+(**100 to 300 Hz**) × three SNRs, calibrated on /i ɑ u/ and scored on **held-out** /ɛ ʌ/.
+
+| SNR | mean \|ΔF error\| fixed | chosen | median fixed | median chosen | worst fixed | worst chosen | points improved |
+|---|---|---|---|---|---|---|---|
+| clean | 1.82% | **1.33%** | 0.62% | 0.61% | 5.11% | 1.67% | 48% |
+| 24 dB | 2.47% | **2.42%** | — | — | — | — | 43% |
+| 16 dB | 5.36% | **4.99%** | 5.14% | 5.04% | 10.44% | **8.87%** | 43% |
+
+At the two ends of the F0 range, clean: **100 Hz** fixed 0.52% / chosen 1.03%; **300 Hz** fixed
+7.57% / chosen 7.65%. At 260 Hz, where the effect is largest, 3.65% → **1.40%**.
+
+**The win is real and it is concentrated, and reporting it as a general improvement would be
+overselling it.** Most speaker/F0 points tie or move by under a tenth of a point, which is why
+the median barely moves while the mean drops. What the search buys is the minority where a fixed
+ceiling is badly wrong: clean, short tract, high F0, where the default cuts into the band F4 is
+in, it recovers 4.5 and 5.7 points. The direction *reverses* with noise exactly as the mechanism
+predicts — at 16 dB it selects **lower** ceilings for long tracts, because the band above F4 now
+carries noise for a spare pole pair to lock onto, which is D2's spurious-pole risk. That is a
+per-user parameter behaving like one. It is insurance against the bad cases.
+
+Two things this does **not** establish. The set is synthesized — a Klatt cascade with no
+breathiness, nasality, room or coarticulation — so it shows the search picks a better ceiling
+when the ceiling is the only thing that differs, not that a real high-F0 speaker gets the same
+benefit. That is Phase 5's ladder. And the set had to be run **with noise** to exercise half the
+mechanism at all: on a noiseless cascade there is nothing above F4 for a spare pole to find, so
+every ceiling above F4 performs identically. Run clean-only, the search "beat" the default by
+0.22 points, which is not a measurement of anything.
+
+**A separate limit, named rather than averaged in.** Above F0 220, where F1 and F2 are close
+(/ʌ/ at 640/1190 Hz), the model places **one** pole across both and every formant lands a slot
+low — ΔF errors of 22–54%. No ceiling touches it; the harmonics needed to separate the two
+resonances are not in the signal at any analysis bandwidth. Three of 24 points are excluded from
+the comparison for it and reported here instead. Catching it live is what the swap gate is for,
+and the swap gate needs a good frame to compare against — a *sustained* merged vowel has none.
+That is an open gap.
+
+#### ρ and /ɝ/: the answer is no, and the blocker was never ρ
+
+Phase 2 handed this over as the thing Phase 3 would "either do properly or establish that it
+can't be done and say why". Both halves were measured.
+
+**ρ does everything Phase 2 said it would, on the norms.** /ɝ/'s ρ is 0.7212 against 0.9053–1.1882
+for every other vowel — and it is *speaker-independent where it matters*: 0.7255 (male) against
+0.7169 (female), a 1.2% difference across a 16.5% gap in pooled tract scale, against a 25% gap to
+the nearest non-rhotic. Because window composition scales every vowel's ρ by a **common** factor,
+dividing by the window's running median removes it. Held out across P&B's two populations, that
+takes the classifier from **95% to 100% correct at 0% abstention**, removes the /ɝ/→/æ/ confusion
+without introducing another, improves at every noise level to 150 Hz per formant, and survives
+window composition down to **three distinct vowels** — breaking at two, where 32 false positives
+appear because a median over two points is whichever is larger. The threshold, √(0.7212·0.9053) =
+0.8080, is the geometric midpoint of two published norms and sits on a broad plateau (85.0%
+against 84.9% at 0.75 and 84.6% at 0.85, swept in `tools/rho-rhotic.mjs`).
+
+**It does not survive the live path, and the failure is not marginal.** Driven over synthesized
+vowels whose identity is known by construction, admitting ρ reads /ɪ/ as /ɝ/ on 26 frames in 67
+and, at F0 180, /ɔ/ as /ɝ/ on 47 of 67 — while recovering /ɝ/ itself on 0–12%. Two causes,
+neither a threshold that could be moved:
+
+1. The live pooling window is ~1.7 s and rarely holds enough **distinct** vowels for its running
+   median ρ to mean anything. A window holding two vowels has a median that is one of them.
+2. **The extractor cannot see the excursion ρ is meant to read.** The LPC assignment admits a
+   pole as F3 only above 2000 Hz, and P&B's adult-male /ɝ/ has F3 = **1690 Hz**. Measured on
+   `main`, the live path names a synthesized /ɝ/ correctly on **0.0%** of frames — it reads as
+   /ʊ/ on 63 of 67 — and the lowest F3 the canonical path ever reported on the Rainbow Passage
+   was 2091 Hz. Widening the slot (`F3_RHOTIC_FLOOR_HZ`, a second assignment over the poles the
+   same solve already produced, so no extra solve) makes /ɝ/ reachable — **92.5% correct at F0
+   110** — but at F0 180 the sparse pole set puts something in the widened slot on most frames
+   and manufactures rhotics: /ɔ/ → /ɝ/ on 47 frames in 67.
+
+So the answer to "is ρ now usable for /ɝ/" is **no**, and the binding constraint is not ρ. It is
+that the formant assignment has one policy, shared with v1, that cannot admit a rhotic F3 without
+admitting spurious ones. Fixing it needs an assignment v1 no longer constrains — **Phase 4**,
+when v1 retires — validated against real rhotic recordings rather than a Klatt cascade, which is
+**Phase 5**. Everything needed is measured and exposed (`rhoticDetected`, `rhoRelative`,
+`rhoReason`, `windowHomogeneityCv`, `measuredRhotic`); **none of it is switched on**, and a test
+pins that, so turning it on later is a deliberate change rather than a drift.
+
+**Phase 2's classification numbers are therefore unchanged**, and the d′ benchmark including its
+Phase 2 additions is untouched.
+
+#### A fabricated formant, removed
+
+`_resonanceLPC` substitutes F1 = 500 Hz and F2 = 1500 Hz when it finds none — v1's behaviour,
+still unchanged. Phases 1 and 2 fed those substitutes **straight into the v2 stream**, because
+v1's age counters reset on the defaulted value, so a fabricated F1 looked freshly measured. The
+LPC finds no F1 on **4.9%** of Rainbow Passage estimator frames and **10.0%** of a synthesized
+vowel set at F0 180. The canonical path reads the pre-default vector and abstains instead.
+
+This is most of why live-path classification at F0 180 reads lower than `main`'s (64.5% against
+76.9%): `main`'s /ɛ/ was named using an F1 the microphone never produced, which happened to sit
+30 Hz from /ɛ/'s true F1. The Phase 3 path declines on those frames — 55 of 67 abstentions — which
+is what §6 asks for. At F0 110 and 130 the two are within half a point (86.7% and 86.6% against
+87.2%).
+
+#### Frame yield, against Phase 2's
+
+| | Phase 2 | Phase 3 | change |
+|---|---|---|---|
+| `formantScale` fit under `lpc` | 98.4% | **98.4%** | — |
+| F4 under `lpc` | 92.4% | **92.4%** | — |
+| pooled scale | 92.4% | 88.6% | −3.8 |
+| vowel named / `f2Position` | 88.0% | 85.3% | **−2.7** |
+
+**The floor §5 states is met on `formantScale` and missed by 2.7 points on `f2Position`, and the
+trade is this.** The whole of the loss is frames the app now declines to read: SNR-floor
+suppression, and clearing the reading past a real pause instead of holding the last one. The
+validity gates cost nothing net — per-formant rejection recovers what whole-frame rejection took,
+and the continuity gate is worth +6.0 points on its own. Against that, the v2 stream's
+across-clip swing falls from 5.6 to **4.3 points** on the same passage, and it is now identical
+under all four estimator settings instead of varying by 0.0224. Declining 2.7% more frames to
+stop the number depending on which estimator the room selected is the trade Phase 3 exists to
+make; the alternative on those frames was a reading built on a fabricated formant or on noise.
 
 *Done when:* estimator identity no longer moves the displayed value; below the SNR floor the app
 shows no resonance rather than a substitute; per-user ceiling measurably beats a fixed ceiling on
-a high-F0 test set.
+a high-F0 test set. **Met, with one criterion met on the value Phase 3 is making valid rather
+than on the one still displayed.** Estimator identity is removed from the canonical value exactly
+(0.0000) and is deliberately *unchanged* for v1, which is frozen by the same rule as in Phases 1
+and 2. Suppression is exact at the SNR floor and clears rather than freezes. The ceiling beats a
+fixed one on the mean at all three SNRs on held-out vowels, and does not move the median — both
+reported.
 
 ### Phase 4 — Two scales and real calibration
 
@@ -573,6 +855,14 @@ Stratify by F0, vowel, SNR, device/microphone, breathiness, nasality, loudness, 
 **The measure gets harder to estimate as it gets more valid.** F3/F4 are lower-amplitude and
 missed more often than F1/F2 — construct validity and measurement reliability pull opposite ways.
 Phase 1's acceptance criteria must include a frame-yield floor, not just d′.
+
+**Measured through Phase 3, and the risk is real but it is not F3/F4.** `formantScale`'s fit
+yield has stayed at 98.4% and F4's at 92.4% through three phases. What has fallen is the yield of
+the things built *on top* of the formants — the pooled scale 92.4% → 88.6%, `f2Position`
+88.0% → 85.3% — and every point of that is the app declining to read a frame rather than failing
+to find a formant in it. The trade is stated with its numbers in §5's Phase 3 entry: 2.7 points
+of frame yield for a value that no longer depends on which estimator the room's noise selected,
+and that clears rather than freezes when there is nothing to measure.
 
 **Decomposition can leak into the UI.** The user should still see one ring. Five internal
 variables is an implementation detail; if it reaches the interface the redesign has failed.
