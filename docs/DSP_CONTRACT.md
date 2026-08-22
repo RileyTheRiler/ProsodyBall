@@ -198,7 +198,15 @@ JS side, and both now return identical values (1000, 1174.286, 1000, 1000, 0). I
 same translation unit the watch flashes, and already runs in `.github/workflows/twatch-build.yml`.
 (4) `resonance-reliability.test.mjs` — drives the real `VoiceAnalyzer` over **synthesized**
 vowels whose F1/F2/F3 are known by construction, so the resonance score has a ground truth to
-be right or wrong about, at the live frame rate.
+be right or wrong about, at the live frame rate. (5) `resonance-dprime.test.mjs` +
+`fixtures/peterson-barney-1952.json` — the construct-validity net, added with Phase 1 of
+`RESONANCE_REDESIGN.md`: Peterson & Barney adult male and female mean formants fed straight
+into the scoring functions (no estimator, no noise, no smoothing) and reduced to
+d′ = (female mean − male mean) / pooled within-sex across-vowel SD. It pins v1 at both ends —
+the §1.1 per-vowel table *and* d′ = 0.858 — so "the displayed metric did not move" is asserted
+rather than asserted-about, and states v2's criteria as inequalities against the redesign's
+thresholds. `npm run test:resonance-yield` is its companion reliability net: v2's formant
+yield on the Rainbow Passage must not fall below v1's under any of the four estimators.
 
 **This is the mechanism that caught the semantic drift the doc predicted it would.** The web
 and C++ ports were both computing ΔF as the endpoint difference over a *compacted* formant list
@@ -348,6 +356,11 @@ is computed and kept in step.
   It also changes what the score *means* mid-session (population anchors → the speaker's own
   span) without recording which scale a stored reading was taken on, so session summaries can
   average across two different scales.
+- **F4 is web-only and LPC-only.** The downsampled-LPC path returns F4 (92.4% of estimator
+  frames on the Rainbow Passage); the cepstral, harmonic and centroid estimators do not, and
+  neither port does. It feeds only the Phase-1 `formantScale`/`formantPattern` pair, which is
+  instrumented and not displayed, so no cross-port contract depends on it yet. Extending the
+  golden vectors past ΔF to the scale/pattern split is Phase 6.
 - **`vtlScore` is a high-gain mapping**: full 0–1 travel over ΔF ∈ [1029, 1250] Hz, ~5 score
   points per 1% of ΔF error. That is a deliberate consequence of the 17 cm → 14 cm apparent
   tract-length anchors (**longer/darker → shorter/brighter**, not male → female: F0 and

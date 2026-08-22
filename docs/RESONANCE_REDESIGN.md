@@ -1,6 +1,6 @@
 # Resonance: measurement redesign
 
-**Status: plan, not implemented.** Extends `DSP_CONTRACT.md`, which stays the cross-port
+**Status: Phase 0 and Phase 1 landed; Phases 2-6 are plan.** Extends `DSP_CONTRACT.md`, which stays the cross-port
 contract. This document covers one question: what `smoothResonance` should *be*.
 
 The short version: the acoustic model is right and the arithmetic is right, but the construct
@@ -56,12 +56,18 @@ two speakers.
 | measure | d′ |
 |---|---|
 | F3 normalised (2200–3300 Hz) | **1.98** |
+| **`resonanceAbsolute` v2 (Phase 1)** | **1.73** |
 | ΔF from F3 alone | 1.67 |
 | mean(F1,F2,F3) normalised | 0.96 |
-| **current app score** | **0.85** |
+| **current app score (v1)** | **0.85** |
 | ΔF(F1,F2,F3) alone | 0.81 |
 | ΔF(F2,F3) | 0.73 |
 | F2 normalised (1000–2400 Hz) | 0.38 |
+
+The benchmark is now committed code, not a table: `resonance-dprime.test.mjs` asserts it and
+`node tools/resonance-benchmark.mjs` prints it, both from one implementation in
+`tools/resonance-benchmark.mjs`. Re-measured there, v1 is 0.858 and the per-vowel scores in
+§1.1 reproduce exactly; the 0.85 above is this document's rounding, not a second measurement.
 
 ### 1.4 The nominal weights are not the real weights
 
@@ -100,7 +106,12 @@ split describes nothing that exists.
 On the Rainbow Passage fixture at the live frame rate, F3 is returned on **100%** of estimator
 frames under `lpc` and `cepstral`, 78% under `harmonic`. The upper-formant-weighted architecture
 below is buildable today. F4 sits inside the current analysis band (LPC runs to ~4961 Hz after
-4× downsampling, 6.5 pole pairs) but no estimator extracts it — that is new work.
+4× downsampling, 6.5 pole pairs) but no estimator extracted it — that was new work.
+
+**Measured after Phase 1.** The downsampled-LPC path now assigns F4 and returns it on **92.4%**
+of estimator frames on the same fixture, against 98.4% for F1/F2/F3. The other three estimators
+return none, so v2 runs its F1–F3 fallback there; its scale-fit yield is 98.4% under all four —
+identical to v1's ΔF-fit yield. `npm run test:resonance-yield` is the standing check.
 
 ---
 
@@ -271,19 +282,70 @@ is the primary regression net; it becomes a committed test.
 *Done when:* no user-facing or in-code text asserts something the evidence doesn't support.
 Zero behaviour change; existing tests unchanged.
 
-### Phase 1 — Decompose the construct *(flagged, both metrics computed)*
+### Phase 1 — Decompose the construct — **LANDED** *(both metrics computed, v1 displayed)*
 
-- Extract F4 (extend the LPC root→formant assignment; gate on measured availability).
-- Compute `formantScale` from an upper-formant-weighted ΔF regression, **pooled over a rolling
-  window**, not per frame.
-- Compute `formantPattern` as the scale-normalised residuals `r_i = F_i / ((i − 0.5)·ΔF)`.
-- Remove double-counting: F1/F2 contribute through exactly one path.
-- `resonanceAbsolute` v2 computed alongside v1; v1 stays the displayed metric.
-- Instrument both; log divergence.
+- **F4 extracted.** The downsampled-LPC root→formant assignment gained a fourth slot
+  (`F4_CEILING_HZ` 4800, tighter bandwidth bound than F1–F3, admitted only after F3). Purely
+  additive: it reads poles the F1–F3 loop had already discarded, so F1/F2/F3 and the confidence
+  built from them are unchanged. **Measured yield: 92.4%** of estimator frames under `lpc`
+  (F1/F2/F3: 98.4%), 0% under the other three estimators, which do not produce one. F4 stayed
+  optional: the scale falls back to F1–F3 and is still defined.
+- **`formantScale`** = weighted zero-intercept fit of `F_i = (2i−1)·ΔF/2`, **pooled over a
+  rolling 100-frame (~1.7 s) window** by weighted median. The weights are not hand-picked
+  toward the benchmark: they are ordinary weighted least squares, `w_i = 1/σ_i²` with
+  `σ_i = CV_i · F̄_i` and the CVs taken from §1.2. Effective per-formant leverage
+  (`w_i·x_i²`, normalised): F1 0.06, F2 0.04, F3 1.00, F4 1.00. Pooling is doing real work —
+  per-frame ΔF scatters with SD 80.9 Hz on the Rainbow Passage, the pooled value 19.3 Hz.
+- **`formantPattern`** = `r_i = F_i / ((i − 0.5)·ΔF)`, kept as a vector. Measured over P&B:
+  r₁ travels 0.46 → 1.47 across vowels and 0.02–0.12 between the male and female norms for the
+  same vowel. Vowel identity is nearly all of the signal, speaker sex nearly none — the
+  inverse of what the scale carries, which is what makes a Phase-2 classifier built on it
+  speaker-independent.
+- **Double-counting removed.** `resonanceAbsolute` v2 takes ΔF_scale and nothing else, so every
+  formant reaches it through the regression and nowhere else.
+- **v1 unchanged and still displayed.** Its arithmetic moved into `resonanceScoreV1()` so the
+  benchmark scores through the same function users see; the eval-harness golden ranges and the
+  dsp-golden vectors pass untouched, and the fixture aggregates are identical to the pre-change
+  run (avgResonance 0.370 / 0.422 at the two operating points).
+- **Divergence instrumented.** `npm run report:resonance-divergence`.
 
 *Done when:* v2 reaches **d′ ≥ 1.5** on the P&B benchmark (from 0.85), across-vowel swing for a
 single speaker **< 25 points** (from 73), and the per-formant sensitivity table shows no formant
-entering twice.
+entering twice. **Measured** (`node tools/resonance-benchmark.mjs`, seven-vowel §1.1 set):
+
+| | d′ | across-vowel swing (M / F) | M→F shift |
+|---|---|---|---|
+| v1 | 0.858 | 73.4 / 84.0 pts | 26.8 pts |
+| **v2** | **1.734** | **14.5 / 12.7 pts** | 8.0 pts |
+
+Per-formant sensitivity, differentiated at the same operating point §1.4 used
+(F1/F2/F3 = 570/1710/2850 Hz, ΔF 1140; score points per kHz):
+
+| | v1 ∂ | share | via ΔF | **second path** | v2 ∂ | share |
+|---|---|---|---|---|---|---|
+| F1 | 0.558 | 30% | 0.141 | **0.417** | 0.052 | 23% |
+| F2 | 0.566 | 31% | 0.423 | **0.143** | 0.012 | 5% |
+| F3 | 0.705 | 39% | 0.705 | 0.000 | 0.168 | 72% |
+
+"Second path" is the sensitivity that survives freezing the ΔF route — nonzero means the
+formant enters the score twice. v2 is zero on every row, asserted numerically rather than by
+reading the source. With F4 present (3990 Hz) v2's shares are F1 15%, F2 4%, F3 48%, F4 34%.
+
+**Two things Phase 1 did not achieve, recorded rather than smoothed over.**
+
+1. On the **full ten-vowel** P&B set v2 reaches d′ 1.22, not 1.50 (v1: 0.76). One vowel is
+   responsible: /ɝ/, whose rhotic constriction drops male F3 to 1690 Hz. An upper-formant-
+   weighted tract-*length* estimate has no defence against that — a rhotic's F3 is not a
+   statement about tract length, and it reads as an apparent tract 24.9 cm long. Dropping /ɝ/
+   alone restores d′ to 1.84. The fix is Phase 2 (vowel conditioning) and Phase 3 (frame
+   validity gates), not a different weight vector; both are asserted in the benchmark test so
+   the limitation cannot be quietly forgotten. Note the residuals do **not** flag /ɝ/ —
+   F3 carries the scale, so the rhotic is absorbed into the scale rather than left in the shape.
+2. v2's male→female separation on the absolute axis is **8 points**, against v1's 27. That is
+   a deliberate consequence of an axis wide enough that a speaker's across-vowel excursion
+   occupies 14.5 points instead of 73, and it is not a loss of discriminability — d′ doubles.
+   Restoring display travel is `resonanceControl`'s job (Phase 4), not an absolute scale steep
+   enough to put /i/ and /u/ from one mouth at opposite ends.
 
 ### Phase 2 — Vowel conditioning
 

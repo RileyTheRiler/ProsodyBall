@@ -1,0 +1,19 @@
+{
+  "source": "Peterson, G. E., & Barney, H. L. (1952). Control methods used in a study of the vowels. Journal of the Acoustical Society of America, 24(2), 175-184. Table II: mean fundamental and formant frequencies.",
+  "units": "Hz",
+  "note": "Adult male (33 speakers) and adult female (28 speakers) MEAN formant frequencies. Children's means are omitted: the benchmark separates two adult populations, and a third population with a different tract length would change what d' is measuring. P&B published F1-F3 only, so F4 is absent throughout - which is exactly the F4-unavailable operating point Phase 1 must not regress on.",
+  "benchmarkVowelSet": ["i", "ɪ", "ɛ", "æ", "ɑ", "ʊ", "u"],
+  "benchmarkVowelSetRationale": "The seven vowels tabulated in RESONANCE_REDESIGN.md §1.1. This set reproduces the two figures the redesign's acceptance criteria are stated against - v1 d' = 0.85 and a 73-point across-vowel swing - so v2 is measured on the same ruler v1 was. The full ten-vowel set is asserted alongside it so the result cannot be an artefact of the subset.",
+  "vowels": {
+    "i":  { "keyword": "heed",   "male": { "f1": 270, "f2": 2290, "f3": 3010 }, "female": { "f1": 310, "f2": 2790, "f3": 3310 } },
+    "ɪ":  { "keyword": "hid",    "male": { "f1": 390, "f2": 1990, "f3": 2550 }, "female": { "f1": 430, "f2": 2480, "f3": 3070 } },
+    "ɛ":  { "keyword": "head",   "male": { "f1": 530, "f2": 1840, "f3": 2480 }, "female": { "f1": 610, "f2": 2330, "f3": 2990 } },
+    "æ":  { "keyword": "had",    "male": { "f1": 660, "f2": 1720, "f3": 2410 }, "female": { "f1": 860, "f2": 2050, "f3": 2850 } },
+    "ɑ":  { "keyword": "hod",    "male": { "f1": 730, "f2": 1090, "f3": 2440 }, "female": { "f1": 850, "f2": 1220, "f3": 2810 } },
+    "ɔ":  { "keyword": "hawed",  "male": { "f1": 570, "f2":  840, "f3": 2410 }, "female": { "f1": 590, "f2":  920, "f3": 2710 } },
+    "ʊ":  { "keyword": "hood",   "male": { "f1": 440, "f2": 1020, "f3": 2240 }, "female": { "f1": 470, "f2": 1160, "f3": 2680 } },
+    "u":  { "keyword": "who'd",  "male": { "f1": 300, "f2":  870, "f3": 2240 }, "female": { "f1": 370, "f2":  950, "f3": 2670 } },
+    "ʌ":  { "keyword": "hud",    "male": { "f1": 640, "f2": 1190, "f3": 2390 }, "female": { "f1": 760, "f2": 1400, "f3": 2780 } },
+    "ɝ":  { "keyword": "heard",  "male": { "f1": 490, "f2": 1350, "f3": 1690 }, "female": { "f1": 500, "f2": 1640, "f3": 1960 } }
+  }
+}

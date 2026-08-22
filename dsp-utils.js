@@ -1133,3 +1133,224 @@ export function computeGenderScoreMulti({
   const score = clamp01(0.5 + (blended - 0.5) * (1 - uncertainty) * DECISIVENESS);
   return { score, uncertainty };
 }
+
+// ============================================================================
+// RESONANCE CONSTRUCT REDESIGN — Phase 1 (docs/RESONANCE_REDESIGN.md §5)
+//
+// Phase 1 decomposes the single 0..1 resonance number into the two things it was
+// conflating: how large the tract is (FORMANT SCALE) and what shape it is currently
+// in (FORMANT PATTERN). Everything below is v2. Nothing here feeds the displayed
+// metric — `smoothResonance` (v1) is untouched and still drives the ball, HUD,
+// haptics, gender score, necklace and bulb. v2 is instrumented only.
+// ============================================================================
+
+// --- Per-formant weights for the scale regression (§3.2) --------------------
+//
+// v1 fits the uniform-tube series F_i = (2i-1)·ΔF/2 with *equal* leverage on F1..F3.
+// That is the configuration measured at d′ = 0.81 in §1.3: F1 and F2 define the vowel
+// (across-vowel CV 32% and 38% against a male→female shift of 16% and 19%), so giving
+// them equal say in a tract-*size* estimate asks them to do the opposite of their job.
+// F3 is the only one of the three that is more speaker-determined than vowel-determined
+// (CV 8%, shift 17%, ratio 2.12 — §1.2), and F3 alone reaches d′ = 1.67.
+//
+// The weights are not hand-picked toward that result. They are ordinary weighted
+// least squares: in the model F_i = x_i·ΔF + ε_i, the efficient weight is w_i = 1/σ_i²
+// where σ_i is the scatter of the observation around the model. Here that scatter *is*
+// the vowel-induced excursion of F_i, whose relative size §1.2 publishes as a CV. So
+//
+//     σ_i = CV_i · F̄_i,     w_i = 1 / σ_i²
+//
+// with F̄ the nominal adult formant centres. The x_i² factor in the normal equations
+// then supplies the leverage term, so formant i's effective say in ΔF is x_i²/σ_i².
+// No free parameters, and it generalises to F4 the moment F4 is available.
+//
+// F4 has no CV in §1.2 because no estimator produced one; it is assigned F3's 8%,
+// which is conservative (F4 is if anything more vowel-independent than F3) and lands
+// it at the same effective leverage as F3 rather than dominating on an assumption.
+export const FORMANT_SCALE_CV = [0.32, 0.38, 0.08, 0.08];      // §1.2 (F4: F3's, see above)
+export const FORMANT_SCALE_CENTRE_HZ = [500, 1500, 2500, 3500]; // nominal adult centres
+export const FORMANT_SCALE_WEIGHTS = FORMANT_SCALE_CV.map((cv, i) => {
+  const sigma = cv * FORMANT_SCALE_CENTRE_HZ[i];
+  return 1 / (sigma * sigma);
+});
+
+// Weighted zero-intercept fit of the uniform-tube series — the FORMANT SCALE stage.
+//
+// Same estimator as fitFormantDispersion (Reby & McComb; §1.5 confirms the method is
+// right) with the weight vector above:
+//
+//     ΔF = Σ(w_i · x_i · F_i) / Σ(w_i · x_i²),   x_i = (2i-1)/2
+//
+// ARRAY POSITION IS THE FORMANT NUMBER, exactly as in fitFormantDispersion: a 0/NaN
+// entry means "not measured this frame", not "the list is shorter". Passing
+// [F1, F2, F3, 0] is the F4-unavailable fallback and is a supported operating point,
+// not a degraded one — §5 gates F4 on measured availability.
+//
+// `leverage` reports each formant's share of ∂ΔF/∂F_i, which is what the per-formant
+// sensitivity table in §1.4 is differentiating. It is returned rather than recomputed
+// so the test asserts against the fit's own arithmetic.
+export function fitFormantScale(formants, {
+  weights = FORMANT_SCALE_WEIGHTS,
+  residualToleranceHz = 350,
+} = {}) {
+  const empty = { deltaF: 0, n: 0, residualHz: 0, fitQuality: 0, leverage: [] };
+  if (!Array.isArray(formants)) return empty;
+  let sxy = 0, sxx = 0, n = 0;
+  for (let i = 0; i < formants.length; i++) {
+    const f = formants[i];
+    if (!(f > 0)) continue;
+    const w = weights[i];
+    if (!(w > 0)) continue;
+    const x = (2 * (i + 1) - 1) / 2;
+    sxy += w * x * f;
+    sxx += w * x * x;
+    n++;
+  }
+  // Same floor as the unweighted fit: one formant cannot separate tract length from
+  // vowel identity. With this weight vector a lone F1 would in any case carry almost
+  // no leverage, so admitting it would be worse than admitting nothing.
+  if (n < 2 || sxx <= 0) return empty;
+  const deltaF = sxy / sxx;
+  const leverage = [];
+  let sq = 0, wsum = 0;
+  for (let i = 0; i < formants.length; i++) {
+    const f = formants[i];
+    const w = weights[i];
+    const x = (2 * (i + 1) - 1) / 2;
+    leverage[i] = (f > 0 && w > 0) ? (w * x) / sxx : 0;
+    if (!(f > 0) || !(w > 0)) continue;
+    const d = f - x * deltaF;
+    // Residual weighted the same way the fit is, so a large but expected F1/F2
+    // excursion does not read as a bad fit while a small F3 excursion reads as a good one.
+    sq += w * d * d;
+    wsum += w;
+  }
+  const residualHz = Math.sqrt(sq / wsum);
+  const fitQuality = clamp01(1 - residualHz / Math.max(1e-6, residualToleranceHz));
+  return { deltaF, n, residualHz, fitQuality, leverage };
+}
+
+// --- FORMANT PATTERN: scale-normalised residuals (§4, §5) -------------------
+//
+//     r_i = F_i / ((i − 0.5)·ΔF)
+//
+// Each r_i says how far formant i sits from where a uniform tube of the speaker's own
+// measured scale would put it. Dividing by that speaker's own ΔF is what makes the
+// vector speaker-independent by construction: it is the tract *shape*, with tract
+// *size* divided out. Phase 2 classifies the vowel from this vector, which is why it
+// is returned as a vector and must not be collapsed into a scalar — a scalar summary
+// would throw away exactly the dimension the vowel lives in.
+//
+// Measured on Peterson & Barney means with the weighted fit above, r₁ travels
+// 0.46 (/i/) → 1.47 (/ɑ/) across vowels while moving 0.02–0.12 between the male and
+// female norms for the same vowel. Vowel identity is nearly all of the signal here,
+// and speaker sex nearly none — the exact inverse of what the scale carries.
+//
+// Missing formants come back as null, not 0: "not measured" and "sits at zero" are
+// different statements, and Phase 2 must not classify from a fabricated residual.
+export function formantPatternResiduals(formants, deltaF) {
+  if (!Array.isArray(formants) || !(deltaF > 0)) return [];
+  return formants.map((f, i) => {
+    if (!(f > 0)) return null;
+    const x = (2 * (i + 1) - 1) / 2;
+    return f / (x * deltaF);
+  });
+}
+
+// --- resonanceAbsolute v2 ---------------------------------------------------
+//
+// One path. ΔF_scale is the ONLY input, so every formant reaches the score through the
+// weighted regression and nowhere else. v1's `vtlScore*0.55 + f1Score*0.25 + f2Score*0.20`
+// routes F1 and F2 in twice — once inside vtlScore's ΔF fit, once as their own terms —
+// which is why differentiating it gives 30/31/39 rather than the published 55/25/20 (§1.4).
+// Adding an F1 or F2 term back on top of ΔF_scale would reintroduce exactly that; the shape
+// information those formants carry is `formantPattern`, which is a separate output.
+//
+// THE SCALE. The score is the speaker's apparent formant dispersion as a fraction of twice
+// the adult population's:
+//
+//     score = ΔF_scale / (2 · ΔF_ref)
+//
+// so 0.5 is an apparent vocal tract the length of the adult population mean, 1.0 is one half
+// that length, and 0 is one unboundedly long. There is one constant and it is a published
+// population location, not a tuning knob.
+//
+// This is a deliberately much shallower axis than v1's, for two reasons:
+//
+//   1. It cannot clamp on any human voice. v1's 17 cm → 14 cm anchors put *five of the seven*
+//      Peterson & Barney adult-male vowels on a rail (/i/ at 1, /æ ɑ ʊ u/ at 0). A rail is
+//      not a measurement — it discards the difference between /ɑ/ and /u/ entirely.
+//   2. A frame is one vowel and one vowel is not a speaker. v1 spends its whole display over
+//      a 21% band of ΔF (~5 score points per 1% of ΔF error, per DSP_CONTRACT), which is why
+//      changing vowel moves the meter 73 points. Here a single speaker's whole across-vowel
+//      excursion — 313 Hz of ΔF, measured on P&B — occupies 14.5 points.
+//
+// The consequence is that the male→female separation on this axis is ~8 points rather than
+// v1's 27, and real adults sit in a band around the middle. That is the right shape for an
+// *absolute* population axis: discriminability is what d′ measures (1.73 here against v1's
+// 0.86), and it is unchanged by how the axis is scaled. Restoring full display travel is
+// `resonanceControl`'s job — personal normalisation, Phase 4 — not an absolute scale steep
+// enough to put /i/ and /u/ from one mouth at opposite ends.
+//
+// ΔF_ref is the Peterson & Barney adult grand-mean upper-formant-weighted dispersion, pooled
+// over both sexes and the seven §1.1 benchmark vowels: 1078 Hz (≈16.2 cm apparent tract).
+// resonance-dprime.test.mjs recomputes it from the committed fixture so it cannot drift away
+// from the norms it claims to come from.
+export const RESONANCE_V2_REFERENCE_DELTA_F_HZ = 1078;
+
+export function resonanceAbsoluteV2(deltaFScaleHz, referenceDeltaFHz = RESONANCE_V2_REFERENCE_DELTA_F_HZ) {
+  if (!(deltaFScaleHz > 0)) return 0;
+  return clamp01(deltaFScaleHz / (2 * referenceDeltaFHz));
+}
+
+// --- Rolling-window pooling of the scale (§5: "pooled over a rolling window") -
+//
+// The scale is a property of the speaker, not of the frame. Estimating it per frame and
+// then comparing frames is the §1.1 error in miniature — each frame is one vowel, and one
+// vowel's apparent tract length is not the speaker's. Pooling over a window that spans
+// several vowels averages the shape excursion out while leaving the size intact.
+//
+// The pool takes the weighted MEDIAN, not the mean: a single formant-tracking failure
+// (an F3 that locked onto F4, a spurious low-bandwidth pole) produces an outlier ΔF that
+// a mean would carry into the pooled value in proportion to its size. Weights are the
+// caller's per-frame confidence, so unreliable frames dilute rather than vote.
+//
+// Returns 0 when the window holds too little to pool — an explicit "no scale yet",
+// which callers must not read as "a very short tract".
+export function poolFormantScale(entries, { minSamples = 8 } = {}) {
+  if (!Array.isArray(entries)) return { deltaF: 0, n: 0, weight: 0 };
+  const usable = entries.filter((e) => e && e.deltaF > 0 && e.weight > 0);
+  if (usable.length < minSamples) return { deltaF: 0, n: usable.length, weight: 0 };
+  const sorted = usable.slice().sort((a, b) => a.deltaF - b.deltaF);
+  const total = sorted.reduce((s, e) => s + e.weight, 0);
+  let acc = 0;
+  for (const e of sorted) {
+    acc += e.weight;
+    if (acc >= total / 2) return { deltaF: e.deltaF, n: sorted.length, weight: total };
+  }
+  const last = sorted[sorted.length - 1];
+  return { deltaF: last.deltaF, n: sorted.length, weight: total };
+}
+
+// --- resonanceAbsolute v1, as a pure function ------------------------------
+//
+// The population-anchor branch of `VoiceAnalyzer.update`'s resonance stage, lifted out
+// verbatim so the benchmark can score Peterson & Barney means through the *actual*
+// displayed function rather than a copy of it that could drift away from the real one.
+// app.js calls this; the arithmetic, the clamp order and the 0.55/0.25/0.20 weights are
+// unchanged, and the golden vectors and eval-harness ranges are the proof.
+//
+// It is left exactly as it is because v1 stays the displayed metric through Phase 1.
+// Its two known defects are measured, not fixed here:
+//   - F1 and F2 enter twice, once inside `deltaFHz`'s fit and once as their own terms,
+//     so the real sensitivity split is 30/31/39 rather than 55/25/20 (§1.4).
+//   - The 17 cm → 14 cm anchors clamp five of the seven P&B adult-male vowels to a rail
+//     and swing 73 points across the vowel set (§1.1).
+// Both are what v2 above exists to answer.
+export function resonanceScoreV1({ deltaFHz = 0, f1 = 0, f2 = 0, vowelLike = false } = {}) {
+  const aVtlCm = deltaFHz > 0 ? 35000 / (2 * deltaFHz) : 0;
+  const vtlScore = aVtlCm > 0 ? clamp01((17 - aVtlCm) / 3) : 0;
+  const f1Score = Math.max(0, Math.min(1, (f1 - 300) / 600));
+  const f2Score = vowelLike ? clamp01((f2 - 1000) / 1400) : vtlScore;
+  return { score: vtlScore * 0.55 + f1Score * 0.25 + f2Score * 0.20, vtlScore, f1Score, f2Score, aVtlCm };
+}
