@@ -157,6 +157,7 @@ test('validity: measured ΔF tracks the synthesized vocal-tract length', async (
 // Resonance the score SHOULD report for BASE_FORMANTS, computed by hand from the published
 // weighting rather than from the code, so this is an external check and not a tautology:
 //   ΔF = 1140 Hz -> aVTL = 35000/(2*1140) = 15.35 cm -> vtlScore = (17-15.35)/3 = 0.550
+//   (the 17 cm -> 14 cm anchors are longer/darker -> shorter/brighter, not male -> female)
 //   f1Score = (570-300)/600 = 0.450 ; f2Score = (1710-1000)/1400 = 0.507
 //   0.550*0.55 + 0.450*0.25 + 0.507*0.20 = 0.516
 const EXPECTED_RESONANCE = 0.516;
@@ -250,10 +251,24 @@ test('reliability: a held vowel reads as a steady score, not a jittering one', a
     `held vowel wobbles by ${(r.resonanceSd * 100).toFixed(1)} points sd — that is noise, not voice`);
 });
 
-test('validity: F0 changes do not move the resonance score', async () => {
-  // Resonance is a filter property. The app's own rationale for weighting it above pitch in the
-  // gender score is that it is the cue pitch cannot fake — which only holds if the resonance
-  // number is actually independent of F0. Same tract, three pitches.
+test('validity: F0 changes do not move the resonance score on synthetic vowels', async () => {
+  // What this test establishes, precisely: the resonance score is *designed* to measure the
+  // filter independently of the source, and under controlled F0 manipulation on synthetic
+  // vowels — same tract, same vowel, three pitches — it is close to invariant. That is the
+  // claim, and it is worth pinning: a score that tracked F0 would be reporting pitch twice.
+  //
+  // What it does NOT establish is F0-independence in real speech. LPC formant estimation has
+  // a known F0-dependent error: with sparse harmonic sampling the poles are attracted toward
+  // individual harmonics rather than the underlying resonance ("harmonic attraction"), and the
+  // error grows as F0 rises and the harmonics thin out — worst exactly in the 180–250 Hz band
+  // transfeminine users are training into. These signals are also idealised: a Klatt cascade
+  // with clean, well-separated formants, no breathiness, no nasality, no room. The bound below
+  // (0.20 of the 0–1 scale) is a *loose* one; it is not evidence of a tight guarantee.
+  //
+  // So: designed to be independent of F0, synthetically shown invariant under controlled F0
+  // manipulation, and known to carry F0-dependent estimator error on real voices. F0 belongs in
+  // the confidence model rather than being claimed away — that is Phase 3 of
+  // docs/RESONANCE_REDESIGN.md. The assertion is unchanged; only what it is said to prove is.
   const formants = BASE_FORMANTS;
   const low = await analyze(synthVowel({ f0: 110, formants }));
   const midF0 = await analyze(synthVowel({ f0: 165, formants }));
@@ -261,5 +276,5 @@ test('validity: F0 changes do not move the resonance score', async () => {
   const scores = [low.resonance, midF0.resonance, high.resonance];
   const spread = Math.max(...scores) - Math.min(...scores);
   assert.ok(spread < 0.20,
-    `doubling F0 moved resonance by ${spread.toFixed(3)} (110Hz=${low.resonance.toFixed(3)} 165Hz=${midF0.resonance.toFixed(3)} 220Hz=${high.resonance.toFixed(3)}) — the score is tracking pitch, not the tract`);
+    `doubling F0 moved resonance by ${spread.toFixed(3)} (110Hz=${low.resonance.toFixed(3)} 165Hz=${midF0.resonance.toFixed(3)} 220Hz=${high.resonance.toFixed(3)}) — on synthetic vowels with a fixed tract, the score is tracking pitch`);
 });

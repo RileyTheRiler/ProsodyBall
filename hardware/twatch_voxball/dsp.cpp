@@ -300,7 +300,7 @@ static float dispersionToFemininity(float meanSpacingHz) {
 // most vowel-dependent quantities in the spectrum (~2200 Hz on /i/, ~700 Hz on /u/), so on any
 // frame where F3 went missing the necklace's "vocal-tract length" was really reporting which
 // vowel was being spoken — and it drives the haptics the user is training against. It also
-// came out roughly double the true spacing, pushing resonance toward the feminine rail.
+// came out roughly double the true spacing, pushing resonance toward the bright rail.
 // DSP_CONTRACT D1 requires this to match the web definition, which is now the same fit.
 float voxFitFormantDispersion(float f1, float f2, float f3) {
   const float freqs[3] = { f1, f2, f3 };
@@ -326,7 +326,10 @@ static float computeGenderScore(float pitchHz, float resonance, float pitchConf,
   float resNorm = clamp01f(resonance);
   float pc = clamp01f(pitchConf), fc = clamp01f(formantConf);
   float wPitch = 0.5f * (0.35f + 0.65f * pc);
-  float wRes   = 0.5f * (0.35f + 0.65f * fc) * 1.1f; // resonance gets a slight edge
+  // Resonance carries a slight intrinsic edge (x1.1). PROVISIONAL, and matched to the web
+  // constant in dsp-utils.js: it is a product choice, not an evidence-derived weighting —
+  // F0 is the strongest single predictor of perceived gender in the literature.
+  float wRes   = 0.5f * (0.35f + 0.65f * fc) * 1.1f;
   float totalW = wPitch + wRes;
   float blended = totalW > 1e-6f ? (pitchNorm * wPitch + resNorm * wRes) / totalW : 0.5f;
   float overallConf = fmaxf(pc, fc);

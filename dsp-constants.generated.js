@@ -19,9 +19,9 @@ export const NOISE_PROFILE_UPDATE_RATE = 0.08;
 export const STEADY_PITCH_ST = 1.5;
 // Combined frame-to-frame |dF1|/F1 + |dF2|/F2 at which the steady-state weight's formant term hits 0 (coarticulatory transition).
 export const STEADY_FORMANT_REL_DELTA = 0.25;
-// Lower bound of the steady-state weight so transition frames still nudge the live resonance estimate (down-weighted, not discarded).
+// Lower bound of the steady-state weight so transition frames still nudge the live resonance/brightness estimate (down-weighted, not discarded).
 export const STEADY_WEIGHT_FLOOR = 0.3;
-// Confidence at/above which the resonance estimate updates (D4).
+// Confidence at/above which the resonance/brightness estimate updates (D4).
 export const UPDATE_CONF_GATE = 0.4;
 // Confidence at/above which directional feedback (haptic/UI) fires (D4); stricter than UPDATE_CONF_GATE.
 export const ALERT_CONF_GATE = 0.45;

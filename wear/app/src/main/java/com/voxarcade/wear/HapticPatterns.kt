@@ -19,8 +19,8 @@ object HapticPatterns {
     // Practice (private) patterns — distinguishable by rhythm/texture.
     private val pitchBelow = longArrayOf(30, 40, 30, 40, 80)        // rising: raise pitch
     private val pitchAbove = longArrayOf(80, 40, 30, 40, 30)        // falling: lower pitch
-    private val resonanceBelow = longArrayOf(20, 30, 20, 30, 20, 30, 20) // flutter: brighten
-    private val resonanceAbove = longArrayOf(120)                  // sustain: darken
+    private val brightnessBelow = longArrayOf(20, 30, 20, 30, 20, 30, 20) // flutter: brighten
+    private val brightnessAbove = longArrayOf(120)                  // sustain: darken
     private val generic = longArrayOf(50, 50, 50)
     private val discreetTap = longArrayOf(35)                      // single short tap (public)
 
@@ -30,8 +30,8 @@ object HapticPatterns {
         return when ("${metric}_$direction") {
             "pitch_below" -> pitchBelow
             "pitch_above" -> pitchAbove
-            "resonance_below" -> resonanceBelow
-            "resonance_above" -> resonanceAbove
+            "brightness_below" -> brightnessBelow
+            "brightness_above" -> brightnessAbove
             else -> generic
         }.copyOf()
     }

@@ -14,9 +14,12 @@ import kotlin.math.sqrt
  *
  * Reads PCM frames from [AudioRecord] on a background thread and publishes, as
  * [StateFlow]s the UI observes: input level, YIN [pitchHz]/[pitchConfidence]
- * (milestone 2), and FFT [resonance]/[resonanceConfidence] with [f1Hz]/[f2Hz]
- * (milestone 4). All DSP runs on the same capture frame, so pitch and resonance
+ * (milestone 2), and FFT [spectralBrightness]/[spectralBrightnessConfidence] with [f1Hz]/[f2Hz]
+ * (milestone 4). All DSP runs on the same capture frame, so pitch and brightness
  * stay frame-aligned.
+ *
+ * [spectralBrightness] is brightness-primary and is NOT the app's resonance metric — see
+ * [SpectralBrightnessEstimator] for what that means and what must not be done with it.
  */
 class MicEngine {
 
@@ -33,13 +36,14 @@ class MicEngine {
     private val _pitchConfidence = MutableStateFlow(0f)
     val pitchConfidence: StateFlow<Float> = _pitchConfidence
 
-    /** Resonance / brightness 0..1 (0.5 neutral at rest). */
-    private val _resonance = MutableStateFlow(0.5f)
-    val resonance: StateFlow<Float> = _resonance
+    /** Spectral brightness 0..1 (0.5 neutral at rest). Not `resonanceScore`; not comparable
+     *  with the web/firmware value of that name, and not for shared session statistics. */
+    private val _spectralBrightness = MutableStateFlow(0.5f)
+    val spectralBrightness: StateFlow<Float> = _spectralBrightness
 
-    /** Resonance confidence 0..1 (high-band SNR + a found formant). */
-    private val _resonanceConfidence = MutableStateFlow(0f)
-    val resonanceConfidence: StateFlow<Float> = _resonanceConfidence
+    /** Brightness confidence 0..1 (high-band SNR + a found formant). */
+    private val _spectralBrightnessConfidence = MutableStateFlow(0f)
+    val spectralBrightnessConfidence: StateFlow<Float> = _spectralBrightnessConfidence
 
     /** Latest formant estimates in Hz for the readout (0 when not found). */
     private val _f1Hz = MutableStateFlow(0f)
@@ -64,7 +68,7 @@ class MicEngine {
     val calibratedFloor: StateFlow<Float> = _calibratedFloor
 
     private val pitch = PitchDetector(sampleRate)
-    private val resonanceEstimator = ResonanceEstimator(sampleRate)
+    private val brightnessEstimator = SpectralBrightnessEstimator(sampleRate)
 
     @Volatile private var running = false
     private var thread: Thread? = null
@@ -79,8 +83,8 @@ class MicEngine {
 
     val isRunning: Boolean get() = running
 
-    /** Switch the resonance measurement method (safe to call while running). */
-    fun setResonanceMethod(m: ResonanceMethod) { resonanceEstimator.method = m }
+    /** Switch the brightness measurement method (safe to call while running). */
+    fun setBrightnessMethod(m: BrightnessMethod) { brightnessEstimator.method = m }
 
     /** Apply a persisted/restored noise floor without re-emitting a calibration result. */
     fun setNoiseFloor(v: Float) { noiseFloor = v.coerceIn(0f, 0.2f) }
@@ -136,7 +140,7 @@ class MicEngine {
             val frame = FloatArray(PITCH_FRAME)
             var smoothed = 0f
             pitch.reset()
-            resonanceEstimator.reset()
+            brightnessEstimator.reset()
             snrDbSmoothed = DspConstants.SNR_GREEN_DB.toFloat()
             recorder.startRecording()
             try {
@@ -199,13 +203,13 @@ class MicEngine {
                             _pitchHz.value = hz
                             _pitchConfidence.value = if (gated) 0f else pitch.confidence
 
-                            // Resonance reuses the same frame; only updates on a
+                            // Brightness reuses the same frame; only updates on a
                             // confidently-voiced frame, otherwise coasts + decays.
                             val voiced = hz > 0f && pitch.confidence > 0.4f
-                            _resonance.value = resonanceEstimator.detect(frame, frameRms, voiced)
-                            _resonanceConfidence.value = resonanceEstimator.confidence
-                            _f1Hz.value = resonanceEstimator.f1Hz
-                            _f2Hz.value = resonanceEstimator.f2Hz
+                            _spectralBrightness.value = brightnessEstimator.detect(frame, frameRms, voiced)
+                            _spectralBrightnessConfidence.value = brightnessEstimator.confidence
+                            _f1Hz.value = brightnessEstimator.f1Hz
+                            _f2Hz.value = brightnessEstimator.f2Hz
                         }
                     }
                 }
@@ -229,8 +233,8 @@ class MicEngine {
         _level.value = 0f
         _pitchHz.value = 0f
         _pitchConfidence.value = 0f
-        _resonance.value = 0.5f
-        _resonanceConfidence.value = 0f
+        _spectralBrightness.value = 0.5f
+        _spectralBrightnessConfidence.value = 0f
         _f1Hz.value = 0f
         _f2Hz.value = 0f
         _snrDb.value = DspConstants.SNR_GREEN_DB.toFloat()

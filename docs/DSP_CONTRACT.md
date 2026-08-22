@@ -26,13 +26,16 @@ The three ports already diverge in two different ways, and they need different f
    that rot on any edit.
 2. **Semantic drift** (the *same field computed by a different formula*). **Codegen of
    constants does not catch this.** Only golden-value cross-port tests do. Today:
-   - Resonance: web (`app.js:1089`) and C++ are VTL/dispersion-primary; Kotlin
-     (`ResonanceEstimator.kt:142`) is brightness-primary — a different formula.
+   - Resonance: web (`app.js:1089`) and C++ are VTL/dispersion-primary; the Kotlin value
+     (`SpectralBrightnessEstimator.kt`) is brightness-primary — a different formula, and
+     since Phase 0 it is named `spectralBrightness` rather than resonance so the divergence
+     is visible in the code instead of hidden behind a shared word.
    - Formants: web uses downsampled LPC (`app.js:1535`), Kotlin uses full-band LPC
-     (`ResonanceEstimator.kt`, 16 kHz, no downsample), C++ uses harmonic-envelope
+     (`SpectralBrightnessEstimator.kt`, 16 kHz, no downsample), C++ uses harmonic-envelope
      peak-picking (no LPC at all).
    - Tilt: web is A-weighted + mic-baseline-subtracted over pitch-adaptive bands
-     (`app.js:886-907`); Kotlin is a plain high/low band ratio (`ResonanceEstimator.kt:107`).
+     (`app.js:886-907`); Kotlin is a plain high/low band ratio
+     (`SpectralBrightnessEstimator.kt`).
 
 A flat "canonical packet with `resonanceScore` in it" cannot resolve #2, because the
 score is *meant* to differ on the watch. The fix is two layers.
@@ -82,7 +85,7 @@ not across platforms.
 
 | field | web | Wear OS | hardware |
 |---|---|---|---|
-| `resonanceScore` | VTL/dispersion-primary | VTL/dispersion (unified per **D1**); brightness = optional display only | VTL/dispersion-primary |
+| `resonanceScore` | VTL/dispersion-primary | **not produced** — the native watch engine publishes `spectralBrightness` instead (see below) | VTL/dispersion-primary |
 | `mode` | private / public | `DISCREET` / `PRACTICE` (`HapticMode`) | (single mode) |
 | output channel | ball hue + opacity, Hue bulb | haptic pattern + intensity | vibration motor + LED |
 | norm ranges (Hz→0..1) | UX-tuned | UX-tuned | UX-tuned |
@@ -98,8 +101,25 @@ not across platforms.
   their initialisation defaults.
 - **C++** (`hardware/*/dsp.h`, `VoxResult.resonance`): same uniform-tube ΔF fit
   (`voxFitFormantDispersion`), golden-tested against the web vectors.
-- **Kotlin** (`ResonanceEstimator.kt:142`): `0.65*formantScore + 0.35*brightness`,
-  `brightness = 0.55*tilt + 0.45*centroidScore` — still the pre-D1 brightness-primary formula.
+- **Kotlin** (`SpectralBrightnessEstimator.kt`): `0.65*formantScore + 0.35*brightness`,
+  `brightness = 0.55*tilt + 0.45*centroidScore` — the pre-D1 brightness-primary formula.
+  **It is no longer called resonance.** The value, its flows, its readout, its alert band
+  and its haptic vocabulary were all renamed to `spectralBrightness` / `brightness_*`,
+  because that is what the formula measures: no ΔF is fitted anywhere on this port. The
+  arithmetic is untouched — same inputs, same numbers — so this is a labelling change, not a
+  metric change. Two rules follow from it:
+  1. Nothing on the watch's native path may be labelled "resonance" while this formula
+     stands.
+  2. `spectralBrightness` must **not** be pooled with web/firmware `resonanceScore` in
+     shared or cross-device session statistics. A session begun on the watch and continued
+     on the phone would otherwise average two different measurements and present the
+     instrumentation change as a change in the user's voice. No such sharing exists today;
+     the constraint is recorded so none is added by accident.
+  Adopting D1 here (making the watch actually compute resonance) is Phase 6 of
+  `RESONANCE_REDESIGN.md` and still needs the Android toolchain. The persisted DataStore
+  keys (`res_low`, `res_high`, `res_display`, `res_method`) deliberately keep their old
+  names: they are a storage contract, and renaming them would reset every existing user's
+  settings for no gain.
 
 ## Decisions (resolved 2026-06-22)
 
@@ -109,15 +129,21 @@ practicing discreetly in public), and the per-platform hardware. Open to overrid
 these are the working calls.
 
 **D1 — Resonance meaning: UNIFY on VTL/dispersion. (was: unify or diverge?)**
-The brightness-vs-VTL split is **drift, not design**: `ResonanceEstimator.kt`'s own
-docstring calls it "a compact Kotlin port of the canonical web DSP's resonance stage,"
-and `MicEngine.kt:12` is the "no-WebView" native re-port — it was *trying* to mirror web's
-VTL stage and diverged. Three product reasons to unify on VTL/dispersion:
-1. It's the metric the app is actually teaching. The code itself treats resonance
-   (formants/VTL) as "the harder-to-fake gender cue" and weights it above pitch in the
-   gender score. VTL is the physical correlate of the vocal-tract change feminization/
-   masculinization training targets; centroid-brightness is a downstream proxy more
-   confounded by mic, loudness (Lombard), and noise.
+The brightness-vs-VTL split is **drift, not design**: the Kotlin estimator's own docstring
+used to call it "a compact Kotlin port of the canonical web DSP's resonance stage," and
+`MicEngine.kt` is the "no-WebView" native re-port — it was *trying* to mirror web's VTL
+stage and diverged. (Phase 0 renamed that file to `SpectralBrightnessEstimator.kt` and
+corrected the docstring; the divergence D1 resolves is unchanged.) Three product reasons to unify on VTL/dispersion:
+1. It's the metric the app is actually teaching. VTL is the physical correlate of the
+   vocal-tract change feminization/masculinization training targets; centroid-brightness is
+   a downstream proxy more confounded by mic, loudness (Lombard), and noise.
+   *(Amended: this bullet originally justified the choice by saying the code treats
+   resonance as "the harder-to-fake gender cue" and weights it above pitch. Both halves are
+   unsupported — nothing in the app measures effort or fakery, and F0 is the strongest
+   single predictor of perceived gender in the literature, so weighting a formant cue above
+   it is not an argument for anything. The remaining reason — VTL is the trained physical
+   change, brightness is a confounded proxy — stands on its own. Weights are provisional;
+   see `RESONANCE_REDESIGN.md` §2.11 and §3.3.)*
 2. Cross-surface consistency is load-bearing *for this product*. A user learns a target
    on desktop (ball + bulb) then practices on the watch/necklace. If "resonance 50%" means
    VTL on desktop but brightness on the watch, the haptics fire at a different vocal target
@@ -188,8 +214,8 @@ on a dropout, and carries ~4.4× less variance against per-formant error (measur
 error ±1.38 cm → ±0.68 cm at σ=120 Hz per formant).
 
 Still to do: the Kotlin leg (needs the Android toolchain, and D1's VTL unification has not
-landed there yet — `ResonanceEstimator.kt` is still brightness-primary), the remaining C++
-fields beyond ΔF, and per-field tolerance tiers.
+landed there yet — `SpectralBrightnessEstimator.kt` is still brightness-primary), the
+remaining C++ fields beyond ΔF, and per-field tolerance tiers.
 
 ### Frame-rate fidelity
 
@@ -283,6 +309,18 @@ Second, the UI offers all four from one dropdown as if they were interchangeable
 four estimators' confidences are calibrated onto one scale (`formantEstimateConfidence`) so
 switching estimator no longer silently changes how much the app trusts itself.
 
+## Resonance construct redesign
+
+The measurement *method* documented above (adaptive-ceiling LPC → uniform-tube ΔF fit) is
+sound and matches the published recommendation. The *construct* — collapsing one frame's
+F1–F3 into a single 0–1 number — is not: measured against Peterson & Barney norms with
+ground-truth formants, vowel identity moves the score ~3x more than speaker sex does, and the
+nominal 55/25/20 weighting double-counts F1 and F2. See
+[`RESONANCE_REDESIGN.md`](./RESONANCE_REDESIGN.md) for the evidence, the target architecture
+(tract scale + tract shape, kept separate), and the phased plan. That document supersedes this
+one on what `resonanceScore` should mean; this one remains the cross-port contract for how it
+is computed and kept in step.
+
 ## Known drift to clean up (tracked here, not fixed yet)
 
 - `docs/ANALYZER_API.md` references `voice-analyzer-core.js` (does not exist);
@@ -294,10 +332,12 @@ switching estimator no longer silently changes how much the app trusts itself.
   constructor default of off.
 - Centroid normalization ranges differ (Kotlin 700–2200 vs C++ 400–2200) — fine as
   presentation, but should be explicit in the spec.
-- **Kotlin has not adopted D1.** `ResonanceEstimator.kt` is still brightness-primary while web
-  and C++ are both on the uniform-tube ΔF fit, so "resonance 50%" still means a different vocal
-  target on the watch than on the ball a user learned it from. This is the highest-value
-  remaining port item; it needs the Android toolchain to verify.
+- **Kotlin has not adopted D1.** `SpectralBrightnessEstimator.kt` is still brightness-primary
+  while web and C++ are both on the uniform-tube ΔF fit, so the watch's 50% is a different
+  vocal target from the ball's 50%. The value is now *named* for what it measures rather than
+  for what the app wishes it measured, which removes the silent miscoaching but not the
+  divergence. Unifying the measurement is the highest-value remaining port item; it needs the
+  Android toolchain to verify.
 - **`harmonic` carries a −11.9 point bias** (see the accuracy table above) and the UI offers it
   in the same dropdown as `lpc`, which is accurate to −0.3 points. Either the dropdown should
   say so or `harmonic` should stop being offered as a peer. It is not reachable from `auto`.
@@ -309,6 +349,8 @@ switching estimator no longer silently changes how much the app trusts itself.
   span) without recording which scale a stored reading was taken on, so session summaries can
   average across two different scales.
 - **`vtlScore` is a high-gain mapping**: full 0–1 travel over ΔF ∈ [1029, 1250] Hz, ~5 score
-  points per 1% of ΔF error. That is a deliberate consequence of the 17 cm → 14 cm
-  physiological anchors, but it means pre-calibration readings carry a wide confidence interval
-  that the meter does not currently draw.
+  points per 1% of ΔF error. That is a deliberate consequence of the 17 cm → 14 cm apparent
+  tract-length anchors (**longer/darker → shorter/brighter**, not male → female: F0 and
+  formants overlap substantially between gender groups, and ASHA is explicit that there is no
+  single acoustic definition of voice feminization), but it means pre-calibration readings
+  carry a wide confidence interval that the meter does not currently draw.

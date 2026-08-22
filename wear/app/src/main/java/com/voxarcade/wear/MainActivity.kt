@@ -55,21 +55,21 @@ private val ACCENT = Color(0xFF34D6C8)
 /** Amber used to flag an out-of-range pitch alert. */
 private val ALERT = Color(0xFFFFA03C)
 
-/** Resonance zone colors — fixed thirds of the 0..100% scale, independent of the
+/** Brightness zone colors — fixed thirds of the 0..100% scale, independent of the
  *  user's configurable alert band, so the readout always shows where you actually
- *  are (forward/bright, neutral/mid, or backed-off/dark resonance). */
-private val RES_BRIGHT = Color(0xFF34D6C8)
-private val RES_MID = Color(0xFFE0B84A)
-private val RES_DARK = Color(0xFF7C8CFF)
+ *  are (forward/bright, neutral/mid, or backed-off/dark). */
+private val ZONE_BRIGHT = Color(0xFF34D6C8)
+private val ZONE_MID = Color(0xFFE0B84A)
+private val ZONE_DARK = Color(0xFF7C8CFF)
 
 /** The three top-level views the watch face can show. */
 private enum class ViewTab { VOICE, NECKLACE, SCREEN }
 
-/** Resonance alert-band presets as (low%, high%) — each targets one third of the
+/** Brightness alert-band presets as (low%, high%) — each targets one third of the
  *  0..100 brightness scale. Tapping one sets the band; the user can still fine-tune. */
-private val RES_PRESET_DARK = 10 to 35
-private val RES_PRESET_MID = 38 to 62
-private val RES_PRESET_BRIGHT = 65 to 90
+private val BRIGHT_PRESET_DARK = 10 to 35
+private val BRIGHT_PRESET_MID = 38 to 62
+private val BRIGHT_PRESET_BRIGHT = 65 to 90
 
 /** Single-activity entry point; hosts the whole UI in one [VoxApp] composable. */
 class MainActivity : ComponentActivity() {
@@ -82,7 +82,7 @@ class MainActivity : ComponentActivity() {
 
 /**
  * Root composable: owns the [MicEngine] lifecycle and RECORD_AUDIO permission,
- * collects the live pitch/resonance flows, persists necklace settings, and renders
+ * collects the live pitch/brightness flows, persists necklace settings, and renders
  * the meter plus [NecklaceControls]. Stops the engine on teardown.
  */
 @Composable
@@ -108,17 +108,19 @@ private fun VoxApp() {
     val intensity = settings.intensity
     val lowHz = settings.lowHz
     val highHz = settings.highHz
-    // Resonance band in % brightness (0 = dark, 100 = bright/forward).
-    val resLow = settings.resLow
-    val resHigh = settings.resHigh
+    // Alert band in % spectral brightness (0 = dark, 100 = bright/forward). This is the
+    // watch's own brightness-primary metric, NOT the resonance score the ball teaches — a
+    // band learned there does not transfer here. See SpectralBrightnessEstimator.
+    val brightLow = settings.brightLow
+    val brightHigh = settings.brightHigh
     // Readout representation (milestone 6).
     val pitchDisplay = settings.pitchDisplay
-    val resDisplay = settings.resDisplay
+    val brightnessDisplay = settings.brightnessDisplay
     val pitchRefHz = if (lowHz > 0 && highHz > 0)
         kotlin.math.sqrt((lowHz.toFloat() * highHz.toFloat())) else 0f
-    // Resonance measurement method (milestone 7) — pushed to the engine when it changes.
-    val resonanceMethod = settings.resonanceMethod
-    LaunchedEffect(resonanceMethod) { engine.setResonanceMethod(resonanceMethod) }
+    // Brightness measurement method (milestone 7) — pushed to the engine when it changes.
+    val brightnessMethod = settings.brightnessMethod
+    LaunchedEffect(brightnessMethod) { engine.setBrightnessMethod(brightnessMethod) }
     // Per-room calibration (milestone 8): restore the saved floor, and persist a new
     // one whenever a capture completes.
     LaunchedEffect(settings.noiseFloor) { engine.setNoiseFloor(settings.noiseFloor) }
@@ -136,8 +138,8 @@ private fun VoxApp() {
     val level by engine.level.collectAsState()
     val pitchHz by engine.pitchHz.collectAsState()
     val pitchConfidence by engine.pitchConfidence.collectAsState()
-    val resonance by engine.resonance.collectAsState()
-    val resonanceConfidence by engine.resonanceConfidence.collectAsState()
+    val spectralBrightness by engine.spectralBrightness.collectAsState()
+    val spectralBrightnessConfidence by engine.spectralBrightnessConfidence.collectAsState()
     val f1Hz by engine.f1Hz.collectAsState()
     val f2Hz by engine.f2Hz.collectAsState()
 
@@ -151,35 +153,35 @@ private fun VoxApp() {
         else -> null
     }
 
-    val resPct = resonance * 100f
-    val resVoiced = resonanceConfidence > 0.45f
-    val resDirection = when {
-        !resVoiced -> null
-        resPct < resLow -> "below"   // too dark → brighten
-        resPct > resHigh -> "above"  // too bright → soften
+    val brightPct = spectralBrightness * 100f
+    val brightVoiced = spectralBrightnessConfidence > 0.45f
+    val brightDirection = when {
+        !brightVoiced -> null
+        brightPct < brightLow -> "below"   // too dark → brighten
+        brightPct > brightHigh -> "above"  // too bright → soften
         else -> null
     }
 
     // Confidence-gated directional alert loop — runs across all three views (Voice,
     // Necklace, Screen), since out-of-range feedback shouldn't depend on which view
     // is on screen. Two metrics: pitch takes priority (fix the fundamental first);
-    // resonance fires when pitch is in range. A short global gap keeps the two
+    // brightness fires when pitch is in range. A short global gap keeps the two
     // buzzes from colliding.
-    LaunchedEffect(listening, mode, intensity, lowHz, highHz, resLow, resHigh) {
+    LaunchedEffect(listening, mode, intensity, lowHz, highHz, brightLow, brightHigh) {
         if (!listening) return@LaunchedEffect
         val gate = DspConstants.ALERT_CONF_GATE.toFloat()
         val greenDb = DspConstants.SNR_GREEN_DB.toFloat()
         val yellowDb = DspConstants.SNR_YELLOW_DB.toFloat()
         var lastPitch = 0L
-        var lastRes = 0L
+        var lastBright = 0L
         var lastAny = 0L
         while (true) {
             val now = System.currentTimeMillis()
             if (now - lastAny >= 250L) {
                 val hz = engine.pitchHz.value
                 val pConf = engine.pitchConfidence.value
-                val rPct = engine.resonance.value * 100f
-                val rConf = engine.resonanceConfidence.value
+                val rPct = engine.spectralBrightness.value * 100f
+                val rConf = engine.spectralBrightnessConfidence.value
                 // SNR trust gates + grades the cue, so a noisy room or a buried mic can't
                 // fire confident-looking guidance: red → stay silent (don't miscoach),
                 // yellow → one step softer, green → as configured.
@@ -199,13 +201,13 @@ private fun VoxApp() {
                     }
                 }
                 if (trustOk && !fired && rConf > gate) {
-                    val dir = if (rPct < resLow) "below" else if (rPct > resHigh) "above" else null
-                    if (dir != null && now - lastRes >= 600L) {
+                    val dir = if (rPct < brightLow) "below" else if (rPct > brightHigh) "above" else null
+                    if (dir != null && now - lastBright >= 600L) {
                         haptics.buzz(
-                            HapticPatterns.patternFor("resonance", dir, mode),
+                            HapticPatterns.patternFor("brightness", dir, mode),
                             HapticPatterns.intensityToAmp(effIntensity, mode)
                         )
-                        lastRes = now; lastAny = now
+                        lastBright = now; lastAny = now
                     }
                 }
             }
@@ -241,15 +243,15 @@ private fun VoxApp() {
                         voiced = voiced,
                         pitchHz = pitchHz,
                         direction = direction,
-                        resVoiced = resVoiced,
-                        resPct = resPct,
-                        resDirection = resDirection,
+                        brightVoiced = brightVoiced,
+                        brightPct = brightPct,
+                        brightDirection = brightDirection,
                         f1Hz = f1Hz, f2Hz = f2Hz,
-                        pitchDisplay = pitchDisplay, resDisplay = resDisplay, pitchRefHz = pitchRefHz,
+                        pitchDisplay = pitchDisplay, brightnessDisplay = brightnessDisplay, pitchRefHz = pitchRefHz,
                         onPitchDisplay = { scope.launch { store.setPitchDisplay(it) } },
-                        onResDisplay = { scope.launch { store.setResDisplay(it) } },
-                        resonanceMethod = resonanceMethod,
-                        onResonanceMethod = { scope.launch { store.setResonanceMethod(it) } },
+                        onBrightnessDisplay = { scope.launch { store.setBrightnessDisplay(it) } },
+                        brightnessMethod = brightnessMethod,
+                        onBrightnessMethod = { scope.launch { store.setBrightnessMethod(it) } },
                         noiseFloor = settings.noiseFloor,
                         calibrating = calibrating,
                         onCalibrate = { engine.startCalibration() },
@@ -258,19 +260,19 @@ private fun VoxApp() {
                         lowHz = lowHz, highHz = highHz,
                         onLow = { scope.launch { store.setLowHz((lowHz + it).coerceIn(80, highHz - 10)) } },
                         onHigh = { scope.launch { store.setHighHz((highHz + it).coerceIn(lowHz + 10, 350)) } },
-                        resLow = resLow, resHigh = resHigh,
-                        onResLow = { scope.launch { store.setResLow((resLow + it).coerceIn(0, resHigh - 5)) } },
-                        onResHigh = { scope.launch { store.setResHigh((resHigh + it).coerceIn(resLow + 5, 100)) } },
-                        onResPreset = { lo, hi -> scope.launch { store.setResLow(lo); store.setResHigh(hi) } },
+                        brightLow = brightLow, brightHigh = brightHigh,
+                        onBrightLow = { scope.launch { store.setBrightLow((brightLow + it).coerceIn(0, brightHigh - 5)) } },
+                        onBrightHigh = { scope.launch { store.setBrightHigh((brightHigh + it).coerceIn(brightLow + 5, 100)) } },
+                        onBrightPreset = { lo, hi -> scope.launch { store.setBrightLow(lo); store.setBrightHigh(hi) } },
                         onTestPitch = {
                             haptics.buzz(
                                 HapticPatterns.patternFor("pitch", "below", mode),
                                 HapticPatterns.intensityToAmp(intensity, mode)
                             )
                         },
-                        onTestRes = {
+                        onTestBrightness = {
                             haptics.buzz(
-                                HapticPatterns.patternFor("resonance", "below", mode),
+                                HapticPatterns.patternFor("brightness", "below", mode),
                                 HapticPatterns.intensityToAmp(intensity, mode)
                             )
                         }
@@ -338,8 +340,8 @@ private fun ScreenView() {
 }
 
 /**
- * The necklace-mode control panel: live pitch/resonance readouts (formatted per the
- * chosen representation), the mode/intensity/band selectors, resonance method and
+ * The necklace-mode control panel: live pitch/brightness readouts (formatted per the
+ * chosen representation), the mode/intensity/band selectors, brightness method and
  * per-room calibration controls, and test-buzz buttons. All state is hoisted — this
  * composable only renders and forwards user actions to the supplied callbacks.
  */
@@ -349,23 +351,23 @@ private fun NecklaceControls(
     voiced: Boolean,
     pitchHz: Float,
     direction: String?,
-    resVoiced: Boolean,
-    resPct: Float,
-    resDirection: String?,
+    brightVoiced: Boolean,
+    brightPct: Float,
+    brightDirection: String?,
     f1Hz: Float, f2Hz: Float,
-    pitchDisplay: PitchDisplay, resDisplay: ResDisplay, pitchRefHz: Float,
-    onPitchDisplay: (PitchDisplay) -> Unit, onResDisplay: (ResDisplay) -> Unit,
-    resonanceMethod: ResonanceMethod, onResonanceMethod: (ResonanceMethod) -> Unit,
+    pitchDisplay: PitchDisplay, brightnessDisplay: BrightnessDisplay, pitchRefHz: Float,
+    onPitchDisplay: (PitchDisplay) -> Unit, onBrightnessDisplay: (BrightnessDisplay) -> Unit,
+    brightnessMethod: BrightnessMethod, onBrightnessMethod: (BrightnessMethod) -> Unit,
     noiseFloor: Float, calibrating: Boolean, onCalibrate: () -> Unit,
     mode: HapticMode, onMode: (HapticMode) -> Unit,
     intensity: Intensity, onIntensity: (Intensity) -> Unit,
     lowHz: Int, highHz: Int,
     onLow: (Int) -> Unit, onHigh: (Int) -> Unit,
-    resLow: Int, resHigh: Int,
-    onResLow: (Int) -> Unit, onResHigh: (Int) -> Unit,
-    onResPreset: (Int, Int) -> Unit,
+    brightLow: Int, brightHigh: Int,
+    onBrightLow: (Int) -> Unit, onBrightHigh: (Int) -> Unit,
+    onBrightPreset: (Int, Int) -> Unit,
     onTestPitch: () -> Unit,
-    onTestRes: () -> Unit
+    onTestBrightness: () -> Unit
 ) {
     // Pitch readout — value formatted in the user's chosen representation.
     val pv = Readout.pitch(pitchHz, pitchDisplay, pitchRefHz)
@@ -382,36 +384,36 @@ private fun NecklaceControls(
         style = MaterialTheme.typography.title3,
         textAlign = TextAlign.Center
     )
-    // Resonance readout — proves the second metric is being measured. The zone
+    // Brightness readout — proves the second metric is being measured. The zone
     // (Bright/Mid/Dark) is fixed thirds of the 0..100% scale, so it always reflects
     // where the voice actually sits; the ↑/↓ arrow layers on top when that's also
-    // outside the user's configured alert band (resLow/resHigh).
-    val rv = Readout.resonance(resPct, f1Hz, f2Hz, resDisplay)
-    val resZone = when {
-        resPct >= 66f -> "Bright"
-        resPct < 34f -> "Dark"
+    // outside the user's configured alert band (brightLow/brightHigh).
+    val rv = Readout.spectralBrightness(brightPct, f1Hz, f2Hz, brightnessDisplay)
+    val brightZone = when {
+        brightPct >= 66f -> "Bright"
+        brightPct < 34f -> "Dark"
         else -> "Mid"
     }
-    val resColor = when {
-        resPct >= 66f -> RES_BRIGHT
-        resPct < 34f -> RES_DARK
-        else -> RES_MID
+    val brightColor = when {
+        brightPct >= 66f -> ZONE_BRIGHT
+        brightPct < 34f -> ZONE_DARK
+        else -> ZONE_MID
     }
-    val resStatus = when {
+    val brightStatus = when {
         !listening -> ""
-        !resVoiced -> "Res —"
-        resDirection == "below" -> "Res $rv · $resZone ↑"
-        resDirection == "above" -> "Res $rv · $resZone ↓"
-        else -> "Res $rv · $resZone"
+        !brightVoiced -> "Bright —"
+        brightDirection == "below" -> "Bright $rv · $brightZone ↑"
+        brightDirection == "above" -> "Bright $rv · $brightZone ↓"
+        else -> "Bright $rv · $brightZone"
     }
     Text(
-        text = resStatus,
-        color = if (resVoiced) resColor else Color(0xFF8C8C9C),
+        text = brightStatus,
+        color = if (brightVoiced) brightColor else Color(0xFF8C8C9C),
         style = MaterialTheme.typography.caption1,
         textAlign = TextAlign.Center
     )
     // In % mode, still surface the raw formants beneath; FORMANTS mode already shows them.
-    if (resVoiced && resDisplay == ResDisplay.PERCENT && f1Hz > 0f && f2Hz > 0f) {
+    if (brightVoiced && brightnessDisplay == BrightnessDisplay.PERCENT && f1Hz > 0f && f2Hz > 0f) {
         Text(
             text = "F1 ${f1Hz.toInt()} · F2 ${f2Hz.toInt()}",
             color = Color(0xFF6A6A7A),
@@ -429,22 +431,22 @@ private fun NecklaceControls(
         Seg("St", pitchDisplay == PitchDisplay.RANGE) { onPitchDisplay(PitchDisplay.RANGE) }
     }
     Spacer(Modifier.height(4.dp))
-    Text("Res as", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
+    Text("Bright as", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Seg("%", resDisplay == ResDisplay.PERCENT) { onResDisplay(ResDisplay.PERCENT) }
-        Seg("F1/F2", resDisplay == ResDisplay.FORMANTS) { onResDisplay(ResDisplay.FORMANTS) }
+        Seg("%", brightnessDisplay == BrightnessDisplay.PERCENT) { onBrightnessDisplay(BrightnessDisplay.PERCENT) }
+        Seg("F1/F2", brightnessDisplay == BrightnessDisplay.FORMANTS) { onBrightnessDisplay(BrightnessDisplay.FORMANTS) }
     }
     Spacer(Modifier.height(4.dp))
-    // Resonance measurement method (milestone 7) — how F1/F2 are derived.
-    Text("Res method", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
+    // Brightness measurement method (milestone 7) — how F1/F2 are derived.
+    Text("Bright method", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Seg("Harm", resonanceMethod == ResonanceMethod.HARMONIC) { onResonanceMethod(ResonanceMethod.HARMONIC) }
-        Seg("Ceps", resonanceMethod == ResonanceMethod.CEPSTRAL) { onResonanceMethod(ResonanceMethod.CEPSTRAL) }
+        Seg("Harm", brightnessMethod == BrightnessMethod.HARMONIC) { onBrightnessMethod(BrightnessMethod.HARMONIC) }
+        Seg("Ceps", brightnessMethod == BrightnessMethod.CEPSTRAL) { onBrightnessMethod(BrightnessMethod.CEPSTRAL) }
     }
     Spacer(Modifier.height(4.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Seg("LPC", resonanceMethod == ResonanceMethod.LPC) { onResonanceMethod(ResonanceMethod.LPC) }
-        Seg("Centr", resonanceMethod == ResonanceMethod.CENTROID) { onResonanceMethod(ResonanceMethod.CENTROID) }
+        Seg("LPC", brightnessMethod == BrightnessMethod.LPC) { onBrightnessMethod(BrightnessMethod.LPC) }
+        Seg("Centr", brightnessMethod == BrightnessMethod.CENTROID) { onBrightnessMethod(BrightnessMethod.CENTROID) }
     }
     Spacer(Modifier.height(8.dp))
 
@@ -465,28 +467,28 @@ private fun NecklaceControls(
     StepperRow("High", highHz, { onHigh(-5) }, { onHigh(5) })
 
     Spacer(Modifier.height(6.dp))
-    Text("Resonance band (%)", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
+    Text("Brightness band (%)", color = Color(0xFF6A6A7A), style = MaterialTheme.typography.caption2)
     // Quick presets that drop the alert band onto the dark / mid / bright third of the
     // scale; the steppers below still let the user fine-tune from there.
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Seg("Dark", resLow == RES_PRESET_DARK.first && resHigh == RES_PRESET_DARK.second) {
-            onResPreset(RES_PRESET_DARK.first, RES_PRESET_DARK.second)
+        Seg("Dark", brightLow == BRIGHT_PRESET_DARK.first && brightHigh == BRIGHT_PRESET_DARK.second) {
+            onBrightPreset(BRIGHT_PRESET_DARK.first, BRIGHT_PRESET_DARK.second)
         }
-        Seg("Mid", resLow == RES_PRESET_MID.first && resHigh == RES_PRESET_MID.second) {
-            onResPreset(RES_PRESET_MID.first, RES_PRESET_MID.second)
+        Seg("Mid", brightLow == BRIGHT_PRESET_MID.first && brightHigh == BRIGHT_PRESET_MID.second) {
+            onBrightPreset(BRIGHT_PRESET_MID.first, BRIGHT_PRESET_MID.second)
         }
-        Seg("Bright", resLow == RES_PRESET_BRIGHT.first && resHigh == RES_PRESET_BRIGHT.second) {
-            onResPreset(RES_PRESET_BRIGHT.first, RES_PRESET_BRIGHT.second)
+        Seg("Bright", brightLow == BRIGHT_PRESET_BRIGHT.first && brightHigh == BRIGHT_PRESET_BRIGHT.second) {
+            onBrightPreset(BRIGHT_PRESET_BRIGHT.first, BRIGHT_PRESET_BRIGHT.second)
         }
     }
     Spacer(Modifier.height(4.dp))
-    StepperRow("Dark", resLow, { onResLow(-5) }, { onResLow(5) })
-    StepperRow("Brt", resHigh, { onResHigh(-5) }, { onResHigh(5) })
+    StepperRow("Dark", brightLow, { onBrightLow(-5) }, { onBrightLow(5) })
+    StepperRow("Brt", brightHigh, { onBrightHigh(-5) }, { onBrightHigh(5) })
 
     Spacer(Modifier.height(8.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Seg("Test pitch", false, onTestPitch)
-        Seg("Test res", false, onTestRes)
+        Seg("Test bright", false, onTestBrightness)
     }
 
     Spacer(Modifier.height(8.dp))

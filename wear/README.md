@@ -8,10 +8,10 @@ separate logic to maintain. On launch you pick one of three modes:
   rhythm of your voice picked up by the watch mic.
 - **Necklace** — an eyes-free haptic mode for wearing the watch as a **pendant near
   your mouth**. The screen stays dark and the watch **buzzes when your voice drifts
-  out of range** (pitch and/or resonance by default). Built for private practice or
+  out of range** (pitch and/or spectral brightness by default). Built for private practice or
   discreet use out in the world.
 - **Screen** — shows a static image instead of the meter or necklace panel, while the
-  same haptic alerts keep buzzing in the background against your set pitch/resonance
+  same haptic alerts keep buzzing in the background against your set pitch/brightness
   ranges. Useful when you'd rather the watch face show something else while you
   practice. See [Screen mode](#screen-mode) below to swap in your own photo.
 
@@ -51,7 +51,14 @@ Wear the watch on a lanyard/pendant so the mic sits closer to your mouth, then p
   range (and buzzing).
 - **Buzz when out of range** — uses the engine's own alert rules. It only fires
   **while you're actually speaking**, with a short cooldown so it nudges rather than
-  nags. Defaults to **pitch 150–250 Hz** and **resonance 30–70%**.
+  nags. Defaults to **pitch 150–250 Hz** and **brightness 30–70%**.
+- **Brightness is not the ball's resonance number.** The watch's native engine measures
+  *spectral brightness* (an F1/F2 cue blended with spectral tilt and centroid), while the
+  web app and the ESP32 necklace measure resonance from a vocal-tract-length model. They
+  are different quantities on the same 0–100% scale, so a band you learned on the ball is
+  not the same vocal target here, and the two must not be averaged into one session
+  statistic. Unifying them is tracked as Phase 6 in
+  [`../docs/RESONANCE_REDESIGN.md`](../docs/RESONANCE_REDESIGN.md).
 - **⚙ Alerts** — opens the rule panel to change which metric(s) trigger, the
   direction (drops below / goes above), and the thresholds. Your custom rules are
   preserved across sessions.
@@ -68,7 +75,7 @@ Wear the watch on a lanyard/pendant so the mic sits closer to your mouth, then p
 
 Pick **Screen** on the launch row to show an image in place of the pitch meter or
 necklace panel. The haptic alert loop is unchanged — it still fires when your voice
-drifts outside the pitch/resonance ranges configured in Necklace mode, using the
+drifts outside the pitch/brightness ranges configured in Necklace mode, using the
 same intensity and discreet/practice setting.
 
 - **Use your own image:** replace `app/src/main/res/drawable-nodpi/screen_image.jpg`

@@ -8,26 +8,48 @@ import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/** How resonance/formants are estimated — mirrors the desktop app's selector. */
-enum class ResonanceMethod { HARMONIC, CEPSTRAL, LPC, CENTROID }
+/** How [SpectralBrightnessEstimator] derives its envelope and formant peaks. */
+enum class BrightnessMethod { HARMONIC, CEPSTRAL, LPC, CENTROID }
 
 /**
- * Native resonance / "brightness" estimator (milestones 4 & 7) — the second
- * biofeedback metric after pitch. A compact Kotlin port of the canonical web DSP's
- * resonance stage, with the same selectable measurement [method]s:
+ * Native **spectral brightness** estimator (milestones 4 & 7) — the second biofeedback
+ * metric after pitch, on the no-WebView watch app.
+ *
+ * ## This is NOT the app's resonance metric. Do not label it one.
+ *
+ * Web and the ESP32 firmware compute `resonanceScore` from a uniform-tube ΔF fit over
+ * F1–F3 — an apparent-vocal-tract-length model (`DSP_CONTRACT.md` **D1**, which unified
+ * the two ports on that definition). This estimator does something different: it is
+ * **brightness-primary**, blending a two-formant F1/F2 cue with spectral tilt and the
+ * spectral centroid (`0.65*formantScore + 0.35*brightness`, and centroid-only under
+ * CENTROID). Tilt and centroid are downstream proxies, confounded by microphone,
+ * loudness (Lombard effect), and room noise in ways ΔF is not, and no ΔF is fitted here
+ * at all. D1 has not been adopted on this port; that is Phase 6 of
+ * `docs/RESONANCE_REDESIGN.md`, and it needs the Android toolchain.
+ *
+ * Until then the value is named for what it measures. Consequences, deliberately:
+ *
+ *  - Nothing on this port is labelled "resonance" — not the field, not the readout, not
+ *    the haptic vocabulary ("brightness_below"/"brightness_above"), not the alert band.
+ *  - This value must **not** be pooled into shared or cross-device session statistics
+ *    alongside web/firmware `resonanceScore`. Averaging them would report an
+ *    instrumentation change as a change in the user's voice — a session begun on the
+ *    watch and continued on the phone would silently switch measurement halfway. There
+ *    is no such sharing today; this comment exists so none is added by accident.
+ *  - Watch haptic thresholds are on the brightness scale, so a band learned on the ball
+ *    is not the same target here. This is a known, documented divergence, not a fix.
+ *
+ * Methods (all on one Hann-windowed radix-2 FFT, no external DSP lib):
  *
  *   - HARMONIC : peak-pick F1/F2 on a 3-tap smoothed magnitude envelope.
  *   - CEPSTRAL : low-quefrency liftered cepstral envelope, then peak-pick.
  *   - LPC      : Levinson-Durbin all-pole spectral envelope, then peak-pick.
  *   - CENTROID : pure spectral-centroid brightness (no formant tracking).
  *
- * All paths run on one Hann-windowed radix-2 FFT (no external DSP lib). The 0..1
- * resonance score blends the method's formant cue with spectral tilt + centroid as
- * stabilizers (centroid-only for CENTROID). Output is EMA-smoothed and updates only
- * on confidently-voiced frames, decaying [confidence] otherwise so the alert loop
- * stays silent on silence/noise.
+ * Output is EMA-smoothed and updates only on confidently-voiced frames, decaying
+ * [confidence] otherwise so the alert loop stays silent on silence/noise.
  */
-class ResonanceEstimator(private val sampleRate: Int = 16_000) {
+class SpectralBrightnessEstimator(private val sampleRate: Int = 16_000) {
 
     /** Selected measurement method (set from settings; read on the audio thread).
      *  LPC is the default: it derives a true vocal-tract envelope (Levinson-Durbin
@@ -35,10 +57,11 @@ class ResonanceEstimator(private val sampleRate: Int = 16_000) {
      *  HARMONIC peak-picks the raw smoothed magnitude — which, at a held/steady
      *  pitch, tends to lock onto strong F0 harmonics instead of tracking the
      *  formant shifts from vowel/lip-rounding changes. */
-    @Volatile var method: ResonanceMethod = ResonanceMethod.LPC
+    @Volatile var method: BrightnessMethod = BrightnessMethod.LPC
 
-    /** 0..1 brightness: 0 = dark/low resonance, 1 = bright/forward. Neutral 0.5 at rest. */
-    var resonance: Float = 0.5f
+    /** 0..1 spectral brightness: 0 = dark, 1 = bright/forward. Neutral 0.5 at rest.
+     *  Not comparable with web/firmware `resonanceScore` — see the class doc. */
+    var spectralBrightness: Float = 0.5f
         private set
 
     /** 0 = unreliable, 1 = confident. */
@@ -63,7 +86,7 @@ class ResonanceEstimator(private val sampleRate: Int = 16_000) {
     private var lpcGain = 0f
 
     fun reset() {
-        resonance = 0.5f
+        spectralBrightness = 0.5f
         confidence = 0f
         f1Hz = 0f
         f2Hz = 0f
@@ -77,7 +100,7 @@ class ResonanceEstimator(private val sampleRate: Int = 16_000) {
         val n = frame.size
         if (!voiced || rms < 0.012f || !isPowerOfTwo(n)) {
             confidence *= 0.9f
-            return resonance
+            return spectralBrightness
         }
         ensure(n)
         val m = method // snapshot the volatile once per frame
@@ -87,7 +110,7 @@ class ResonanceEstimator(private val sampleRate: Int = 16_000) {
             im[i] = 0f
         }
         // LPC needs the windowed time signal (re) before the FFT overwrites it.
-        val haveLpc = if (m == ResonanceMethod.LPC) computeLpc(re, n) else false
+        val haveLpc = if (m == BrightnessMethod.LPC) computeLpc(re, n) else false
 
         fft(re, im, inverse = false)
 
@@ -99,7 +122,7 @@ class ResonanceEstimator(private val sampleRate: Int = 16_000) {
             mag[k] = mg
             total += mg.toDouble()
         }
-        if (total < 1e-6) { confidence *= 0.9f; return resonance }
+        if (total < 1e-6) { confidence *= 0.9f; return spectralBrightness }
 
         // Spectral tilt (high vs low band) and centroid — cheap, method-independent.
         val low = bandEnergy(80f, 1200f, binHz, half)
@@ -113,9 +136,9 @@ class ResonanceEstimator(private val sampleRate: Int = 16_000) {
 
         // Build the method's spectral envelope into env[] for formant peak-picking.
         when (m) {
-            ResonanceMethod.HARMONIC, ResonanceMethod.CENTROID -> smoothEnvelope(half)
-            ResonanceMethod.CEPSTRAL -> cepstralEnvelope(n, half)
-            ResonanceMethod.LPC -> if (haveLpc) lpcEnvelope(half, binHz) else smoothEnvelope(half)
+            BrightnessMethod.HARMONIC, BrightnessMethod.CENTROID -> smoothEnvelope(half)
+            BrightnessMethod.CEPSTRAL -> cepstralEnvelope(n, half)
+            BrightnessMethod.LPC -> if (haveLpc) lpcEnvelope(half, binHz) else smoothEnvelope(half)
         }
 
         f1Hz = peakHzInBand(250f, 1000f, binHz, half)
@@ -133,7 +156,7 @@ class ResonanceEstimator(private val sampleRate: Int = 16_000) {
 
         val raw: Float
         val conf: Float
-        if (m == ResonanceMethod.CENTROID) {
+        if (m == BrightnessMethod.CENTROID) {
             // Pure brightness — no formant requirement.
             raw = (0.6f * centroidScore + 0.4f * tilt).coerceIn(0f, 1f)
             val snr = (high / (low + 1e-9)).toFloat()
@@ -145,8 +168,8 @@ class ResonanceEstimator(private val sampleRate: Int = 16_000) {
             conf = (min(1f, snr * 1.6f) * (if (f2Found) 1f else 0.4f)).coerceIn(0f, 1f)
         }
         confidence = conf
-        resonance += (raw - resonance) * (0.08f + 0.12f * confidence)
-        return resonance
+        spectralBrightness += (raw - spectralBrightness) * (0.08f + 0.12f * confidence)
+        return spectralBrightness
     }
 
     // ---- envelopes ---------------------------------------------------------

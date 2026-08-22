@@ -33,8 +33,8 @@ test('golden: formant dispersion (ΔF) and apparent vocal-tract length', () => {
   near(computeFormantDispersion([500, 0, 2500]), 1000);      // F2 dropped, F1/F3 keep their slots
   near(computeFormantDispersion([500, 1500, 0]), 1000);      // F3 dropped
   near(computeFormantDispersion([0, 1500, 2500]), 1000);     // F1 dropped
-  near(dispersionToVtlCm(1000), 17.5);                       // male ≈ 17.5 cm
-  near(dispersionToVtlCm(1250), 14.0);                       // female ≈ 14 cm
+  near(dispersionToVtlCm(1000), 17.5);                       // 17.5 cm: longer tract, darker
+  near(dispersionToVtlCm(1250), 14.0);                       // 14.0 cm: shorter tract, brighter
 });
 
 test('golden: dispersion fit quality separates a tube-like frame from a scrambled one', () => {
