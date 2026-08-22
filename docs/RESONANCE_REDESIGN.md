@@ -1,6 +1,6 @@
 # Resonance: measurement redesign
 
-**Status: Phase 0 and Phase 1 landed; Phases 2-6 are plan.** Extends `DSP_CONTRACT.md`, which stays the cross-port
+**Status: Phases 0-2 landed; Phases 3-6 are plan.** Extends `DSP_CONTRACT.md`, which stays the cross-port
 contract. This document covers one question: what `smoothResonance` should *be*.
 
 The short version: the acoustic model is right and the arithmetic is right, but the construct
@@ -161,6 +161,12 @@ make the app worse than it is today.
 **Consequence for sequencing:** vowel identification is a *prerequisite* for the F2 feature, not
 a parallel workstream. Phase 2 cannot start before Phase 1 produces the residuals that classify
 the vowel.
+
+**Measured after Phase 2.** The conditioning does what this section says it does: it removes
+**11.4×** of the across-vowel variance that makes raw F2 the worst measure in §1.3 (35.5% of the
+mean → 3.10%). What it does *not* do is beat raw F2 on §1.3's male-vs-female contrast, because
+that contrast is almost entirely tract size and the conditioned feature has tract size divided
+out — see §5's Phase 2 entry for the numbers and for why putting it back was refused.
 
 ### 3.2 The scale component should be upper-formant-weighted
 
@@ -347,17 +353,172 @@ reading the source. With F4 present (3990 Hz) v2's shares are F1 15%, F2 4%, F3 
    Restoring display travel is `resonanceControl`'s job (Phase 4), not an absolute scale steep
    enough to put /i/ and /u/ from one mouth at opposite ends.
 
-### Phase 2 — Vowel conditioning
+### Phase 2 — Vowel conditioning — **LANDED** *(instrumented only; v1 still displayed)*
 
-- Classify vowel from the Phase-1 residuals (this is what residuals are *for* — they are already
-  scale-normalised, so the classification is speaker-independent by construction).
-- `f2Position` = F2 relative to the expected F2 for that vowel at that speaker's scale.
-- Two aggregation modes: **exercise** (steady-state weighted, current behaviour) and **speech**
-  (vowel nuclei from connected speech, no privilege for long holds).
-- Session statistics use speech mode; the ball keeps exercise mode.
+- **Vowel classified from the Phase-1 residuals.** Nearest of ten Peterson & Barney templates in
+  a residual space normalised by each dimension's across-vowel SD, softened into a posterior at
+  the measured across-speaker scatter (0.195). Speaker-independence is **demonstrated, not
+  asserted**: templates built from one sex classify the other, across a 16.5% difference in
+  pooled tract scale. **95% correct, 0% abstention, 0 errors outside /ɝ/** over all ten vowels
+  in both directions; 100% on the seven-vowel §1.1 set.
+- **`f2Position`** = `F2 / (r₂_template(vowel) · 1.5 · ΔF_frame)`. 1.0 is exactly where the
+  published norms put that vowel for a tract of that size.
+- **Two aggregation modes.** `aggregateExercise` (steady-state weighted, current behaviour) and
+  `aggregateSpeech` (one value per vowel nucleus, nuclei weighted equally), plus a streaming
+  `ResonanceAggregator` for live sessions that produces identical numbers. Session statistics
+  read speech mode, the ball reads exercise mode — for the **v2** stream. v1's displayed
+  "Avg Resonance" is untouched; switching the *displayed* statistic is Phase 4's job, since
+  there is nothing to switch it to until v2 is displayed at all.
+- **v1 unchanged.** avgResonance 0.370 / 0.422 at the two operating points, golden ranges and
+  dsp-golden vectors untouched.
+
+#### Two structural results that changed the design
+
+**1. The residual vector has exactly *n*−1 free dimensions.** Not "r₃ is nearly
+uninformative" — an identity. The weighted fit forces
+
+```
+Σ L_i · r_i ≡ 1,     L_i = w_i x_i² / Σ(w_j x_j²)
+```
+
+verified to 1.1e-16 on all ten vowels. F1–F3 therefore carries **two** dimensions, and r₃ is
+r₁ and r₂ rearranged. Phase 1's guess that the classifier is "effectively running on (r₁, r₂)"
+is exactly right, and now provable rather than effective.
+
+**2. What a residual means depends on what the pooling window contained.** ΔF is pooled over a
+rolling window, so in connected speech ρ = Σ L_i r_i ranges 0.73–1.22 across the P&B vowels —
+the identity is broken and a third dimension opens. But a **sustained hold** collapses the
+window onto one vowel, ΔF converges on that vowel's own fit, and ρ → 1 exactly. Both are
+first-class: a held vowel *is* the exercise mode the ball runs. A classifier calibrated to the
+pooled frame abstains through an entire sustained vowel — measured, a held /i/ sits 1.011 from
+its own pooled-frame template against a 0.585 gate.
+
+The classifier therefore matches in the **scale-invariant frame** (`r′ = r/ρ`), which is what
+both operating points have in common. Measured effect: the vowel is named on **93.9%** of a
+4-second held /i/ (unanimously /i/) and 91.2% of the running speech beside it.
+
+#### /ɝ/: separable in principle, not by what Phase 2 ships
+
+Phase 1 handed this over as the vowel where Phase 2 "either earns its keep or doesn't". Both
+halves of the answer are recorded because either alone is misleading.
+
+| frame | /ɝ/ distance to its nearest neighbour | rest of the set |
+|---|---|---|
+| pooled window (connected speech) | **1.18 — the most isolated vowel in the set** | 0.35–0.81 |
+| scale-invariant (what ships) | **0.40 — tied with the closest pairs**, nearest is /æ/ | 0.38–0.63 |
+
+Against a pooled scale the rhotic cannot be absorbed — the scale comes from the speaker's
+*other* vowels — so it lands in r₃ at 0.697 against 0.94–1.24 for everything else. But **the
+dimension that isolates /ɝ/ (ρ) is the same dimension a pooling-window mismatch moves.** They
+are literally the same number. Using it requires knowing what the window contained, which is a
+frame-validity and estimator-discipline question — **Phase 3** — and it is left there rather
+than smuggled in. The cost is one confusion in twenty held-out classifications: /ɝ/ → /æ/,
+exactly the confusion Phase 1 predicted.
+
+#### f2Position vs raw F2 — the acceptance criterion as written is MISSED
+
+Stated plainly, with the number:
+
+| contrast | raw F2 d′ | f2Position d′ |
+|---|---|---|
+| **female vs male (§5's criterion), seven-vowel set** | **0.476** | **0.105** |
+| female vs male, all ten | 0.459 | 0.242 |
+| published GAVT training shift, seven-vowel set | 0.158 | **2.085** |
+| published GAVT training shift, all ten | 0.156 | **2.211** |
+
+**f2Position does not beat raw F2 on the male-vs-female contrast, and the reason is
+structural.** P&B's two populations differ in tract *size* and barely in vowel *posture*, and
+f2Position has size divided out by construction. Sweeping the one parameter that controls this
+makes it unarguable — `α` is how much of the speaker's own scale the denominator keeps:
+
+| α | d′ (F vs M) | r with `resonanceAbsoluteV2` |
+|---|---|---|
+| 0.00 (population-relative) | 5.866 | **0.954** |
+| 0.50 | 2.942 | 0.846 |
+| **1.00 (shipped)** | **0.105** | **0.057** |
+
+α = 0 would clear the criterion at d′ 5.9 — by re-measuring tract length through F2, correlating
+**r = 0.95** with the scale `formantScale` already publishes. That is §1.4's double count rebuilt
+through a different door, and it is the whole thing Phase 1 existed to remove. **The knob was
+not turned.**
+
+What the conditioning *did* achieve is §3.1's actual claim, and the benchmark's own d′
+denominator is the thing it measures: across-vowel SD of raw F2 is **35.5%** of its mean;
+of f2Position, **3.10%**. **Vowel variance removed: 11.4×.** And on the contrast the feature is
+for — §1.5's published GAVT outcome (F2 1847 → 1961 Hz, a *within-speaker* change at fixed
+tract length, which is what an F2 biofeedback target trains) — f2Position beats raw F2 by
+**13×**, using the classifier's own decisions rather than oracle labels. Raw F2 detects the very
+shift it is promoted as a training target for at d′ 0.16, *worse* than it separates the two P&B
+populations, because a 6% F2 change is small against a 35% across-vowel spread.
+
+#### Abstention: the frame-level gates are not sufficient; the nucleus rule is
+
+§6 requires degrading to "no vowel this frame" rather than guessing. Frame by frame it does
+**not**: below ~0.5 SD of residual noise the classifier misclassifies more often than it
+abstains, because the two gates catch a frame thrown away from every template or landing between
+two, but not one thrown squarely onto a neighbour. What meets §6 is the nucleus rule — three
+consecutive frames must agree before any nucleus exists — which is why `f2Position` is
+aggregated and never read off one frame:
+
+| residual noise SD | per frame: correct / wrong / abstain | per nucleus: correct / wrong / abstain |
+|---|---|---|
+| 0.0 | 95.0 / 5.0 / 0.0 | 95.0 / 5.0 / 0.0 |
+| 0.2 | 84.9 / 13.5 / 1.6 | **92.8 / 4.4 / 2.8** |
+| 0.3 | 71.1 / 23.3 / 5.7 | **87.8 / 6.0 / 6.3** |
+| 0.5 | 47.9 / 36.1 / 16.0 | 51.6 / **10.5** / 37.9 |
+| 1.0 | 14.9 / 44.9 / 40.2 | 4.7 / **2.9** / 92.4 |
+
+Misclassification drops roughly fourfold and abstention overtakes it. Reducing the remainder is
+Phase 3's frame-validity work, not a threshold to move here.
+
+#### F4, and frame yield
+
+F4 **does not degrade** classification (identical within sampling error at 0–100 Hz of formant
+noise) and does not improve it either. The reason is structural: the classifier's frame is
+pinned to F1–F3 because the templates are F1–F3 — P&B published no F4, so there is no measured
+r₄ and inventing one is the fabrication §6 forbids. Normalising a 4-element residual against
+3-formant templates compares vectors on two different constraint surfaces; when that was live it
+cost **47 points of frame yield** under `lpc`. F4 keeps its Phase 1 job of sharpening
+`formantScale`. A measured r₄ is Phase 5's to provide.
+
+Frame yield on the Rainbow Passage, against Phase 1's numbers:
+
+| | `lpc` | `cepstral` | `harmonic` | `centroid` |
+|---|---|---|---|---|
+| `formantScale` fit (Phase 1) | 98.4% | 98.4% | 98.4% | 98.4% |
+| F4 (Phase 1) | 92.4% | 0% | 0% | 0% |
+| **vowel named / `f2Position`** | **88.0%** | 81.5% | 74.5% | **0%** |
+
+`centroid` resolves no F3, so it yields one residual dimension and the classifier declines
+outright rather than naming a vowel from a scale it cannot fit — the §6 discipline reaching the
+right answer without a special case.
+
+#### Aggregation modes, on a hold-plus-speech clip
+
+`tools/resonance-aggregation.mjs` builds the fixture in source (a synthesized 4 s held /i/ —
+P&B's male /i/ rescaled to the passage speaker, F2 raised by the GAVT increment — concatenated
+with the Rainbow Passage) and reports both modes:
+
+| | exercise | speech | hold-only | passage-only |
+|---|---|---|---|---|
+| `f2Position` | 0.9993 | 0.9873 | 1.0049 | 0.9873 |
+| `resonanceAbsoluteV2` | 0.5584 | 0.5216 | 0.5760 | 0.5242 |
+
+The hold commands **68.1% of exercise-mode weight and 4.2% of speech-mode nuclei** (1 of 24) —
+a 16× asymmetry, and the whole difference between the modes. f2Position shows the smaller gap
+(1.2%) because this hold happens to sit near the passage's own mean f2Position; resonanceV2
+shows 7.1%. The hold is fixed by publication rather than chosen, and requiring both gaps to be
+large would be satisfied by shopping for a flattering fixture.
 
 *Done when:* `f2Position` beats raw F2 (d′ 0.38) by a clear margin on the benchmark, and the two
 aggregation modes measurably differ on a clip containing one long hold plus running speech.
+**Half met.** The aggregation criterion is met and asserted (`npm run test:resonance-aggregation`).
+The d′ criterion is **not met on the contrast as written** (0.105 vs 0.476) and is met by 13× on
+the contrast the feature is for. Closing it as written would require putting tract length back
+into f2Position, which duplicates `formantScale` at r = 0.95. Recommendation for Phase 4: state
+the criterion against a within-speaker contrast, since an absolute tract-size axis
+(`resonanceAbsolute`) and a trainable-posture axis (`f2Position`) should not both be scored on
+how well they separate two populations by tract length.
 
 ### Phase 3 — Estimator discipline
 
@@ -422,6 +583,16 @@ versioning, not by pretending continuity.
 **Vowel classification is a new failure mode.** A misclassified vowel produces a confidently
 wrong `f2Position`. It must degrade to "no F2 feature this frame" rather than guess — the same
 discipline applied to the centroid's fabricated F3.
+
+**Measured after Phase 2, and the answer has two parts.** Two abstention gates (distance to the
+nearest template beyond three across-speaker scatters; posterior below 0.5) are *not* sufficient
+on their own: frame by frame, below ~0.5 SD of residual noise, the classifier misclassifies more
+often than it declines, because neither gate catches a residual thrown squarely onto a
+neighbouring vowel. What satisfies this risk is that `f2Position` is never read off one frame —
+a vowel nucleus requires three consecutive frames to agree, which cuts misclassification roughly
+fourfold and puts abstention above it. The per-frame and per-nucleus rates are tabulated in §5's
+Phase 2 entry and asserted in `resonance-dprime.test.mjs`. Tightening the frame-level gates
+further is Phase 3.
 
 ---
 

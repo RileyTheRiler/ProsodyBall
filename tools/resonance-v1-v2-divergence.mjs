@@ -61,6 +61,11 @@ export async function measure(method = 'lpc') {
   let frames = 0, estimatorFrames = 0;
   const yieldCount = { f1: 0, f2: 0, f3: 0, f4: 0 };
   let v1FitFrames = 0, v2FitFrames = 0, v2ScaleFrames = 0;
+  // Phase 2: how often the vowel is named and f2Position therefore exists. §6 requires the
+  // abstentions to be counted and reported, not quietly treated as missing data.
+  let vowelFrames = 0, f2PosFrames = 0;
+  const abstainReasons = {};
+  const vowelCounts = {};
 
   for (let i = 0; i + CHUNK <= audio.length; i += LIVE_HOP_SAMPLES) {
     a.audioCtx._currentChunk = audio.subarray(i, i + CHUNK);
@@ -79,6 +84,9 @@ export async function measure(method = 'lpc') {
     if (a.dispersionFormantsUsed >= 2) v1FitFrames++;
     if (a.formantScaleFormantsUsed >= 2) v2FitFrames++;
     if (a.formantScaleHz > 0) v2ScaleFrames++;
+    if (a.vowelId) { vowelFrames++; vowelCounts[a.vowelId] = (vowelCounts[a.vowelId] || 0) + 1; }
+    else abstainReasons[a.vowelAbstainReason] = (abstainReasons[a.vowelAbstainReason] || 0) + 1;
+    if (a.f2PositionRatio > 0) f2PosFrames++;
     rows.push({
       t: +(i / decoded.sampleRate).toFixed(3),
       v1: a.smoothResonance,
@@ -113,6 +121,15 @@ export async function measure(method = 'lpc') {
       v1DispersionFit: +(100 * v1FitFrames / Math.max(1, estimatorFrames)).toFixed(1),
       v2ScaleFit: +(100 * v2FitFrames / Math.max(1, estimatorFrames)).toFixed(1),
       v2PooledScale: +(100 * v2ScaleFrames / Math.max(1, estimatorFrames)).toFixed(1),
+      // Phase 2. f2Position exists exactly where the classifier named a vowel, by design:
+      // §6 forbids a reading on a frame whose vowel is unknown.
+      vowelClassified: +(100 * vowelFrames / Math.max(1, estimatorFrames)).toFixed(1),
+      f2Position: +(100 * f2PosFrames / Math.max(1, estimatorFrames)).toFixed(1),
+    },
+    vowelAbstention: {
+      ratePct: +(100 * (estimatorFrames - vowelFrames) / Math.max(1, estimatorFrames)).toFixed(1),
+      reasons: abstainReasons,
+      vowelCounts,
     },
     v1: { mean: +mean(both.map((r) => r.v1)).toFixed(4), sd: +sd(both.map((r) => r.v1)).toFixed(4),
           min: +Math.min(...both.map((r) => r.v1)).toFixed(4), max: +Math.max(...both.map((r) => r.v1)).toFixed(4) },
@@ -168,7 +185,8 @@ async function check() {
     const r = await measure(m);
     const line = `${m}: F1 ${r.yieldPct.f1}%  F2 ${r.yieldPct.f2}%  F3 ${r.yieldPct.f3}%  F4 ${r.yieldPct.f4}%  |  `
       + `v1 ΔF fit ${r.fitYieldPct.v1DispersionFit}%  v2 scale fit ${r.fitYieldPct.v2ScaleFit}%  `
-      + `v2 pooled ${r.fitYieldPct.v2PooledScale}%  |  divergence mean ${r.divergence.meanAbsPts} pts, `
+      + `v2 pooled ${r.fitYieldPct.v2PooledScale}%  vowel ${r.fitYieldPct.vowelClassified}%  `
+      + `f2Position ${r.fitYieldPct.f2Position}%  |  divergence mean ${r.divergence.meanAbsPts} pts, `
       + `p95 ${r.divergence.p95AbsPts}, max ${r.divergence.maxAbsPts}  |  `
       + `swing v1 ${r.divergence.v1SwingPts} pts, v2 ${r.divergence.v2SwingPts} pts`;
     const gap = r.fitYieldPct.v2ScaleFit - r.fitYieldPct.v1DispersionFit;
