@@ -1,8 +1,9 @@
-const CACHE_NAME = 'prosodyball-shell-v4';
+const CACHE_NAME = 'prosodyball-shell-v5';
 const APP_SHELL = [
   './',
   './index.html',
   './app.js',
+  './recording-lifecycle.js',
   './dsp-utils.js',
   './dsp-constants.generated.js',
   './speech-gate.js',

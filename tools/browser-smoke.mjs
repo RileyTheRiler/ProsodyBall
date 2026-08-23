@@ -163,6 +163,87 @@ try {
     throw new Error('Recordings drawer did not close on the second click');
   }
 
+  // Deterministic recording-resource stress: the fake recorder emits one chunk per take,
+  // while the real game code owns timers, callbacks, Blob URLs, audio elements and deletion.
+  // Heap totals are intentionally avoided because browser GC timing is not a contract.
+  const recordingStress = await page.evaluate(async () => {
+    class MockMediaRecorder {
+      static isTypeSupported(type) { return type.includes('webm'); }
+      constructor(_stream, options = {}) {
+        this.mimeType = options.mimeType || 'audio/webm';
+        this.state = 'inactive';
+        this.ondataavailable = null;
+        this.onstop = null;
+        this.onerror = null;
+      }
+      start() { this.state = 'recording'; }
+      stop() {
+        this.state = 'inactive';
+        queueMicrotask(() => {
+          this.ondataavailable?.({ data: new Blob([new Uint8Array(1024)], { type: this.mimeType }) });
+          this.onstop?.();
+        });
+      }
+    }
+    window.MediaRecorder = MockMediaRecorder;
+    const game = window.voxGame;
+    const analyzer = game.analyzer;
+    analyzer.audioCtx = { sampleRate: 48000 };
+    analyzer.analyserRec = {
+      fftSize: 512,
+      getFloatTimeDomainData(target) { target.fill(0.05); },
+    };
+    analyzer.recTimeDomainData = new Float32Array(512);
+    analyzer.stream = { getTracks: () => [{ readyState: 'live' }] };
+    analyzer.smoothPitchHz = 180;
+    analyzer.pitchConfidence = 0.9;
+    analyzer.lastPitch = 180;
+    analyzer.smoothResonance = 0.5;
+    analyzer.syllableImpulse = 0;
+
+    for (let i = 0; i < 40; i++) {
+      if (!game.startRecording()) throw new Error(`recording ${i} did not start`);
+      await new Promise((resolve) => setTimeout(resolve, 12));
+      await game.stopRecording();
+      if (game.recordings.length !== 1) throw new Error(`recording ${i} did not finalize`);
+      game.playRecording(0);
+      game.stopPlayback();
+      game.deleteRecording(0);
+    }
+
+    // Export owns its URL through the asynchronous browser hand-off even if the clip is
+    // deleted immediately afterward, then releases it on the tracked grace timer.
+    game.recordings.push({
+      id: 'export-stress', blob: new Blob([new Uint8Array(2048)], { type: 'audio/webm' }),
+      duration: 1, timestamp: 'now', name: 'export-stress', mimeType: 'audio/webm',
+    });
+    game.updateRecordingsUI();
+    game.downloadRecording(0);
+    game.deleteRecording(0);
+    const duringExport = game.getRecordingResourceSnapshot();
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+
+    // A cancelled take invalidates the recorder token before its queued callbacks run.
+    game.startRecording();
+    game.cancelRecording('smoke-cancel');
+    await Promise.resolve();
+    analyzer.stream = null;
+    analyzer.analyserRec = null;
+    analyzer.audioCtx = null;
+    const final = game.getRecordingResourceSnapshot();
+    return { duringExport, final };
+  });
+  if (recordingStress.duringExport.retainedAudioBytes !== 0 || recordingStress.duringExport.activeObjectUrls !== 1) {
+    throw new Error(`export/delete ownership was wrong: ${JSON.stringify(recordingStress.duringExport)}`);
+  }
+  for (const key of ['retainedAudioBytes', 'retainedChunks', 'activeChunks', 'activeAudioBytes', 'activeMetricSamples',
+    'activeObjectUrls', 'liveStreams', 'liveTracks', 'liveRecordingNodes', 'liveAudioElements',
+    'recordingTimers', 'recordingListeners']) {
+    if (recordingStress.final[key] !== 0) {
+      throw new Error(`recording stress leaked ${key}: ${JSON.stringify(recordingStress.final)}`);
+    }
+  }
+
   if (browserName === 'chrome') {
     await page.evaluate(() => localStorage.clear());
     await page.reload({ waitUntil: 'domcontentloaded' });
