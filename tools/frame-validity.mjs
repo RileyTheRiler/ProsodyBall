@@ -14,22 +14,27 @@
 // actually reports, and DSP_CONTRACT records that a 1% ΔF error moves v1's displayed score by
 // ~5 points, so 5% is a quarter of the meter — unambiguously an error rather than scatter.
 //
-// Usage: node tools/frame-validity.mjs [--check]
+// The report now follows the gate through to the live pooled output and includes every target
+// frame. Precision, accurate-frame recall, abstention, wrong-output rate, and each vowel/F0
+// subgroup are asserted separately. `--check` is strict; CI may name the current noisy-speech
+// quarantine explicitly with `--allow-known-validity-failures`, but the failures still print.
+//
+// Usage: node tools/frame-validity.mjs [--check] [--allow-known-validity-failures]
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import wav from 'node-wav';
 import { MockAudioContext } from './run-eval-harness.mjs';
 import { synthVowel } from './synth-vowel.mjs';
-import { fitFormantScale, frameValidity } from '../dsp-utils.js';
+import { fitFormantScale } from '../dsp-utils.js';
 
 const SAMPLE_RATE = 44100;
 const WINDOW = 4096;
 const HOP = Math.round(SAMPLE_RATE / 60);
 const DT = HOP / SAMPLE_RATE;
 export const BAD_DELTA_F_FRACTION = 0.05;
-// Conditions the --check gate asserts on. 6 dB is measured and printed but not asserted; see
-// the note at the assertion for why.
+// Raw gate discrimination is asserted through 12 dB. At 6 dB the whole analyzer is expected to
+// abstain, and that user-facing behavior has its own exact assertion below.
 const ASSERTED_SNR_DB = [Infinity, 20, 12];
 
 // Five Peterson & Barney vowels at a range of tract scales, so the gates are measured across
@@ -46,15 +51,34 @@ const VOWEL_FORMANTS = {
 const SCALES = [0.90, 1.00, 1.12];
 const F0S = [100, 150, 200, 260];
 
-async function analyzerFor(signal) {
+async function analyzerFor(calibrationNoise = null) {
   const { VoiceAnalyzer } = await import('../app.js');
   const a = new VoiceAnalyzer();
   await a.start(null, { deviceId: 'mock' });
   a.audioCtx.sampleRate = SAMPLE_RATE;
-  a.isCalibrated = true;
-  a.noiseFloor = 0.005;
-  a.hfNoiseFloor = 0.001;
-  a.micTiltBaselineDb = 0;
+  if (calibrationNoise) {
+    // The live analyzer knows the room noise because users calibrate before practice. Feeding
+    // noisy speech while leaving the analyzer's noise profile at a clean-room fallback tests a
+    // deliberately misconfigured product and prevents the SNR abstention path from doing its
+    // job. Calibrate on noise of the same power, but a different deterministic draw.
+    a.noiseCalibrationDuration = 0.5;
+    const log = console.log;
+    console.log = () => {};
+    try {
+      for (let i = 0; i + WINDOW <= calibrationNoise.length && !a.isCalibrated; i += HOP) {
+        a.audioCtx._currentChunk = calibrationNoise.subarray(i, i + WINDOW);
+        a.update(DT);
+      }
+      if (!a.isCalibrated) a.finalizeNoiseCalibration();
+    } finally {
+      console.log = log;
+    }
+  } else {
+    a.isCalibrated = true;
+    a.noiseFloor = 0.005;
+    a.hfNoiseFloor = 0.001;
+    a.micTiltBaselineDb = 0;
+  }
   a.resonanceMethod = 'lpc';
   return a;
 }
@@ -62,20 +86,27 @@ async function analyzerFor(signal) {
 // Additive white noise at a given SNR, so the gates are exercised on frames that are actually
 // hard rather than only on frames that are easy. Deterministic generator: a reported curve has
 // to be reproducible.
-function addNoise(sig, snrDb, seed = 3) {
-  if (!Number.isFinite(snrDb)) return sig;
+function gaussianNoise(length, rms, seed) {
   let st = seed >>> 0;
   const uni = () => ((st = (st * 1664525 + 1013904223) >>> 0) + 1) / 4294967297;
+  const out = new Float32Array(length);
+  for (let i = 0; i < length; i++) {
+    const g = Math.sqrt(-2 * Math.log(uni())) * Math.cos(2 * Math.PI * uni());
+    out[i] = rms * g;
+  }
+  return out;
+}
+
+function addNoise(sig, snrDb, seed = 3) {
+  if (!Number.isFinite(snrDb)) return { signal: sig, calibrationNoise: null };
   let p = 0;
   for (let i = 0; i < sig.length; i++) p += sig[i] * sig[i];
   const sigRms = Math.sqrt(p / sig.length);
   const noiseRms = sigRms / Math.pow(10, snrDb / 20);
-  const out = new Float32Array(sig.length);
-  for (let i = 0; i < sig.length; i++) {
-    const g = Math.sqrt(-2 * Math.log(uni())) * Math.cos(2 * Math.PI * uni());
-    out[i] = sig[i] + noiseRms * g;
-  }
-  return out;
+  const noise = gaussianNoise(sig.length, noiseRms, seed);
+  const signal = new Float32Array(sig.length);
+  for (let i = 0; i < sig.length; i++) signal[i] = sig[i] + noise[i];
+  return { signal, calibrationNoise: gaussianNoise(sig.length, noiseRms, seed + 1009) };
 }
 
 export async function collect({ snrDb = Infinity } = {}) {
@@ -85,23 +116,39 @@ export async function collect({ snrDb = Infinity } = {}) {
       const formants = base.map((f) => f * k);
       const trueDeltaF = fitFormantScale([...formants, 0]).deltaF;
       for (const f0 of F0S) {
-        const signal = addNoise(synthVowel({ f0, formants, seconds: 1.2, sampleRate: SAMPLE_RATE }), snrDb);
-        const a = await analyzerFor(signal);
+        const noisy = addNoise(synthVowel({ f0, formants, seconds: 1.2, sampleRate: SAMPLE_RATE }), snrDb);
+        const signal = noisy.signal;
+        const a = await analyzerFor(noisy.calibrationNoise);
         for (let i = 0; i + WINDOW <= signal.length; i += HOP) {
           a.audioCtx._currentChunk = signal.subarray(i, i + WINDOW);
           a.update(DT);
-          if (!(a.lastPitch > 0 && a.pitchConfidence > 0.4 && a.vowelLikelihood > 0.25)) continue;
+          const analyzerRan = a.lastPitch > 0 && a.pitchConfidence > 0.4 && a.vowelLikelihood > 0.25;
           const raw = a.canonicalRaw;
-          if (!raw || raw.filter((x) => x > 0).length < 2) continue;
-          const rawDeltaF = fitFormantScale(raw).deltaF;
-          const err = rawDeltaF > 0 ? Math.abs(rawDeltaF - trueDeltaF) / trueDeltaF : 1;
+          const rawDeltaF = analyzerRan && raw && raw.filter((x) => x > 0).length >= 2
+            ? fitFormantScale(raw).deltaF : 0;
+          const err = rawDeltaF > 0 ? Math.abs(rawDeltaF - trueDeltaF) / trueDeltaF : null;
+          const acceptedDeltaF = analyzerRan && a.frameValid
+            ? fitFormantScale(a.canonicalAccepted).deltaF : 0;
+          const acceptedErr = acceptedDeltaF > 0
+            ? Math.abs(acceptedDeltaF - trueDeltaF) / trueDeltaF : null;
+          const outputDeltaF = !a.resonanceSuppressed ? a.formantScaleHz : 0;
+          const outputErr = outputDeltaF > 0
+            ? Math.abs(outputDeltaF - trueDeltaF) / trueDeltaF : null;
           rows.push({
-            vowel, f0, scale: k, err,
-            bad: err > BAD_DELTA_F_FRACTION,
+            vowel, f0, scale: k, trueDeltaF, rawDeltaF, err,
+            bad: err == null ? null : err > BAD_DELTA_F_FRACTION,
+            analyzerRan,
             valid: a.frameValid,
+            acceptedDeltaF,
+            acceptedErr,
+            outputDeltaF,
+            outputErr,
             reasons: a.frameInvalidReasons.slice(),
             agreement: a.crossEstimatorAgreement,
             confidence: a.resonanceConfidenceV2,
+            canonicalRaw: Array.isArray(raw) ? raw.slice() : [0, 0, 0, 0],
+            canonicalAccepted: Array.isArray(a.canonicalAccepted)
+              ? a.canonicalAccepted.slice() : [0, 0, 0, 0],
           });
         }
       }
@@ -126,8 +173,71 @@ function pr(rows, rejects) {
   };
 }
 
+// User-facing accuracy for a stage that may abstain. Precision answers "when the stage emits,
+// how often is it within the documented 5% ΔF tolerance?" Recall answers "of all eligible
+// voiced/vowel-like frames, how often does it emit an accurate value?" Reporting both prevents
+// an always-abstaining gate from claiming perfect precision and an always-emitting gate from
+// hiding wrong values in coverage.
+export function outputMetrics(rows, errorKey) {
+  const emitted = rows.filter((r) => r[errorKey] != null);
+  const correct = emitted.filter((r) => r[errorKey] <= BAD_DELTA_F_FRACTION).length;
+  const wrong = emitted.length - correct;
+  const n = rows.length || 1;
+  return {
+    n: rows.length,
+    correct,
+    wrong,
+    abstain: rows.length - emitted.length,
+    precision: +(100 * correct / Math.max(1, emitted.length)).toFixed(1),
+    recall: +(100 * correct / n).toFixed(1),
+    wrongRate: +(100 * wrong / n).toFixed(1),
+    abstainRate: +(100 * (rows.length - emitted.length) / n).toFixed(1),
+  };
+}
+
 const GATES = ['order', 'residual', 'swap', 'bandwidth', 'continuity'];
 const fires = (r, gate) => r.reasons.some((x) => x === gate || x.endsWith(`:${gate}`));
+const gateIntervened = (r) => !r.valid || [0, 1, 2, 3]
+  .some((i) => (r.canonicalAccepted?.[i] || 0) !== (r.canonicalRaw?.[i] || 0));
+
+// These floors describe minimally usable feedback, not the current implementation. A value
+// outside 5% ΔF error can move v1 by roughly a quarter of its full meter, so emitting it is a
+// material false reading. Clean precision is held to 90%; noisy conditions may abstain more,
+// but at least four of five emitted readings still need to be accurate. Recall floors prevent
+// an always-abstaining gate from claiming perfect precision. Gate false positives are capped at
+// 5% clean and 25–30% in noise so validity filtering cannot discard more than a small clean
+// minority or roughly one noisy frame in four. The subgroup floor prevents an average from
+// hiding a vowel or F0 with no accurate output at all.
+export const FRAME_LIVE_ACCEPTANCE = new Map([
+  [Infinity, { minPrecision: 90, minRecall: 50, maxWrongRate: 10, maxAbstainRate: 50,
+    maxInterventionFalsePositiveRate: 5, minSubgroupRecall: 10 }],
+  [20,       { minPrecision: 80, minRecall: 20, maxWrongRate: 20, maxAbstainRate: 70,
+    maxInterventionFalsePositiveRate: 25, minSubgroupRecall: 5 }],
+  [12,       { minPrecision: 80, minRecall: 10, maxWrongRate: 20, maxAbstainRate: 85,
+    maxInterventionFalsePositiveRate: 30, minSubgroupRecall: 5 }],
+]);
+
+export function frameAcceptanceFailures(condition, floor = FRAME_LIVE_ACCEPTANCE.get(condition?.snrDb)) {
+  if (!condition || !floor) return ['missing acceptance condition'];
+  const failures = [];
+  const live = condition.live || {};
+  if (live.precision < floor.minPrecision) failures.push(`precision ${live.precision}% < ${floor.minPrecision}%`);
+  if (live.recall < floor.minRecall) failures.push(`recall ${live.recall}% < ${floor.minRecall}%`);
+  if (live.wrongRate > floor.maxWrongRate) failures.push(`wrong ${live.wrongRate}% > ${floor.maxWrongRate}%`);
+  if (live.abstainRate > floor.maxAbstainRate) failures.push(`abstain ${live.abstainRate}% > ${floor.maxAbstainRate}%`);
+  const interventionFp = condition.intervention?.falsePositiveRate;
+  if (interventionFp == null) failures.push('missing intervention false-positive rate');
+  else if (interventionFp > floor.maxInterventionFalsePositiveRate) {
+    failures.push(`intervention false positives ${interventionFp}% > ${floor.maxInterventionFalsePositiveRate}%`);
+  }
+  for (const [vowel, m] of Object.entries(condition.perVowel || {})) {
+    if (m.recall < floor.minSubgroupRecall) failures.push(`/${vowel}/ recall ${m.recall}% < ${floor.minSubgroupRecall}%`);
+  }
+  for (const [f0, m] of Object.entries(condition.perF0 || {})) {
+    if (m.recall < floor.minSubgroupRecall) failures.push(`${f0} Hz recall ${m.recall}% < ${floor.minSubgroupRecall}%`);
+  }
+  return failures;
+}
 
 export async function report() {
   const out = { conditions: [] };
@@ -137,13 +247,26 @@ export async function report() {
 
   for (const snrDb of [Infinity, 20, 12, 6]) {
     const rows = await collect({ snrDb });
+    const labelled = rows.filter((r) => r.bad != null);
     const label = Number.isFinite(snrDb) ? `${snrDb} dB SNR` : 'clean';
-    const all = pr(rows, (r) => !r.valid);
-    out.conditions.push({ snrDb, rows: rows.length, all, gates: {} });
-    console.log(`--- ${label} — ${rows.length} frames, ${all.badRate}% of them bad ---`);
+    const all = pr(labelled, (r) => !r.valid);
+    const intervention = pr(labelled, gateIntervened);
+    const good = labelled.filter((r) => !r.bad);
+    intervention.falsePositiveRate = +(100 * good.filter(gateIntervened).length
+      / Math.max(1, good.length)).toFixed(1);
+    const accepted = outputMetrics(rows, 'acceptedErr');
+    const live = outputMetrics(rows, 'outputErr');
+    const perVowel = Object.fromEntries(Object.keys(VOWEL_FORMANTS)
+      .map((vowel) => [vowel, outputMetrics(rows.filter((r) => r.vowel === vowel), 'outputErr')]));
+    const perF0 = Object.fromEntries(F0S
+      .map((f0) => [f0, outputMetrics(rows.filter((r) => r.f0 === f0), 'outputErr')]));
+    out.conditions.push({ snrDb, rows: rows.length, labelledRows: labelled.length,
+      all, intervention, accepted, live, perVowel, perF0, gates: {} });
+    console.log(`--- ${label} — ${rows.length} target frames, ${labelled.length} with raw formants, `
+      + `${all.badRate}% of those bad ---`);
     console.log('   gate         reject%  precision  recall');
     for (const gate of GATES) {
-      const g = pr(rows, (r) => fires(r, gate));
+      const g = pr(labelled, (r) => fires(r, gate));
       out.conditions[out.conditions.length - 1].gates[gate] = g;
       console.log(`   ${gate.padEnd(12)} ${String(g.rejectRate).padStart(6)}%  `
         + `${g.precision == null ? '    —' : String(g.precision).padStart(6) + '%'}  `
@@ -152,10 +275,20 @@ export async function report() {
     console.log(`   ${'ALL (frame)'.padEnd(12)} ${String(all.rejectRate).padStart(6)}%  `
       + `${all.precision == null ? '    —' : String(all.precision).padStart(6) + '%'}  `
       + `${all.recall == null ? '    —' : String(all.recall).padStart(5) + '%'}`);
+    console.log(`   any intervention: precision ${intervention.precision ?? '—'}%, `
+      + `recall ${intervention.recall ?? '—'}%, false-positive rate ${intervention.falsePositiveRate}%`);
+    console.log(`   post-gate accepted: precision ${accepted.precision}%, recall ${accepted.recall}%, `
+      + `wrong ${accepted.wrongRate}%, abstain ${accepted.abstainRate}%`);
+    console.log(`   live pooled output: precision ${live.precision}%, recall ${live.recall}%, `
+      + `wrong ${live.wrongRate}%, abstain ${live.abstainRate}%`);
+    console.log(`   live by vowel (correct/wrong/abstain): ${Object.entries(perVowel)
+      .map(([vowel, m]) => `/${vowel}/ ${m.recall}/${m.wrongRate}/${m.abstainRate}%`).join('  ')}`);
+    console.log(`   live by F0 (correct/wrong/abstain): ${Object.entries(perF0)
+      .map(([f0, m]) => `${f0} Hz ${m.recall}/${m.wrongRate}/${m.abstainRate}%`).join('  ')}`);
 
     // Does the cross-estimator agreement term predict error? §5 is explicit that a gate which
     // costs more than it buys is reported and left off, and this is the number that decides it.
-    const withAg = rows.filter((r) => r.agreement != null);
+    const withAg = labelled.filter((r) => r.agreement != null);
     if (withAg.length > 20) {
       const sorted = withAg.slice().sort((a, b) => a.agreement - b.agreement);
       const q = Math.max(1, Math.floor(sorted.length / 4));
@@ -206,6 +339,7 @@ if (process.argv[1] && process.argv[1].endsWith('frame-validity.mjs')) {
   const r = await report();
   if (process.argv.includes('--check')) {
     let failed = false;
+    let quarantinedFailure = false;
     // The one claim the gates make: the frames they reject are worse than the frames they
     // admit. Stated as precision above the base rate, which is the weakest form of the claim
     // that is still a claim — a gate rejecting frames at the base rate is rejecting at random.
@@ -234,6 +368,37 @@ if (process.argv[1] && process.argv[1].endsWith('frame-validity.mjs')) {
         + `${clean.gates.bandwidth.precision}%, expected >= 90%`);
       failed = true;
     }
-    process.exit(failed ? 1 : 0);
+
+    for (const c of r.conditions) {
+      if (c.snrDb === 6) {
+        // The contract says the app must emit no resonance below its usable SNR floor. At 6 dB
+        // silence is the correct result, so this is an abstention assertion rather than an
+        // accuracy assertion over values the analyzer correctly refused to produce.
+        if (!(c.live.abstainRate === 100 && c.live.wrongRate === 0)) {
+          console.error(`FAIL at 6 dB: expected 100% abstention and 0% wrong output, got `
+            + `${c.live.abstainRate}% abstain and ${c.live.wrongRate}% wrong`);
+          failed = true;
+        }
+        continue;
+      }
+      const floor = FRAME_LIVE_ACCEPTANCE.get(c.snrDb);
+      if (!floor) continue;
+      const failures = frameAcceptanceFailures(c, floor);
+      if (failures.length) {
+        const label = Number.isFinite(c.snrDb) ? `${c.snrDb} dB` : 'clean';
+        console.error(`FAIL live output at ${label}: ${failures.join('; ')}`);
+        // Clean regressions are never quarantined. The existing 20/12 dB failures are allowed
+        // only by the explicit CI quarantine flag below, so the strict command stays red.
+        if (c.snrDb === 20 || c.snrDb === 12) quarantinedFailure = true;
+        else failed = true;
+      }
+    }
+
+    const allowQuarantine = process.argv.includes('--allow-known-validity-failures');
+    if (quarantinedFailure && allowQuarantine) {
+      console.warn('QUARANTINED: noisy-speech ΔF output is below the documented acceptance floors.');
+      console.warn('Remove the quarantine only when every 20/12 dB aggregate and vowel/F0 subgroup passes.');
+    }
+    process.exit(failed || (quarantinedFailure && !allowQuarantine) ? 1 : 0);
   }
 }

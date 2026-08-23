@@ -15,6 +15,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:all
+      # These strict checks stay visible and red until the documented DSP quarantines clear.
+      # `test:all` runs their explicit quarantine modes so unrelated regressions still block CI.
+      - name: Strict noisy-frame acceptance (quarantined)
+        continue-on-error: true
+        run: npm run test:resonance-validity
+      - name: Strict live-rhotic acceptance (quarantined)
+        continue-on-error: true
+        run: npm run test:resonance-rhotic
 
   browser-smoke-matrix:
     runs-on: ubuntu-latest
