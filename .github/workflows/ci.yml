@@ -14,9 +14,26 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run test:all
+      # Lint, generated constants, unit tests and the two fixture pipelines. `npm run test:all`
+      # is still the single command that runs everything (this plus resonance-corpus below); it
+      # is split here because the corpus jobs drive the real analyzer over synthesized corpora
+      # and take minutes rather than seconds, and a unit job that grows every phase stops being
+      # the fast signal it exists to be.
+      - run: npm run test:core
+
+  resonance-corpus:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:resonance-corpus
       # These strict checks stay visible and red until the documented DSP quarantines clear.
-      # `test:all` runs their explicit quarantine modes so unrelated regressions still block CI.
+      # `test:resonance-corpus` runs their explicit quarantine modes so unrelated regressions
+      # still block CI.
       - name: Strict noisy-frame acceptance (quarantined)
         continue-on-error: true
         run: npm run test:resonance-validity

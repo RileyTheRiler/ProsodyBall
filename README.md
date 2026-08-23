@@ -78,9 +78,28 @@ away.
 shorter/brighter vocal tract, not a measure of effort or strain — nothing in the signal chain
 measures phonatory effort — and not a verdict about gender: F0 and formants overlap
 substantially between gender groups, and ASHA is explicit that there is no single acoustic
-definition of voice feminization. Vowel identity also moves the current score about three
-times more than speaker sex does; see
+definition of voice feminization. See
 [`docs/RESONANCE_REDESIGN.md`](./docs/RESONANCE_REDESIGN.md) for the evidence and the plan.
+
+**What the number on the ring is, as of Phase 4.** One measurement with two views. The ring, the
+meter, the bulb and the haptics show **`resonanceControl`** — where you are inside a *span*: the
+published adult range until you run the guided resonance setup, your own demonstrated range
+afterwards. Everything that compares across people, sessions or devices reads
+**`resonanceAbsolute`** instead, which is never personally normalised. You still see one ring;
+the split is behind it.
+
+Two consequences worth knowing:
+
+- **The ring can go quiet.** The old score was a running average that could never be absent, so
+  it always showed a number — including on frames where the microphone gave it nothing to work
+  with. The new one declines to read those frames: the ring relaxes to a neutral "listening" ring
+  and the readout blanks. On clean read speech that is about 11% of frames, and measured, they
+  arrive in stretches of a tenth of a second to half a second rather than as flicker.
+- **Existing resonance alerts are paused, not converted.** A "buzz below 30" you set before this
+  change was set against a different measurement, and there is no honest way to translate it. The
+  threshold you typed is kept exactly as it is, the alert stops firing, and the vibration settings
+  offer one button to confirm it once you have watched the live number on the new scale. Pitch,
+  energy and every other alert are untouched.
 
 See [`docs/DSP_CONTRACT.md`](./docs/DSP_CONTRACT.md) for the measured per-estimator accuracy
 table and the cross-port golden-vector status.

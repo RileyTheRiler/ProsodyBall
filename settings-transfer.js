@@ -1,3 +1,5 @@
+import { parseResonanceProfile } from './resonance-metric.js';
+
 const PORTABLE_KEY_PATTERNS = [
   /^vox:colorMode$/,
   /^vox:daf:(enabled|delayMs|bassFilter)$/,
@@ -6,6 +8,12 @@ const PORTABLE_KEY_PATTERNS = [
   /^vox:motionPreference$/,
   /^vox:(micDeviceId|echoCancellation|noiseSuppression|autoGainControl|speechGate)$/,
   /^vox:vibration:v1$/,
+  // The calibrated personal span. It travels with the vibration rules DELIBERATELY: those
+  // thresholds are on `resonanceControl` (docs/RESONANCE_REDESIGN.md §7 question 3), so a rule
+  // exported without its span would mean something different on the receiving device — the
+  // per-device divergence D1 exists to prevent. It carries its own metric version inside, and
+  // the importing build refuses a version it cannot interpret rather than reinterpreting it.
+  /^vox:resonance:profile:v1$/,
   /^vox:bulb:(enabled|transport|hueLightId|bleNamePrefix|bleServiceUuid|bleWriteUuid|autoReconnect|throttleMs)$/,
 ];
 
@@ -46,6 +54,13 @@ export function normalizePortableSetting(key, value) {
     return Number.isInteger(delay) && delay >= 50 && delay <= 5000 ? String(delay) : null;
   }
   if (key === 'vox:bulb:transport') return BULB_TRANSPORTS.has(value) ? value : null;
+  if (key === 'vox:resonance:profile:v1') {
+    // Validated by the module that owns the schema, not by a second copy of its rules here. A
+    // profile from another metric version fails to parse and is dropped from the bundle, which
+    // is the correct outcome: it would be refused on import anyway.
+    if (value.length > 100000) return null;
+    return parseResonanceProfile(value).profile ? value : null;
+  }
   if (key === 'vox:vibration:v1') {
     if (value.length > 100000) return null;
     try {

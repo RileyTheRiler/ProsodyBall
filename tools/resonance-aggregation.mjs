@@ -110,7 +110,7 @@ export async function measure({ method = 'lpc' } = {}) {
     const weight = Math.max(0, a.formantConfidence * a.formantSteadiness);
     const base = { weight, vowel: a.vowelId, index, inHold };
     samples.f2.push({ ...base, value: a.f2PositionRatio });
-    samples.v2.push({ ...base, value: a.resonanceAbsoluteV2 });
+    samples.v2.push({ ...base, value: a.resonanceAbsolute != null ? a.resonanceAbsolute : 0 });
     index++;
   }
 

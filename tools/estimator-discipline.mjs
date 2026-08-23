@@ -57,7 +57,7 @@ async function analyze(signal, method, { ceilingHz = null } = {}) {
     a.update(DT);
     frames++;
     if (a.formantConfidence > 0.2) v1.push(a.smoothResonance);
-    if (!a.resonanceSuppressed) v2.push(a.resonanceAbsoluteV2);
+    if (!a.resonanceSuppressed && a.resonanceAbsolute != null) v2.push(a.resonanceAbsolute);
   }
   const msTotal = Number(process.hrtime.bigint() - t0) / 1e6;
   const back = (xs) => xs.slice(Math.floor(xs.length / 2));
@@ -197,7 +197,7 @@ export async function report() {
         + `${(100 * r.rate).toFixed(1).padStart(9)}%   ${JSON.stringify(r.reasons)}`);
     }
   }
-  console.log('\n   WHAT THE USER SEES: nothing. A suppressed frame clears resonanceAbsoluteV2, the');
+  console.log('\n   WHAT THE USER SEES: nothing. A suppressed frame clears resonanceAbsolute, the');
   console.log('   pooled scale, the apparent tract length, the vowel and f2Position — it does not');
   console.log('   freeze them at their last value and it does not substitute a brightness number');
   console.log('   that is computable from noise but wrong, which is the trap D1 names. It also');

@@ -450,9 +450,36 @@ test('§5: the classifier works on three formants and does not degrade on four',
   assert.equal(classifyVowel([...three, 1.4]).vowel, 'i', 'a fourth residual must not change the identity');
 });
 
-test('§5 acceptance, as written: f2Position does NOT beat raw F2 on the male-vs-female contrast', () => {
-  // Reported as a miss, with the number, because it is one. §5 asks f2Position to beat raw
-  // F2's d′ 0.38 on the P&B benchmark; measured on that contrast it does not come close.
+// =============================================================================================
+// PHASE 4 DECISION: THE d′ CRITERION IS RESTATED, PER PHASE 2'S RECOMMENDATION.
+// =============================================================================================
+//
+// Phase 2 closed with: "Recommendation for Phase 4: state the criterion against a within-speaker
+// contrast, since an absolute tract-size axis (`resonanceAbsolute`) and a trainable-posture axis
+// (`f2Position`) should not both be scored on how well they separate two populations by tract
+// length." Phase 4 accepts it, and the split is not symmetric — which is the whole point:
+//
+//   `resonanceAbsolute` KEEPS the male-vs-female criterion. It is a tract-size axis, separating
+//   two populations that differ in tract size is exactly what it claims to do, and d′ 1.73
+//   against v1's 0.86 is the claim. Nothing about it is restated.
+//
+//   `f2Position` MOVES to the within-speaker contrast. It has tract size divided out by
+//   construction (§5's α sweep proves the alternative is §1.4's double count rebuilt at
+//   r = 0.95), so scoring it on a contrast that is almost entirely tract size measures the
+//   thing the feature deliberately removed. The contrast it is scored on is §1.5's published
+//   GAVT outcome — F2 1847 → 1961 Hz, a within-speaker change at fixed tract length, which is
+//   what an F2 biofeedback target trains and what a user can actually move.
+//
+// The male-vs-female number is still MEASURED and still ASSERTED — as a descriptive figure with
+// a bound, not as an acceptance gate. Deleting it would hide the axis on which the feature is
+// weak; promoting it back to a gate would require putting tract length back in. Both tests below
+// therefore stay, and the one that decides whether the feature ships is the second.
+
+test('DESCRIPTIVE (no longer the acceptance gate): f2Position does not beat raw F2 on male-vs-female', () => {
+  // Kept and measured because the limitation is real and should not become invisible when the
+  // criterion moves. §5 originally asked f2Position to beat raw F2's d′ 0.38 on the P&B
+  // benchmark; measured on that contrast it does not come close, and the block above says why
+  // that is the wrong question for this feature rather than a failure of it.
   const bench = f2PositionSexDPrime(BENCH_SET);
   const all = f2PositionSexDPrime(FULL_SET);
   assert.ok(bench.rawF2.d > bench.f2Position.d,
@@ -491,11 +518,11 @@ test('§3.1, measured: the conditioning removes the vowel variance that made raw
     `vowel variance removed: ${(rel(raw) / rel(pos)).toFixed(1)}×`);
 });
 
-test('§5, on the contrast the feature is for: f2Position beats raw F2 by ~12× on a published training shift', () => {
-  // The same d′ arithmetic, the same data, the same classifier — the only change is the
-  // contrast. §1.5 cites a GAVT outcome of F2 1847 → 1961 Hz: a WITHIN-speaker articulatory
-  // change at a fixed tract length, which is what an F2 biofeedback target is for and what a
-  // user can actually move. Tract length is not trainable; this is.
+test('ACCEPTANCE (Phase 4, restated): f2Position beats raw F2 by >10× on a within-speaker shift', () => {
+  // THIS IS THE GATE. The same d′ arithmetic, the same data, the same classifier — the only
+  // change is the contrast. §1.5 cites a GAVT outcome of F2 1847 → 1961 Hz: a WITHIN-speaker
+  // articulatory change at a fixed tract length, which is what an F2 biofeedback target is for
+  // and what a user can actually move. Tract length is not trainable; this is.
   assert.ok(Math.abs(GAVT_F2_GAIN - 1961 / 1847) < 1e-9, 'the gain is the published one');
   for (const keys of [BENCH_SET, FULL_SET]) {
     const r = f2PositionTrainingDPrime(keys);
@@ -511,6 +538,18 @@ test('§5, on the contrast the feature is for: f2Position beats raw F2 by ~12× 
   const train = f2PositionTrainingDPrime(BENCH_SET);
   const sex = f2PositionSexDPrime(BENCH_SET);
   assert.ok(train.rawF2.d < sex.rawF2.d, `raw F2: ${train.rawF2.d.toFixed(3)} on training vs ${sex.rawF2.d.toFixed(3)} on sex`);
+});
+
+test('the restatement is ASYMMETRIC: resonanceAbsolute keeps the between-population criterion', () => {
+  // The half of Phase 2's recommendation that is easy to over-apply. Moving f2Position to a
+  // within-speaker contrast is not a general retreat from the male-vs-female benchmark — it is
+  // specific to a feature that has tract size divided out. `resonanceAbsolute` has tract size as
+  // its ENTIRE content, so it is scored where it always was, and it must keep clearing the
+  // Phase 1 bar or the restatement has been used to lower one.
+  const v2 = dPrime(scoreV2, BENCH_SET);
+  const v1 = dPrime(scoreV1, BENCH_SET);
+  assert.ok(v2.d >= 1.5, `resonanceAbsolute d′ (F vs M) = ${v2.d.toFixed(3)} — Phase 1's criterion was 1.5`);
+  assert.ok(v2.d > v1.d * 1.8, `v2 ${v2.d.toFixed(3)} vs v1 ${v1.d.toFixed(3)}`);
 });
 
 test('f2Position is a ratio to the vowel\'s own norm, and carries no tract length', () => {

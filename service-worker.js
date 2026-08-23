@@ -17,6 +17,7 @@ const APP_SHELL = [
   './vibration-preferences.js',
   './ui-dialog-manager.js',
   './settings-transfer.js',
+  './resonance-metric.js',
   './daf-engine.js',
   './pitch-estimator.js',
   './pitch-analysis-worker.js',
