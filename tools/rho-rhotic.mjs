@@ -18,14 +18,17 @@
 // from connected speech), and the observation that window composition scales every vowel's ρ by
 // a COMMON factor, so a running median divides it out.
 //
-// This tool measures what that buys and what it costs, over four conditions:
+// This tool measures what that buys and what it costs, over five conditions:
 //   1. clean P&B norms, held out across speakers
 //   2. formant noise sweep, 0–150 Hz per formant
 //   3. WINDOW COMPOSITION: pools built from random subsets of the vowel set, which is the
 //      failure mode Phase 2 named and the one an absolute ρ threshold would walk into
 //   4. threshold sweep, so the cost of moving the threshold is visible without moving it
+//   5. the real VoiceAnalyzer at three F0s, with every vowel reported separately
 //
-// Usage: node tools/rho-rhotic.mjs [--check]
+// `--check` is strict and fails while the live target is broken. CI may name the temporary
+// quarantine explicitly with `--allow-known-live-rhotic-failure`; the failure still prints.
+// Usage: node tools/rho-rhotic.mjs [--check] [--allow-known-live-rhotic-failure]
 import {
   classifyVowel, rhoticFromRho, RHOTIC_RHO_THRESHOLD, VOWEL_POOLED_RHO,
   fitFormantScale, formantPatternResiduals, normalizeResidualScale, residualScaleFactor,
@@ -191,11 +194,13 @@ export function report() {
 // Barney's adult-male /ɝ/ has F3 = 1690 Hz. The extractor could not resolve a rhotic F3 at all.
 // The lowest F3 the canonical path ever reported on the Rainbow Passage was 2091 Hz.
 //
-// With the rhotic-capable assignment (app.js F3_RHOTIC_FLOOR_HZ, a second pass over the poles
-// the same solve already produced, applied to the canonical path only so v1 does not move) the
-// lowest F3 on that passage is 1660 Hz and /ɝ/ is named on 7.1% of frames by the ordinary
-// scale-invariant classifier, with ρ adding 1.6 points on top. So the answer to Phase 2's
-// hand-off is: ρ is usable and it does work, but it was never the binding constraint.
+// The rhotic-capable assignment (app.js F3_RHOTIC_FLOOR_HZ) is a second pass over the poles the
+// same solve already produced, so it leaves displayed v1 untouched. It is instrumented only:
+// the standard classifier still names /ɝ/ on 0% of frames at every tested F0. The detector
+// itself reaches 0%, 3%, and 11.9% recall at F0 110/130/180 while false positives rise from
+// 4.3% to 12.6%. Turning it on would therefore trade one systematic miss for wrong feedback on
+// other vowels. The strict check remains red until the live path clears both recall and false-
+// positive criteria; the published-norm calculation cannot cover that failure.
 import { MockAudioContext } from './run-eval-harness.mjs';
 import { synthVowel } from './synth-vowel.mjs';
 
@@ -205,6 +210,36 @@ const PB_MALE = {
   'ʌ': [640, 1190, 2390], 'ɝ': [490, 1350, 1690],
 };
 
+const LIVE_F0S = [110, 130, 180];
+// Completion conditions for removing the quarantine. Fifty-percent /ɝ/ recall is deliberately
+// below the 92.5% produced by the unsafe widened assignment: it catches total target failure
+// without demanding a tuned benchmark optimum. The 5% detector false-positive ceiling prevents
+// that recall from being bought by calling every low-F3 vowel rhotic. Every vowel must also
+// produce at least one correct frame at every F0 so an overall average cannot hide a dead class.
+export const RHOTIC_LIVE_ACCEPTANCE = {
+  minOverallCorrect: 60,
+  maxOverallWrong: 35,
+  maxOverallAbstain: 20,
+  minRhoticRecall: 50,
+  maxDetectorFalsePositiveRate: 5,
+};
+
+export function rhoticLiveFailures(result, acceptance = RHOTIC_LIVE_ACCEPTANCE) {
+  if (!result) return ['missing live result'];
+  const reasons = [];
+  if (result.correct < acceptance.minOverallCorrect) reasons.push(`overall correct ${result.correct}%`);
+  if (result.wrong > acceptance.maxOverallWrong) reasons.push(`overall wrong ${result.wrong}%`);
+  if (result.abstain > acceptance.maxOverallAbstain) reasons.push(`overall abstain ${result.abstain}%`);
+  if (result.rhoticRecall < acceptance.minRhoticRecall) reasons.push(`/ɝ/ recall ${result.rhoticRecall}%`);
+  if (result.detectorFalsePositiveRate > acceptance.maxDetectorFalsePositiveRate) {
+    reasons.push(`rhotic false positives ${result.detectorFalsePositiveRate}%`);
+  }
+  for (const [vowel, m] of Object.entries(result.perVowel || {})) {
+    if (m.correct === 0) reasons.push(`/${vowel}/ has zero correct frames`);
+  }
+  return reasons;
+}
+
 export async function livePath({ f0 = 130, seconds = 1.2 } = {}) {
   const { VoiceAnalyzer } = await import('../app.js');
   const SR = 44100, W = 4096, HOP = Math.round(SR / 60);
@@ -213,7 +248,7 @@ export async function livePath({ f0 = 130, seconds = 1.2 } = {}) {
   a.audioCtx.sampleRate = SR;
   a.isCalibrated = true; a.noiseFloor = 0.005; a.hfNoiseFloor = 0.001; a.micTiltBaselineDb = 0;
   a.resonanceMethod = 'lpc';
-  const tally = { correct: 0, wrong: 0, abstain: 0 };
+  const tally = { correct: 0, wrong: 0, abstain: 0, rhoticDetected: 0 };
   const perVowel = {};
   // One continuous pass over all ten vowels in sequence, so the pooling window holds several
   // vowels — which is the operating point ρ needs and the one connected speech actually is.
@@ -227,7 +262,9 @@ export async function livePath({ f0 = 130, seconds = 1.2 } = {}) {
   // would be scoring the warm-up.
   for (const pass of [0, 1]) {
     for (const { v, sig } of clips) {
-      perVowel[v] = perVowel[v] || { correct: 0, wrong: 0, abstain: 0, got: {} };
+      perVowel[v] = perVowel[v] || {
+        correct: 0, wrong: 0, abstain: 0, rhoticDetected: 0, got: {}, rhoReasons: {},
+      };
       for (let i = 0; i + W <= sig.length; i += HOP) {
         a.audioCtx._currentChunk = sig.subarray(i, i + W);
         a.update(HOP / SR);
@@ -237,15 +274,25 @@ export async function livePath({ f0 = 130, seconds = 1.2 } = {}) {
         const bucket = got == null ? 'abstain' : got === v ? 'correct' : 'wrong';
         tally[bucket]++; perVowel[v][bucket]++;
         perVowel[v].got[got || '—'] = (perVowel[v].got[got || '—'] || 0) + 1;
+        if (a.rhoticDetected) { tally.rhoticDetected++; perVowel[v].rhoticDetected++; }
+        perVowel[v].rhoReasons[a.rhoReason] = (perVowel[v].rhoReasons[a.rhoReason] || 0) + 1;
       }
     }
   }
   const n = tally.correct + tally.wrong + tally.abstain || 1;
+  const rhotic = perVowel['ɝ'] || { correct: 0, wrong: 0, abstain: 0, rhoticDetected: 0 };
+  const rhoticN = rhotic.correct + rhotic.wrong + rhotic.abstain || 1;
+  const nonRhotic = Object.entries(perVowel).filter(([v]) => v !== 'ɝ').map(([, x]) => x);
+  const nonRhoticN = nonRhotic.reduce((sum, x) => sum + x.correct + x.wrong + x.abstain, 0) || 1;
+  const rhoticFalsePositives = nonRhotic.reduce((sum, x) => sum + x.rhoticDetected, 0);
   return {
     n,
     correct: +(100 * tally.correct / n).toFixed(1),
     wrong: +(100 * tally.wrong / n).toFixed(1),
     abstain: +(100 * tally.abstain / n).toFixed(1),
+    rhoticRecall: +(100 * rhotic.correct / rhoticN).toFixed(1),
+    detectorRecall: +(100 * rhotic.rhoticDetected / rhoticN).toFixed(1),
+    detectorFalsePositiveRate: +(100 * rhoticFalsePositives / nonRhoticN).toFixed(1),
     perVowel,
   };
 }
@@ -255,8 +302,10 @@ if (process.argv[1] && process.argv[1].endsWith('rho-rhotic.mjs')) {
   console.log('\n5. THROUGH THE LIVE PATH — the real VoiceAnalyzer over synthesized vowels');
   console.log('   whose identity is known by construction, ten vowels in sequence so the pooling');
   console.log('   window holds several of them (which is what connected speech is):\n');
-  for (const f0 of [110, 130, 180]) {
+  r.live = [];
+  for (const f0 of LIVE_F0S) {
     const lp = await livePath({ f0 });
+    r.live.push({ f0, ...lp });
     console.log(`   F0 ${f0} Hz: ${lp.correct}% correct, ${lp.wrong}% wrong, ${lp.abstain}% abstain `
       + `over ${lp.n} frames`);
     const rho = lp.perVowel['ɝ'];
@@ -265,10 +314,17 @@ if (process.argv[1] && process.argv[1].endsWith('rho-rhotic.mjs')) {
       console.log(`     /ɝ/ specifically: ${(100 * rho.correct / tot).toFixed(1)}% correct, `
         + `read as ${JSON.stringify(rho.got)}`);
     }
+    console.log(`     detector: ${lp.detectorRecall}% /ɝ/ recall, `
+      + `${lp.detectorFalsePositiveRate}% false positives on non-rhotics`);
+    console.log(`     per vowel (correct/wrong/abstain): ${Object.entries(lp.perVowel).map(([v, m]) => {
+      const vn = m.correct + m.wrong + m.abstain || 1;
+      return `/${v}/ ${(100 * m.correct / vn).toFixed(1)}/${(100 * m.wrong / vn).toFixed(1)}/${(100 * m.abstain / vn).toFixed(1)}%`;
+    }).join('  ')}`);
   }
   r.livePathRun = true;
   if (process.argv.includes('--check')) {
     let failed = false;
+    let quarantinedFailure = false;
     // The one claim this makes: on clean norms held out across speakers, admitting ρ removes
     // the /ɝ/→/æ/ confusion and introduces no other error. If it ever costs one, this fails and
     // the trade has to be re-argued rather than re-tuned.
@@ -280,6 +336,29 @@ if (process.argv[1] && process.argv[1].endsWith('rho-rhotic.mjs')) {
       console.error(`FAIL: ρ leaves ${r.clean.withRho.wrong}% wrong on clean norms: ${JSON.stringify(r.clean.confusion)}`);
       failed = true;
     }
-    process.exit(failed ? 1 : 0);
+    // At 50 Hz/formant of deterministic measurement noise, the detector must remain useful
+    // across the full vowel set. This is the stress point used by the threshold and window
+    // sweeps, and 80% correct / <=20% wrong prevents a clean-only result from passing.
+    const noisy50 = r.noise.find((x) => x.noiseHz === 50);
+    if (!noisy50 || noisy50.withRho.correct < 80 || noisy50.withRho.wrong > 20) {
+      console.error(`FAIL: ρ at 50 Hz/formant noise is ${noisy50?.withRho.correct ?? 'missing'}% correct, `
+        + `${noisy50?.withRho.wrong ?? 'missing'}% wrong; expected >=80% correct and <=20% wrong`);
+      failed = true;
+    }
+
+    for (const lp of r.live) {
+      const reasons = rhoticLiveFailures(lp);
+      if (reasons.length) {
+        console.error(`FAIL live path at F0 ${lp.f0} Hz: ${reasons.join('; ')}`);
+        quarantinedFailure = true;
+      }
+    }
+
+    const allowQuarantine = process.argv.includes('--allow-known-live-rhotic-failure');
+    if (quarantinedFailure && allowQuarantine) {
+      console.warn('QUARANTINED: VoiceAnalyzer does not meet the live /ɝ/ acceptance criteria.');
+      console.warn('Remove the quarantine only after every tested F0 reaches >=50% /ɝ/ recall, <=5% detector false positives, and no vowel has zero correct frames.');
+    }
+    process.exit(failed || (quarantinedFailure && !allowQuarantine) ? 1 : 0);
   }
 }

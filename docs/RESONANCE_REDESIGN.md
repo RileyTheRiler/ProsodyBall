@@ -626,6 +626,16 @@ rejecting at random. That is not a gate failure, it is the SNR floor's job inste
 why the committed check asserts down to 12 dB and reports 6 dB without asserting it. A
 knife-edge assertion dressed as a claim is worse than a stated limit.
 
+**That detector-only check was insufficient.** It could pass while frame-level recall was 0%
+on clean audio and 1.6% at 20 dB, because it asserted precision only when at least ten whole
+frames were rejected. The current acceptance report follows each target frame through the
+per-formant gates, pooling, and suppression. It separately reports emitted-value precision,
+accurate-frame recall, wrong-output rate, abstention, and every vowel/F0 subgroup. At 20 dB the
+live output is only 37.4% precise with 48.7% wrong frames; at 12 dB it is 44.6% precise, with
+`/i/` and `/u/` at 0% accurate recall. The strict check now fails those conditions. CI names the
+temporary quarantine and runs the strict command as a visible non-blocking step; removing the
+quarantine requires every aggregate and subgroup to meet the thresholds documented in the tool.
+
 **The continuity gate's benefit is not measurable on the corpus that can label frames, and this
 is stated rather than papered over.** Sustained synthetic vowels contain no formant transitions,
 so a continuity gate has nothing to catch there, and its 0% precision on clean audio is the
@@ -752,9 +762,11 @@ appear because a median over two points is whichever is larger. The threshold, �
 against 84.9% at 0.75 and 84.6% at 0.85, swept in `tools/rho-rhotic.mjs`).
 
 **It does not survive the live path, and the failure is not marginal.** Driven over synthesized
-vowels whose identity is known by construction, admitting ρ reads /ɪ/ as /ɝ/ on 26 frames in 67
-and, at F0 180, /ɔ/ as /ɝ/ on 47 of 67 — while recovering /ɝ/ itself on 0–12%. Two causes,
-neither a threshold that could be moved:
+vowels whose identity is known by construction, the shipped classifier identifies `/ɝ/` on 0%
+of frames at F0 110, 130, and 180. The instrumented detector reaches 0%, 3%, and 11.9% recall,
+while false positives on non-rhotics are 4.3%, 4.1%, and 12.6%. At F0 180, `/ɛ/` and `/ɑ/` also
+have zero correct frames, so the failure is not isolated to the rhotic. Two causes, neither a
+threshold that could be moved:
 
 1. The live pooling window is ~1.7 s and rarely holds enough **distinct** vowels for its running
    median ρ to mean anything. A window holding two vowels has a median that is one of them.
@@ -772,8 +784,11 @@ that the formant assignment has one policy, shared with v1, that cannot admit a 
 admitting spurious ones. Fixing it needs an assignment v1 no longer constrains — **Phase 4**,
 when v1 retires — validated against real rhotic recordings rather than a Klatt cascade, which is
 **Phase 5**. Everything needed is measured and exposed (`rhoticDetected`, `rhoRelative`,
-`rhoReason`, `windowHomogeneityCv`, `measuredRhotic`); **none of it is switched on**, and a test
-pins that, so turning it on later is a deliberate change rather than a drift.
+`rhoReason`, `windowHomogeneityCv`, `measuredRhotic`); **none of it is switched on**. The strict
+live check requires at least 50% `/ɝ/` recall at each tested F0, at most 5% detector false
+positives, and no vowel with zero correct frames. CI's quarantine is explicit and its completion
+condition is those criteria, so turning the detector on later requires evidence rather than a
+green norms-only check.
 
 **Phase 2's classification numbers are therefore unchanged**, and the d′ benchmark including its
 Phase 2 additions is untouched.

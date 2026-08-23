@@ -234,12 +234,17 @@ canonical path has no branch for the estimator identity to take); the ceiling-pa
 is byte-identical to the pre-Phase-3 decimation at the default 5512.5 Hz, which is what lets a
 per-user ceiling exist without moving v1; a calibrated ceiling does not reach v1 at all; and
 below the floor every v2 output is *cleared* rather than frozen. The tools produce numbers that
-have to be read rather than passed, each with a `--check` in `test:all`:
+have to be read and enforce explicit criteria. `estimator-discipline` and `lpc-ceiling` run
+strictly in `test:all`; frame validity and live rhotic handling currently run through named
+quarantines, while their raw `--check` commands fail and CI runs those strict commands as
+visible non-blocking steps:
 `tools/estimator-discipline.mjs` (between-estimator spread, LPC solves per frame against §3.4's
 budget, suppression rate at both of the repo's "live" hop sizes),
-`tools/frame-validity.mjs` (per-gate precision/recall on labelled synthetic frames, and the
-per-gate cost on the Rainbow Passage, which has no labels and is therefore reported as cost
-only), `tools/lpc-ceiling.mjs` (per-user ceiling vs the fixed default over four tract scales ×
+`tools/frame-validity.mjs` (per-gate detection plus post-gate and live-output precision, accurate
+recall, wrong-output rate, abstention, gate false-positive rate, and every vowel/F0 subgroup on
+labelled synthetic frames;
+the Rainbow Passage still has no labels and is therefore cost-only), `tools/lpc-ceiling.mjs`
+(per-user ceiling vs the fixed default over four tract scales ×
 F0 100–300 Hz × three SNRs, calibrated and scored on disjoint vowel sets), and
 `tools/rho-rhotic.mjs` (whether ρ is usable for /ɝ/ — on the norms and through the live path,
 which give opposite answers).
@@ -462,8 +467,12 @@ is computed and kept in step.
   assignment over the poles the same solve already produced (`F3_RHOTIC_FLOOR_HZ`, no extra LPC),
   which makes /ɝ/ reachable — 92.5% correct at F0 110 — but at F0 180 the sparse pole set fills
   the widened slot on most frames and manufactures rhotics (/ɔ/ → /ɝ/ on 47 frames in 67). It is
-  therefore **computed and exposed, and not used**. Fixing it needs an assignment policy v1 no
-  longer constrains, which is Phase 4, validated on real rhotic recordings, which is Phase 5.
+  therefore **computed and exposed, and not used**. On the current live classifier `/ɝ/` remains
+  0% correct at F0 110, 130, and 180. The instrumented detector reaches 0%, 3%, and 11.9% recall,
+  while non-rhotic false positives rise from 4.3% to 12.6%. The strict check requires at least
+  50% `/ɝ/` recall at every F0, no zero-accuracy vowel subgroup, and at most 5% rhotic false
+  positives. Fixing it needs an assignment policy v1 no longer constrains, which is Phase 4,
+  validated on real rhotic recordings, which is Phase 5.
 
 - **The vowel classifier's meaning depends on the pooling window, and that is only half solved.**
   `formantPattern` is taken against the ΔF pooled over a rolling window, so what a residual means
@@ -472,9 +481,10 @@ is computed and kept in step.
   in both — but the component it divides out (ρ) is exactly the component a rhotic /ɝ/ shows up
   in. **Phase 3 answered this and the answer is no.** ρ does what Phase 2 predicted on the
   published norms — held out across P&B's two populations it takes the classifier from 95% to
-  100% correct at 0% abstention and removes the /ɝ/→/æ/ confusion — but through the live path it
-  reads /ɪ/ as /ɝ/ on 26 frames in 67 and, at F0 180, /ɔ/ on 47 of 67, because the ~1.7 s pooling
-  window rarely holds enough distinct vowels for its running median ρ to mean anything. It is
+  100% correct at 0% abstention and removes the /ɝ/→/æ/ confusion — but the current live path
+  still has 0% `/ɝ/` accuracy, because the standard assignment cannot supply its low F3 and the
+  widened assignment is not safe to act on. The ~1.7 s pooling window also rarely holds enough
+  distinct vowels for its running median ρ to mean anything. It is
   instrumented (`rhoticDetected`, `rhoRelative`, `rhoReason`, `windowHomogeneityCv`) and not
   acted on, with a test pinning that. The classifier's one systematic error remains /ɝ/ → /æ/.
 - **Phase 2's features are web-only and unversioned.** `vowelId`, `f2Position`, and the two
