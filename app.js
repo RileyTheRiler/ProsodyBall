@@ -5114,14 +5114,15 @@ export class VoxBallGame {
     }
     this._updateVoiceRecBtn();
 
+    // Keep the singleton empty-state node attached. Removing it with `textContent = ''`
+    // made the final delete try to append `null` on the next render.
+    list.querySelectorAll('.rec-item').forEach((item) => item.remove());
     if (this.recordings.length === 0) {
-      list.textContent = '';
-      list.appendChild(empty);
       empty.style.display = '';
       return;
     }
 
-    list.textContent = '';
+    empty.style.display = 'none';
     for (let i = this.recordings.length - 1; i >= 0; i--) {
       const rec = this.recordings[i];
       const item = document.createElement('div');
