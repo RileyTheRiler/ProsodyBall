@@ -1,8 +1,8 @@
 # Vox Arcade for Wear OS (Galaxy Watch 7)
 
-A thin Wear OS app that runs the existing ProsodyBall web app full-screen on your
-watch. It reuses the exact same audio/DSP engine as the web app — there is no
-separate logic to maintain. On launch you pick one of three modes:
+A standalone native Wear OS app. It captures the watch microphone through Android
+`AudioRecord`, performs pitch and spectral-brightness analysis in Kotlin, and renders
+three tabs:
 
 - **Vox Ball** — the visual voice-training game; the ball reacts to the pitch and
   rhythm of your voice picked up by the watch mic.
@@ -87,17 +87,14 @@ same intensity and discreet/practice setting.
 
 | Piece | Purpose |
 |-------|---------|
-| `app/src/main/java/com/voxarcade/wear/MainActivity.kt` | The native shell: one full-screen `WebView`, mic-permission handling, keep-screen-on, a **native Vibrator bridge** (`AndroidHaptics`) so the page's `navigator.vibrate` produces strong, reliable buzzes, a **brightness bridge** (`AndroidScreen`) for necklace mode, and the **mask overlay** (long-press to peek) for visual discretion. |
-| `assets-overlay/watch.css` + `watch-boot.js` | Watch adaptation layer injected at runtime: the launch chooser, the Vox Ball layout, and the necklace UI (mic toggle, status dot, alert seeding). The canonical `index.html` is never edited. |
-| `app/build.gradle.kts` (`copyWebApp` task) | Copies the root web app (`index.html`, `app.js`, `dsp-utils.js`, …) + the overlay into the APK's assets at build time. |
+| `app/src/main/java/com/voxarcade/wear/MainActivity.kt` | Native Compose UI, permission hand-off, activity lifecycle cleanup, haptics, and the Voice/Necklace/Screen tabs. |
+| `app/src/main/java/com/voxarcade/wear/MicEngine.kt` | The sole `AudioRecord` owner, capture thread, native DSP, generation guards, and deterministic resource diagnostics. |
+| `app/src/main/java/com/voxarcade/wear/WearMicSession.kt` | Owns pending permission state and prevents late permission callbacks from restarting a stopped session. |
+| `app/src/main/java/com/voxarcade/wear/PitchDetector.kt` + `SpectralBrightnessEstimator.kt` | Native pitch and spectral-brightness estimators. |
 
-The biofeedback itself is the web app's existing vibration rule engine
-(`window.voxGame.vibration`); the watch layer just seeds sensible defaults and routes
-haptics to the system vibrator.
-
-The copied web assets live under `app/src/main/assets/web/` and are **git-ignored**
-— they're generated from the repo root on every build, so the web app stays the
-single source of truth.
+The legacy `assets-overlay` files remain for historical tests but are not packaged or
+executed by the native v2 APK. See
+[`../docs/WEAR_MIC_LIFECYCLE.md`](../docs/WEAR_MIC_LIFECYCLE.md) for resource ownership.
 
 ## Getting an installable APK (no Android Studio needed)
 
