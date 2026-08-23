@@ -2437,3 +2437,26 @@ export function rhoticFromRho(rho, {
   return { rhotic: rel < threshold, rhoRelative: rel, reason: rel < threshold ? 'rhotic' : 'not-rhotic' };
 }
 
+// Sanitize untrusted or dynamically constructed URLs (e.g. from window.location.href)
+// to prevent DOM-based XSS via javascript: or similar pseudo-protocols masquerading as relative paths.
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  const urlStr = String(url).trim();
+  try {
+    const parsed = new URL(urlStr);
+    if (['http:', 'https:', 'mailto:', 'tel:', 'blob:', 'file:'].includes(parsed.protocol)) {
+      return urlStr;
+    }
+    return 'about:blank';
+  } catch (e) {
+    try {
+      new URL(urlStr, 'https://dummy.local');
+      if (/^[^/:]*:/.test(urlStr) || urlStr.startsWith('://')) {
+        return 'about:blank';
+      }
+      return urlStr;
+    } catch (e2) {
+      return 'about:blank';
+    }
+  }
+}
