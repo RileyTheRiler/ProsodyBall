@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Fullscreen, no action bar — the WebView owns the whole round screen. -->
+    <!-- Fullscreen, no action bar — native Compose owns the whole round screen. -->
     <style name="Theme.VoxArcadeWear" parent="@android:style/Theme.DeviceDefault.NoActionBar">
         <item name="android:windowFullscreen">true</item>
         <item name="android:windowNoTitle">true</item>

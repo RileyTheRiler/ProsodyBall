@@ -27,3 +27,16 @@ Test at least one compact phone (320–360 CSS px wide) and one current large ph
 - Export settings, reset them, and import the backup. Confirm private bulb credentials were not included in the JSON.
 
 Automated browser smoke covers the compact viewport matrix, scrolling, orientation, focus trapping, the global error banner, the web manifest, and the pitch worker. Physical-device checks remain required for microphone routing, vibration hardware, browser chrome, and OEM keyboard behavior.
+
+## Native Wear OS microphone lifecycle
+
+- Deny, grant, revoke, and re-grant `RECORD_AUDIO`; a late permission result after
+  leaving the activity must not start capture.
+- Run at least 20 rapid Start/Stop cycles and confirm the system microphone indicator
+  clears every time.
+- Press Start and immediately background the activity; confirm capture releases and
+  stays off when returning until Start is pressed again.
+- While listening, interrupt the input with an available device/OEM audio route change;
+  confirm the app reports a stopped microphone and can start one clean replacement.
+- Switch among Voice, Necklace, and Screen while listening; confirm the one capture
+  continues without a second microphone owner.
