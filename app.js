@@ -18,6 +18,14 @@ import { ModalFocusManager } from './ui-dialog-manager.js';
 import { exportPortableSettings, importPortableSettings, resetPortableSettings } from './settings-transfer.js';
 import { SessionWakeLock, registerPwa } from './pwa.js';
 import {
+  RECORDING_LIMITS,
+  RecordingAttempt,
+  RecordingObjectUrlPool,
+  recordingCapacity,
+  retainedAudioBytes,
+  retainedMetricSamples,
+} from './recording-lifecycle.js';
+import {
   DafEngine,
   outputLatencyMs,
   describeEffectiveDelay,
@@ -3475,7 +3483,7 @@ class Particle {
 // ============================================================
 // MAIN GAME
 // ============================================================
-class VoxBallGame {
+export class VoxBallGame {
   constructor() {
     this.canvas = document.getElementById('gameCanvas');
     this.ctx = this.canvas.getContext('2d');
@@ -3556,21 +3564,27 @@ class VoxBallGame {
     // Recording
     this.isRecording = false;
     this._recInterval = null;
-    this._recBuffers = [];
-    this._recMetricSamples = []; // live metric snapshots per recorder tick, summarized at stop
     this._recSampleRate = 48000;
     this._mediaRecorder = null;
-    this._recChunks = [];
     this._recUseMediaRecorder = false;
     this._recMimeType = null;
-    this.recordings = []; // { blob, dataUrl, duration, timestamp, name, mimeType, metrics, label }
+    this._recordingGeneration = 0;
+    this._recordingAttempt = null;
+    this._recordingFinalizePromise = null;
+    this._recStopTimer = null;
+    this._recDurationTimer = null;
+    this._recordingLimitStopRequested = false;
+    this._recordingUrls = new RecordingObjectUrlPool();
+    this._playbackGeneration = 0;
+    this._recordingListenerCount = 0;
+    this.recordings = []; // bounded, memory-only { id, blob, duration, timestamp, name, ... }
     this.recordingStartTime = 0;
     this.currentPlayback = null;
     this.currentSpeech = null; // in-flight SpeechSynthesisUtterance for the practice results "Hear feedback" button
     this._pendingClipLabel = null; // label attached to the next saved clip (set by practice flow)
     this._pendingPhrase = null;    // known phrase text for the next saved clip → word-by-word analysis
     this._pendingPhraseDef = null; // PRACTICE_PHRASES entry for the next saved clip → coaching scores
-    this._recTickSec = 512 / 48000; // exact per-snapshot duration; recomputed at startRecording
+    this._recTickSec = 1 / RECORDING_LIMITS.metricSamplesPerSecond;
 
     // Guided phrase practice flow state; stage: 'prompt' (read & record) | 'results' (review take)
     // takeIndex points at the recording shown in the results stage.
@@ -3737,6 +3751,13 @@ class VoxBallGame {
     window.addEventListener('resize', onResize);
     this._disposables.push(() => window.removeEventListener('resize', onResize));
     this.setupUI();
+    const onPageHide = () => {
+      this.cancelRecording('pagehide');
+      this.stopPlayback();
+      this._recordingUrls.releaseAll();
+    };
+    window.addEventListener('pagehide', onPageHide);
+    this._disposables.push(() => window.removeEventListener('pagehide', onPageHide));
     this._updateHelpContent();
     this._setupMobile();
     this._setupInfoPopups();
@@ -4027,23 +4048,42 @@ class VoxBallGame {
   // ============================================
   startRecording() {
     const a = this.analyzer;
-    if (!a.audioCtx || !a.analyserRec || this.isRecording) return;
+    if (!a.audioCtx || !a.analyserRec || this.isRecording || this._recordingFinalizePromise) return false;
+    const capacity = recordingCapacity(this.recordings);
+    if (!capacity.ok) {
+      const message = capacity.reason === 'clip-count'
+        ? `Recording limit reached (${RECORDING_LIMITS.maxSavedRecordings} clips). Download and delete a clip before recording again.`
+        : `Recording memory limit reached (${Math.round(RECORDING_LIMITS.maxRetainedAudioBytes / 1024 / 1024)} MB). Download and delete a clip before recording again.`;
+      this._notifyRecording(message);
+      return false;
+    }
+
+    const token = ++this._recordingGeneration;
+    const startedAtMs = performance.now();
+    const attempt = new RecordingAttempt({
+      id: token,
+      startedAtMs,
+      retainedBytes: capacity.bytes,
+    });
+    this._recordingAttempt = attempt;
+    this._recordingLimitStopRequested = false;
     try {
       this._recSampleRate = a.audioCtx.sampleRate;
-      this._recBuffers = [];
-      this._recMetricSamples = [];
       const fftSize = a.analyserRec.fftSize; // 512
 
       // Poll interval = window duration in ms (e.g. 512/44100*1000 ≈ 11.6ms)
       const intervalMs = Math.round(1000 * fftSize / this._recSampleRate);
-      // Snapshot timeline uses index × this duration — sample-exact vs the encoded
-      // clip, immune to setInterval wall-clock jitter.
-      this._recTickSec = fftSize / this._recSampleRate;
+      // Metrics are intentionally sampled at 25 Hz. Phrase timing remains frame-indexed,
+      // while a ten-minute take retains at most 15,001 small snapshots.
+      this._recTickSec = 1 / RECORDING_LIMITS.metricSamplesPerSecond;
 
       this._recUseMediaRecorder = !!(a.stream && typeof MediaRecorder !== 'undefined');
+      this.recordingStartTime = startedAtMs;
+      this.isRecording = true;
 
       this._recInterval = setInterval(() => {
-        if (!this.isRecording || !a.analyserRec) return;
+        if (!this.isRecording || !attempt.accepts(token) || !a.analyserRec) return;
+        const nowMs = performance.now();
         a.analyserRec.getFloatTimeDomainData(a.recTimeDomainData);
 
         // Speech gate: compute local RMS and check against analyzer's noise floor
@@ -4056,19 +4096,15 @@ class VoxBallGame {
         const isSpeech = localRms > threshold || a.pitchConfidence > 0.3;
 
         if (!this._recUseMediaRecorder) {
-          // Legacy capture path only — MediaRecorder handles the real audio
-          // when available, so this buffer isn't needed (and shouldn't gate
-          // silence, since MediaRecorder captures everything verbatim).
-          if (isSpeech) {
-            this._recBuffers.push(new Float32Array(data));
-          } else {
-            // Push silence to keep timing intact (avoids clicks/jumps)
-            this._recBuffers.push(new Float32Array(data.length));
-          }
+          // The no-MediaRecorder fallback keeps Int16 windows (half the old Float32
+          // footprint). Silence stays explicit so clip timing is never compressed.
+          const frame = isSpeech ? data : new Float32Array(data.length);
+          if (attempt.addPcmFrame(token, frame)) this._requestRecordingLimitStop('memory', token);
         }
 
-        // Snapshot live analysis so the clip can carry review metrics.
-        this._recMetricSamples.push({
+        // Snapshot live analysis so the clip can carry review metrics. The attempt owns
+        // and rate-limits this array; the recorder timer itself may run faster for PCM.
+        attempt.addMetric(token, nowMs, {
           hz: a.smoothPitchHz,
           conf: a.pitchConfidence,
           voiced: isSpeech && a.lastPitch > 0,
@@ -4077,24 +4113,61 @@ class VoxBallGame {
           energy: localRms,       // raw window RMS (pre-gate) → phrase segmentation contour
           syl: a.syllableImpulse, // decaying onset impulse → word-split boundary hints
         });
+        if (attempt.durationLimitReached(nowMs)) this._requestRecordingLimitStop('duration', token);
       }, intervalMs);
+      this._recDurationTimer = setTimeout(
+        () => this._requestRecordingLimitStop('duration', token),
+        RECORDING_LIMITS.maxDurationMs,
+      );
 
       if (this._recUseMediaRecorder) {
-        this._recChunks = [];
         const mimeType = this._pickRecordingMimeType();
-        this._mediaRecorder = mimeType ? new MediaRecorder(a.stream, { mimeType }) : new MediaRecorder(a.stream);
+        const options = { audioBitsPerSecond: 128000 };
+        if (mimeType) options.mimeType = mimeType;
+        this._mediaRecorder = new MediaRecorder(a.stream, options);
         this._recMimeType = this._mediaRecorder.mimeType || mimeType || 'audio/webm';
         this._mediaRecorder.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) this._recChunks.push(e.data);
+          if (!attempt.accepts(token)) return;
+          if (attempt.addEncodedChunk(token, e.data)) this._requestRecordingLimitStop('memory', token);
         };
-        this._mediaRecorder.start();
+        this._mediaRecorder.onerror = (e) => {
+          if (!attempt.accepts(token)) return;
+          console.error('MediaRecorder error:', e && e.error ? e.error : e);
+          this.cancelRecording('recorder-error');
+          this._notifyRecording('Recording stopped because the browser recorder failed. No clip was saved.');
+        };
+        // One-second chunks make active encoded memory countable and let the byte cap
+        // stop a take promptly instead of receiving one unbounded Blob at the end.
+        this._mediaRecorder.start(RECORDING_LIMITS.mediaRecorderTimesliceMs);
       }
-
-      this.recordingStartTime = performance.now();
-      this.isRecording = true;
+      return true;
     } catch (e) {
       console.error('Recording failed:', e);
+      this.cancelRecording('start-failure');
+      this._notifyRecording('Recording could not start. No clip was saved.');
+      return false;
     }
+  }
+
+  _notifyRecording(message, tone = 'error') {
+    if (this._showRecordingStatus) {
+      this._showRecordingStatus(message, { tone, autoHideMs: tone === 'info' ? 7000 : 0 });
+    } else {
+      console.warn(message);
+    }
+  }
+
+  _requestRecordingLimitStop(reason, token) {
+    if (this._recordingLimitStopRequested || !this._recordingAttempt?.accepts(token)) return;
+    this._recordingLimitStopRequested = true;
+    queueMicrotask(async () => {
+      if (!this._recordingAttempt?.accepts(token)) return;
+      await this.stopRecording();
+      const message = reason === 'duration'
+        ? 'Recording reached the 10-minute limit and was saved.'
+        : 'Recording reached its memory limit and was saved.';
+      this._notifyRecording(message, 'info');
+    });
   }
 
   _pickRecordingMimeType() {
@@ -4113,19 +4186,54 @@ class VoxBallGame {
   }
 
   stopRecording() {
-    if (!this.isRecording) return Promise.resolve();
+    if (!this.isRecording) return this._recordingFinalizePromise || Promise.resolve();
+    const attempt = this._recordingAttempt;
+    if (!attempt) return Promise.resolve();
+    const token = attempt.id;
     this.isRecording = false;
 
     if (this._recInterval) {
       clearInterval(this._recInterval);
       this._recInterval = null;
     }
+    if (this._recDurationTimer) clearTimeout(this._recDurationTimer);
+    this._recDurationTimer = null;
 
-    return new Promise((resolve) => {
-      const finalize = (audioBlob, mimeType) => {
+    const finalizePromise = new Promise((resolve) => {
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        if (this._recStopTimer) clearTimeout(this._recStopTimer);
+        this._recStopTimer = null;
+        const recorder = this._mediaRecorder;
+        if (recorder) {
+          recorder.ondataavailable = null;
+          recorder.onstop = null;
+          recorder.onerror = null;
+        }
+        this._mediaRecorder = null;
+        if (this._recordingAttempt === attempt) this._recordingAttempt = null;
+        this._recordingLimitStopRequested = false;
+        this._updateVoiceRecBtn();
+        resolve();
+      };
+
+      const abort = () => {
+        attempt.clear();
+        this._clearPendingRecordingMetadata();
+        settle();
+      };
+
+      const finalize = (audioBlob, mimeType, resources) => {
         try {
+          if (token !== this._recordingGeneration || !resources || !(audioBlob?.size > 0)) {
+            abort();
+            return;
+          }
+          const metricSamples = resources.metricSamples;
           // Summarize the metric snapshots into per-clip review stats (null = no usable voice)
-          const metrics = summarizeClipMetrics(this._recMetricSamples);
+          const metrics = summarizeClipMetrics(metricSamples);
           // Practice takes carry the known phrase → segment + align + per-word analysis,
           // then the coaching layer (phrase-coach.js) turns it into scores + a sparkline.
           const phrase = this._pendingPhrase;
@@ -4133,7 +4241,7 @@ class VoxBallGame {
           this._pendingPhrase = null;
           this._pendingPhraseDef = null;
           const phraseAnalysis = phrase
-            ? summarizePhraseTake(this._recMetricSamples, phrase, {
+            ? summarizePhraseTake(metricSamples, phrase, {
                 tickSec: this._recTickSec,
                 noiseFloor: this.analyzer.isCalibrated ? this.analyzer.noiseFloor : 0,
               })
@@ -4142,9 +4250,9 @@ class VoxBallGame {
             ? scorePhraseTake(phraseAnalysis, phraseDef, { goalMode: this.goalMode })
             : null;
           const contourSeries = phraseAnalysis && phraseAnalysis.overall
-            ? buildContourSeries(this._recMetricSamples, { tickSec: this._recTickSec })
+            ? buildContourSeries(metricSamples, { tickSec: this._recTickSec })
             : null;
-          this._recMetricSamples = [];
+          resources.metricSamples = [];
           const label = this._pendingClipLabel;
           this._pendingClipLabel = null;
 
@@ -4153,43 +4261,29 @@ class VoxBallGame {
           const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
           const fileTs = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
 
-          // Convert to data URL for universal playback in sandbox
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            this.recordings.push({
-              blob: audioBlob,
-              dataUrl: reader.result,
-              duration,
-              timestamp: ts,
-              name: `vox-ball-${fileTs}`,
-              mimeType,
-              metrics,
-              label,
-              phrase,
-              phraseAnalysis,
-              phraseScore,
-              contourSeries
-            });
-            this.updateRecordingsUI();
-            resolve();
-          };
-          reader.onerror = () => { resolve(); };
-          reader.readAsDataURL(audioBlob);
+          // The Blob is the sole retained audio copy. Playback/export create short-lived
+          // object URLs and release them when that consumer finishes.
+          this.recordings.push({
+            id: `clip-${token}`,
+            blob: audioBlob,
+            duration,
+            timestamp: ts,
+            name: `vox-ball-${fileTs}`,
+            mimeType,
+            metrics,
+            label,
+            phrase,
+            phraseAnalysis,
+            phraseScore,
+            contourSeries,
+          });
+          this.updateRecordingsUI();
+          settle();
         } catch (e) {
           const msg = e && e.message ? e.message : String(e);
           console.error(`Recording save error (${e && e.name || 'Error'}): ${msg}`, e);
-          resolve();
+          abort();
         }
-      };
-
-      const abort = () => {
-        this._recBuffers = [];
-        this._recChunks = [];
-        this._recMetricSamples = [];
-        this._pendingClipLabel = null;
-        this._pendingPhrase = null;
-        this._pendingPhraseDef = null;
-        resolve();
       };
 
       try {
@@ -4197,37 +4291,26 @@ class VoxBallGame {
           const mr = this._mediaRecorder;
           const mimeType = this._recMimeType || 'audio/webm';
           mr.onstop = () => {
-            this._mediaRecorder = null;
-            const chunks = this._recChunks;
-            this._recChunks = [];
-            if (chunks.length === 0) { abort(); return; }
-            finalize(new Blob(chunks, { type: mimeType }), mimeType);
+            const resources = attempt.detach(token);
+            if (!resources || resources.encodedChunks.length === 0) { abort(); return; }
+            finalize(new Blob(resources.encodedChunks, { type: mimeType }), mimeType, resources);
           };
           mr.onerror = (e) => {
             console.error('MediaRecorder error:', e && e.error ? e.error : e);
+            abort();
+            this._notifyRecording('Recording stopped because the browser recorder failed. No clip was saved.');
           };
-          if (mr.state !== 'inactive') mr.stop();
+          if (mr.state !== 'inactive') {
+            mr.stop();
+            // Broken implementations have failed to deliver `stop`; never retain the
+            // attempt arrays or leave session shutdown waiting forever.
+            this._recStopTimer = setTimeout(abort, RECORDING_LIMITS.recorderStopTimeoutMs);
+          }
           else abort();
         } else {
-          if (this._recBuffers.length === 0) { abort(); return; }
-
-          // Merge all Float32 buffers
-          // ⚡ Bolt: Replace reduce with traditional loop for performance
-          let totalLen = 0;
-          for (let i = 0; i < this._recBuffers.length; i++) {
-            totalLen += this._recBuffers[i].length;
-          }
-          const merged = new Float32Array(totalLen);
-          let offset = 0;
-          for (const buf of this._recBuffers) {
-            merged.set(buf, offset);
-            offset += buf.length;
-          }
-          this._recBuffers = [];
-
-          // Encode as WAV (PCM 16-bit mono)
-          const wavBlob = this._encodeWAV(merged, this._recSampleRate);
-          finalize(wavBlob, 'audio/wav');
+          const resources = attempt.detach(token);
+          if (!resources || resources.pcmChunks.length === 0) { abort(); return; }
+          finalize(this._encodeWAV(resources.pcmChunks, this._recSampleRate), 'audio/wav', resources);
         }
       } catch (e) {
         const msg = e && e.message ? e.message : String(e);
@@ -4235,6 +4318,43 @@ class VoxBallGame {
         abort();
       }
     });
+    this._recordingFinalizePromise = finalizePromise;
+    return finalizePromise.finally(() => {
+      if (this._recordingFinalizePromise === finalizePromise) this._recordingFinalizePromise = null;
+    });
+  }
+
+  cancelRecording(reason = 'cancelled') {
+    const attempt = this._recordingAttempt;
+    ++this._recordingGeneration;
+    this.isRecording = false;
+    if (this._recInterval) clearInterval(this._recInterval);
+    this._recInterval = null;
+    if (this._recStopTimer) clearTimeout(this._recStopTimer);
+    this._recStopTimer = null;
+    if (this._recDurationTimer) clearTimeout(this._recDurationTimer);
+    this._recDurationTimer = null;
+    const recorder = this._mediaRecorder;
+    if (recorder) {
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      recorder.onerror = null;
+      try { if (recorder.state !== 'inactive') recorder.stop(); } catch (_) { /* already failed */ }
+    }
+    this._mediaRecorder = null;
+    attempt?.clear();
+    this._recordingAttempt = null;
+    this._recordingFinalizePromise = null;
+    this._recordingLimitStopRequested = false;
+    this._clearPendingRecordingMetadata();
+    this._updateVoiceRecBtn();
+    return reason;
+  }
+
+  _clearPendingRecordingMetadata() {
+    this._pendingClipLabel = null;
+    this._pendingPhrase = null;
+    this._pendingPhraseDef = null;
   }
 
   // DAF (Delayed Auditory Feedback) is a native Web Audio delay line living in
@@ -4368,13 +4488,15 @@ class VoxBallGame {
     }
   }
 
-  _encodeWAV(samples, sampleRate) {
+  _encodeWAV(chunks, sampleRate) {
     // PCM 16-bit mono WAV
     const numChannels = 1;
     const bitsPerSample = 16;
     const byteRate = sampleRate * numChannels * bitsPerSample / 8;
     const blockAlign = numChannels * bitsPerSample / 8;
-    const dataLength = samples.length * blockAlign;
+    let sampleCount = 0;
+    for (const chunk of chunks) sampleCount += chunk.length;
+    const dataLength = sampleCount * blockAlign;
     const buffer = new ArrayBuffer(44 + dataLength);
     const view = new DataView(buffer);
 
@@ -4397,12 +4519,14 @@ class VoxBallGame {
     this._writeString(view, 36, 'data');
     view.setUint32(40, dataLength, true);
 
-    // Convert Float32 [-1,1] to Int16
+    // Copy the already-quantized frames directly. Keeping Int16 during capture halves
+    // fallback retention and avoids a full merged Float32 allocation at stop.
     let p = 44;
-    for (let i = 0; i < samples.length; i++) {
-      const s = Math.max(-1, Math.min(1, samples[i]));
-      view.setInt16(p, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-      p += 2;
+    for (const chunk of chunks) {
+      for (let i = 0; i < chunk.length; i++) {
+        view.setInt16(p, chunk[i], true);
+        p += 2;
+      }
     }
 
     return new Blob([buffer], { type: 'audio/wav' });
@@ -4421,60 +4545,79 @@ class VoxBallGame {
 
     const audio = new Audio();
     audio.volume = 1.0;
-    this.currentPlayback = { audio, index };
+    const url = this._recordingUrls.create(rec.blob, `playback:${rec.id}`);
+    const playback = {
+      token: ++this._playbackGeneration,
+      audio,
+      url,
+      recordingId: rec.id,
+      indexAtStart: index,
+      listeners: [],
+    };
+    this.currentPlayback = playback;
     this.updateRecItemState(index, true);
     this._updateVoiceRecBtn();
 
-    audio.addEventListener('timeupdate', () => {
+    const on = (type, listener, options) => {
+      audio.addEventListener(type, listener, options);
+      playback.listeners.push([type, listener, options]);
+      this._recordingListenerCount++;
+    };
+    on('timeupdate', () => {
+      if (this.currentPlayback !== playback) return;
       const progress = audio.duration > 0 ? (audio.currentTime / audio.duration) * 100 : 0;
-      const el = document.getElementById(`rec-progress-${index}`);
+      const currentIndex = this.recordings.findIndex((item) => item.id === playback.recordingId);
+      const el = document.getElementById(`rec-progress-${currentIndex}`);
       if (el) el.style.width = progress + '%';
     });
 
-    audio.addEventListener('ended', () => {
-      this.updateRecItemState(index, false);
-      const el = document.getElementById(`rec-progress-${index}`);
-      if (el) el.style.width = '0%';
-      this.currentPlayback = null;
-      this._updateVoiceRecBtn();
+    on('ended', () => {
+      if (this.currentPlayback === playback) this._cleanupPlayback(playback);
     });
 
-    audio.addEventListener('error', (e) => {
+    on('error', (e) => {
+      if (this.currentPlayback !== playback) return;
       const detail = audio.error ? `${audio.error.code}: ${audio.error.message}` : String(e);
       console.error(`Audio playback error: ${detail}`);
-      this.updateRecItemState(index, false);
-      this.currentPlayback = null;
-      this._updateVoiceRecBtn();
+      this._cleanupPlayback(playback);
     });
 
     // Wait for audio to be loadable before playing
-    audio.addEventListener('canplay', () => {
+    on('canplay', () => {
+      if (this.currentPlayback !== playback) return;
       audio.play().catch(e => {
+        if (this.currentPlayback !== playback) return;
         console.error('Playback failed:', e);
-        this.updateRecItemState(index, false);
-        this.currentPlayback = null;
-        this._updateVoiceRecBtn();
+        this._cleanupPlayback(playback);
       });
     }, { once: true });
 
-    // Use data URL (works in sandboxed iframes, unlike blob: URLs)
-    audio.src = rec.dataUrl;
+    audio.src = url;
     audio.load();
   }
 
   stopPlayback() {
     this.stopSpeech(); // only one audio source (recorded clip or spoken feedback) plays at a time
-    if (this.currentPlayback) {
-      const audio = this.currentPlayback.audio;
-      audio.pause();
-      audio.removeAttribute('src');
-      audio.load(); // release media resources
-      this.updateRecItemState(this.currentPlayback.index, false);
-      const el = document.getElementById(`rec-progress-${this.currentPlayback.index}`);
-      if (el) el.style.width = '0%';
-      this.currentPlayback = null;
-      this._updateVoiceRecBtn();
+    if (this.currentPlayback) this._cleanupPlayback(this.currentPlayback);
+  }
+
+  _cleanupPlayback(playback) {
+    if (!playback) return;
+    const { audio } = playback;
+    for (const [type, listener, options] of playback.listeners.splice(0)) {
+      audio.removeEventListener(type, listener, options);
+      this._recordingListenerCount--;
     }
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load(); // releases the browser's decoded/media pipeline before URL revocation
+    this._recordingUrls.release(playback.url);
+    const currentIndex = this.recordings.findIndex((item) => item.id === playback.recordingId);
+    if (currentIndex >= 0) this.updateRecItemState(currentIndex, false);
+    const oldProgress = document.getElementById(`rec-progress-${playback.indexAtStart}`);
+    if (oldProgress) oldProgress.style.width = '0%';
+    if (this.currentPlayback === playback) this.currentPlayback = null;
+    this._updateVoiceRecBtn();
   }
 
   // Speak a short summary of the practice results via the browser's built-in TTS.
@@ -4516,6 +4659,13 @@ class VoxBallGame {
 
   // Keep the always-visible top-bar Record/Play buttons in sync with recording + playback state.
   _updateVoiceRecBtn() {
+    const legacyRecBtn = document.getElementById('recBtn');
+    if (legacyRecBtn) {
+      legacyRecBtn.classList.toggle('recording', !!this.isRecording);
+      legacyRecBtn.setAttribute('aria-pressed', String(!!this.isRecording));
+      const legacyLabel = legacyRecBtn.querySelector('.rec-label');
+      if (legacyLabel) legacyLabel.textContent = this.isRecording ? 'Stop' : 'Rec';
+    }
     const recBtn = document.getElementById('voiceRecBtn');
     if (recBtn) {
       recBtn.classList.toggle('recording', !!this.isRecording);
@@ -4526,7 +4676,8 @@ class VoxBallGame {
     const playBtn = document.getElementById('voicePlayBtn');
     if (playBtn) {
       const lastIdx = this.recordings.length - 1;
-      const playingLast = !!(this.currentPlayback && this.currentPlayback.index === lastIdx);
+      const lastId = this.recordings[lastIdx]?.id;
+      const playingLast = !!(this.currentPlayback && this.currentPlayback.recordingId === lastId);
       playBtn.disabled = lastIdx < 0 || this.isRecording;
       playBtn.classList.toggle('playing', playingLast);
       // Keep the practice panel's Record/Done button in sync however recording was toggled.
@@ -4862,15 +5013,26 @@ class VoxBallGame {
   downloadRecording(index) {
     const rec = this.recordings[index];
     if (!rec) return;
-    const url = URL.createObjectURL(rec.blob);
+    if (this._recordingUrls.snapshot().objectUrlTimers >= RECORDING_LIMITS.maxPendingDownloads) {
+      this._notifyRecording('Several downloads are still starting. Wait a moment, then try again.', 'info');
+      return;
+    }
+    const url = this._recordingUrls.create(rec.blob, `download:${rec.id}`);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = `${rec.name}${this._extensionForMimeType(rec.mimeType)}`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    // Revoke immediately — the download has already been initiated by click()
-    URL.revokeObjectURL(url);
+    try {
+      a.href = url;
+      a.download = `${rec.name}${this._extensionForMimeType(rec.mimeType)}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      // Revoking inside the click task races Safari/Firefox download hand-off. A short,
+      // tracked grace period keeps the Blob alive for that consumer and remains bounded.
+      this._recordingUrls.releaseAfter(url, RECORDING_LIMITS.downloadUrlReleaseMs);
+    } catch (error) {
+      a.remove();
+      this._recordingUrls.release(url);
+      throw error;
+    }
   }
 
   _extensionForMimeType(mimeType) {
@@ -4882,7 +5044,9 @@ class VoxBallGame {
   }
 
   deleteRecording(index) {
-    if (this.currentPlayback && this.currentPlayback.index === index) {
+    const recording = this.recordings[index];
+    if (!recording) return;
+    if (this.currentPlayback && this.currentPlayback.recordingId === recording.id) {
       this.stopPlayback();
     }
     this.recordings.splice(index, 1);
@@ -4893,6 +5057,41 @@ class VoxBallGame {
     this.stopPlayback();
     this.recordings = [];
     this.updateRecordingsUI();
+  }
+
+  getRecordingResourceSnapshot() {
+    const attempt = this._recordingAttempt?.snapshot() || {
+      activeChunks: 0,
+      activeAudioBytes: 0,
+      activeMetricSamples: 0,
+      audioByteLimit: 0,
+    };
+    const urlState = this._recordingUrls.snapshot();
+    const streamTracks = this.analyzer.stream?.getTracks?.() || [];
+    const liveTracks = streamTracks.filter((track) => track.readyState !== 'ended').length;
+    return {
+      retainedAudioBytes: retainedAudioBytes(this.recordings),
+      retainedChunks: this.recordings.length,
+      retainedMetricSamples: retainedMetricSamples(this.recordings),
+      activeChunks: attempt.activeChunks,
+      activeAudioBytes: attempt.activeAudioBytes,
+      activeMetricSamples: attempt.activeMetricSamples,
+      activeObjectUrls: urlState.activeObjectUrls,
+      liveStreams: liveTracks > 0 ? 1 : 0,
+      liveTracks,
+      liveRecordingNodes: this.analyzer.analyserRec ? 1 : 0,
+      liveAudioElements: this.currentPlayback ? 1 : 0,
+      recordingTimers: Number(this._recInterval != null) + Number(this._recDurationTimer != null)
+        + Number(this._recStopTimer != null) + urlState.objectUrlTimers,
+      recordingListeners: this._recordingListenerCount,
+      limits: {
+        durationMs: RECORDING_LIMITS.maxDurationMs,
+        savedRecordings: RECORDING_LIMITS.maxSavedRecordings,
+        retainedAudioBytes: RECORDING_LIMITS.maxRetainedAudioBytes,
+        activeAudioBytes: RECORDING_LIMITS.maxActiveAudioBytes,
+        metricSamples: Math.ceil(RECORDING_LIMITS.maxDurationMs / 1000 * RECORDING_LIMITS.metricSamplesPerSecond) + 1,
+      },
+    };
   }
 
   formatDuration(seconds) {
@@ -4915,14 +5114,15 @@ class VoxBallGame {
     }
     this._updateVoiceRecBtn();
 
+    // Keep the singleton empty-state node attached. Removing it with `textContent = ''`
+    // made the final delete try to append `null` on the next render.
+    list.querySelectorAll('.rec-item').forEach((item) => item.remove());
     if (this.recordings.length === 0) {
-      list.textContent = '';
-      list.appendChild(empty);
       empty.style.display = '';
       return;
     }
 
-    list.textContent = '';
+    empty.style.display = 'none';
     for (let i = this.recordings.length - 1; i >= 0; i--) {
       const rec = this.recordings[i];
       const item = document.createElement('div');
@@ -5003,7 +5203,7 @@ class VoxBallGame {
       const action = btn.dataset.action;
       const idx = parseInt(btn.dataset.index, 10);
       if (action === 'play') {
-        if (this.currentPlayback && this.currentPlayback.index === idx) {
+        if (this.currentPlayback && this.currentPlayback.recordingId === this.recordings[idx]?.id) {
           this.stopPlayback();
         } else {
           this.playRecording(idx);
@@ -5276,6 +5476,9 @@ class VoxBallGame {
       errorBanner.classList.remove('info');
       if (statusLiveRegion) statusLiveRegion.textContent = '';
     };
+    // Recording limit/failure paths route through the shared accessible banner; the
+    // lifecycle code owns resources, not a parallel notification element.
+    this._showRecordingStatus = showError;
 
     const updateAdaptiveProfileStatus = () => {
       if (pitchProfileLearned) {
@@ -5548,6 +5751,11 @@ class VoxBallGame {
       if (this._isStarting) return; // prevent concurrent start/stop race
       this._isStarting = true;
       try {
+      // A new session owns a fresh analyzer graph. Finish any prior take and release
+      // playback before creating that graph so late callbacks cannot cross sessions.
+      if (this.isRecording) await this.stopRecording();
+      else if (this._recordingFinalizePromise) await this._recordingFinalizePromise;
+      this.stopPlayback();
       this.teleprompterSentenceIndex = 0; // start each session at the first sentence
       clearError();
       const initialDiag = await getMicDiagnostics(this.analyzer.audioCtx);
@@ -5836,6 +6044,7 @@ class VoxBallGame {
         recBtn.querySelector('.rec-label').textContent = 'Rec';
         await this.stopRecording();
       }
+      this.stopPlayback();
       this.stopDAF();
       document.getElementById('dafPanel')?.classList.remove('show');
       document.getElementById('dafBtn')?.setAttribute('aria-expanded', 'false');
@@ -5891,9 +6100,13 @@ class VoxBallGame {
       perfBtn.classList.toggle('active', this.perfMonitor.enabled);
     });
 
-    homeBtn?.addEventListener('click', () => {
+    homeBtn?.addEventListener('click', async () => {
       // If a game is running, stop it and go directly to menu
       if (this.isRunning) {
+        if (this.isRecording) await this.stopRecording();
+        else if (this._recordingFinalizePromise) await this._recordingFinalizePromise;
+        this.stopPlayback();
+        this.stopDAF();
         this.isRunning = false;
         this.wakeLock.release();
         this.analyzer.stop();
@@ -6207,7 +6420,7 @@ class VoxBallGame {
     document.getElementById('practicePlayBtn')?.addEventListener('click', () => {
       const idx = this.practice.takeIndex;
       if (idx < 0) return;
-      if (this.currentPlayback && this.currentPlayback.index === idx) this.stopPlayback();
+      if (this.currentPlayback && this.currentPlayback.recordingId === this.recordings[idx]?.id) this.stopPlayback();
       else this.playRecording(idx);
     });
     document.getElementById('practiceSpeakBtn')?.addEventListener('click', () => {
@@ -6224,7 +6437,7 @@ class VoxBallGame {
       voicePlayBtn.addEventListener('click', () => {
         const lastIdx = this.recordings.length - 1;
         if (lastIdx < 0) return;
-        if (this.currentPlayback && this.currentPlayback.index === lastIdx) {
+        if (this.currentPlayback && this.currentPlayback.recordingId === this.recordings[lastIdx]?.id) {
           this.stopPlayback();
         } else {
           this.playRecording(lastIdx);
@@ -6933,9 +7146,7 @@ class VoxBallGame {
           recBtn.classList.remove('recording');
           recBtn.querySelector('.rec-label').textContent = 'Rec';
         } else {
-          this.startRecording();
-          recBtn.classList.add('recording');
-          recBtn.querySelector('.rec-label').textContent = 'Stop';
+          if (this.startRecording()) this._updateVoiceRecBtn();
         }
       });
     }

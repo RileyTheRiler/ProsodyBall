@@ -37,6 +37,17 @@ estimate). See `docs/DSP_CONTRACT.md` for the canonical feature-packet definitio
 - Do not re-normalize metrics in mode-specific renderers.
 - Feature additions that need raw DSP values should be introduced via explicit analyzer fields and documented here.
 
+## Recording ownership boundary
+
+- `VoiceAnalyzer` owns the input `MediaStream`, `AudioContext`, source, and analyser nodes for the
+  session. `VoiceAnalyzer.stop()` stops tracks, disconnects the source, closes the context, and
+  clears the dedicated recording analyser reference.
+- The recorder borrows `analyzer.stream` and samples `analyzer.analyserRec`; it does not own or
+  stop the session stream. Stopping a take therefore leaves live analysis running.
+- The recording lifecycle owns recorder chunks, PCM fallback windows, metric snapshots, saved
+  Blobs, playback elements, object URLs, recorder timers, and playback listeners. See
+  [`RECORDING_LIFECYCLE.md`](./RECORDING_LIFECYCLE.md) for limits and release events.
+
 ## Module boundary (phase 1)
 
 `voice-analyzer-core.js` now owns shared normalization/reliability math.

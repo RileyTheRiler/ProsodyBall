@@ -4038,6 +4038,14 @@
       cursor: not-allowed;
     }
 
+    .recordings-policy {
+      margin: 0;
+      padding: 0 14px 10px;
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      line-height: 1.35;
+    }
+
     .recordings-list {
       overflow-y: auto;
       padding: 8px;
@@ -5192,6 +5200,7 @@
           <h3>Recordings</h3>
           <button class="btn-clear-all" id="clearAllRecs" aria-label="Clear all recordings">Clear all</button>
         </div>
+        <p class="recordings-policy">Clips stay in this tab only: 10 minutes each, up to 20 clips or 256 MB total. Download clips before closing or deleting them.</p>
         <div class="recordings-list" id="recordingsList">
           <div class="recordings-empty" id="recsEmpty">No recordings yet. Press <b>Rec</b> while a session is running.</div>
         </div>
