@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, fitFormantDispersion, formantEstimateConfidence, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake, fitFormantScale, formantPatternResiduals, resonanceAbsoluteV2, poolFormantScale, resonanceScoreV1, classifyVowel, f2PositionFromResidual, normalizeResidualScale, VOWEL_TEMPLATE_FORMANTS, ResonanceAggregator, frameValidity, formantMeasurementNoise, crossEstimatorAgreement, resonanceConfidence, RESONANCE_CONFIDENCE_FLOOR, spectralBrightness, windowHomogeneity, rhoticFromRho, residualScaleFactor, selectLpcCeiling, LPC_DEFAULT_CEILING_HZ, LPC_CEILING_CANDIDATES_HZ, LPC_CEILING_MIN_FRAMES, FORMANT_NOISE_F0_REF_HZ } from './dsp-utils.js';
+import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, fitFormantDispersion, formantEstimateConfidence, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake, fitFormantScale, formantPatternResiduals, resonanceAbsoluteV2, poolFormantScale, resonanceScoreV1, classifyVowel, f2PositionFromResidual, normalizeResidualScale, VOWEL_TEMPLATE_FORMANTS, ResonanceAggregator, frameValidity, formantMeasurementNoise, crossEstimatorAgreement, resonanceConfidence, RESONANCE_CONFIDENCE_FLOOR, spectralBrightness, windowHomogeneity, rhoticFromRho, residualScaleFactor, selectLpcCeiling, LPC_DEFAULT_CEILING_HZ, LPC_CEILING_CANDIDATES_HZ, LPC_CEILING_MIN_FRAMES, FORMANT_NOISE_F0_REF_HZ, sanitizeUrl } from './dsp-utils.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { SpeechGate } from './speech-gate.js';
 import { PRACTICE_PHRASES, scorePhraseTake, buildContourSeries, practiceTipForGoal } from './phrase-coach.js';
@@ -5234,7 +5234,8 @@ class VoxBallGame {
       iframeNotice.appendChild(document.createTextNode('This app needs microphone access, which may be blocked when embedded.'));
       iframeNotice.appendChild(document.createElement('br'));
       const link = document.createElement('a');
-      link.href = directUrl;
+      // Security: Sanitize the directUrl to prevent DOM-based XSS when assigning to href
+      link.href = sanitizeUrl(directUrl);
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       link.textContent = 'Open in new tab for full access ↗';
@@ -5580,7 +5581,8 @@ class VoxBallGame {
         errNode.appendChild(document.createTextNode('This requires HTTPS and a modern browser. '));
         if (isInIframe) {
           const link = document.createElement('a');
-          link.href = window.location.href;
+          // Security: Sanitize window.location.href to prevent DOM-based XSS
+          link.href = sanitizeUrl(window.location.href);
           link.target = '_blank';
           link.rel = 'noopener noreferrer';
           link.textContent = 'Try opening in a new tab ↗';
@@ -5614,7 +5616,8 @@ class VoxBallGame {
               url.searchParams.set('ec', this.micInputPreferences.echoCancellation ? '1' : '0');
               url.searchParams.set('ns', this.micInputPreferences.noiseSuppression ? '1' : '0');
               url.searchParams.set('ag', this.micInputPreferences.autoGainControl ? '1' : '0');
-              if (phoneMicUrlEl) { phoneMicUrlEl.href = url.href; phoneMicUrlEl.textContent = url.href; phoneMicUrlEl.style.display = ''; }
+              // Security: Sanitize url.href to prevent DOM-based XSS when assigning to href
+              if (phoneMicUrlEl) { phoneMicUrlEl.href = sanitizeUrl(url.href); phoneMicUrlEl.textContent = url.href; phoneMicUrlEl.style.display = ''; }
               if (phoneMicCodeEl) { phoneMicCodeEl.style.display = ''; phoneMicCodeEl.querySelector('strong').textContent = code; }
               if (phoneMicStatusEl) { phoneMicStatusEl.style.display = ''; phoneMicStatusEl.textContent = 'Waiting for phone to connect...'; }
               showError(`📱 Open on your phone: ${url.href}`);
@@ -5662,7 +5665,8 @@ class VoxBallGame {
             msg.appendChild(document.createTextNode('🎙 Microphone blocked by browser — this usually happens inside iframes.'));
             msg.appendChild(document.createElement('br'));
             const link = document.createElement('a');
-            link.href = window.location.href;
+            // Security: Sanitize window.location.href to prevent DOM-based XSS
+            link.href = sanitizeUrl(window.location.href);
             link.target = '_blank';
             link.rel = 'noopener noreferrer';
             link.textContent = 'Open in a new tab for full mic access ↗';
