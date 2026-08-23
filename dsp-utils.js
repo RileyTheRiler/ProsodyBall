@@ -561,8 +561,8 @@ export function summarizeVoiceCloud(points) {
     sdSemitones: Math.sqrt(varLog / wSum) * 12,      // log2-octaves → semitones
     meanRes,
     sdRes: Math.sqrt(varRes / wSum),
-    medianHz: mid(pts.map((p) => p.hz).sort((a, b) => a - b)),
-    medianRes: mid(pts.map((p) => clamp01(p.res)).sort((a, b) => a - b)),
+    medianHz: mid(Float64Array.from(pts, (p) => p.hz).sort()), // Optimize: use Float64Array for numeric sorting
+    medianRes: mid(Float64Array.from(pts, (p) => clamp01(p.res)).sort()),
   };
 }
 
@@ -1722,7 +1722,7 @@ export function aggregateExercise(samples) {
 // the streaming form further down so a session's numbers and a fixture's cannot diverge.
 export function nucleusFromRun(run, { minFrames = 3 } = {}) {
   if (!Array.isArray(run) || run.length < minFrames) return null;
-  const vs = run.map((s) => s.value).sort((a, b) => a - b);
+  const vs = Float64Array.from(run, (s) => s.value).sort(); // Optimize: use Float64Array for numeric sorting
   const mid = vs.length >> 1;
   return {
     vowel: run[0].vowel,
