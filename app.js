@@ -5236,7 +5236,7 @@ export class VoxBallGame {
       overallRow.append(
         chip(`avg ${Math.round(o.pitchAvgHz)} Hz`),
         chip(`${Math.round(o.pitchMinHz)}–${Math.round(o.pitchMaxHz)} Hz`),
-        chip(`res ${Math.round(o.resonanceAvg * 100)}%`),
+        chip(o.resonanceAvg != null ? `res ${Math.round(o.resonanceAvg * 100)}%` : 'res —'),
         chip(`pros ${Math.round(o.prosodyAvg * 100)}%`),
         chip(`range ${o.pitchRangeSemitones.toFixed(1)} st`),
         chip(`pace ${o.paceWps.toFixed(1)} w/s`),
@@ -5448,7 +5448,7 @@ export class VoxBallGame {
         metricsRow.append(
           chip(`avg ${Math.round(m.pitchAvgHz)} Hz`),
           chip(`${Math.round(m.pitchMinHz)}–${Math.round(m.pitchMaxHz)} Hz`),
-          chip(`res ${Math.round(m.resonanceAvg * 100)}%`),
+          chip(m.resonanceAvg != null ? `res ${Math.round(m.resonanceAvg * 100)}%` : 'res —'),
           chip(`pros ${Math.round(m.prosodyAvg * 100)}%`)
         );
         metricsRow.title = `Voiced ${Math.round(m.voicedRatio * 100)}% of ${this.formatDuration(rec.duration)}`;

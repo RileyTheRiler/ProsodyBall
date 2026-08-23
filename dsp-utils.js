@@ -572,18 +572,31 @@ export function summarizeVoiceCloud(points) {
 // shaky frames can't skew a take's numbers. Returns null when fewer than minVoiced samples
 // qualify — the UI renders that as "no voice data" instead of junk stats. Values are left
 // unrounded; formatting is a render-time concern. Pure + unit-tested (clip-metrics.test.mjs).
+//
+// RESONANCE IS AVERAGED OVER ITS OWN DENOMINATOR, and that is a Phase 4 correction rather than
+// a refinement. `voiced` is a PITCH judgement — the frame had a periodic source — and since
+// Phase 4 the resonance reading can be absent on a frame that is unambiguously voiced: 11.4% of
+// clean read speech, 36.9% at 12 dB (docs/RESONANCE_REDESIGN.md §5, Phase 4). Folding those in
+// as `res = 0` would drag a take's resonance average toward the dark end in proportion to how
+// noisy the room was, which is the substituted-value failure D1 names, arriving through an
+// arithmetic default instead of through a fallback estimator.
+//
+// `resonanceAvg` is therefore null, not 0, when the clip produced no resonance reading at all —
+// the same rule the live path follows, for the same reason. `resonanceSamples` is returned so a
+// caller can say "over 40 of 55 voiced frames" rather than implying the average covers the whole
+// take.
 export function summarizeClipMetrics(samples, { minConf = 0.35, minVoiced = 5 } = {}) {
   if (!Array.isArray(samples) || samples.length === 0) return null;
   let voicedCount = 0;
   let pitchSum = 0, pitchMin = Infinity, pitchMax = -Infinity;
-  let resSum = 0, prosodySum = 0;
+  let resSum = 0, resCount = 0, prosodySum = 0;
   for (const s of samples) {
     if (!s || !s.voiced || !(s.hz > 0) || !(s.conf >= minConf)) continue;
     voicedCount++;
     pitchSum += s.hz;
     if (s.hz < pitchMin) pitchMin = s.hz;
     if (s.hz > pitchMax) pitchMax = s.hz;
-    resSum += clamp01(Number.isFinite(s.res) ? s.res : 0);
+    if (Number.isFinite(s.res)) { resSum += clamp01(s.res); resCount++; }
     prosodySum += clamp01(Number.isFinite(s.prosody) ? s.prosody : 0);
   }
   if (voicedCount < Math.max(1, minVoiced)) return null;
@@ -591,7 +604,8 @@ export function summarizeClipMetrics(samples, { minConf = 0.35, minVoiced = 5 } 
     pitchAvgHz: pitchSum / voicedCount,
     pitchMinHz: pitchMin,
     pitchMaxHz: pitchMax,
-    resonanceAvg: resSum / voicedCount,
+    resonanceAvg: resCount > 0 ? resSum / resCount : null,
+    resonanceSamples: resCount,
     prosodyAvg: prosodySum / voicedCount,
     voicedRatio: voicedCount / samples.length,
     sampleCount: samples.length,

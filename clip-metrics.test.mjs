@@ -71,9 +71,36 @@ test('summarizeClipMetrics: missing res/prosody fields do not produce NaN', () =
   const samples = Array.from({ length: 5 }, () => ({ hz: 180, conf: 0.9, voiced: true }));
   const m = summarizeClipMetrics(samples);
   assert.ok(m);
-  assert.equal(m.resonanceAvg, 0);
+  // Phase 4: an ABSENT resonance reading is null, not 0. `voiced` is a pitch judgement and the
+  // resonance reading can be absent on a frame that is unambiguously voiced (11.4% of clean read
+  // speech), so averaging those in as 0 would drag a take's resonance toward the darkest reading
+  // the scale has in proportion to how noisy the room was — a substituted value arriving through
+  // an arithmetic default. Prosody has no such absence and is still 0.
+  assert.equal(m.resonanceAvg, null);
+  assert.equal(m.resonanceSamples, 0);
   assert.equal(m.prosodyAvg, 0);
   assert.ok(Number.isFinite(m.pitchAvgHz));
+});
+
+test('summarizeClipMetrics: resonance is averaged over its OWN denominator, not the voiced one', () => {
+  // Six voiced frames; two of them produced no resonance reading. The average must be over the
+  // four that did, and the count must say so.
+  const samples = [
+    { hz: 180, conf: 0.9, voiced: true, res: 0.8 },
+    { hz: 180, conf: 0.9, voiced: true, res: 0.8 },
+    { hz: 180, conf: 0.9, voiced: true, res: null },
+    { hz: 180, conf: 0.9, voiced: true, res: 0.8 },
+    { hz: 180, conf: 0.9, voiced: true, res: null },
+    { hz: 180, conf: 0.9, voiced: true, res: 0.8 },
+  ];
+  const m = summarizeClipMetrics(samples);
+  assert.ok(m);
+  assert.equal(m.resonanceSamples, 4);
+  assert.ok(Math.abs(m.resonanceAvg - 0.8) < 1e-12,
+    `resonanceAvg ${m.resonanceAvg} — the two absent frames were averaged in as 0`);
+  // Pitch still uses every voiced frame: the two denominators are different questions.
+  assert.equal(m.pitchAvgHz, 180);
+  assert.equal(m.voicedRatio, 1);
 });
 
 test('summarizeClipMetrics: exactly minVoiced identical-pitch samples give avg === min === max', () => {
