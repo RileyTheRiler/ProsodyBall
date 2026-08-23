@@ -11,6 +11,8 @@ A gamified voice training game — train pitch, resonance, articulation, and pro
 ## How It Works
 
 - Voice analysis happens locally in your browser; microphone recordings are not uploaded for analysis
+- Recording clips stay in memory for the current tab: 10 minutes per clip, up to 20 clips or
+  256 MiB total. Download a clip before deleting it or closing/reloading the tab.
 - Optional phone relay sends audio peer-to-peer and uses PeerJS signaling; third-party fonts and scripts make normal asset requests
 - Uses Web Audio API for real-time voice analysis
 - Worker-backed YIN pitch detection with a main-thread fallback
@@ -37,6 +39,8 @@ See [`IMPROVEMENT_SUGGESTIONS.md`](./IMPROVEMENT_SUGGESTIONS.md) for a prioritiz
 
 - Shared analyzer normalization and reliability gating helpers live in `dsp-utils.js`.
 - Internal analyzer/UI contract is documented in [`docs/ANALYZER_API.md`](./docs/ANALYZER_API.md).
+- Recording ownership, limits, and cleanup are documented in
+  [`docs/RECORDING_LIFECYCLE.md`](./docs/RECORDING_LIFECYCLE.md).
 
 ## Regression harness
 

@@ -3,6 +3,7 @@ const APP_SHELL = [
   './',
   './index.html',
   './app.js',
+  './recording-lifecycle.js',
   './dsp-utils.js',
   './dsp-constants.generated.js',
   './speech-gate.js',

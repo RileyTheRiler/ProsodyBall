@@ -33,8 +33,8 @@ def verify_frontend():
             import('./app.js').then((module) => {
                 const game = module.game;
                 game.recordings = [
-                    { timestamp: '10:00:00', duration: 5.5, name: 'vox-ball-1', blob: new Blob([]), dataUrl: '' },
-                    { timestamp: '10:01:00', duration: 2.1, name: 'vox-ball-2', blob: new Blob([]), dataUrl: '' }
+                    { id: 'verify-1', timestamp: '10:00:00', duration: 5.5, name: 'vox-ball-1', blob: new Blob([]), mimeType: 'audio/wav' },
+                    { id: 'verify-2', timestamp: '10:01:00', duration: 2.1, name: 'vox-ball-2', blob: new Blob([]), mimeType: 'audio/wav' }
                 ];
                 game.updateRecordingsUI();
             });
