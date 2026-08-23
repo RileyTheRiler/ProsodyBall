@@ -50,9 +50,9 @@ This is a practical backlog focused on three goals: **better UX**, **more reliab
    - Examples: "Presentation", "Storytelling", "Call-center clarity".
    - Each preset can tune rule weights and feedback language.
 
-3. **Reduce maintenance risk from dual app entrypoints.**
-   - There is a compatibility shim at `js/app.js` that also contains duplicated app logic.
-   - Consolidate to a single source of truth to avoid divergence bugs.
+3. **Reduce maintenance risk in the large app entrypoints.**
+   - The main `app.js` and `index.html` files are large enough that targeted feature modules would make changes easier to review and test.
+   - Extract cohesive UI and lifecycle features behind small, tested interfaces.
 
 4. **Instrument privacy-safe analytics for UX funnels.**
    - Track only event counts (e.g., calibration started/completed, average session length).

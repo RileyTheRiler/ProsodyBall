@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PRACTICE_PHRASES, scorePhraseTake, buildContourSeries } from './phrase-coach.js';
+import { PRACTICE_PHRASES, scorePhraseTake, buildContourSeries, practiceTipForGoal } from './phrase-coach.js';
 import { summarizePhraseTake } from './dsp-utils.js';
 
 // ---------- fixture builders (shapes mirror summarizePhraseTake output) ----------
@@ -66,15 +66,41 @@ test('scorePhraseTake: null without usable overall stats', () => {
   assert.equal(scorePhraseTake({ words: [], overall: null, segmentation: {} }, PRACTICE_PHRASES[0]), null);
 });
 
-test('scorePhraseTake: resonance focus rewards bright words', () => {
+test('scorePhraseTake: feminization resonance focus rewards the brighter target', () => {
   const a = analysisFixture([
     wordEntry('heat', { resonanceAvg: 0.9 }),
     wordEntry('fire', { resonanceAvg: 0.1 }),
   ]);
-  const r = scorePhraseTake(a, { focus: 'resonance' });
+  const r = scorePhraseTake(a, { focus: 'resonance' }, { goalMode: 'feminization' });
   assert.ok(r);
   assert.ok(r.words[0].score > r.words[1].score + 20,
     `expected clear gap: ${r.words[0].score} vs ${r.words[1].score}`);
+});
+
+test('scorePhraseTake: masculinization resonance focus rewards the darker target', () => {
+  const a = analysisFixture([
+    wordEntry('heat', { resonanceAvg: 0.9 }),
+    wordEntry('fire', { resonanceAvg: 0.1 }),
+  ]);
+  const r = scorePhraseTake(a, { focus: 'resonance' }, { goalMode: 'masculinization' });
+  assert.ok(r.words[1].score > r.words[0].score + 20,
+    `expected clear gap: ${r.words[1].score} vs ${r.words[0].score}`);
+});
+
+test('scorePhraseTake: a personalized resonance target is preferred to overshooting it', () => {
+  const a = analysisFixture([
+    wordEntry('target', { resonanceAvg: 0.5 }),
+    wordEntry('overshoot', { resonanceAvg: 1 }),
+  ]);
+  const r = scorePhraseTake(a, { focus: 'resonance' }, { resonanceTarget: { min: 0.45, max: 0.55 } });
+  assert.ok(r.words[0].score > r.words[1].score, `${r.words[0].score} > ${r.words[1].score}`);
+});
+
+test('practiceTipForGoal: resonance coaching follows the selected goal', () => {
+  const phrase = { focus: 'resonance', tip: 'fallback' };
+  assert.match(practiceTipForGoal(phrase, 'feminization'), /brighter/i);
+  assert.match(practiceTipForGoal(phrase, 'masculinization'), /darker/i);
+  assert.equal(practiceTipForGoal({ focus: 'intonation', tip: 'Lift at the end.' }), 'Lift at the end.');
 });
 
 test('scorePhraseTake: weak words are floored at 60', () => {

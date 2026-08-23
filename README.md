@@ -10,8 +10,8 @@ A gamified voice training game — train pitch, resonance, articulation, and pro
 
 ## How It Works
 
-- 100% client-side — all audio processing happens locally in your browser
-- No data is sent to any server
+- Voice analysis happens locally in your browser; microphone recordings are not uploaded for analysis
+- Optional phone relay sends audio peer-to-peer and uses PeerJS signaling; third-party fonts and scripts make normal asset requests
 - Uses Web Audio API for real-time voice analysis
 - Worker-backed YIN pitch detection with a main-thread fallback
 - Spectral analysis for articulation detection
@@ -35,7 +35,7 @@ See [`IMPROVEMENT_SUGGESTIONS.md`](./IMPROVEMENT_SUGGESTIONS.md) for a prioritiz
 
 ## Analyzer architecture notes
 
-- Shared analyzer normalization and reliability gating helpers now live in `voice-analyzer-core.js`.
+- Shared analyzer normalization and reliability gating helpers live in `dsp-utils.js`.
 - Internal analyzer/UI contract is documented in [`docs/ANALYZER_API.md`](./docs/ANALYZER_API.md).
 
 ## Regression harness

@@ -1,10 +1,11 @@
 import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, fitFormantDispersion, formantEstimateConfidence, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake, fitFormantScale, formantPatternResiduals, resonanceAbsoluteV2, poolFormantScale, resonanceScoreV1, classifyVowel, f2PositionFromResidual, normalizeResidualScale, VOWEL_TEMPLATE_FORMANTS, ResonanceAggregator, frameValidity, formantMeasurementNoise, crossEstimatorAgreement, resonanceConfidence, RESONANCE_CONFIDENCE_FLOOR, spectralBrightness, windowHomogeneity, rhoticFromRho, residualScaleFactor, selectLpcCeiling, LPC_DEFAULT_CEILING_HZ, LPC_CEILING_CANDIDATES_HZ, LPC_CEILING_MIN_FRAMES, FORMANT_NOISE_F0_REF_HZ } from './dsp-utils.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { SpeechGate } from './speech-gate.js';
-import { PRACTICE_PHRASES, scorePhraseTake, buildContourSeries } from './phrase-coach.js';
+import { PRACTICE_PHRASES, scorePhraseTake, buildContourSeries, practiceTipForGoal } from './phrase-coach.js';
 import { buildPhraseSpeechSummary } from './speech-feedback.js';
 import { PerformanceMonitor } from './performance-monitor.js';
 import { CalibrationWizard } from './calibration-wizard.js';
+import { runCalibrationWithTimeout } from './calibration-runner.js';
 import { BulbController } from './bulb-controller.js';
 import { NecklaceController, HapticSrc } from './necklace-controller.js';
 import {
@@ -606,7 +607,7 @@ export class VoiceAnalyzer {
           await this.audioElement.play();
         } catch (playErr) {
           console.error("Autoplay prevented:", playErr);
-          // Provide error response if play fails
+          this.stop();
           return { ok: false, error: "AutoPlayError", message: playErr.message };
         }
       }
@@ -614,6 +615,7 @@ export class VoiceAnalyzer {
       return { ok: true, audioElement: this.audioElement };
     } catch (e) {
       console.error('Mic/Audio access denied:', e);
+      this.stop();
       return { ok: false, error: e.name, message: e.message };
     }
   }
@@ -4137,7 +4139,7 @@ class VoxBallGame {
               })
             : null;
           const phraseScore = phraseDef && phraseAnalysis
-            ? scorePhraseTake(phraseAnalysis, phraseDef)
+            ? scorePhraseTake(phraseAnalysis, phraseDef, { goalMode: this.goalMode })
             : null;
           const contourSeries = phraseAnalysis && phraseAnalysis.overall
             ? buildContourSeries(this._recMetricSamples, { tickSec: this._recTickSec })
@@ -4665,7 +4667,7 @@ class VoxBallGame {
         ? 'Word-by-word breakdown of your take.'
         : this.isRecording
           ? 'Recording — read the phrase, then press Done.'
-          : (this.practice.notice || def.tip || 'Press Record, read the phrase aloud, then press Done.');
+          : (this.practice.notice || practiceTipForGoal(def, this.goalMode) || 'Press Record, read the phrase aloud, then press Done.');
     }
     const recBtn = document.getElementById('practiceRecordBtn');
     if (recBtn) {
@@ -5717,14 +5719,7 @@ class VoxBallGame {
         let calResult = { outcome: 'incomplete', skipped: true, reason: 'timeout-guard' };
         try {
           // Global guard so calibration can never stall session start.
-          const timeoutMs = 15000;
-          calResult = await Promise.race([
-            this.calibrationWizard.run(this.analyzer),
-            new Promise((resolve) => setTimeout(() => {
-              this.calibrationWizard.cancel();
-              resolve({ outcome: 'incomplete', skipped: true, reason: 'wizard-timeout' });
-            }, timeoutMs)),
-          ]);
+          calResult = await runCalibrationWithTimeout(this.calibrationWizard, this.analyzer);
         } catch (err) {
           console.error('Calibration flow failed:', err);
           calResult = { outcome: 'incomplete', skipped: true, reason: 'wizard-exception' };
