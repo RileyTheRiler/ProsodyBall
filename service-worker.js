@@ -1,14 +1,16 @@
-const CACHE_NAME = 'prosodyball-shell-v3';
+const CACHE_NAME = 'prosodyball-shell-v4';
 const APP_SHELL = [
   './',
   './index.html',
   './app.js',
   './dsp-utils.js',
   './dsp-constants.generated.js',
+  './speech-gate.js',
   './phrase-coach.js',
   './speech-feedback.js',
   './performance-monitor.js',
   './calibration-wizard.js',
+  './calibration-runner.js',
   './bulb-controller.js',
   './necklace-controller.js',
   './vibration-preferences.js',
@@ -42,12 +44,17 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request).then((response) => {
+    fetch(event.request).then(async (response) => {
       if (response.ok) {
         const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        try {
+          const cache = await caches.open(CACHE_NAME);
+          await cache.put(event.request, copy);
+        } catch {
+          // A quota/cache write failure must not discard a valid network response.
+        }
       }
       return response;
-    }))
+    }).catch(() => caches.match(event.request))
   );
 });

@@ -21,6 +21,7 @@ test('exports portable preferences without credentials or unrelated storage', ()
   const storage = new MemoryStorage({
     'vox:colorMode': 'gender',
     'vox:bulb:enabled': '1',
+    'vox:speechGate': 'true',
     'vox:bulb:hueUser': 'secret-user',
     'vox:bulb:webhookUrl': 'https://example.invalid/private',
     unrelated: 'keep-me',
@@ -28,7 +29,8 @@ test('exports portable preferences without credentials or unrelated storage', ()
   const bundle = exportPortableSettings(storage);
   assert.deepEqual(bundle.settings, {
     'vox:colorMode': 'gender',
-    'vox:bulb:enabled': '1',
+    'vox:bulb:enabled': 'true',
+    'vox:speechGate': 'true',
   });
 });
 
@@ -39,13 +41,21 @@ test('imports only supported string preferences', () => {
     schemaVersion: 1,
     settings: {
       'vox:goalMode': 'masculinization',
+      'vox:daf:delayMs': '9999',
+      'vox:colorMode': 'rainbow',
+      'vox:speechGate': '1',
+      'vox:vibration:v1': '{broken',
       'vox:bulb:httpUrl': 'https://example.invalid/private',
       unrelated: 'no',
       'vox:motionPreference': 12,
     },
   });
-  assert.equal(count, 1);
+  assert.equal(count, 2);
   assert.equal(storage.getItem('vox:goalMode'), 'masculinization');
+  assert.equal(storage.getItem('vox:speechGate'), 'true');
+  assert.equal(storage.getItem('vox:daf:delayMs'), null);
+  assert.equal(storage.getItem('vox:colorMode'), null);
+  assert.equal(storage.getItem('vox:vibration:v1'), null);
   assert.equal(storage.getItem('vox:bulb:httpUrl'), null);
 });
 

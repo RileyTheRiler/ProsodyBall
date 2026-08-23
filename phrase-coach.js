@@ -23,6 +23,11 @@ const WEAK_WORD_FLOOR = 0.6;           // function words are graded leniently �
 const NO_VOICE_CEILING = 0.35;         // a word slice with no usable voice can't score above this
 const RUSHED_FRACTION = 0.45;          // 'rushed' when a content word gets under this share of its expected time
 const CONTOUR_BONUS = 5;               // take-score bonus for matching the phrase's contour hint
+const RESONANCE_TARGETS = Object.freeze({
+  feminization: Object.freeze({ min: 0.65, max: 0.9 }),
+  masculinization: Object.freeze({ min: 0.1, max: 0.35 }),
+});
+const RESONANCE_FALLOFF = 0.5;
 
 // The guided-practice curriculum. `text` is what the user reads and exactly what
 // the engine aligns against (it tokenizes the text itself — keep them in sync).
@@ -34,7 +39,7 @@ export const PRACTICE_PHRASES = [
     text: 'Heat from fire, fire from heat.',
     focus: 'resonance',
     contourHint: 'falling',
-    tip: 'Keep the sound bright and forward on every word.',
+    tip: 'Aim for your resonance target while keeping the sound easy.',
     weakWords: ['from'],
   },
   {
@@ -81,11 +86,26 @@ const wordRangeSt = (m) => (m && m.pitchMinHz > 0 && m.pitchMaxHz > 0)
 
 // [0,1] "did this word do what the phrase trains". Word shape is the engine's
 // summarizeWordMetrics output: { word, matched, durSec, metrics|null, relLoudness }.
-function focusBase(w, focus) {
+function targetBandScore(value, target) {
+  const measured = Number(value);
+  if (!Number.isFinite(measured)) return 0;
+  const min = clamp01(Math.min(Number(target?.min), Number(target?.max)));
+  const max = clamp01(Math.max(Number(target?.min), Number(target?.max)));
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return 0;
+  if (measured >= min && measured <= max) return 1;
+  const distance = measured < min ? min - measured : measured - max;
+  return clamp01(1 - distance / RESONANCE_FALLOFF);
+}
+
+function focusBase(w, focus, options) {
   const m = w.metrics;
   if (!m) return 0;
   switch (focus) {
-    case 'resonance': return clamp01(m.resonanceAvg);
+    case 'resonance': {
+      const goalMode = options?.goalMode === 'masculinization' ? 'masculinization' : 'feminization';
+      const target = options?.resonanceTarget || RESONANCE_TARGETS[goalMode];
+      return targetBandScore(m.resonanceAvg, target);
+    }
     case 'intonation': return clamp01(wordRangeSt(m) / INTONATION_FULL_RANGE_ST);
     case 'elongation': return clamp01((w.durSec / estimateSyllables(w.word)) / ELONGATION_FULL_SEC_PER_SYL);
     case 'articulation':
@@ -131,10 +151,12 @@ function buildTakeaway({ scoredWords, phraseDef, overall, segmentation }) {
 
 // Score one analyzed take. `analysis` is summarizePhraseTake() output;
 // `phraseDef` is a PRACTICE_PHRASES entry (or any { focus, contourHint,
-// weakWords }). Returns null when the take had no usable voice, otherwise:
+// weakWords }). `options.goalMode` selects the default resonance target;
+// `options.resonanceTarget` can provide a personalized { min, max } band.
+// Returns null when the take had no usable voice, otherwise:
 //   { score, contourMatch, takeaway,
 //     words: [{ word, score, note, weak }] }  // parallel to analysis.words
-export function scorePhraseTake(analysis, phraseDef = {}) {
+export function scorePhraseTake(analysis, phraseDef = {}, options = {}) {
   if (!analysis || !analysis.overall) return null;
   const o = analysis.overall;
   const focus = phraseDef.focus;
@@ -147,7 +169,7 @@ export function scorePhraseTake(analysis, phraseDef = {}) {
   const scoredWords = words.map((w) => {
     const weak = weakSet.has(lc(w.word));
     const clarity = w.metrics ? clamp01(w.metrics.voicedRatio / CLARITY_FULL_VOICED_RATIO) : 0;
-    let score01 = 0.7 * focusBase(w, focus) + 0.3 * clarity;
+    let score01 = 0.7 * focusBase(w, focus, options) + 0.3 * clarity;
     // Function words *should* stay short and unstressed — grading them like
     // content words would coach robotic over-enunciation.
     if (weak) score01 = Math.max(score01, WEAK_WORD_FLOOR);
@@ -179,6 +201,13 @@ export function scorePhraseTake(analysis, phraseDef = {}) {
     takeaway: buildTakeaway({ scoredWords, phraseDef, overall: o, segmentation: analysis.segmentation }),
     words: scoredWords.map(({ word, score: s, note, weak }) => ({ word, score: s, note, weak })),
   };
+}
+
+export function practiceTipForGoal(phraseDef = {}, goalMode = 'feminization') {
+  if (phraseDef.focus !== 'resonance') return phraseDef.tip || '';
+  return goalMode === 'masculinization'
+    ? 'Aim for a darker resonance target while keeping the sound easy.'
+    : 'Aim for a brighter, more forward resonance target while keeping the sound easy.';
 }
 
 // Downsample the per-tick snapshots into a sparkline-ready pitch series:
