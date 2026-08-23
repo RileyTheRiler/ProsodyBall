@@ -1,6 +1,7 @@
 # Resonance: measurement redesign
 
-**Status: Phases 0-2 landed; Phases 3-6 are plan.** Extends `DSP_CONTRACT.md`, which stays the cross-port
+**Status: Phases 0-4 landed; Phases 5-6 are plan.** `resonanceControl` (v2) is the displayed
+metric; `resonanceScoreV1` remains computable and is displayed nowhere. Extends `DSP_CONTRACT.md`, which stays the cross-port
 contract. This document covers one question: what `smoothResonance` should *be*.
 
 The short version: the acoustic model is right and the arithmetic is right, but the construct
@@ -208,6 +209,16 @@ Not addressed in the review, but it blocks shipping. Existing users have session
 learned personal ranges, necklace thresholds ("resonance 30–70%"), and vibration rules
 ("resonance below 40"). Changing the metric silently invalidates all of it and mis-fires
 hardware against the old numbers.
+
+**Corrected in Phase 4, against a grep rather than an assumption, and the correction cuts both
+ways.** Two of the four do not exist: nothing persists a session history, and the "learned
+personal range" is in-session only — it is reset in the constructor, in `stop()` and by the
+settings reset, no `localStorage` key ever holds it, and it dies with the tab. The necklace
+controller reads no resonance at all. What *is* persisted is the phone's vibration rules
+(`vox:vibration:v1`) and the Wear overlay's own copy (`voxWatch.settings`), both defaulting to
+"resonance below 30 / above 70". So the migration surface is **two threshold stores**, and the
+real work was the persistence that did not exist — versioned from its first write. See §5's
+Phase 4 entry for the table and for the measured mis-fire the versioning prevents.
 
 **Requirement:** the metric carries a version. Stored readings record which version produced
 them. Aggregates never mix versions. Threshold-based rules and hardware calibration are migrated
@@ -835,16 +846,280 @@ and 2. Suppression is exact at the SNR floor and clears rather than freezes. The
 fixed one on the mean at all three SNRs on held-out vowels, and does not move the median — both
 reported.
 
-### Phase 4 — Two scales and real calibration
+### Phase 4 — Two scales and real calibration — **LANDED** *(v2 displayed; v1 computable, not shown)*
 
-- `resonanceAbsolute` / `resonanceControl` split throughout; perception model consumes absolute
-  only; ball/HUD/haptics consume control.
-- Guided calibration extended to a vowel set (ə i u æ ɑ) plus a standard phrase, sampling three
-  postures: habitual, comfortably brighter, comfortably darker.
-- Metric versioning + migration per §3.5.
+The first phase where the displayed number is allowed to move, and it moved.
 
-*Done when:* two speakers with different absolute ranges no longer both read 100%; stored
-readings carry a version; no hardware threshold fires against a value from a different version.
+- **`resonanceAbsolute` / `resonanceControl` split throughout.** One measurement, two views. The
+  perception model and every cross-speaker or cross-device comparison read `resonanceAbsolute`;
+  the ball, the HUD, the meter, the bulb and the haptics read `resonanceControl`. Both are
+  **`null`** on a frame that produced no reading, never 0 — 0 is a real position on either axis
+  and a suppressed frame is not that.
+- **The session card is the one place §4 and §6 pull opposite ways, and the resolution is
+  recorded rather than fudged.** §4 puts "cross-session progress" on absolute, correctly: control
+  moves whenever the span does, so a user who recalibrates between Tuesday and Friday would
+  otherwise see progress that is entirely the new span. §6 says the user sees one ring, and the
+  end-of-session card is the same surface. So the session accumulates **both** — the statistic is
+  absolute, versioned and scale-tagged; the number on the card is the plain mean of **control**,
+  the scale the ring showed while they were speaking. Showing an absolute number would put an
+  axis the user has never seen on screen with nothing to compare it to, because *this app does
+  not persist a session history to compare against*. When it does, the absolute accumulator and
+  `resonanceV2Summary()`'s speech mode are what it reads.
+- **Control is defined on frame one.** Before calibration it normalises against a
+  **population span** built entirely from published numbers: P&B's adult-male and adult-female
+  *pooled* dispersions on the absolute axis (0.4607 and 0.5482) each extended outward by half the
+  mean within-speaker across-vowel excursion (0.0680), giving **[0.3927, 0.6162]**. By
+  construction each published mean lands half an excursion inside its end, so an adult male at
+  his pooled mean reads **30.4%** and an adult female at hers **69.6%** — the app's two shipped
+  default haptic thresholds are 30 and 70, which is arithmetic rather than a fit: the span comes
+  from the norms and the defaults predate it. `resonance-metric.test.mjs` recomputes both ends
+  from the committed fixture.
+- **Guided vowel-set calibration**, replacing the two-step darkest/brightest flow. Five held
+  vowels (ə i u æ ɑ) captured as **five separate segments** drive `calibrateLpcCeiling()` — the
+  input that method was built for, and the reason it takes segments rather than a flat frame
+  list — then three postures (habitual / comfortably brighter / comfortably darker) on the
+  Rainbow Passage's opening sentence produce the personal span, **measured after the ceiling is
+  applied**. The order is the design: postures measured first would build a span out of readings
+  the next frame invalidates.
+- **Metric versioning + migration**, versioned from the first write.
+- **v1 retired from the display, kept computable.** `resonanceScoreV1` is untouched, its golden
+  vectors are untouched, and the eval-harness aggregates are still **0.370 / 0.422** at the two
+  operating points.
+
+#### §3.5 was wrong about what exists, and the correction shrinks the migration and grows the build
+
+§3.5 says existing users have "session histories, learned personal ranges, necklace thresholds
+and vibration rules". Grepped on `main` before a line of migrator was written:
+
+| §3.5 claims | actually persisted |
+|---|---|
+| session histories | **nothing.** `this.session` is rebuilt per session and never written to storage |
+| learned personal ranges | **nothing.** `analyzer.resonanceProfile` is in-session only — reset in the constructor, in `stop()`, and by the settings reset — and no `localStorage` key ever holds it. It dies with the tab |
+| necklace thresholds | the necklace controller reads no resonance at all |
+| vibration rules | **yes** — `vox:vibration:v1`, `resonance` defaults "below 30" / "above 70", whitelisted for export in `settings-transfer.js` |
+| — | **and one §3.5 misses:** the Wear overlay's own `voxWatch.settings`, same two defaults |
+
+So the migration surface is **two threshold stores**, and the real work is the persistence that
+did not exist: `vox:resonance:profile:v1`, carrying the span, the chosen ceiling, the posture
+sample counts and a **metric version**, refused rather than coerced when the version does not
+match. A returning user's "learned personal range" was not at risk from the metric change — it
+was already being thrown away on every reload.
+
+#### Migration: suspend, never rescale
+
+There is no honest function from a v1 threshold to a v2 one. A stored "below 30" was set against
+a 17 cm → 14 cm axis *optionally renormalised against a range learned in that session and then
+discarded*; version 2's 30 is a position inside a published population span or the speaker's own.
+The v1 number depended on state that no longer exists, so rescaling would be inventing the user's
+intent. Resonance rules are therefore **suspended**: the threshold is preserved exactly as typed,
+the rule stops firing, and the settings panel offers one button to confirm it against the live
+number. Every other metric is untouched — none of them changed.
+
+The same rule covers a **span change**: a control threshold is a position inside a span, so a
+recalibration that moves the span suspends the rules set against the old one. Spans carry an id
+derived from their own numbers, so a recalibration that lands in the same place re-prompts for
+nothing.
+
+**The mis-fire, measured** (`npm run report:resonance-two-scale`). Two synthesized speakers, each
+sweeping the same published posture excursion, **uncalibrated** — which is the state every user
+is in on every reload, because v1's learned range was never persisted. Each shipped default rule
+replayed frame by frame against v1 and against control:
+
+| speaker | rule | frames | v1 median | control median | fires on v1 | fires on control | **verdicts differ** | fires now |
+|---|---|---|---|---|---|---|---|---|
+| LONG | below 30 | 555 | 52.1 | 12.7 | 65 | 539 | **474 (85.4%)** | **0** |
+| LONG | above 70 | 555 | 52.1 | 12.7 | 53 | 0 | 53 (9.5%) | **0** |
+| SHORT | below 30 | 527 | 49.8 | 65.3 | 46 | 0 | 46 (8.7%) | **0** |
+| SHORT | above 70 | 527 | 49.8 | 65.3 | 67 | 182 | 147 (27.9%) | **0** |
+
+On 85.4% of frames in the worst case, the same stored rule buzzes on one metric and stays silent
+on the other. After migration it fires **0** times on any of them, and every threshold comes
+through unaltered (30 and 70).
+
+#### Two speakers with different absolute ranges
+
+Built rather than found, because the claim is about vocal tract length and the fixtures contain
+one speaker. Both numbers are published: the tracts are P&B's adult-male formant set scaled in
+frequency (k = 0.92, a tract ~9% longer; k = 1.18, ~15% shorter), and both sweep the **same**
+excursion — §1.5's GAVT outcome, F2 1847 → 1961 Hz (+6.2%), applied in each direction — so the
+only thing that differs between them is size.
+
+| | absolute range over all postures | v1 at darkest → brightest | control | absolute |
+|---|---|---|---|---|
+| LONG | **0.387 – 0.474** | 29.7% → 73.0% | 4.5% → 95.5% | 39.7% → 44.8% |
+| SHORT | **0.507 – 0.578** | 27.7% → 74.8% | 4.5% → 95.5% | 51.4% → 57.3% |
+
+**The two ranges are disjoint.** The "BEFORE" column is v1 after the app's *own* guided resonance
+calibration — the flow this phase replaces, which takes the medians of the two deliberate
+postures as the ends and pads 5%, so a speaker reads at or near the top of the meter at their own
+brightest whatever their tract is. The two speakers land **1.8 points apart** there.
+
+Read the criterion carefully, because the obvious reading of it is wrong. Control puts both
+speakers at 95.5% at their own brightest, and *that is what control is for* — it is not the
+defect §2.7 names. The defect is that a personally-normalised number was **also feeding the
+perception model**, so two different vocal tracts produced the same score:
+
+| gap between the two speakers at their own brightest | before | after |
+|---|---|---|
+| the displayed number | 1.8 pts (v1) | 0.0 pts (control) — by design |
+| the number the perception model reads | 1.8 pts (v1) | **12.5 pts (absolute)** |
+| the perceived-gender score itself | **0.008** | **0.069** |
+
+#### What the user sees when there is no reading — and the premise was wrong
+
+v1 always had a number; v2 can be absent, and 11.4% of clean read speech is suppressed. The brief
+for this phase called that "a ring that blinks out for one frame in nine". **Measured, it is not.**
+Those frames are not scattered:
+
+| condition | suppressed | runs | run lengths (frames) | singletons | median run | longest |
+|---|---|---|---|---|---|---|
+| clean, 30 fps | 11.4% | **3** | 14, 4, 3 | **0** | 133 ms | 467 ms |
+| clean, 60 fps | 4.5% | 2 | 13, 1 | 1 | 217 ms | 217 ms |
+| +noise, 12 dB | 36.9% | 5 | 34, 13, 6, 3, 3 | 0 | 200 ms | 1133 ms |
+
+The app does not flicker. It declines in contiguous stretches of 100 ms to 1.1 s — pool warm-up
+and the pauses between phrases, exactly what §5's Phase 3 entry said collapsed. That measurement
+is what sets the design:
+
+- **The number blanks immediately.** The windowed average stops being fed on the first suppressed
+  frame, so the HUD readout goes to "—" with no ramp at all. Nothing numeric is ever shown stale.
+- **The meter's position indicator fades out** rather than parking. A greyed marker still sitting
+  at 62% is a position claim and there is no position to claim.
+- **The ring relaxes into a neutral listening ring** — fixed radius, no hue travel, no width
+  travel, encoding nothing — over 90 ms, which is shorter than the shortest measured decline, so
+  every real one completes the transition. For at most those 90 ms the ring is still partly where
+  the last reading put it. That is stated rather than hidden: it is the difference between a ring
+  that relaxes and one that cuts out, and a cut reads as a fault in the app rather than as an
+  absence of signal. Both ramps are in seconds and integrated against the real frame interval,
+  not per-frame coefficients.
+
+#### What displaying v2 costs, on the same fixture
+
+| condition | yield v1 | yield v2 | across-clip swing v1 | v2 | p05–p95 v1 | v2 | median frame-to-frame step v1 | v2 |
+|---|---|---|---|---|---|---|---|---|
+| clean, 30 fps | 100% | **88.6%** | 0.387 | 0.194 | 0.294 | 0.142 | 0.0013 | **0.0000** |
+| clean, 60 fps | 100% | **95.5%** | 0.497 | 0.289 | 0.473 | 0.239 | 0.0016 | **0.0000** |
+| +noise, 12 dB | 100% | **63.1%** | 0.273 | 0.062 | 0.260 | 0.062 | 0.0025 | **0.0000** |
+
+v1's yield is 100% by construction — it is an EMA that cannot be absent, which is precisely the
+property that let it show a number built on a fabricated formant. **The cost is 11.4 points of
+yield on clean read speech and 36.9 at 12 dB.** What it buys is on the other three columns:
+across-clip swing roughly halves, the p05–p95 band halves, and the median frame-to-frame step is
+**zero** — the displayed number is pooled over a rolling window and does not move at all between
+most adjacent frames, where v1 moved on every one. *Displaying v2 does not cost stability. It
+costs availability, and it buys stability.*
+
+#### The budget after v1 retires (§3.4)
+
+The second LPC solve existed only because v1's displayed output had to stay byte-identical while
+the canonical path used a per-user ceiling. v1 is no longer displayed, so its `lpc` branch reads
+the canonical solve and the duplication is gone. Measured on 3 s of held vowel:
+
+| case | Phase 3 | Phase 4 |
+|---|---|---|
+| `lpc`, default ceiling — every uncalibrated user | 0.994 | **1.000** |
+| `lpc`, per-user ceiling (post-calibration) | **1.989** | **1.000** |
+| v1 forced onto `harmonic` | 0.994 | **1.000** |
+| `harmonic` + per-user ceiling | 1.989 | **1.000** |
+
+ms/frame for the whole `update()`: 2.5–2.6 ms, **15–16% of the 16.67 ms frame budget**, against
+Phase 3's 4.6–4.7 ms / 28%. (The absolute ms are not comparable across phases — different
+machine, different day — but the *ratio between the calibrated and uncalibrated cases* is, and it
+has gone from 2× the solves to 1×.)
+
+#### The formant assignment, and /ɝ/ — the answer is not what Phase 3 predicted
+
+Phase 3 handed this over: "the binding constraint is not ρ. It is that the formant assignment has
+one policy, shared with v1, that cannot admit a rhotic F3 without admitting spurious ones. Fixing
+it needs an assignment v1 no longer constrains — Phase 4." v1 has retired, so it is a measurement
+(`npm run report:resonance-assignment`):
+
+| F0 | assignment | /ɝ/ correct | /ɔ/ → /ɝ/ | /ɪ/ → /ɝ/ | all non-rhotic → /ɝ/ | overall correct |
+|---|---|---|---|---|---|---|
+| 110 | standard | 0% | 0% | 0% | 0% | 86.7% |
+| 110 | **rhotic** | **92.5%** | **0%** | **0%** | 0.2% | **96.0%** |
+| 130 | standard | 0% | 0% | 0% | 0% | 86.6% |
+| 130 | **rhotic** | **25.4%** | **0%** | **0%** | 0.3% | **89.1%** |
+| 180 | standard | 0% | 0% | 0% | 0% | 64.5% |
+| 180 | **rhotic** | **31.3%** | **0%** | **0%** | 0.2% | **67.5%** |
+
+**It does not manufacture rhotics.** Phase 3 recorded that widening the slot reads "/ɔ/ → /ɝ/ on
+47 frames in 67" at F0 180. Used as the *measurement* rather than as Phase 3's ρ-corroborated
+detector, false positives are **0%** on both named vowels at every tested F0 and 0.2–0.3% across
+all non-rhotic frames, and overall correctness **rises** at every F0. The manufacturing was a
+property of the detector, not of the slot.
+
+**It still ships off**, for three reasons, none of which is "it fabricates rhotics":
+
+1. It misses the ≥50% recall criterion at F0 130 (25.4%) and 180 (31.3%). Above 110 the rhotic
+   reads as /æ/ rather than /ʊ/ — a different wrong answer, not a right one — so §6's
+   confidently-wrong-vowel failure is reduced, not removed.
+2. It is not free on ordinary speech: **3.8 points of vowel yield** (85.3% → 81.5%) and **2.1
+   points of movement in the mean displayed value** (0.4718 → 0.4507) on the Rainbow Passage.
+3. Decisively: every number above is from a Klatt cascade whose /ɝ/ F3 is placed by construction.
+   Phase 3's own condition was an assignment v1 no longer constrains — now provided and measured
+   — "validated against real rhotic recordings rather than a Klatt cascade, which is Phase 5".
+   The remaining blocker is that validation, and half-building Phase 5 to reach it would be worse
+   than leaving a measured, exposed, unused option in place.
+
+A fourth variant was considered and abandoned, recorded because the reason is a limit rather than
+a preference: restricting the widened slot to poles corroborated by F4 is a physical claim (a
+rhotic lowers F3 and leaves F4) and cannot be evaluated here, because the synthesized corpus
+places every vowel's F4 at 3.5·ΔF of *that vowel's own* fit — so the synthetic /ɝ/'s F4 has
+already been dragged down with its F3 and shows a gap of 1.09·ΔF against the uniform tube's 1.00.
+Fixing the fixture is defensible on its own; doing it in order to make a candidate pass is not.
+
+#### Phase 2's d′ recommendation, accepted — and applied asymmetrically
+
+Phase 2 recommended restating the acceptance criterion "against a within-speaker contrast, since
+an absolute tract-size axis and a trainable-posture axis should not both be scored on how well
+they separate two populations by tract length." Accepted. The split is **not symmetric**:
+
+- **`resonanceAbsolute` keeps the male-vs-female criterion.** It is a tract-size axis, separating
+  two populations that differ in tract size is exactly what it claims to do, and d′ 1.73 against
+  v1's 0.86 is the claim. Nothing about it is restated, and a test now pins that it still clears
+  Phase 1's 1.5 — so the restatement cannot be used to lower a bar.
+- **`f2Position` moves to the within-speaker contrast** (§1.5's published GAVT shift), where it
+  scores d′ 2.09 / 2.21 against raw F2's 0.16, a margin of 13×. The male-vs-female number
+  (0.105 against raw F2's 0.476) is still measured and still asserted, as a **descriptive figure
+  with a bound rather than an acceptance gate** — deleting it would hide the axis on which the
+  feature is weak, and promoting it back to a gate would require putting tract length back in at
+  r = 0.95 with `formantScale`.
+
+#### The span floor, and two wrong values before it
+
+`resonanceControl` normalises against a span, and a span narrower than the measurement's own noise
+is not a span — it is a calibration that failed, and normalising against it turns estimator jitter
+into display travel. The floor is derived from measurement noise and nothing else. Measured on a
+sustained synthesized vowel where the true value is constant by construction, through the live
+analyzer:
+
+| SNR | 40 dB | 30 dB | 24 dB | 20 dB | 16 dB | 12 dB |
+|---|---|---|---|---|---|---|
+| SD of pooled `resonanceAbsolute` | 0.0001 | 0.0085 | 0.0019 | **0.0055** | 0.0158 | 0.0177 |
+
+**Five** of the 20 dB SD — five SD between the two posture medians is a demonstrated difference,
+not a coin flip — gives **0.0275**, and the two synthesized speakers' actual posture sweeps
+measure 0.051 and 0.059, so it does not bind on a genuine calibration. Both bounds are asserted.
+
+Two earlier values were wrong and both are recorded, because each was a mis-stated expectation
+rather than a tuning choice:
+
+| value | why it was wrong |
+|---|---|
+| 0.127 — one population's across-vowel excursion | the argument was that a deliberate posture change should move a speaker at least as far as changing vowel does. It does not: measured, a posture change moves them **two to four times less**. This floor sat above every real posture excursion and would have bound for every user |
+| 0.089 — ten times the pooled scale's scatter on the Rainbow Passage (19.3 Hz) | that number is not measurement noise. The passage is connected speech, so most of its scatter is the speaker genuinely changing vowel. Measured where the true value is *constant*, the noise is three to forty times smaller |
+
+*Done when:* two speakers with different absolute ranges no longer both read 100%; stored readings
+carry a version; no hardware threshold fires against a value from a different version. **Met, with
+the first criterion met on the axis that compares speakers rather than on the one that shows a
+person their own range** — the two speakers' absolute ranges are disjoint (0.387–0.474 against
+0.507–0.578) and the perceived-gender score separates them by 0.069 against 0.008 before, while
+`resonanceControl` deliberately puts both at 95.5% at their own brightest because that is what it
+is for. Stored readings carry a metric version, a scale and a span id; aggregates refuse to mix
+them and report how many they refused. No hardware threshold fires against a value from a
+different version: measured, the mis-fire reached 85.4% of frames and is now 0. `npm run
+test:resonance-two-scale` is the standing check.
 
 ### Phase 5 — Validation ladder
 
@@ -879,11 +1154,37 @@ to find a formant in it. The trade is stated with its numbers in §5's Phase 3 e
 of frame yield for a value that no longer depends on which estimator the room's noise selected,
 and that clears rather than freezes when there is nothing to measure.
 
+**And now it reaches the user, which is what Phase 4 changed.** Through Phases 1–3 that yield loss
+was invisible: v1 was displayed and v1 cannot be absent. With v2 displayed, the risk stops being
+an internal statistic and becomes 11.4% of clean read speech with nothing on the ring — and the
+number that matters for a UI turned out not to be the percentage. Measured (§5's Phase 4 entry),
+those frames are **three contiguous runs of 100–467 ms, with zero singletons**, not a flicker.
+The other half of the trade is the same table's right-hand columns: across-clip swing halves and
+the median frame-to-frame step of the displayed value is **zero**, against v1's 0.0013. Displaying
+v2 costs availability and buys stability.
+
 **Decomposition can leak into the UI.** The user should still see one ring. Five internal
 variables is an implementation detail; if it reaches the interface the redesign has failed.
 
+**Held through Phase 4, which is where it was most at risk.** The split is two views of one
+measurement, not two meters: the ball, the meter, the bulb and the haptics all read
+`resonanceControl` and nothing else, and `formantScale`, `apparentVTL`, `formantPattern`,
+`f2Position` and `resonanceConfidence` are still computed, still exposed and still undrawn. The
+one interface change is a **third state** on the same ring — a reading, no reading, and the
+transition — which is not a second variable but the honest rendering of a metric that can be
+absent. The resonance status line, which used to print v1's learned F1 range, now says only
+whether the span is the population's or the user's own and how wide it is; it does not print a
+tract length, a vowel or an f2Position.
+
 **Existing users' numbers change.** Unavoidable — the current numbers are wrong. Handled by
 versioning, not by pretending continuity.
+
+**Done in Phase 4, and §3.5's inventory of what changes was itself wrong.** Two of the four
+things it lists as at risk were never persisted at all (§3.5's correction). The one real risk —
+a stored haptic threshold reinterpreted against a new metric — is measured rather than asserted:
+the same stored rule disagrees with itself across the two metrics on up to **85.4% of frames**,
+and after migration it fires **0** times until the user confirms it, with the threshold they
+typed preserved verbatim.
 
 **Vowel classification is a new failure mode.** A misclassified vowel produces a confidently
 wrong `f2Position`. It must degrade to "no F2 feature this frame" rather than guess — the same
@@ -903,11 +1204,72 @@ further is Phase 3.
 
 ## 7. Open questions
 
-1. Should `resonanceControl` remain the default display, or should absolute be default once the
-   calibration is good enough to trust? (Product call — control is better for motor learning,
-   absolute is better for knowing where you actually are.)
-2. Is F4 worth its miss rate, or is F3 + a tighter confidence model sufficient?
-3. Does the necklace/watch haptic threshold belong on absolute or control? Absolute is
-   cross-device consistent; control is what the user is training against.
-4. What replaces the five-tier descriptor once the metric is two-dimensional — a tier plus a
-   shape cue, or a position on a 2D map?
+**Phase 4 decided 1 and 3, because the split makes them unavoidable rather than theoretical.
+2 and 4 stay open, with what is now known about each.**
+
+### 1. Should `resonanceControl` remain the default display? — **DECIDED: yes, control.**
+
+Control is the displayed number, and absolute is what the perception model, the session summary
+and every cross-speaker or cross-device comparison read. Three reasons, in order of weight:
+
+1. **Absolute cannot be a display axis without a dishonest gain.** It puts a whole adult
+   population inside about 22 points (P&B's two pooled means are 46.1 and 54.8) and one speaker's
+   entire across-vowel excursion occupies 14.5 of them. A meter on that axis barely moves when
+   the user does the thing they are practising. Steepening it is exactly what §5's Phase 1 entry
+   refused — an absolute scale steep enough to put /i/ and /u/ from one mouth at opposite ends is
+   v1's defect rebuilt.
+2. **The two speakers make the alternative concrete.** Measured (§5's Phase 4 entry): sweeping
+   the same published posture excursion, the LONG speaker travels 39.7% → 44.8% on absolute and
+   4.5% → 95.5% on control. A five-point ball is not a biofeedback instrument.
+3. **"Once the calibration is good enough to trust" turns out not to be the axis of the
+   question.** Control is not less trustworthy than absolute; it is the *same* measurement
+   expressed against a span. What calibration buys is that the span is the user's own instead of
+   the population's — and until it is, control is still defined, on published ends, so the ball
+   works out of the box.
+
+The cost, stated: control is not comparable between people or across a recalibration. That is
+why absolute exists, why stored readings carry a span id, and why §3.5's machinery treats a span
+change exactly as it treats a version change.
+
+### 2. Is F4 worth its miss rate? — **still open, and Phase 4 did not move it.**
+
+Unchanged since Phase 2: F4's yield is 92.4% against F1–F3's 98.4%, it sharpens `formantScale`
+and it does not reach the vowel classifier (`VOWEL_TEMPLATE_FORMANTS` pins that at three, because
+P&B published no F4 and normalising a 4-element residual against 3-formant templates cost 47
+points of yield when it was live). The question needs a *measured* r₄, which is Phase 5's to
+provide. Phase 4 adds one datum against dropping it: the F3–F4 gap is the natural discriminator
+for a rhotic F3, and it could not be evaluated here only because the synthesized corpus places F4
+from each vowel's own fit rather than the speaker's.
+
+### 3. Does the haptic threshold belong on absolute or control? — **DECIDED: control.**
+
+Both halves of the original framing are true; the tie is broken by what a haptic *is* — an
+instruction to move, fired while the user is speaking and cannot look at a screen.
+
+1. **On absolute the shipped defaults are unreachable for most people.** "Buzz below 30" on an
+   axis where a whole adult population sits inside 22 points would never fire for a great many
+   speakers and would fire permanently for the rest. A threshold that cannot be crossed is not a
+   coaching signal.
+2. **D1's cross-surface argument is satisfied by the span, not by the axis.** D1 objects to
+   "resonance 50%" meaning VTL on the desktop and brightness on the watch — a different
+   *quantity* per device. Control is the same quantity everywhere; what it needs in order to
+   travel identically is the same *span* everywhere, which is why the calibrated profile is
+   persisted and whitelisted for export alongside the rules that depend on it. A rule and the
+   span it was set against travel together or neither does.
+3. **Control is defined on frame one**, so a fresh install has working haptics with defensible
+   ends rather than an inert feature and a nag screen.
+
+The cost, stated: a control threshold means something different after a recalibration. That is
+§3.5's machinery doing its job — the span has an id, a stored reading records which span it was
+taken on, and a rule set against a superseded span is re-prompted rather than reinterpreted.
+
+### 4. What replaces the five-tier descriptor? — **still open, and deliberately untouched.**
+
+Phase 4 changed *what* the one ring shows and not *how many* things it shows. §6's risk is
+explicit — "if the decomposition reaches the interface the redesign has failed" — and a two-scale
+metric is not permission for two meters, so `formantScale`, `apparentVTL`, `formantPattern`,
+`f2Position` and `resonanceConfidence` remain internal and undrawn. The one interface change is
+that the ring now has a **third state**: a reading, no reading, and the transition between them
+(§5's Phase 4 entry). Answering this question properly needs the Phase 5 validation to say which
+of the internals is trustworthy enough to earn a place, and inventing a 2D map before that would
+be drawing a picture of numbers nobody has validated on a real voice.

@@ -136,11 +136,46 @@
   var prevEngineEnabled = null;
   var statusOverride = { text: '', until: 0 };
 
+  // §3.5: no hardware threshold fires against a value from a different metric version. The
+  // watch persists its own rules at voxWatch.settings, so it needs its own migration — the same
+  // rule, applied at the same moment (on the way in), suspending rather than rescaling. The
+  // watch overlay is plain ES5 in a WebView without module loading, so the version number and
+  // the predicate are restated here rather than imported; resonance-metric.js is the source of
+  // truth and watch-haptics.test.mjs pins the two together.
+  var RESONANCE_METRIC_VERSION = 2;
+
+  function ruleMayFire(r) {
+    if (!r || r.enabled === false) return false;
+    if (r.metric !== 'resonance') return true;
+    if (r.suspended === true) return false;
+    var v = (typeof r.metricVersion === 'number' && isFinite(r.metricVersion)) ? r.metricVersion : 1;
+    return v === RESONANCE_METRIC_VERSION;
+  }
+
+  // Suspend any stored resonance rule that predates the metric split. The threshold the user
+  // chose is preserved verbatim; only its ability to fire is withheld, until they confirm it
+  // against the new scale.
+  function migrateStoredRules() {
+    var changed = false;
+    for (var i = 0; i < settings.rules.length; i++) {
+      var r = settings.rules[i];
+      if (!r || r.metric !== 'resonance') continue;
+      var v = (typeof r.metricVersion === 'number' && isFinite(r.metricVersion)) ? r.metricVersion : 1;
+      if (v === RESONANCE_METRIC_VERSION) continue;
+      r.metricVersion = v;
+      r.suspended = true;
+      changed = true;
+    }
+    if (changed) saveSettings();
+    return changed;
+  }
+
   function syncWorkingRules() {
     workingRules = settings.rules.map(function (r) {
       return {
         metric: r.metric, direction: r.direction, threshold: r.threshold,
-        enabled: r.enabled, cdUntil: 0, tripped: false
+        enabled: r.enabled, suspended: r.suspended === true, metricVersion: r.metricVersion,
+        cdUntil: 0, tripped: false
       };
     });
   }
@@ -149,8 +184,17 @@
   function seedWatchRules() {
     function ensure(metric, dir, threshold) {
       var has = settings.rules.some(function (r) { return r.metric === metric && r.direction === dir; });
-      if (!has) settings.rules.push({ metric: metric, direction: dir, threshold: threshold, enabled: true });
+      // A rule CREATED now is created against the current metric, so it is stamped with the
+      // current version. Only rules that already existed are suspended — this seeder must never
+      // stamp one of those, which is why it only ever pushes and never edits.
+      if (!has) {
+        settings.rules.push({
+          metric: metric, direction: dir, threshold: threshold, enabled: true,
+          metricVersion: metric === 'resonance' ? RESONANCE_METRIC_VERSION : undefined
+        });
+      }
     }
+    migrateStoredRules();
     ensure('pitch', 'below', 150);
     ensure('pitch', 'above', 250);
     ensure('resonance', 'below', 30);
@@ -163,7 +207,11 @@
     var m = a.metrics || {};
     switch (metric) {
       case 'pitch': return a.smoothPitchHz;
-      case 'resonance': return (a.smoothResonance || 0) * 100;
+      // §7 question 3: the watch fires on CONTROL, the same axis the ball teaches, so the
+      // haptic and the ball agree about what "resonance 30" means (D1's cross-surface rule).
+      // `null` when the frame produced no reading — a suppressed frame is not a low reading,
+      // and returning 0 here would buzz "brighter!" every time the room got noisy.
+      case 'resonance': return a.resonanceControl != null ? a.resonanceControl * 100 : null;
       case 'energy': return (m.energy || 0) * 100;
       case 'bounce': return (m.bounce || 0) * 100;
       case 'vowel': return (m.vowel || 0) * 100;
@@ -225,8 +273,9 @@
     var t = nowS();
     for (var i = 0; i < workingRules.length; i++) {
       var r = workingRules[i];
-      if (!r.enabled) { r.tripped = false; continue; }
+      if (!ruleMayFire(r)) { r.tripped = false; continue; }
       var val = metricValue(a, r.metric);
+      if (val == null) { r.tripped = false; continue; }
       var cond = r.direction === 'below' ? val < r.threshold : val > r.threshold;
       var gated = cond && VW.gatePasses(r.metric, conf, settings.tuning);
       r.tripped = gated;
@@ -686,6 +735,11 @@
 
   function init() {
     loadSettings();
+    // Run the metric-version migration before anything can read a rule as current. Suspending
+    // on the way in is what stops a v1 threshold ever reaching the fire path in a state that
+    // looks live (§3.5).
+    migrateStoredRules();
+    syncWorkingRules();
     applyTheme();
     root.classList.add(settings.mode === 'practice' ? 'mode-practice' : 'mode-discreet');
     buildChooser();

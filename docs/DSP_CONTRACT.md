@@ -390,12 +390,30 @@ The measurement *method* documented above (adaptive-ceiling LPC → uniform-tube
 sound and matches the published recommendation. The *construct* — collapsing one frame's
 F1–F3 into a single 0–1 number — is not: measured against Peterson & Barney norms with
 ground-truth formants, vowel identity moves the score ~3x more than speaker sex does, and the
-nominal 55/25/20 weighting double-counts F1 and F2. Phases 0–3 have landed: the score is
+nominal 55/25/20 weighting double-counts F1 and F2. Phases 0–4 have landed: the score is
 decomposed into tract scale and tract shape, the shape now names the vowel, F2 is reported
-relative to that vowel's own norm, and the measurement is defined by one estimator rather than by
-whichever one the room's noise selected. All of it is instrumented and none of it is displayed —
-`smoothResonance` (v1) is still the only resonance number any user, port or piece of hardware
-sees, and its output is byte-identical. See
+relative to that vowel's own norm, the measurement is defined by one estimator rather than by
+whichever one the room's noise selected, and **Phase 4 has switched the display over**.
+
+**What a port has to know as of Phase 4.** There are now two *views* of one measurement, and
+which one a surface reads is not a style choice:
+
+| value | who reads it | comparable across |
+|---|---|---|
+| `resonanceAbsolute` | the perception model, the stored session statistic, any cross-device comparison | speakers, sessions, devices |
+| `resonanceControl` | ball, HUD, meter, bulb, **haptics**, and the number on the session card | nothing — it is a position inside one speaker's span |
+
+(The session card shows control and the session *statistic* is absolute: §4 wants cross-session
+comparability, §6 wants one scale in front of the user, and web has no persisted session history
+to compare against yet. A port that gains one should display the axis it can actually compare.)
+
+Both are **absent (`null`), never 0**, on a frame the app declined to read. Every stored reading
+carries a metric version (`RESONANCE_METRIC_VERSION = 2`), which of the two scales it is on, and
+— for control — a span id; aggregates refuse to mix them. **No hardware threshold may fire
+against a value from a different version**: a resonance rule stored before the split is suspended
+with its threshold intact until the user re-confirms it, on the phone and on the Wear overlay
+alike. `resonanceScoreV1` and its golden vectors are unchanged and still computed; they are
+displayed nowhere. See
 [`RESONANCE_REDESIGN.md`](./RESONANCE_REDESIGN.md) for the evidence, the target architecture
 (tract scale + tract shape, kept separate), and the phased plan. That document supersedes this
 one on what `resonanceScore` should mean; this one remains the cross-port contract for how it
@@ -424,15 +442,16 @@ is computed and kept in step.
   *(Still true of v1's dropdown. Post-Phase-3 the choice no longer reaches the v2 stream at all,
   and the bias is now divided out before any cross-check reads it —
   `ESTIMATOR_DELTA_F_BIAS` — because a published bias is not a disagreement.)*
-- **The canonical LPC path and v1 now disagree by design, and the divergence is bounded and
-  tested.** Post-Phase-3, `_resonanceLPC` is parameterised by analysis ceiling and returns two
-  formant assignments plus bandwidths and the model residual. v1 reads the assignment and the
-  default ceiling it always had, byte-identically; the canonical v2 path reads the pre-default
-  vector (so a fabricated F1 = 500 Hz never reaches it — the LPC finds no F1 on 4.9% of Rainbow
-  Passage frames and 10.0% of a synthesized vowel set at F0 180) at the per-user ceiling. Two
-  LPC solves per frame occur only when those two ceilings differ; the shared case is one, and
-  §3.4's three is never reached. This whole duplication exists because v1 must not move while it
-  is displayed and is retired with v1 in Phase 4.
+- ~~**The canonical LPC path and v1 now disagree by design...**~~ **RESOLVED in Phase 4.** v1's
+  `lpc` branch was pinned to the published default ceiling so its displayed output stayed
+  byte-identical, which is the only reason a second LPC solve per frame ever existed. v1 is no
+  longer displayed, so it reads the canonical solve and the duplication is gone: **1.000 solves
+  per frame at every ceiling and every estimator setting**, against Phase 3's 0.994 shared /
+  1.989 split. `_resonanceLPC` still returns two formant assignments (the second is the
+  rhotic-capable one, measured and unused — see below) plus bandwidths and the model residual,
+  and the canonical path still reads the pre-default vector so a fabricated F1 = 500 Hz never
+  reaches it. For an uncalibrated user the two ceilings are the same number, so every golden
+  vector and both fixture aggregates (0.370 / 0.422) are untouched.
 
 - **`spectralBrightness` replaces the centroid as a resonance estimator on web only.** D1's
   "brightness stays available only as an optional secondary display" is now true of the v2
@@ -440,13 +459,14 @@ is computed and kept in step.
   reads it. v1's `centroid` estimator option is unchanged, and the Kotlin port's
   `SpectralBrightnessEstimator` is still brightness-primary (see D1 above).
 
-- **The personal resonance-range learner is method-dependent.** Its conjunction of four gates
-  (`conf > 0.4`, `formantSteadiness > 0.5`, `vowelLikelihood > 0.4`, non-zero ΔF) is reached
-  under `lpc`/`cepstral`/`centroid` but not under `harmonic` on the Rainbow Passage, so whether
-  a user ever gets a personal 0–100% span depends on which estimator the room's SNR selected.
-  It also changes what the score *means* mid-session (population anchors → the speaker's own
-  span) without recording which scale a stored reading was taken on, so session summaries can
-  average across two different scales.
+- ~~**The personal resonance-range learner is method-dependent.**~~ **RESOLVED in Phase 4, by
+  removing it from the display path rather than by fixing it.** The learner still runs and still
+  has its four method-dependent gates, but it now feeds only `resonanceScoreV1`, which is
+  computed and displayed nowhere. The displayed number's personal span comes from the guided
+  vowel-set calibration instead — deliberate, versioned, persisted, and produced by the canonical
+  path, which no estimator setting can reach (Phase 3). The second half of the drift is closed
+  outright: a stored reading now records its metric version, its scale and its span id, and
+  `aggregateReadings` refuses to mix them and reports how many it refused.
 - **F4 is web-only and LPC-only.** The downsampled-LPC path returns F4 (92.4% of estimator
   frames on the Rainbow Passage); the cepstral, harmonic and centroid estimators do not, and
   neither port does. It feeds only the Phase-1 `formantScale`/`formantPattern` pair, which is
@@ -459,7 +479,20 @@ is computed and kept in step.
   normalising a 4-element residual and matching it against 3-formant templates compares vectors
   that do not live in the same space. Measured cost when that was live: vowel yield under `lpc`
   fell from 88.0% to 40.8%.
-- **Rhotic F3 is unreachable by v1's formant assignment, and that is the real /ɝ/ blocker.**
+- **Rhotic F3 is unreachable by the shipped formant assignment. Phase 4 removed the *constraint*
+  and measured the candidate; what remains is a validation, not a code problem.** Now that v1 no
+  longer pins the assignment, the widened slot can be used as the measurement, and measured that
+  way it **does not manufacture rhotics**: false positives are 0% on /ɔ/ and /ɪ/ at F0 110/130/180
+  and 0.2–0.3% over all non-rhotic frames, /ɝ/ recall goes 0% → 92.5% / 25.4% / 31.3%, and
+  overall vowel correctness rises at every F0 (86.7→96.0, 86.6→89.1, 64.5→67.5). Phase 3's
+  "manufactures rhotics" was a property of its ρ-corroborated *detector*, not of the slot. It
+  still ships **off** (`canonicalAssignment: 'standard'`, pinned by a test): it misses the ≥50%
+  recall bar at F0 130 and 180, it costs 3.8 points of vowel yield and moves the mean displayed
+  value 2.1 points on the Rainbow Passage, and every one of those numbers comes from a Klatt
+  cascade whose /ɝ/ F3 is placed by construction. `npm run report:resonance-assignment` is the
+  report. The paragraph below is Phase 3's account, kept for the history:
+
+  **Rhotic F3 is unreachable by v1's formant assignment, and that is the real /ɝ/ blocker.**
   The LPC assignment loop admits a pole as F3 only above 2000 Hz; Peterson & Barney's adult-male
   /ɝ/ has F3 = 1690 Hz. Measured on the live path before Phase 3, a synthesized /ɝ/ was named
   correctly on **0.0%** of frames (it read as /ʊ/ on 63 of 67), and the lowest F3 the canonical
@@ -489,8 +522,19 @@ is computed and kept in step.
   acted on, with a test pinning that. The classifier's one systematic error remains /ɝ/ → /æ/.
 - **Phase 2's features are web-only and unversioned.** `vowelId`, `f2Position`, and the two
   aggregation modes exist on the web analyzer only, are not in the Layer A packet, and are not
-  displayed. Nothing on any port reads them. When they do become displayable (Phase 4), §3.5's
-  versioning applies to them the same as to `resonanceAbsolute`.
+  displayed. Nothing on any port reads them. *(Phase 4 note: still true, and still not displayed
+  — §6's "the user sees one ring" is not relaxed by the two-scale split. The versioning §3.5 asks
+  for now exists and applies to `resonanceAbsolute` and `resonanceControl`; extending it to these
+  is a Phase 6 port item, because nothing outside the web analyzer can read them yet.)*
+
+- **The two scales are web-only, and both ports are on the old construct.** `resonanceAbsolute`
+  and `resonanceControl`, the personal span, the metric version and the threshold suspension all
+  exist on web. The Wear overlay reads `resonanceControl` and applies the same suspension rule
+  (restated in ES5 in `watch-boot.js`, pinned to `resonance-metric.js` by `watch-haptics.test.mjs`)
+  because it drives haptics off the web analyzer in a WebView — but the native Kotlin
+  `SpectralBrightnessEstimator` and the C++ necklace are still on their own constructs and know
+  nothing about versions or spans. Aligning them is Phase 6, and until then a **stored resonance
+  threshold must not be assumed to mean the same thing on a native surface**.
 - **`vtlScore` is a high-gain mapping**: full 0–1 travel over ΔF ∈ [1029, 1250] Hz, ~5 score
   points per 1% of ΔF error. That is a deliberate consequence of the 17 cm → 14 cm apparent
   tract-length anchors (**longer/darker → shorter/brighter**, not male → female: F0 and

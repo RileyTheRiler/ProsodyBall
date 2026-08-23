@@ -85,3 +85,63 @@ test('mergeSettings is null-tolerant and deep-copies rules', () => {
   merged.rules[0].threshold = 999;
   assert.equal(VW.DEFAULT_SETTINGS.rules[0].threshold, 150, 'defaults must not be mutated');
 });
+
+// ===== Phase 4: the watch's copy of the metric-version rule =====================================
+//
+// docs/RESONANCE_REDESIGN.md §3.5 and §5's Phase 4 entry. The Wear overlay persists its OWN
+// rules at `voxWatch.settings`, so it needs its own migration and its own fire gate. It is plain
+// ES5 in a WebView without module loading, so `watch-boot.js` restates the version number and
+// the predicate rather than importing them — which is exactly the kind of duplication that
+// drifts. These tests are what stop it: they read the literal source of watch-boot.js and check
+// it against resonance-metric.js, the single source of truth.
+import fs from 'node:fs';
+import { RESONANCE_METRIC_VERSION, ruleMayFire } from './resonance-metric.js';
+
+const WATCH_BOOT = fs.readFileSync(new URL('./wear/assets-overlay/watch-boot.js', import.meta.url), 'utf8');
+
+test('the watch overlay restates the SAME metric version as resonance-metric.js', () => {
+  const m = WATCH_BOOT.match(/var RESONANCE_METRIC_VERSION = (\d+);/);
+  assert.ok(m, 'watch-boot.js no longer declares RESONANCE_METRIC_VERSION');
+  assert.equal(Number(m[1]), RESONANCE_METRIC_VERSION,
+    'the watch is gating haptics on a different metric version from the app');
+});
+
+test('the watch fires resonance rules on CONTROL, and on nothing when there is no reading', () => {
+  assert.ok(/case 'resonance': return a\.resonanceControl != null/.test(WATCH_BOOT),
+    'the watch is reading a resonance value other than resonanceControl');
+  // A suppressed frame must not buzz "brighter!". metricValue returns null and evalAlerts skips.
+  assert.ok(/if \(val == null\) \{ r\.tripped = false; continue; \}/.test(WATCH_BOOT),
+    'the watch alert loop does not skip a frame with no reading');
+});
+
+test('the watch migrates and gates rather than rescaling, like the app', () => {
+  assert.ok(/function migrateStoredRules\(\)/.test(WATCH_BOOT), 'no migration on the watch');
+  assert.ok(/r\.suspended = true;/.test(WATCH_BOOT), 'the watch migration does not suspend');
+  // Nothing in the watch's migration touches the threshold the user typed.
+  const fn = WATCH_BOOT.slice(WATCH_BOOT.indexOf('function migrateStoredRules()'));
+  const body = fn.slice(0, fn.indexOf('\n  }') + 4);
+  assert.ok(!/\.threshold\s*=/.test(body), 'the watch migration rewrites a stored threshold');
+  assert.ok(/if \(!ruleMayFire\(r\)\)/.test(WATCH_BOOT), 'the watch fire path does not consult ruleMayFire');
+});
+
+test('the shared predicate agrees with the watch\'s restatement on every case it has to handle', () => {
+  // The behaviour the two copies must agree on, enumerated. If the app's predicate changes, this
+  // is what says the watch's copy has to change too.
+  const cases = [
+    [{ metric: 'resonance', enabled: true }, false],                                        // unversioned = v1
+    [{ metric: 'resonance', enabled: true, metricVersion: RESONANCE_METRIC_VERSION }, true],
+    [{ metric: 'resonance', enabled: false, metricVersion: RESONANCE_METRIC_VERSION }, false],
+    [{ metric: 'resonance', enabled: true, metricVersion: RESONANCE_METRIC_VERSION, suspended: true }, false],
+    [{ metric: 'pitch', enabled: true }, true],
+    [{ metric: 'pitch', enabled: false }, false],
+  ];
+  // The watch's predicate, extracted from its own source so this cannot pass against a copy that
+  // has been edited in the test instead of in the file.
+  const src = WATCH_BOOT.slice(WATCH_BOOT.indexOf('function ruleMayFire(r) {'));
+  const watchRuleMayFire = new Function('RESONANCE_METRIC_VERSION',
+    `${src.slice(0, src.indexOf('\n  }') + 4)}; return ruleMayFire;`)(RESONANCE_METRIC_VERSION);
+  for (const [rule, expected] of cases) {
+    assert.equal(ruleMayFire(rule), expected, `app: ${JSON.stringify(rule)}`);
+    assert.equal(watchRuleMayFire(rule), expected, `watch: ${JSON.stringify(rule)}`);
+  }
+});

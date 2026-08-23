@@ -4841,7 +4841,7 @@
         <div class="settings-status" aria-live="polite">
           <div class="settings-status-item"><span>Pitch profile</span><strong id="pitchProfileLearned">Learning… 0%</strong></div>
           <div class="settings-status-item"><span>Tilt profile</span><strong id="tiltProfileLearned">Learning… 0%</strong></div>
-          <div class="settings-status-item"><span>Resonance profile</span><strong id="resonanceProfileLearned">Learning… 0%</strong></div>
+          <div class="settings-status-item"><span>Resonance range</span><strong id="resonanceProfileLearned">Typical adult range</strong></div>
           <div class="settings-status-item"><span>Frame confidence</span><strong id="frameConfidenceLabel">0%</strong></div>
         </div>
       </div>
@@ -4933,7 +4933,7 @@
         <button class="btn btn-help btn-fill" id="recalibrateBtn" aria-label="Run microphone calibration again"
           title="Run mic calibration again">Recalibrate</button>
         <button class="btn btn-help btn-fill" id="guidedResonanceBtn" aria-label="Run guided resonance setup"
-          title="Guided setup that maps your resonance range from your deepest and brightest sounds">🎚 Guided resonance setup</button>
+          title="About a minute: five short vowels to tune the analysis to your voice, then one sentence read three ways to map the ring to your own range">🎚 Guided resonance setup</button>
       </div>
 
       <div class="settings-group">
@@ -5249,10 +5249,13 @@
           Resonance
           <div class="info-wrapper">
             <button class="info-trigger" aria-label="More Info">?</button>
-            <div class="info-popup">Your vocal tone quality. High resonance sounds 'forward' or 'bright'; low resonance
-              sounds 'deep' or 'hollow'.</div>
+            <div class="info-popup">Where you are inside your own resonance range: 'forward' and 'bright' to the right,
+              open and 'hollow' to the left. Run Guided resonance setup in Settings to map it to your voice — until then
+              it uses a typical adult range. It shows nothing when the mic can't give a clear reading, rather than
+              guessing. The estimator dropdown picks how F1/F2 are tracked for the spectrogram; the resonance number
+              itself is always measured the same way.</div>
           </div>
-          <select id="resMethodSelect" class="res-method-select" aria-label="Resonance method">
+          <select id="resMethodSelect" class="res-method-select" aria-label="Formant estimator">
             <option value="auto" selected>Auto (SNR)</option>
             <option value="harmonic">A: Harmonic Env</option>
             <option value="cepstral">B: Cepstral</option>
@@ -5289,7 +5292,7 @@
         <div class="metric-card" data-metric="resonance">
           <div class="metric-card-header">
             <span class="metric-card-title">Resonance</span>
-            <select id="resMethodSelectExpanded" class="res-method-select" aria-label="Resonance method">
+            <select id="resMethodSelectExpanded" class="res-method-select" aria-label="Formant estimator">
               <option value="auto" selected>Auto (SNR)</option>
               <option value="harmonic">A: Harmonic Env</option>
               <option value="cepstral">B: Cepstral</option>

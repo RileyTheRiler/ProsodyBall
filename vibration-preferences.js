@@ -40,7 +40,12 @@ export function parseVibrationPreferences(raw) {
     const id = Number.isSafeInteger(candidate.id) && candidate.id > 0
       ? candidate.id
       : rules.length + 1;
-    rules.push({
+    // The metric version and the suspension flag round-trip verbatim. They are NOT defaulted
+    // to "current" here: an unversioned stored rule predates the resonance metric split and
+    // must stay unversioned so migrateResonanceRules can see it and suspend it
+    // (docs/RESONANCE_REDESIGN.md §3.5). A parser that helpfully stamped the current version
+    // would erase the exact fact the migration exists to detect.
+    const rule = {
       id,
       metric: spec.value,
       direction,
@@ -48,7 +53,17 @@ export function parseVibrationPreferences(raw) {
       enabled: candidate.enabled !== false,
       cooldownTimer: 0,
       tripped: false,
-    });
+    };
+    if (Number.isFinite(candidate.metricVersion)) rule.metricVersion = candidate.metricVersion;
+    // Which personal span the threshold was chosen against. A resonance threshold is a position
+    // inside a span, so a rule that outlives its span is as un-interpretable as one that
+    // outlives its metric version — see _suspendResonanceRulesForNewSpan in app.js.
+    if (typeof candidate.spanId === 'string' && candidate.spanId.length <= 128) rule.spanId = candidate.spanId;
+    if (candidate.suspended === true) {
+      rule.suspended = true;
+      if (typeof candidate.suspendedReason === 'string') rule.suspendedReason = candidate.suspendedReason;
+    }
+    rules.push(rule);
   }
 
   const highestId = rules.reduce((max, rule) => Math.max(max, rule.id), 0);
@@ -62,12 +77,21 @@ export function parseVibrationPreferences(raw) {
 export function serializeVibrationPreferences(vibration) {
   return JSON.stringify({
     enabled: vibration?.enabled === true,
-    rules: (Array.isArray(vibration?.rules) ? vibration.rules : []).map((rule) => ({
-      id: rule.id,
-      metric: rule.metric,
-      direction: rule.direction,
-      threshold: rule.threshold,
-      enabled: rule.enabled !== false,
-    })),
+    rules: (Array.isArray(vibration?.rules) ? vibration.rules : []).map((rule) => {
+      const out = {
+        id: rule.id,
+        metric: rule.metric,
+        direction: rule.direction,
+        threshold: rule.threshold,
+        enabled: rule.enabled !== false,
+      };
+      if (Number.isFinite(rule.metricVersion)) out.metricVersion = rule.metricVersion;
+      if (typeof rule.spanId === 'string') out.spanId = rule.spanId;
+      if (rule.suspended === true) {
+        out.suspended = true;
+        if (typeof rule.suspendedReason === 'string') out.suspendedReason = rule.suspendedReason;
+      }
+      return out;
+    }),
   });
 }

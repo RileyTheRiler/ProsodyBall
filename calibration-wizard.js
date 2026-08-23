@@ -1,3 +1,46 @@
+// The vowel set §5's Phase 4 entry names, in the order it names them. Each is ONE production
+// and becomes ONE segment: the ceiling search compares candidates on how well they track
+// formants across the vowel space, and a boundary run through a continuity tracker is a
+// measurement of the boundary (see VoiceAnalyzer.calibrateLpcCeiling).
+export const VOWEL_SET_PROMPTS = Object.freeze([
+  { vowel: 'ə', say: '"uh"', hint: 'relaxed, like the middle of "sofa"' },
+  { vowel: 'i', say: '"eee"', hint: 'as in "see"' },
+  { vowel: 'u', say: '"ooo"', hint: 'as in "who"' },
+  { vowel: 'æ', say: '"aaa"', hint: 'as in "cat"' },
+  { vowel: 'ɑ', say: '"ahh"', hint: 'as in "father"' },
+]);
+
+// The standard phrase: the Rainbow Passage's opening sentence, which is already the fixture
+// every frame-yield number in this redesign is measured on.
+export const CALIBRATION_PHRASE =
+  'When the sunlight strikes raindrops in the air, they act like a prism and form a rainbow.';
+
+export const VOWEL_HOLD_SECS = 2.0;
+export const PHRASE_SECS = 6.0;
+// Below this a production has not produced enough evidence to be worth scoring a ceiling on.
+export const VOWEL_MIN_WINDOWS = 12;
+
+// Three postures. Only the two DELIBERATE extremes set the ends of the span; habitual sets
+// none of it (see spanFromPostures). The wording avoids male/female framing throughout, per
+// §2.10 — longer/darker to shorter/brighter, which is what the axis actually is.
+export const POSTURE_PROMPTS = Object.freeze([
+  {
+    key: 'habitual',
+    instruction: (w) => ['Read this ', w._strong('the way you normally talk'),
+      ' — no effort, no target: ', w._strong(CALIBRATION_PHRASE)],
+  },
+  {
+    key: 'brighter',
+    instruction: (w) => ['Now read it again, ', w._strong('comfortably brighter and more forward'),
+      ' — as bright as you can hold without straining: ', w._strong(CALIBRATION_PHRASE)],
+  },
+  {
+    key: 'darker',
+    instruction: (w) => ['And once more, ', w._strong('comfortably darker and more open'),
+      ' — like a relaxed yawn, again without pushing: ', w._strong(CALIBRATION_PHRASE)],
+  },
+]);
+
 export class CalibrationWizard {
   constructor({ overlayId = 'calibrationOverlay', titleId = 'calStepTitle', descId = 'calStepDesc', progressId = 'calProgressFill', nextBtnId = 'calNextBtn', skipBtnId = 'calSkipBtn', visualId = 'calVisualContainer', focusManager = null } = {}) {
     this.overlay = document.getElementById(overlayId);
@@ -36,6 +79,213 @@ export class CalibrationWizard {
 
   _strong(text) {
     return Object.assign(document.createElement('strong'), { textContent: text });
+  }
+
+  // ===== PHASE 4: GUIDED VOWEL-SET CALIBRATION =====
+  //
+  // docs/RESONANCE_REDESIGN.md §5's Phase 4 entry: "guided calibration extended to a vowel set
+  // (ə i u æ ɑ) plus a standard phrase, sampling three postures: habitual, comfortably
+  // brighter, comfortably darker."
+  //
+  // It replaces §2.8's rejected six-second passive learner and the two-step darkest/brightest
+  // flow below, and it does two DIFFERENT jobs in a deliberate order:
+  //
+  //   PART 1 — THE VOWEL SET sizes the ANALYSIS. Five held vowels at the user's habitual
+  //   posture, captured as five SEPARATE SEGMENTS and handed to calibrateLpcCeiling(). That
+  //   method takes segments rather than a flat frame list for a measured reason (see its
+  //   comment): running one continuity tracker across a vowel boundary measures the boundary,
+  //   and it silently rigged the search — the ceiling that found FEWER formants scored best,
+  //   0.775 per-formant yield against 0.306 for the ceiling that was three times more accurate.
+  //   The vowel set is also what makes the search meaningful: a ceiling is chosen on how well
+  //   it tracks formants ACROSS the vowel space, so one sustained /ɑ/ would choose it on a
+  //   twentieth of the evidence.
+  //
+  //   PART 2 — THE THREE POSTURES size the DISPLAY, and they run AFTER the ceiling is applied,
+  //   on the standard phrase. The two deliberate extremes set the ends of `resonanceControl`'s
+  //   span; the habitual posture sets none of it and is recorded so a later session can tell
+  //   "your range moved" from "you are having a dark day". Measuring the postures BEFORE the
+  //   ceiling would build the span out of readings the next frame is about to invalidate.
+  //
+  // The phrase is the Rainbow Passage's opening sentence — the app's own reference material,
+  // already the fixture every yield number in this redesign is measured on — rather than a
+  // sentence invented here.
+  async runVowelSetCalibration(analyzer, { onProfile = null } = {}) {
+    if (!this.overlay) return { outcome: 'skipped', reason: 'missing-overlay' };
+    if (!analyzer || !analyzer.isActive) return { outcome: 'skipped', reason: 'inactive' };
+    try {
+      this.isWizardLoopActive = true;
+      this._show();
+      this._clearVisual();
+      this._setStep(
+        '🎚 Resonance Setup',
+        'Two parts, about a minute. First five short vowels so I can tune the analysis to your '
+        + 'voice, then one sentence read three ways so the ring matches your own range. Ready?',
+        0,
+      );
+      this._showBtn(this.nextBtn, 'Start');
+      this._showBtn(this.skipBtn, 'Cancel');
+      if (await this._waitForClick() === 'skip') { this._hide(); return { outcome: 'cancelled', reason: 'user-cancel' }; }
+
+      // ---- Part 1: the vowel set -> the analysis ceiling ----------------------------------
+      const segments = [];
+      for (let i = 0; i < VOWEL_SET_PROMPTS.length; i++) {
+        const v = VOWEL_SET_PROMPTS[i];
+        const seg = await this._captureAudioSegment(analyzer, {
+          title: `Vowels · ${i + 1} of ${VOWEL_SET_PROMPTS.length}`,
+          instruction: ['Hold ', this._strong(v.say), ' — ', v.hint, ' — steadily, at your normal voice…'],
+          progressBase: 4 + i * 7,
+          progressSpan: 7,
+          holdSecs: VOWEL_HOLD_SECS,
+        });
+        if (!this.isWizardLoopActive) { this._hide(); return { outcome: 'cancelled', reason: 'closed' }; }
+        // A production that produced almost no audio is dropped rather than padded. A short
+        // segment is not a shorter measurement of the same thing — it is a different amount of
+        // evidence, and scoreLpcCeiling already refuses a candidate with too few frames.
+        if (seg.length >= VOWEL_MIN_WINDOWS) segments.push(seg);
+      }
+      if (segments.length < 3) {
+        return this._calibrationFailed('I couldn\u2019t hear enough of those vowels',
+          'Find a quieter spot and try again from Settings whenever you like.',
+          { outcome: 'incomplete', reason: 'insufficient-vowels', vowels: segments.length });
+      }
+
+      this._setStep('Tuning to your voice…', 'One moment.', 40);
+      this._clearVisual();
+      // Not real time: this is the multi-solve §3.4 forbids per frame and permits here.
+      const ceiling = analyzer.calibrateLpcCeiling(segments);
+
+      // ---- Part 2: three postures on the standard phrase -> the personal span --------------
+      const postures = { habitual: [], brighter: [], darker: [] };
+      for (let i = 0; i < POSTURE_PROMPTS.length; i++) {
+        const posture = POSTURE_PROMPTS[i];
+        const readings = await this._capturePostureReadings(analyzer, {
+          title: `Your range · ${i + 1} of ${POSTURE_PROMPTS.length}`,
+          instruction: posture.instruction(this),
+          progressBase: 42 + i * 18,
+          progressSpan: 18,
+          holdSecs: PHRASE_SECS,
+        });
+        if (!this.isWizardLoopActive) { this._hide(); return { outcome: 'cancelled', reason: 'closed' }; }
+        postures[posture.key] = readings;
+      }
+
+      const applied = analyzer.applyVowelSetCalibration({
+        postures,
+        ceilingHz: ceiling && ceiling.selected ? ceiling.ceilingHz : null,
+        // The habitual reading is stored on the profile so a later session can compare like
+        // with like without re-running the whole flow.
+        phraseAbsolute: postures.habitual.length
+          ? postures.habitual.slice().sort((a, b) => a - b)[Math.floor(postures.habitual.length / 2)]
+          : null,
+      });
+      this._clearVisual();
+      this._hideBtn(this.skipBtn);
+      if (!applied.ok) {
+        return this._calibrationFailed('Couldn\u2019t map your range',
+          applied.reason === 'insufficient-samples'
+            ? 'I didn\u2019t get a clear reading on every pass — a quieter room usually fixes it.'
+            : 'Something looked off in the readings — please try again from Settings.',
+          { outcome: 'incomplete', reason: applied.reason, counts: applied.counts });
+      }
+
+      if (typeof onProfile === 'function') onProfile(applied.profile);
+
+      const widthPts = Math.round((applied.span.max - applied.span.min) * 100);
+      this._setStep(
+        '🎉 Resonance calibrated!',
+        applied.span.spreadFloored
+          // Said plainly rather than dressed up. A floored span means the two postures barely
+          // differed, so the ring is normalised against the minimum defensible range and the
+          // honest advice is to try again with more contrast.
+          ? `Your two postures came out close together, so the ring is using a ${widthPts}-point `
+            + 'range for now. Re-run this any time — pushing the bright and dark passes further '
+            + 'apart will make the ring more responsive.'
+          : `The ring now spans your own range (${widthPts} points wide) — your darkest at the `
+            + 'left, your brightest at the right.',
+        100,
+      );
+      this._showBtn(this.nextBtn, 'Done');
+      await this._waitForClick(6000, 'next');
+      return {
+        outcome: 'completed', reason: 'completed',
+        profile: applied.profile, span: applied.span, ceiling, counts: applied.counts,
+      };
+    } catch (err) {
+      const errMsg = err && err.message ? err.message : String(err);
+      console.error('Vowel-set calibration failed:', errMsg, err);
+      return { outcome: 'incomplete', reason: 'exception', error: errMsg };
+    } finally {
+      this._hide();
+      this._clearVisual();
+      this._hideBtn(this.nextBtn);
+      this._hideBtn(this.skipBtn);
+    }
+  }
+
+  async _calibrationFailed(title, body, result) {
+    this._clearVisual();
+    this._setStep(title, body, 100);
+    this._hideBtn(this.skipBtn);
+    this._showBtn(this.nextBtn, 'Done');
+    await this._waitForClick(5000, 'next');
+    this._hide();
+    return result;
+  }
+
+  // Capture the RAW analysis windows of one production, as one segment. The analyzer is driven
+  // exactly as every other step here drives it, so the windows are the same ones the live path
+  // saw; they are copied because `timeDomainData` is a reused buffer.
+  async _captureAudioSegment(analyzer, { title, instruction, progressBase, progressSpan, holdSecs }) {
+    const windows = [];
+    await this._runHold(analyzer, { title, instruction, progressBase, progressSpan, holdSecs }, () => {
+      const td = analyzer.timeDomainData;
+      if (td && td.length) windows.push(Float32Array.from(td));
+    });
+    return windows;
+  }
+
+  // Collect the live ABSOLUTE readings of one posture. Suppressed frames contribute nothing —
+  // they are not readings, and pushing a 0 for one would drag a posture's median toward the
+  // dark end every time the room got noisy.
+  async _capturePostureReadings(analyzer, opts) {
+    const readings = [];
+    await this._runHold(analyzer, opts, () => {
+      if (analyzer.resonancePresent && analyzer.resonanceAbsolute != null) {
+        readings.push(analyzer.resonanceAbsolute);
+      }
+    });
+    return readings;
+  }
+
+  // The shared drive loop. One definition, so the two capture kinds cannot drift apart in how
+  // they clock the analyzer — which is the frame-rate fidelity defect DSP_CONTRACT documents.
+  async _runHold(analyzer, { title, instruction, progressBase, progressSpan, holdSecs }, onFrame) {
+    this._hideBtn(this.nextBtn);
+    this._hideBtn(this.skipBtn);
+    this._setStep(title, instruction, progressBase);
+    this._clearVisual();
+    const vuTrack = document.createElement('div');
+    vuTrack.className = 'cal-vu-track';
+    const vuFill = document.createElement('div');
+    vuFill.className = 'cal-vu-fill';
+    vuTrack.appendChild(vuFill);
+    if (this.visualEl) this.visualEl.appendChild(vuTrack);
+
+    const start = performance.now();
+    let last = start;
+    while ((performance.now() - start) / 1000 < holdSecs && this.isWizardLoopActive) {
+      if (!this.overlay?.classList.contains('show')) { this.isWizardLoopActive = false; break; }
+      const now = performance.now();
+      const dt = (now - last) / 1000;
+      last = now;
+      analyzer.update(Math.max(0.016, dt));
+      const e = analyzer.metrics?.energy || 0;
+      if (vuFill) vuFill.style.width = `${Math.min(100, e * 500)}%`;
+      onFrame();
+      const elapsed = (now - start) / 1000;
+      if (this.progressEl) this.progressEl.style.width = `${progressBase + (elapsed / holdSecs) * progressSpan}%`;
+      await new Promise((r) => setTimeout(r, 60));
+    }
   }
 
   // ===== GUIDED RESONANCE CALIBRATION =====

@@ -1,4 +1,11 @@
 import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, fitFormantDispersion, formantEstimateConfidence, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake, fitFormantScale, formantPatternResiduals, resonanceAbsoluteV2, poolFormantScale, resonanceScoreV1, classifyVowel, f2PositionFromResidual, normalizeResidualScale, VOWEL_TEMPLATE_FORMANTS, ResonanceAggregator, frameValidity, formantMeasurementNoise, crossEstimatorAgreement, resonanceConfidence, RESONANCE_CONFIDENCE_FLOOR, spectralBrightness, windowHomogeneity, rhoticFromRho, residualScaleFactor, selectLpcCeiling, LPC_DEFAULT_CEILING_HZ, LPC_CEILING_CANDIDATES_HZ, LPC_CEILING_MIN_FRAMES, FORMANT_NOISE_F0_REF_HZ } from './dsp-utils.js';
+import {
+  RESONANCE_METRIC_VERSION, RESONANCE_SCALE_ABSOLUTE, RESONANCE_SCALE_CONTROL,
+  RESONANCE_POPULATION_SPAN, RESONANCE_PROFILE_KEY,
+  resonanceControl, spanFromPostures, makeResonanceProfile, serializeResonanceProfile,
+  parseResonanceProfile, spanIdFor, makeReading, aggregateReadings,
+  migrateResonanceRules, ruleMayFire, confirmResonanceRule,
+} from './resonance-metric.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { SpeechGate } from './speech-gate.js';
 import { PRACTICE_PHRASES, scorePhraseTake, buildContourSeries, practiceTipForGoal } from './phrase-coach.js';
@@ -83,6 +90,26 @@ const F4_CEILING_HZ = 4800;
 // /ɪ/, whose F2 is assigned before F3 is considered — so it widens the window for a rhotic
 // without opening one for an F2.
 const F3_FLOOR_HZ = 2000;
+// Presentation ramps for the "no reading" state (§5 Phase 4). Both in SECONDS, integrated
+// against the real frame interval. The fade-out is deliberately shorter than the shortest
+// measured suppression run on the Rainbow Passage (3 frames = 100 ms at the live rate), so
+// every real decline completes the transition; the fade-in is faster still, so a reading that
+// comes back is not held behind an animation.
+// A rule the user is creating or re-pointing RIGHT NOW is set against the metric that is
+// running right now, so it carries the current version and no suspension. Only rules that came
+// out of storage having been set against an older metric are suspended (§3.5) — which is why
+// this is a separate function from the migrator and is never called on load.
+function stampCurrentMetricVersion(rule, spanId = null) {
+  if (rule && rule.metric === 'resonance') {
+    rule.metricVersion = RESONANCE_METRIC_VERSION;
+    rule.spanId = spanId;
+    rule.suspended = false;
+    delete rule.suspendedReason;
+  }
+  return rule;
+}
+const RESONANCE_FADE_OUT_SEC = 0.09;
+const RESONANCE_FADE_IN_SEC = 0.06;
 const F3_RHOTIC_FLOOR_HZ = 1500;
 const F4_MAX_BW_HZ = 500;
 
@@ -238,7 +265,18 @@ export class VoiceAnalyzer {
     this.formantScaleFrameHz = 0;// this frame's unpooled weighted ΔF, for divergence logging
     this.apparentVtlV2Cm = 0;    // 35000 / (2·formantScaleHz)
     this.formantPattern = [];    // r_i = F_i/((i-0.5)·ΔF) — the tract SHAPE. Phase 2 input.
-    this.resonanceAbsoluteV2 = 0;// the v2 score. Not displayed in Phase 1.
+    // ---- THE TWO SCALES (§4). Phase 4: these are what the app displays. ----
+    // Both are `null` when the frame produced no reading, never 0. 0 is a real position on
+    // either axis — "as long a tract as this scale goes" — and a suppressed frame is not that.
+    // Everything downstream tests for null; nothing coerces it.
+    this.resonanceAbsolute = null;  // ΔF_scale / 2ΔF_ref. Perception model, cross-session,
+                                    // cross-device. Never personally normalised, which is the
+                                    // whole point of keeping it separate (§2.7).
+    this.resonanceControl = null;   // where that sits inside a SPAN — the population span
+                                    // until the user calibrates, their own after. Ball, HUD,
+                                    // haptics. This is the displayed number.
+    this.resonancePresent = false;  // one boolean the UI reads, so "is there a reading" is not
+                                    // re-derived from three different fields in four places.
     this.formantScaleFitQuality = 0;
     this.formantScaleFormantsUsed = 0;
     this._scalePool = [];        // rolling window of per-frame weighted ΔF + confidence
@@ -285,6 +323,52 @@ export class VoiceAnalyzer {
     // the guided vowel-set UI that would call it) and nudged by the background re-check.
     this.lpcCeilingHz = null;
     this.lpcCeilingSource = 'default';   // 'default' | 'calibrated' | 'background'
+
+    // ---- Which assignment defines the canonical MEASUREMENT (§5 Phase 4, item a) ----
+    //
+    // Phase 3 handed this over as a problem: the LPC loop admits a pole as F3 only above
+    // 2000 Hz, P&B's adult-male /ɝ/ has F3 = 1690 Hz, and the live path therefore named a
+    // synthesized /ɝ/ correctly on 0.0% of frames. Phase 3 could not widen the slot because the
+    // assignment was shared with v1 and v1's output was frozen. Phase 4 retires v1, so the
+    // constraint is gone and the question becomes a measurement rather than a blocker.
+    //
+    // 'standard' — the shipped policy. F3 admitted only above 2000 Hz.
+    // 'rhotic'   — the widened floor (F3_RHOTIC_FLOOR_HZ) AS THE MEASUREMENT. Same solve, same
+    //              pole list, second slot assignment, so no extra LPC.
+    //
+    // MEASURED IN tools/rhotic-assignment.mjs, AND THE RESULT IS NOT WHAT PHASE 3 PREDICTED.
+    // Phase 3 recorded that widening the slot "manufactures rhotics at F0 180 (/ɔ/ → /ɝ/ on 47
+    // of 67)". As the measurement rather than as Phase 3's ρ-corroborated detector, it does not:
+    // false positives are 0% on /ɔ/ and /ɪ/ at F0 110/130/180 and 0.2-0.3% over all non-rhotic
+    // frames, /ɝ/ recall goes 0% → 92.5% / 25.4% / 31.3%, and overall correctness RISES at every
+    // F0 (86.7→96.0, 86.6→89.1, 64.5→67.5). The manufacturing was the detector's, not the slot's.
+    //
+    // IT STILL SHIPS OFF, for reasons that are not "it fabricates rhotics":
+    //   - above F0 110 the rhotic reads as /æ/ instead of /ʊ/ — a different wrong answer, so
+    //     §6's confidently-wrong-vowel failure is reduced rather than removed;
+    //   - on the Rainbow Passage it costs 3.8 points of vowel yield (85.3% → 81.5%) and moves
+    //     the mean displayed value 2.1 points (0.4718 → 0.4507), so it is not free;
+    //   - and every one of those numbers is from a Klatt cascade whose /ɝ/ F3 is placed by
+    //     construction. Phase 3 said this fix needs an assignment v1 no longer constrains —
+    //     which Phase 4 has now provided and measured — "validated against real rhotic
+    //     recordings rather than a Klatt cascade, which is Phase 5". That validation is the
+    //     remaining blocker, and half-building Phase 5 to reach it would be worse than leaving
+    //     a measured, exposed, unused option here.
+    this.canonicalAssignment = 'standard';
+
+    // ---- The personal span, and the versioned profile it came from (§3.5, §5 Phase 4) ----
+    // No profile = not calibrated = the PUBLISHED POPULATION SPAN, which is a real axis with
+    // real ends rather than an absent one, so `resonanceControl` is defined on frame one and
+    // the ball works out of the box. Calibrating replaces it with the speaker's own.
+    //
+    // The span is NOT reset by stop() or by a new session: it is a property of the speaker, it
+    // is persisted, and losing it on reload is exactly the defect §3.5's "learned personal
+    // ranges" bullet describes and that the grep in resonance-metric.js found to be the actual
+    // state of the app before this phase.
+    this.resonanceProfileV2 = null;
+    this.resonanceSpan = RESONANCE_POPULATION_SPAN;
+    this.resonanceSpanId = RESONANCE_POPULATION_SPAN.spanId;
+    this.resonanceMetricVersion = RESONANCE_METRIC_VERSION;
     this._ceilingTracks = null;          // per-candidate frame history during a search
     this._ceilingRecheckIdx = 0;
     this._ceilingRecheckFrames = 0;
@@ -679,7 +763,9 @@ export class VoiceAnalyzer {
     this.formantScaleFrameHz = 0;
     this.apparentVtlV2Cm = 0;
     this.formantPattern = [];
-    this.resonanceAbsoluteV2 = 0;
+    this.resonanceAbsolute = null;
+    this.resonanceControl = null;
+    this.resonancePresent = false;
     this.formantScaleFitQuality = 0;
     this.formantScaleFormantsUsed = 0;
     this._scalePool = [];
@@ -913,6 +999,94 @@ export class VoiceAnalyzer {
     rp.isLearned = true;
     this.smoothResonance = 0.5;
     return true;
+  }
+
+  // ================= Phase 4: the personal span, versioned ==========================
+  //
+  // docs/RESONANCE_REDESIGN.md §5's Phase 4 entry and §3.5. Three methods, and the ORDER they
+  // are meant to be called in is the design:
+  //
+  //   1. `calibrateLpcCeiling(segments)` over the guided VOWEL SET — several distinct
+  //      productions, one segment each, which is the input that search was built for.
+  //   2. the three POSTURE holds, measured live AT THE CHOSEN CEILING, producing the absolute
+  //      readings the span is built from.
+  //   3. `applyVowelSetCalibration()`, which turns those into a span and a stored profile.
+  //
+  // Doing 2 before 1 would build the span on a ceiling that is about to change, and a span is
+  // exactly the thing that must not be re-derived silently. This is also why the span is NOT
+  // computed from the vowel-set holds: those are one posture, so they measure the speaker's
+  // tract, not the speaker's range.
+
+  // Install a parsed, version-checked profile. The only way the span ever moves.
+  applyResonanceProfile(profile) {
+    if (!profile || !profile.span || !Number.isFinite(profile.span.min) || !Number.isFinite(profile.span.max)) {
+      return false;
+    }
+    this.resonanceProfileV2 = profile;
+    this.resonanceSpan = {
+      min: profile.span.min, max: profile.span.max,
+      source: profile.spanSource || 'calibrated',
+      metricVersion: profile.metricVersion,
+    };
+    this.resonanceSpanId = profile.spanId;
+    // The ceiling travels with the span because they were measured together on the same voice.
+    // A profile carrying a ceiling but restored onto a different microphone is still the right
+    // ceiling — it is a property of the SPEAKER's tract, not of the room (§5 Phase 3).
+    if (Number.isFinite(profile.ceilingHz) && profile.ceilingHz > 0) {
+      this.lpcCeilingHz = profile.ceilingHz;
+      this.lpcCeilingSource = 'calibrated';
+    }
+    return true;
+  }
+
+  // Back to the published population span. Used by the settings "reset calibration" control and
+  // when a stored profile is refused for being on another metric version — in both cases the
+  // app falls back to an axis it can defend, rather than to no axis at all.
+  clearResonanceProfile() {
+    this.resonanceProfileV2 = null;
+    this.resonanceSpan = RESONANCE_POPULATION_SPAN;
+    this.resonanceSpanId = RESONANCE_POPULATION_SPAN.spanId;
+    this.lpcCeilingHz = null;
+    this.lpcCeilingSource = 'default';
+  }
+
+  // `postures` = { habitual: [absolute…], brighter: [absolute…], darker: [absolute…] }, each an
+  // array of the live `resonanceAbsolute` readings collected during that posture's hold.
+  // Suppressed frames contribute nothing — they are not readings — so the caller filters nulls
+  // rather than pushing zeros, and `minSamples` is what stops a span being fitted to two frames.
+  applyVowelSetCalibration({ postures, ceilingHz = null, phraseAbsolute = null, at = null, minSamples = 8 } = {}) {
+    const counts = {
+      habitual: (postures?.habitual || []).length,
+      brighter: (postures?.brighter || []).length,
+      darker: (postures?.darker || []).length,
+    };
+    if (counts.brighter < minSamples || counts.darker < minSamples) {
+      return { ok: false, reason: 'insufficient-samples', counts };
+    }
+    const span = spanFromPostures(postures);
+    if (!span) return { ok: false, reason: 'no-span', counts };
+    const profile = makeResonanceProfile({
+      span,
+      ceilingHz: Number.isFinite(ceilingHz) ? ceilingHz : this.lpcCeilingHz,
+      calibratedAt: at || new Date().toISOString(),
+      postureSamples: counts,
+      phraseAbsolute,
+    });
+    if (!this.applyResonanceProfile(profile)) return { ok: false, reason: 'apply-failed', counts };
+    return { ok: true, profile, span, counts };
+  }
+
+  // The reading, packaged so it can be stored or aggregated without the caller having to
+  // remember which scale it is on or which version produced it. §3.5's first requirement, in
+  // the one place that knows all three facts.
+  currentResonanceReading(scale = RESONANCE_SCALE_CONTROL) {
+    const value = scale === RESONANCE_SCALE_ABSOLUTE ? this.resonanceAbsolute : this.resonanceControl;
+    if (value == null) return null;
+    return makeReading(value, {
+      scale,
+      metricVersion: RESONANCE_METRIC_VERSION,
+      spanId: scale === RESONANCE_SCALE_CONTROL ? this.resonanceSpanId : null,
+    });
   }
 
   // Per-bin A-weighting lookup table. The gain for a bin depends only on the bin's
@@ -1658,12 +1832,22 @@ export class VoiceAnalyzer {
           // other three estimators must not be made to look as though they abstained when
           // they were never asked.
           //
-          // ALWAYS at the DEFAULT ceiling, never at the per-user one. v1's displayed value may
-          // not move, and a chosen ceiling would move it — so calibrating the canonical path
-          // cannot reach v1 at all. Where the user has not calibrated, this is the same call
-          // the canonical path just made and the cache returns it for free.
+          // PHASE 4: the same solve the canonical path just made, at the SAME ceiling.
+          //
+          // Through Phases 1-3 this line read `this._lpcAtCeiling(LPC_DEFAULT_CEILING_HZ)` —
+          // pinned to the published default even for a user whose canonical path had chosen a
+          // different one — because v1 was the displayed number and its output had to stay
+          // byte-identical. That pin is the whole reason a second LPC solve per frame existed
+          // (§5's Phase 3 budget table: 0.994 solves/frame shared, 1.989 when the two ceilings
+          // differed). v1 is no longer displayed, so the pin has nothing left to protect and
+          // the duplicate solve goes with it. Measured after: tools/resonance-budget.mjs.
+          //
+          // v1 stays COMPUTABLE, which is what migration needs: `resonanceScoreV1` is untouched,
+          // its golden vectors are untouched, and for an uncalibrated user — every fixture and
+          // every golden test — the two ceilings are the same number, so this is the same call
+          // it always was.
           ({ f1: f1Candidate, f2: f2Candidate, f3: f3Candidate, f4: f4Candidate = 0, confidence: conf } =
-            this._lpcAtCeiling(LPC_DEFAULT_CEILING_HZ));
+            canonical);
           break;
         case 'centroid':
           ({ f1: f1Candidate, f2: f2Candidate, f3: f3Candidate, confidence: conf } =
@@ -2085,7 +2269,11 @@ export class VoiceAnalyzer {
         : 'Feminine';
     }
     this.metrics.energy = normalizeAgainstPercentiles(gatedRms, this.energyPercentiles.p50, this.energyPercentiles.p90, 1.1);
-    this.metrics.resonance = this.smoothResonance;
+    // §4: the ball, HUD and haptics read CONTROL. `metrics.resonance` is the shared bus every
+    // presentation surface hangs off, so this one assignment is where v1 stops being displayed.
+    // It is `null` on a frame with no reading — every consumer tests for it (there is no 0 that
+    // means "nothing", because 0 is a real position on this axis).
+    this.metrics.resonance = this.resonanceControl;
 
     // 7. WEIGHT — perceived heaviness (1=heavy/thick, 0=light/breathy). Source-only cues only;
     //    F2 (a filter/resonance property) has been removed to avoid cross-contamination.
@@ -2121,11 +2309,12 @@ export class VoiceAnalyzer {
 
   // The Phase-2 session summary (docs/RESONANCE_REDESIGN.md §5), in both aggregation modes.
   //
-  // Instrumented only, and deliberately not rendered: §6's second risk is that the
-  // decomposition leaks into the UI, and the answer is that the user still sees one ring.
-  // The summary screen's "Avg Resonance" is still v1's plain mean of `smoothResonance`,
-  // unchanged, byte for byte. This is what Phase 4 will switch that readout over to once
-  // there is a versioned metric to switch it to.
+  // Still instrumented only, and still deliberately not rendered — §6's second risk is that the
+  // decomposition leaks into the UI, and one ring means one number on the summary card too.
+  // Phase 4 switched that card from v1 to the plain mean of `resonanceControl`, which is the
+  // scale the ring showed while the user was speaking. What the two aggregation modes are FOR is
+  // a cross-session comparison this app does not yet persist; when it does, this is the call
+  // that provides it, on the absolute axis, in speech mode.
   //
   // §5 says session statistics use SPEECH mode and the ball keeps EXERCISE mode, so both are
   // returned from one call over one frame stream: reading them from two places is how they
@@ -2389,6 +2578,30 @@ export class VoiceAnalyzer {
     return r;
   }
 
+  // Which of the solve's two assignments the canonical measurement reads. Both come from the
+  // SAME pole list and the same LPC solve, so this is a choice between two readings of one
+  // measurement, never a second solve.
+  //
+  // A THIRD VARIANT WAS CONSIDERED AND ABANDONED, recorded because the reason is a real limit
+  // rather than a preference. Restricting the widened slot to poles corroborated by F4 is a
+  // physical claim, not a threshold — a rhotic constriction lowers F3 toward F2 and leaves F4
+  // where it was, so a genuine rhotic shows an unusually wide F3-F4 gap. It cannot be evaluated
+  // here: the synthesized corpus places every vowel's F4 at 3.5·ΔF of THAT VOWEL'S OWN fit, so
+  // the synthetic /ɝ/'s F4 has already been dragged down with its F3 and shows a gap of 1.09·ΔF
+  // against the uniform tube's 1.00 — no separation at all. Fixing the fixture (F4 from the
+  // SPEAKER's scale, which is what one tract length means) is defensible on its own, but doing
+  // it in order to make a candidate pass is the thing this plan forbids. It is a Phase 5
+  // question, on material where F4 is where a mouth put it.
+  _selectCanonicalAssignment(canonical) {
+    const standard = (canonical && canonical.measured) || [0, 0, 0, 0];
+    if (this.canonicalAssignment !== 'rhotic') return standard;
+    const rhotic = (canonical && canonical.measuredRhotic) || [0, 0, 0, 0];
+    // The two assignments only differ when the widened slot found a pole below the standard
+    // floor. Otherwise they are the same vector and there is nothing to choose between.
+    const widened = rhotic[2] > 0 && rhotic[2] < F3_FLOOR_HZ && rhotic[0] > 0 && rhotic[1] > 0;
+    return widened ? rhotic : standard;
+  }
+
   _updateResonanceV2(canonical, pitchHz, pitchDevSt, frameSec) {
     // The MEASUREMENT runs on the standard assignment. The rhotic-capable one (same solve, same
     // poles, an F3 floor low enough for a rhotic to occupy the slot) is used further down as a
@@ -2397,7 +2610,7 @@ export class VoiceAnalyzer {
     // /ɝ/ where /ɝ/ is, but at F0 180 it also reads /ɔ/ as /ɝ/ on 47 frames in 67 and /ɪ/ on 35,
     // because at high F0 the pole set is sparse enough that something lands in the widened slot.
     // A confidently wrong vowel is the failure §6 names by name.
-    const measured = (canonical && canonical.measured) || [0, 0, 0, 0];
+    const measured = this._selectCanonicalAssignment(canonical);
     const bandwidths = (canonical && canonical.bandwidths) || [];
 
     // ---- 1. FRAME VALIDITY (§5) ------------------------------------------------------
@@ -2642,7 +2855,9 @@ export class VoiceAnalyzer {
       // number that is computable from noise but wrong.
       this.resonanceSuppressed = true;
       this.resonanceSuppressReason = !(pooled.deltaF > 0) ? 'no-pooled-scale' : this._weakestConfidenceTerm(pitchHz);
-      this.resonanceAbsoluteV2 = 0;
+      this.resonanceAbsolute = null;
+      this.resonanceControl = null;
+      this.resonancePresent = false;
       // The SCALE is cleared too, not just the score. "No reading" has to mean no reading:
       // leaving formantScaleHz standing at its last value would let anything downstream — a
       // report, a future display, the next phase — read a stale tract length as a live one,
@@ -2673,7 +2888,14 @@ export class VoiceAnalyzer {
     this.formantScaleHz = pooled.deltaF;
     this.apparentVtlV2Cm = 35000 / (2 * pooled.deltaF);
     this.formantPattern = formantPatternResiduals(scaleInputs, pooled.deltaF);
-    this.resonanceAbsoluteV2 = resonanceAbsoluteV2(pooled.deltaF);
+    // ---- THE TWO SCALES, computed once, here (§4) ----------------------------------
+    // `resonanceAbsolute` is what the perception model and every cross-speaker or cross-device
+    // comparison read. `resonanceControl` is that same reading expressed inside a span, and it
+    // is what the ball, the HUD and the haptics read. They are one measurement viewed twice —
+    // there is no second estimator, no second smoother and no second suppression decision.
+    this.resonanceAbsolute = resonanceAbsoluteV2(pooled.deltaF);
+    this.resonanceControl = resonanceControl(this.resonanceAbsolute, this.resonanceSpan);
+    this.resonancePresent = this.resonanceControl != null;
 
     // ---- 8. Vowel, and ρ (Phase 2's hand-off, answered) --------------------------------
     const pattern = normalizeResidualScale(
@@ -2788,7 +3010,9 @@ export class VoiceAnalyzer {
 
     const aggWeight = Math.max(0, this.canonicalConfidence * this.canonicalSteadiness);
     const aggSample = { weight: aggWeight, vowel: this.vowelId, index: this._v2FrameIndex };
-    this.v2Aggregator.push({ ...aggSample, value: this.resonanceAbsoluteV2 });
+    // The aggregator carries ABSOLUTE, always. Session statistics that survive a recalibration
+    // have to be on the axis that does not move when the span does (§4).
+    this.v2Aggregator.push({ ...aggSample, value: this.resonanceAbsolute });
     this.f2PositionAggregator.push({ ...aggSample, value: this.f2PositionRatio });
     this._v2FrameIndex++;
 
@@ -2812,7 +3036,9 @@ export class VoiceAnalyzer {
     this.resonanceSuppressReason = 'not-voiced';
     this.resonanceConfidenceV2 = 0;
     this.resonanceSuppressionConfidence = 0;
-    this.resonanceAbsoluteV2 = 0;
+    this.resonanceAbsolute = null;
+    this.resonanceControl = null;
+    this.resonancePresent = false;
     this.formantScaleHz = 0;
     this.formantScaleFrameHz = 0;
     this.apparentVtlV2Cm = 0;
@@ -3602,10 +3828,41 @@ class VoxBallGame {
     try {
       const savedVibration = parseVibrationPreferences(localStorage.getItem(VIBRATION_STORAGE_KEY));
       this.vibration.enabled = savedVibration.enabled;
-      this.vibration.rules = savedVibration.rules;
+      // §3.5's migration, run on the way in rather than at the fire path, so a rule is never in
+      // memory in a state where a later code path might read it as current. Every resonance
+      // rule that predates the metric split comes back SUSPENDED with its threshold intact;
+      // `resonanceRulesNeedingReprompt` is what the settings panel shows the user.
+      // Checked against the span the analyzer is actually on, which at this point is either a
+      // profile restored a few lines below or the population span. Both cases are handled the
+      // same way: a rule that cannot be shown to belong to the live span does not fire until
+      // the user says it should.
+      const migration = migrateResonanceRules(savedVibration.rules, { spanId: this.analyzer.resonanceSpanId });
+      this.vibration.rules = migration.rules;
       this.vibration.nextId = savedVibration.nextId;
+      this.resonanceRulesNeedingReprompt = migration.needsReprompt;
+      // Persist the migration immediately. Leaving it in memory only would re-run it on every
+      // load, which is harmless, but it would also mean the exported settings bundle still
+      // carried unversioned rules — and that bundle is how a rule reaches a second device.
+      if (migration.migrated > 0) {
+        localStorage.setItem(VIBRATION_STORAGE_KEY, serializeVibrationPreferences(this.vibration));
+      }
     } catch {
       // Storage can be unavailable in private/embedded contexts; defaults remain usable.
+    }
+
+    // ====== THE PERSONAL SPAN (§3.5) ======
+    // The persistence that did not exist before this phase. Grepped on main: no localStorage key
+    // held a resonance profile or a session history, so the "learned personal range" §3.5 lists
+    // as existing user state died with the tab. This is versioned from its first write — a
+    // profile from another metric version is refused by parseResonanceProfile, and the app falls
+    // back to the published population span rather than to a number it cannot interpret.
+    this.resonanceProfileStatus = 'absent';
+    try {
+      const parsed = parseResonanceProfile(localStorage.getItem(RESONANCE_PROFILE_KEY));
+      this.resonanceProfileStatus = parsed.reason;
+      if (parsed.profile) this.analyzer.applyResonanceProfile(parsed.profile);
+    } catch {
+      // Same as above: an unreadable store is not a reason to fail to start.
     }
 
     // ====== SESSION STATS ======
@@ -3616,8 +3873,18 @@ class VoxBallGame {
       pitchCount: 0,
       pitchMin: Infinity,
       pitchMax: 0,
+      // `resonanceSum` is CONTROL — the scale the ring showed, and the one the summary card
+      // displays. `absoluteSum` is the same frames on the absolute axis: the statistic that
+      // would survive a recalibration, tagged with the metric version that produced it, kept
+      // for the cross-session comparison this app does not yet persist.
       resonanceSum: 0,
       resonanceCount: 0,
+      absoluteSum: 0,
+      absoluteCount: 0,
+      resonanceMetricVersion: RESONANCE_METRIC_VERSION,
+      resonanceScale: RESONANCE_SCALE_CONTROL,
+      resonanceSpanId: null,
+      resonanceSuppressedCount: 0,
       prosodyHistory: [],  // sampled every ~0.5s for sparkline
       prosodySampleTimer: 0,
       scrollAtStart: 0,
@@ -3715,6 +3982,38 @@ class VoxBallGame {
     // Vocal-attack orb animation: condenses gas→solid on each onset at a speed set by the
     // measured onset hardness, then evaporates. (Weight orb reads m.weight directly.)
     this._attackOrb = { solidity: 0, prevAttack: 0, hardness: 0, lastT: 0 };
+
+    // ====== WHAT THE USER SEES WHEN THERE IS NO READING (§5 Phase 4, §6) ======
+    //
+    // v1 always had a number, because it was an EMA that could not be absent. v2 can be, and
+    // 11.4% of clean read speech is suppressed at the app's live rate. The brief in front of
+    // this phase called that "a ring that blinks out for one frame in nine". MEASURED, IT IS
+    // NOT: on the Rainbow Passage those 21 frames are THREE runs, of 3, 4 and 14 frames
+    // (100 ms, 133 ms, 467 ms), and not one is a singleton. At 60 fps it is two runs, of 1 and
+    // 13 frames. The app does not flicker — it declines in contiguous stretches, which is what
+    // pool warm-up and the pauses between phrases actually are.
+    //
+    // That measurement is what sets the design. A stretch of 100 ms or more is long enough to
+    // be read as a state, so the ring gets a state: it relaxes into a NEUTRAL LISTENING RING
+    // that encodes nothing — fixed radius, no hue travel, no width travel — and comes back when
+    // there is something to show.
+    //
+    // Two rules make this honest rather than a cover-up:
+    //   - The NUMBER blanks immediately. `_pushAvgSamples` stops feeding the windowed average
+    //     on the first suppressed frame, so the HUD readout goes to "—" with no ramp at all.
+    //     Nothing numeric is ever shown stale.
+    //   - The RING cross-fades, over a ramp SHORTER THAN THE SHORTEST MEASURED DECLINE, so
+    //     every real one completes the transition. For at most RESONANCE_FADE_OUT_SEC the ring
+    //     is still partly where the last reading put it. That is stated rather than hidden: it
+    //     is the difference between a ring that relaxes and a ring that cuts out, and a cut
+    //     reads as a fault in the app rather than as an absence of signal.
+    //
+    // The ramps are in SECONDS and integrated against the real frame interval, not per-frame
+    // coefficients — the frame-rate fidelity defect DSP_CONTRACT documents and Phase 3
+    // reproduced once already.
+    this._resPresence = 0;        // 0 = neutral listening ring, 1 = a reading
+    this._resDisplayValue = null; // last CONTROL value; null until the first ever reading
+    this._lastBulbResonance = null;
 
     // ====== WINDOWED-AVERAGE READOUTS ======
     // Numeric readouts for pitch/resonance/attack/weight show a rolling time-window average
@@ -4072,7 +4371,11 @@ class VoxBallGame {
           hz: a.smoothPitchHz,
           conf: a.pitchConfidence,
           voiced: isSpeech && a.lastPitch > 0,
-          res: a.smoothResonance,
+          // Clip review is a presentation surface: it reads CONTROL, the same number the ball
+          // showed while the clip was being recorded. A suppressed frame has no reading and is
+          // excluded from the clip average by `voiced`, so it is never averaged in as 0.
+          res: a.resonanceControl,
+          resMetricVersion: RESONANCE_METRIC_VERSION,
           prosody: this.prosodyScore,
           energy: localRms,       // raw window RMS (pre-gate) → phrase segmentation contour
           syl: a.syllableImpulse, // decaying onset impulse → word-split boundary hints
@@ -5287,8 +5590,7 @@ class VoxBallGame {
           (t) => `${t.min.toFixed(1)} to ${t.max.toFixed(1)} dB learned`);
       }
       if (resonanceProfileLearned) {
-        resonanceProfileLearned.textContent = this._formatAdaptiveStatus(this.analyzer.resonanceProfile,
-          (r) => `F1 ${Math.round(r.f1Min)}–${Math.round(r.f1Max)} Hz learned`);
+        resonanceProfileLearned.textContent = this._resonanceSpanStatus();
       }
       if (frameConfidenceLabel) {
         frameConfidenceLabel.textContent = `${Math.round(this.analyzer.frameConfidence * 100)}%`;
@@ -5783,13 +6085,17 @@ class VoxBallGame {
       this.session.pitchMax = 0;
       this.session.resonanceSum = 0;
       this.session.resonanceCount = 0;
+      this.session.absoluteSum = 0;
+      this.session.absoluteCount = 0;
+      this.session.resonanceSuppressedCount = 0;
+      this.session.resonanceSpanId = this.analyzer.resonanceSpanId;
       this.session.prosodyHistory = [];
       this.session.prosodySampleTimer = 0;
       this.session.scrollAtStart = this.scrollX;
       // Phase 2 (§5): "Session statistics use speech mode; the ball keeps exercise mode."
-      // The v2 aggregators are session-scoped, so a new session starts them over. They
-      // summarise the v2 stream only — v1's `resonanceSum` above is untouched and is still
-      // what the summary screen displays, because v2 is displayed nowhere until Phase 4.
+      // The v2 aggregators are session-scoped, so a new session starts them over. They carry
+      // ABSOLUTE (§4) and are still not rendered; the summary card shows the plain mean of
+      // CONTROL above, which is the scale the ring showed.
       this.analyzer.v2Aggregator.reset();
       this.analyzer.f2PositionAggregator.reset();
 
@@ -6028,9 +6334,14 @@ class VoxBallGame {
       this.analyzer.pitchProfile.samples = [];
       this.analyzer.tiltProfile.isLearned = false;
       this.analyzer.tiltProfile.samples = [];
-      this.analyzer.resonanceProfile.isLearned = false;
+      this.analyzer.resonanceProfile.isLearned = false;   // v1's learner: still computed
       this.analyzer.resonanceProfile.samples = [];
       this.analyzer.resonanceProfile.voicedTime = 0;
+      // The DISPLAYED metric's span goes with it, and so does the stored profile — a "reset my
+      // voice profile" control that left a calibrated span in localStorage would put the app
+      // back on a span the user believes they cleared.
+      this.analyzer.clearResonanceProfile();
+      try { localStorage.removeItem(RESONANCE_PROFILE_KEY); } catch { /* storage may be unavailable */ }
       const baseSustain = this.analyzer.defaultSustainedThreshold || this.analyzer.sustainedThreshold || 0.02;
       this.analyzer.sustainedThreshold = Math.max(0.01, baseSustain * cfg.sustainMul);
       this.analyzer.spectralTiltSmoothedDb += cfg.tiltShift;
@@ -6136,6 +6447,10 @@ class VoxBallGame {
       this.analyzer.smoothF1 = 500;
       this.analyzer.smoothF2 = 1500;
       this.analyzer.smoothF3 = 2700;
+      // v1's live state, still reset for the same reason it always was: it is still computed,
+      // it is just no longer displayed. The canonical v2 stream is deliberately NOT reset here
+      // — `resonanceMethod` does not reach it (§5 Phase 3), so there is nothing for a method
+      // change to invalidate.
       this.analyzer.smoothResonance = 0.5;
       this.analyzer.formantConfidence = 0;
       this.analyzer.formantSteadiness = 1;
@@ -6638,6 +6953,35 @@ class VoxBallGame {
 
         configDiv.append(topDiv1, topDiv2);
 
+        // §3.5's "re-prompted, never silently reinterpreted", made visible. A resonance rule
+        // set against v1 is shown with its threshold intact, marked as not firing, and given
+        // one button. Nothing here rescales the number: the user reads the live value on the
+        // new scale (the readout beside the threshold is already live) and decides.
+        if (rule.suspended === true) {
+          const notice = document.createElement('div');
+          notice.className = 'vib-rule-notice';
+          notice.style.cssText = 'font-size:0.62rem;line-height:1.35;color:#ffb86b;margin-top:4px';
+          notice.textContent = 'Resonance is measured differently now — this alert is paused so it '
+            + 'can\u2019t buzz at the wrong moment. Watch the live number, then keep or change it.';
+          const confirmBtn = document.createElement('button');
+          confirmBtn.type = 'button';
+          confirmBtn.className = 'vib-confirm-btn';
+          confirmBtn.textContent = 'Use this threshold';
+          confirmBtn.style.cssText = 'margin-top:4px;font-size:0.62rem;padding:3px 8px';
+          confirmBtn.addEventListener('click', () => {
+            const confirmed = confirmResonanceRule(rule, { threshold: Number(thresholdInput.value) });
+            Object.assign(rule, confirmed);
+            // The user confirmed this threshold while looking at the CURRENT span, so that is
+            // the span it now belongs to.
+            rule.spanId = this.analyzer.resonanceSpanId;
+            this.resonanceRulesNeedingReprompt =
+              (this.resonanceRulesNeedingReprompt || []).filter((r) => r.id !== rule.id);
+            persistVibrationPreferences();
+            renderVibRules();
+          });
+          configDiv.append(notice, confirmBtn);
+        }
+
         const delBtn = document.createElement('button');
         delBtn.className = 'vib-rule-del';
         delBtn.title = 'Delete rule';
@@ -6652,6 +6996,9 @@ class VoxBallGame {
           rule.metric = e.target.value;
           const newInfo = getMetricInfo(rule.metric);
           rule.threshold = rule.direction === 'below' ? newInfo.defaultBelow : newInfo.defaultAbove;
+          // The user is choosing this metric and this threshold NOW, looking at the current
+          // scale, so the rule is current and any inherited suspension is spent.
+          stampCurrentMetricVersion(rule, this.analyzer.resonanceSpanId);
           persistVibrationPreferences();
           renderVibRules();
         });
@@ -6678,7 +7025,7 @@ class VoxBallGame {
     };
 
     vibAddBtn.addEventListener('click', () => {
-      this.vibration.rules.push({
+      this.vibration.rules.push(stampCurrentMetricVersion({
         id: this.vibration.nextId++,
         metric: 'pitch',
         direction: 'below',
@@ -6686,7 +7033,7 @@ class VoxBallGame {
         enabled: true,
         cooldownTimer: 0,
         tripped: false,
-      });
+      }, this.analyzer.resonanceSpanId));
       persistVibrationPreferences();
       renderVibRules();
     });
@@ -6710,7 +7057,8 @@ class VoxBallGame {
           let val;
           switch (rule.metric) {
             case 'pitch': val = Math.round(hz); break;
-            case 'resonance': val = Math.round(this.analyzer.smoothResonance * 100); break;
+            case 'resonance': val = this.analyzer.resonanceControl != null
+              ? Math.round(this.analyzer.resonanceControl * 100) : null; break;
             case 'energy': val = Math.round(m.energy * 100); break;
             case 'bounce': val = Math.round(m.bounce * 100); break;
             case 'tempo': val = 0; break;
@@ -6718,7 +7066,7 @@ class VoxBallGame {
             case 'articulation': val = Math.round(m.articulation * 100); break;
             default: val = 0;
           }
-          const isActive = m.energy > 0.05;
+          const isActive = m.energy > 0.05 && val != null;
           valEl.textContent = isActive ? `${val}` : '—';
           valEl.style.color = rule.tripped
             ? 'rgba(255,160,60,0.8)'
@@ -6741,7 +7089,7 @@ class VoxBallGame {
       // Clear existing rules
       this.vibration.rules = [];
       for (const r of rules) {
-        this.vibration.rules.push({
+        this.vibration.rules.push(stampCurrentMetricVersion({
           id: this.vibration.nextId++,
           metric: r.metric,
           direction: r.direction,
@@ -6749,7 +7097,7 @@ class VoxBallGame {
           enabled: true,
           cooldownTimer: 0,
           tripped: false,
-        });
+        }, this.analyzer.resonanceSpanId));
       }
       // Enable master toggle
       this.vibration.enabled = true;
@@ -6885,10 +7233,29 @@ class VoxBallGame {
         showError('ℹ Start a session first, then open Settings and run Guided resonance setup.', { autoHideMs: 6000, tone: 'info' });
         return;
       }
-      const result = await this.calibrationWizard.runResonanceCalibration(this.analyzer);
+      // Phase 4's flow: a vowel set (which sizes the ANALYSIS, via calibrateLpcCeiling) then
+      // three postures on the standard phrase (which size the DISPLAY, via the personal span).
+      // The wizard never touches storage itself — it hands back a versioned profile and this
+      // callback writes it, so there is one place that knows the storage key and the schema.
+      const result = await this.calibrationWizard.runVowelSetCalibration(this.analyzer, {
+        onProfile: (profile) => {
+          try {
+            localStorage.setItem(RESONANCE_PROFILE_KEY, serializeResonanceProfile(profile));
+            this.resonanceProfileStatus = 'ok';
+          } catch {
+            // An unwritable store means the span is live for this session and gone on reload.
+            // That is the pre-Phase-4 behaviour, so it degrades to what the app already did.
+            this.resonanceProfileStatus = 'unwritable';
+          }
+        },
+      });
       if (result?.outcome === 'completed') {
         updateAdaptiveProfileStatus();
         updateCalibrationReadiness();
+        // The span moved, so any resonance threshold set against the OLD span is now pointing
+        // at a different vocal target. §3.5's rule applies to a span change exactly as it does
+        // to a version change: re-prompt, never silently reinterpret.
+        this._suspendResonanceRulesForNewSpan(result.profile);
       }
     });
 
@@ -7010,6 +7377,51 @@ class VoxBallGame {
     animate();
   }
 
+  // A recalibration moves the span, and every `resonanceControl` threshold is a position inside
+  // it — so a rule set against the old span now means a different vocal target. Suspending it is
+  // the same remedy as a metric-version change and for the same reason: the app cannot know
+  // whether the user wants the same NUMBER or the same VOICE, and guessing is the silent
+  // reinterpretation §3.5 forbids. A rule already set against this exact span (a recalibration
+  // that landed in the same place) is left alone — spanIdFor is derived from the span's own
+  // numbers precisely so that re-prompting for a no-op does not happen.
+  _suspendResonanceRulesForNewSpan(profile) {
+    const newSpanId = profile && profile.spanId;
+    if (!newSpanId) return;
+    const affected = [];
+    for (const rule of this.vibration.rules) {
+      if (rule.metric !== 'resonance') continue;
+      if (rule.spanId === newSpanId) continue;
+      rule.suspended = true;
+      rule.suspendedReason = 'span-changed';
+      rule.spanId = newSpanId;
+      affected.push(rule);
+    }
+    if (!affected.length) return;
+    this.resonanceRulesNeedingReprompt = affected;
+    try {
+      localStorage.setItem(VIBRATION_STORAGE_KEY, serializeVibrationPreferences(this.vibration));
+    } catch { /* storage may be unavailable */ }
+    this._renderVibRules?.();
+  }
+
+  // The presentation ramp described in the constructor. Pure presentation: it never produces
+  // a resonance value, it only decides how much of the ring is a reading.
+  _updateResonanceDisplay(dt) {
+    const a = this.analyzer;
+    const present = !!(a && a.resonancePresent && a.resonanceControl != null);
+    const step = Math.max(0, Math.min(0.25, dt));   // a long stall must not jump the ramp
+    if (present) {
+      this._resDisplayValue = a.resonanceControl;
+      this._resPresence = Math.min(1, this._resPresence + step / RESONANCE_FADE_IN_SEC);
+    } else {
+      this._resPresence = Math.max(0, this._resPresence - step / RESONANCE_FADE_OUT_SEC);
+      // Only once the ring has fully reached neutral is the last value forgotten. Dropping it
+      // on the first suppressed frame would make the ramp jump to the origin instead of
+      // relaxing from where it was.
+      if (this._resPresence === 0) this._resDisplayValue = null;
+    }
+  }
+
   loop() {
     if (!this.isRunning) return;
     const now = performance.now();
@@ -7036,11 +7448,18 @@ class VoxBallGame {
     this.dynamicQualityScale += (targetQualityScale - this.dynamicQualityScale) * 0.08;
     this.particleScale = this.baseParticleScale * this.dynamicQualityScale;
 
+    this._updateResonanceDisplay(dt);
     this.update(dt);
     this.drawSceneInternal(this.prosodyScore);
     // Mirror the live ball color onto a smart bulb (throttled internally).
     // Driven from the central loop so it tracks every mode that updates the color.
-    const currentResonance = this.analyzer ? this.analyzer.smoothResonance : 0;
+    // The bulb is a presentation surface, so it reads CONTROL like the ball. On a frame with
+    // no reading it holds the last colour it was given rather than being driven to 0 — a lamp
+    // snapping to "darkest" because the room got noisy is the substitute D1 forbids.
+    const currentResonance = this._resDisplayValue != null
+      ? this._resDisplayValue
+      : (this._lastBulbResonance != null ? this._lastBulbResonance : 0.5);
+    this._lastBulbResonance = currentResonance;
     const currentWeight = this.analyzer ? this.analyzer.weightSmoothed : 0.5;
     this.bulbController?.update(this.ballHue, this.ballSat, this.ballLit, currentResonance, dt, currentWeight);
     this._pushAvgSamples();
@@ -7068,8 +7487,35 @@ class VoxBallGame {
       sess.pitchCount++;
       if (sessHz < sess.pitchMin) sess.pitchMin = sessHz;
       if (sessHz > sess.pitchMax) sess.pitchMax = sessHz;
-      sess.resonanceSum += this.analyzer.smoothResonance;
-      sess.resonanceCount++;
+      // TWO ACCUMULATORS, AND THE SPLIT BETWEEN THEM IS §4 AND §6 PULLING IN DIFFERENT
+      // DIRECTIONS — resolved by what each number is FOR.
+      //
+      // §4 puts "cross-session progress" on the absolute axis, and it is right: control moves
+      // whenever the span does, so a user who recalibrates between Tuesday and Friday would
+      // otherwise see "progress" that is entirely the new span. So the STATISTIC is absolute,
+      // versioned, and tagged with its scale.
+      //
+      // §6 says the user sees one ring. The end-of-session card is the same surface as the ring,
+      // and there is no cross-session history in this app to compare against — nothing persists
+      // one. Showing a number on an axis the user has never seen, with no second reading to
+      // compare it to, would be the decomposition leaking into the interface for no benefit. So
+      // the DISPLAYED average is control: the same scale the ring showed while they were
+      // speaking.
+      //
+      // Frames with no reading are counted as neither. They are not zeroes.
+      const sessControl = this.analyzer.currentResonanceReading(RESONANCE_SCALE_CONTROL);
+      const sessAbsolute = this.analyzer.currentResonanceReading(RESONANCE_SCALE_ABSOLUTE);
+      if (sessControl && sessAbsolute) {
+        sess.resonanceSum += sessControl.value;
+        sess.resonanceCount++;
+        sess.resonanceScale = sessControl.scale;
+        sess.resonanceSpanId = sessControl.spanId;
+        sess.absoluteSum += sessAbsolute.value;
+        sess.absoluteCount++;
+        sess.resonanceMetricVersion = sessAbsolute.metricVersion;
+      } else {
+        sess.resonanceSuppressedCount++;
+      }
     }
 
     // Sample prosody score every 0.5s for sparkline
@@ -7521,7 +7967,15 @@ class VoxBallGame {
     // dispersion and cpp are now absorbed into resonance and weight respectively.
     const cues = {
       pitchZone: { value: clamp01(a.metrics.pitchZone), confidence: a.modalF0Confidence },
-      resonance: { value: clamp01(a.smoothResonance), confidence: a.formantConfidence },
+      // §4: THE PERCEPTION MODEL CONSUMES ABSOLUTE ONLY. This is §2.7's accepted point — a
+      // personally-normalised resonance feeding a gender score means two speakers with
+      // completely different vocal tracts both score 1.0 at their own brightest, which is not a
+      // statement about how either of them sounds. A frame with no reading contributes the cue
+      // at zero confidence rather than a substituted value.
+      resonance: {
+        value: a.resonanceAbsolute != null ? clamp01(a.resonanceAbsolute) : 0,
+        confidence: a.resonanceAbsolute != null ? a.formantConfidence : 0,
+      },
       weight: { value: 1 - clamp01(a.metrics.weight), confidence: a.spectralTiltConfidence }, // invert: low weight = light/feminine
       sibilant: { value: computeSibilantFemininity(a.sibilantCentroidHz), confidence: a.sibilantConfidence },
       intonation: { value: clamp01(a.metrics.bounce), confidence: a.pitchConfidence },
@@ -7753,27 +8207,50 @@ class VoxBallGame {
     ctx.arc(0, 0, this.ball.radius - 0.5, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Resonance ring — shows vocal tract resonance (F1/F2/F3)
-    // Inner ring: F2-based (primary), Outer ring: F3-based (secondary)
-    // Cool blue-violet = low/dark resonance → warm gold = high/bright resonance
-    const res = this.analyzer.smoothResonance;
-    const resConf = this.analyzer.formantConfidence;
-    const resAlpha = (0.10 + res * 0.35 + prosodyGlow * 0.1) * (0.3 + resConf * 0.7);
+    // Resonance ring — the ONE ring §6 requires. It shows `resonanceControl` and nothing else.
+    // Five internal variables (formantScale, apparentVTL, formantPattern, f2Position,
+    // resonanceConfidence) exist behind it and none of them is drawn: a two-scale metric is not
+    // permission for two meters.
+    //
+    // Cool blue-violet = darker/longer → warm gold = brighter/shorter, on the user's own span
+    // once they have calibrated and on the published population span until then.
+    //
+    // NO READING: the ring relaxes into a neutral listening ring — fixed radius, no hue travel,
+    // no width travel — over RESONANCE_FADE_OUT_SEC. `presence` is the only thing that ramps;
+    // it is not a resonance value and it is never used as one. See the constructor.
+    const presence = this._resPresence;
+    const resValue = this._resDisplayValue;
+    // The CANONICAL confidence, not v1's `formantConfidence`. The ring's vividness is a claim
+    // about how much to trust the number it is drawing, and that number now comes from the
+    // canonical path — reading v1's estimator confidence here would put "which estimator the
+    // room's noise selected" back into the display through the alpha channel, which is exactly
+    // what Phase 3 took out of the value (§5 Phase 3).
+    const resConf = this.analyzer.resonanceConfidenceV2;
+    // The neutral ring is a constant. It encodes nothing, which is the point: a person can tell
+    // "the app is not reading you" from "the app is reading you as very dark" because the two
+    // do not look alike.
+    const NEUTRAL_HUE = 250, NEUTRAL_SAT = 6, NEUTRAL_LIT = 42;
+    const mix = (neutral, value) => neutral + (value - neutral) * presence;
+    // Before the first reading of a session there is no value to relax FROM, so the ring is
+    // simply the neutral one at its resting alpha.
+    const res = resValue != null ? resValue : 0.5;
+    const readingAlpha = (0.10 + res * 0.35 + prosodyGlow * 0.1) * (0.3 + resConf * 0.7);
+    const resAlpha = mix(0.07, readingAlpha);
     if (resAlpha > 0.04) {
       // F2 ring (primary): colorblind = blue(220)→yellow(55), normal = blue(240)→gold(45)
       let resHue, resSat, resLit;
       if (this.colorblindMode) {
-        resHue = 220 - res * 165; // 220 (blue) → 55 (yellow)
-        resSat = 70 + res * 30;
-        resLit = 45 + res * 35;   // darker blue → brighter yellow (luminance-mapped)
+        resHue = mix(NEUTRAL_HUE, 220 - res * 165); // 220 (blue) → 55 (yellow)
+        resSat = mix(NEUTRAL_SAT, 70 + res * 30);
+        resLit = mix(NEUTRAL_LIT, 45 + res * 35);   // darker blue → brighter yellow
       } else {
-        resHue = 240 - res * 195;
-        resSat = 60 + res * 40;
-        resLit = 50 + res * 30;
+        resHue = mix(NEUTRAL_HUE, 240 - res * 195);
+        resSat = mix(NEUTRAL_SAT, 60 + res * 40);
+        resLit = mix(NEUTRAL_LIT, 50 + res * 30);
       }
-      const ringRadius = this.ball.radius + 4 + res * 6 + prosodyGlow * 3;
+      const ringRadius = this.ball.radius + mix(6, 4 + res * 6 + prosodyGlow * 3);
       ctx.strokeStyle = `hsla(${resHue}, ${resSat}%, ${resLit}%, ${resAlpha})`;
-      ctx.lineWidth = 1.5 + res * 2;
+      ctx.lineWidth = mix(1, 1.5 + res * 2);
       ctx.beginPath();
       ctx.arc(0, 0, ringRadius, 0, Math.PI * 2);
       ctx.stroke();
@@ -7789,7 +8266,9 @@ class VoxBallGame {
       // F3 outer ring — appears when F3 is high (> 2500 Hz) and confident
       // Separate visual from F2 ring: thinner, more cyan/white toned
       const f3Norm = Math.max(0, Math.min(1, (this.analyzer.smoothF3 - 2200) / 1200));
-      const f3Alpha = f3Norm * resConf * 0.45;
+      // Scaled by presence for the same reason as the main ring: it is a value-bearing mark and
+      // must not keep asserting an F3 on a frame the app declined to read.
+      const f3Alpha = f3Norm * resConf * 0.45 * presence;
       if (f3Alpha > 0.03) {
         const f3Radius = ringRadius + 6 + res * 6 + f3Norm * 4;
         const f3Hue = 200 - f3Norm * 30; // cyan → bright blue-white
@@ -7879,6 +8358,34 @@ class VoxBallGame {
   // ============================================================
   // VIBRATION ALERT ENGINE
   // ============================================================
+  // ===== §7 QUESTION 3, DECIDED: the haptic threshold lives on CONTROL =====
+  //
+  // "Absolute is cross-device consistent; control is what the user is training against." Both
+  // halves are true, and the tie is broken by what a haptic IS: an instruction to move, fired
+  // while the user is speaking and cannot look at a screen. Three reasons, in order of weight:
+  //
+  //   1. On absolute, the shipped defaults are unreachable for most speakers. `resonanceAbsolute`
+  //      puts a whole adult population inside about 22 points (P&B's two pooled means are 46.1
+  //      and 54.8), and one speaker's entire across-vowel excursion is 14.5 of them. A rule that
+  //      says "buzz below 30" would never fire for a great many people and would fire
+  //      permanently for the rest. A threshold that cannot be crossed is not a coaching signal.
+  //   2. D1's cross-surface argument is satisfied by the SPAN, not by the axis. D1 objects to
+  //      "resonance 50%" meaning VTL on the desktop and brightness on the watch — a different
+  //      QUANTITY per device. Control is the same quantity everywhere; what it needs to travel
+  //      is the same span everywhere, which is why the calibrated profile is persisted and
+  //      whitelisted for export alongside the rules that depend on it. A rule and the span it
+  //      was set against travel together or neither does.
+  //   3. Control is defined on frame one. Until the user calibrates it is the PUBLISHED
+  //      POPULATION SPAN, so a fresh install has working haptics with defensible ends rather
+  //      than an inert feature and a nag screen.
+  //
+  // The cost is stated rather than hidden: a control threshold means something different after
+  // a recalibration than before it. That is exactly what §3.5's machinery is for — the span has
+  // an id, a stored reading records which span it was taken on, and a rule set against one span
+  // is re-prompted rather than silently reinterpreted when the span moves.
+  //
+  // `resonanceAbsolute` remains what the perception model, the session summary and any
+  // cross-device or cross-session comparison read. Nothing here changes that.
   checkVibrationAlerts(dt) {
     const vib = this.vibration;
 
@@ -7904,7 +8411,12 @@ class VoxBallGame {
     let trippedLabel = '';
 
     for (const rule of vib.rules) {
-      if (!rule.enabled) {
+      // §3.5: "no hardware threshold fires against a value from a different version." One
+      // question, one definition, asked here and on the watch overlay both (ruleMayFire). A
+      // resonance rule stored before the split carries no metric version, is read as v1, and
+      // CANNOT FIRE until the user has looked at the number on the new scale and confirmed it.
+      // Its threshold is preserved exactly as they typed it; nothing is rescaled or guessed.
+      if (!ruleMayFire(rule)) {
         if (rule.tripped) { rule.tripped = false; needsRender = true; }
         continue;
       }
@@ -7914,7 +8426,12 @@ class VoxBallGame {
       let currentVal;
       switch (rule.metric) {
         case 'pitch': currentVal = hz; break;
-        case 'resonance': currentVal = this.analyzer.smoothResonance * 100; break;
+        // §7 question 3, answered: THE HAPTIC THRESHOLD IS ON CONTROL. See the note above
+        // checkVibrationAlerts. A suppressed frame has no value, so no rule can trip on it —
+        // `currentVal` stays null and the comparison below is skipped rather than being fed a 0
+        // that would fire every "below" rule the moment the room got noisy.
+        case 'resonance': currentVal = this.analyzer.resonanceControl != null
+          ? this.analyzer.resonanceControl * 100 : null; break;
         case 'energy': currentVal = m.energy * 100; break;
         case 'bounce': currentVal = m.bounce * 100; break;
         case 'tempo': currentVal = 0; break;
@@ -7924,7 +8441,7 @@ class VoxBallGame {
       }
 
       let conditionMet = false;
-      if (isSpeaking) {
+      if (isSpeaking && currentVal != null) {
         conditionMet = rule.direction === 'below'
           ? currentVal < rule.threshold
           : currentVal > rule.threshold;
@@ -8188,9 +8705,15 @@ class VoxBallGame {
     els.pitch.style.left = (pitchPos * 100) + '%';
     els.valPitch.textContent = this._pitchReadout();
 
-    // Resonance meter — position-based indicator like pitch; numeric readout = windowed avg F1/F2
-    const res = this.analyzer.smoothResonance;
-    els.resonance.style.left = (res * 100) + '%';
+    // Resonance meter — position-based indicator like pitch; numeric readout = windowed average.
+    //
+    // NO READING: the indicator FADES OUT rather than parking somewhere. A greyed-out marker
+    // still sitting at 62% is a position claim, and there is no position to claim. The numeric
+    // readout blanks on the first suppressed frame on its own, because `_pushAvgSamples` stops
+    // feeding the window (see the constructor's note).
+    const resPos = this._resDisplayValue != null ? this._resDisplayValue : 0.5;
+    els.resonance.style.left = (resPos * 100) + '%';
+    els.resonance.style.opacity = String(this._resPresence);
     els.valResonance.textContent = this._resonanceReadout();
 
     for (const [k, el] of Object.entries(els.highlight)) {
@@ -8213,8 +8736,7 @@ class VoxBallGame {
           (t) => `${t.min.toFixed(1)} to ${t.max.toFixed(1)} dB learned`);
       }
       if (resonanceStatus) {
-        resonanceStatus.textContent = this._formatAdaptiveStatus(this.analyzer.resonanceProfile,
-          (r) => `F1 ${Math.round(r.f1Min)}–${Math.round(r.f1Max)} Hz learned`);
+        resonanceStatus.textContent = this._resonanceSpanStatus();
       }
       if (confidenceStatus) confidenceStatus.textContent = `${Math.round(this.analyzer.frameConfidence * 100)}%`;
     }
@@ -8224,6 +8746,20 @@ class VoxBallGame {
   // the learned label once the profile is trained, otherwise a capped "Learning… X%" from its
   // voiced-time progress. Single source for the string so the settings panel and the meters
   // panel can't drift apart.
+  // What the resonance status line says now that the displayed number is normalised against a
+  // SPAN rather than learned passively from ambient speech. Deliberately never shows the
+  // absolute value, the tract length, the vowel or f2Position: §6's risk is that the
+  // decomposition leaks into the interface, and "five internal variables is an implementation
+  // detail" applies to a status string as much as to a second meter.
+  _resonanceSpanStatus() {
+    const p = this.analyzer.resonanceProfileV2;
+    if (!p) return 'Typical adult range — calibrate to use your own';
+    const width = Math.round((p.span.max - p.span.min) * 100);
+    return p.spreadFloored
+      ? `Your range (narrow — ${width} pts; try wider postures)`
+      : `Your range (${width} pts wide)`;
+  }
+
   _formatAdaptiveStatus(profile, learnedFormatter) {
     if (profile.isLearned) return learnedFormatter(profile);
     const pct = Math.min(100, Math.round((profile.voicedTime / Math.max(0.1, profile.learningDuration)) * 100));
@@ -8253,13 +8789,20 @@ class VoxBallGame {
     if (a.lastPitch > 0 && a.smoothPitchHz > 0 && a.pitchConfidence > 0.35 && m.energy > 0.05) {
       B.pitch.push({ t, v: a.smoothPitchHz });
     }
-    if (a.formantConfidence > 0.2 && m.energy > 0.05) {
+    // Only frames that PRODUCED A READING reach the windowed average. That is what makes the
+    // HUD's numeric readout blank on its own during a suppressed stretch rather than needing a
+    // second "is it suppressed" rule beside the averaging one. `resonancePresent` already
+    // subsumes the old confidence gate — a frame below the confidence floor is suppressed — so
+    // there is no second threshold here to drift away from the first.
+    if (a.resonancePresent && m.energy > 0.05) {
       // Carry the frame's confidence so the readout can weight by it. The 0.2 gate admits a
       // frame; it does not make a 0.21-confidence frame worth as much as a 0.95 one, and the
       // Voice Map cloud has always weighted its samples this way (summarizeVoiceCloud).
+      // Canonical throughout: the formants, the value and the weight all come from the path
+      // that defines the measurement, so one record cannot mix two provenances.
       B.resonance.push({
-        t, f1: a.smoothF1, f2: a.smoothF2, res: a.smoothResonance,
-        w: clamp01(a.formantConfidence) * (0.4 + 0.6 * clamp01(a.dispersionFitQuality)),
+        t, f1: a.canonicalF1 || a.smoothF1, f2: a.canonicalF2 || a.smoothF2, res: a.resonanceControl,
+        w: clamp01(a.resonanceConfidenceV2) * (0.4 + 0.6 * clamp01(a.formantScaleFitQuality)),
       });
     }
     if (m.attack > 0.02) {
@@ -8275,14 +8818,17 @@ class VoxBallGame {
     // the background field, which is painted with the same function.
     if (t - this._voiceMapLastPush >= 0.1 &&
         a.lastPitch > 0 && a.smoothPitchHz > 0 && a.pitchConfidence > 0.35 &&
-        a.formantConfidence > 0.2 && m.energy > 0.05) {
+        a.resonancePresent && a.formantConfidence > 0.2 && m.energy > 0.05) {
       this._voiceMapPoints.push({
         t,
         hz: a.smoothPitchHz,
-        res: clamp01(a.smoothResonance),
+        // The map's Y AXIS is the displayed axis, so it is control. Its TINT is a perceived-
+        // gender score, so that reads absolute — the same split as everywhere else, and the
+        // reason the two are named separately here rather than sharing one variable.
+        res: clamp01(a.resonanceControl),
         score: computeGenderScore({
           pitchHz: a.smoothPitchHz,
-          resonance: a.smoothResonance,
+          resonance: clamp01(a.resonanceAbsolute),
           pitchConfidence: a.pitchConfidence,
           formantConfidence: a.formantConfidence,
         }),
@@ -8479,7 +9025,10 @@ class VoxBallGame {
     const max = this._metricHistoryMax;
 
     h.pitch.push(this.analyzer.smoothPitchHz);
-    h.resonance.push(this.analyzer.smoothResonance);
+    // Presentation history (the expanded-metrics sparkline), so control. A frame with no
+    // reading pushes the last drawn presentation value rather than a 0 spike the user never
+    // produced; `_resDisplayValue` is null only before the first ever reading.
+    h.resonance.push(this._resDisplayValue != null ? this._resDisplayValue : 0);
     h.bounce.push(m.bounce);
     h.vowels.push(m.vowel);
     h.attack.push(m.attack);
@@ -8889,7 +9438,11 @@ class VoxBallGame {
     ctx.fillText('brighter →', w - gutter, h - 3 * dpr);
 
     // Personal practice zone from the user's own pitch/resonance vibration rules
-    const zone = voiceMapZoneFromRules(this.vibration?.rules);
+    // A SUSPENDED rule does not draw a target zone. The zone is the user's own goal read off
+    // their alert thresholds, and a threshold whose metric they have not re-confirmed is not a
+    // goal on this scale — drawing it would be the silent reinterpretation §3.5 forbids, in
+    // pixels instead of haptics.
+    const zone = voiceMapZoneFromRules((this.vibration?.rules || []).filter((r) => ruleMayFire(r)));
     if (zone) {
       const x0 = zone.resMin != null ? X(zone.resMin) : 0;
       const x1 = zone.resMax != null ? X(zone.resMax) : w;

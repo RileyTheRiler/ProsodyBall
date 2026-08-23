@@ -90,7 +90,7 @@ export async function measure(method = 'lpc') {
     rows.push({
       t: +(i / decoded.sampleRate).toFixed(3),
       v1: a.smoothResonance,
-      v2: a.resonanceAbsoluteV2,
+      v2: a.resonanceAbsolute != null ? a.resonanceAbsolute : 0,
       f1: a.smoothF1, f2: a.smoothF2, f3: a.smoothF3, f4: a.smoothF4,
       dfV1: a.formantDispersionHz,
       dfV2: a.formantScaleHz,

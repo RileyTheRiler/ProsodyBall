@@ -65,7 +65,7 @@ test('§5: the canonical value is IDENTICAL under every estimator setting', asyn
     for (let i = 0; i + WINDOW <= signal.length; i += HOP) {
       a.audioCtx._currentChunk = signal.subarray(i, i + WINDOW);
       a.update(DT);
-      if (!a.resonanceSuppressed) vals.push(a.resonanceAbsoluteV2);
+      if (!a.resonanceSuppressed) vals.push(a.resonanceAbsolute);
     }
     assert.ok(vals.length > 20, `${method}: only ${vals.length} unsuppressed frames`);
     results[method] = vals;
@@ -277,7 +277,7 @@ test('§5: F0 enters the noise and NOT the score', async () => {
     for (let i = 0; i + WINDOW <= signal.length; i += HOP) {
       a.audioCtx._currentChunk = signal.subarray(i, i + WINDOW);
       a.update(DT);
-      if (!a.resonanceSuppressed) vals.push(a.resonanceAbsoluteV2);
+      if (!a.resonanceSuppressed) vals.push(a.resonanceAbsolute);
     }
     const back = vals.slice(Math.floor(vals.length / 2));
     scores.push(back.reduce((s, x) => s + x, 0) / back.length);
@@ -325,7 +325,7 @@ test('§5: below the floor the app produces NO reading, not a stale or substitut
     a.update(DT);
   }
   assert.ok(!a.resonanceSuppressed, 'a clean held vowel must not be suppressed');
-  assert.ok(a.resonanceAbsoluteV2 > 0 && a.formantScaleHz > 0);
+  assert.ok(a.resonanceAbsolute > 0 && a.formantScaleHz > 0);
   // Now silence. Everything the v2 stream reports must go to "no reading" — not freeze.
   const quiet = new Float32Array(WINDOW);
   for (let k = 0; k < 200; k++) {
@@ -333,7 +333,12 @@ test('§5: below the floor the app produces NO reading, not a stale or substitut
     a.update(DT);
   }
   assert.ok(a.resonanceSuppressed, 'silence did not suppress the reading');
-  assert.equal(a.resonanceAbsoluteV2, 0, 'the score was frozen rather than cleared');
+  // Phase 4: ABSENT, not zero. 0 is a real position on this axis — "as long a tract as this
+  // scale goes" — so a suppressed frame reporting 0 would be a substitute, which is the exact
+  // thing D1 forbids. Both scales go null together, because they are one measurement.
+  assert.equal(a.resonanceAbsolute, null, 'the score was frozen or zeroed rather than cleared');
+  assert.equal(a.resonanceControl, null, 'control survived a frame with no absolute reading');
+  assert.equal(a.resonancePresent, false);
   assert.equal(a.formantScaleHz, 0, 'the pooled scale was frozen rather than cleared');
   assert.equal(a.apparentVtlV2Cm, 0, 'the apparent tract length was frozen rather than cleared');
   assert.equal(a.vowelId, null);
@@ -389,7 +394,7 @@ test('§5, D1: the centroid is a brightness feature and never a resonance substi
     a.update(DT);
   }
   assert.ok(a.spectralBrightness >= 0 && a.spectralBrightness <= 1);
-  assert.ok(a.resonanceAbsoluteV2 > 0, 'the canonical reading exists even under the centroid setting');
+  assert.ok(a.resonanceAbsolute > 0, 'the canonical reading exists even under the centroid setting');
 });
 
 // ---------------------------------------------------------------------------
@@ -455,26 +460,46 @@ test('calibration treats a vowel SET as separate productions, not one utterance'
   assert.equal(counts.size, 1, `candidates scored on different frame counts: ${[...counts].join(',')}`);
 });
 
-test('a per-user ceiling does not reach v1', async () => {
-  // v1's `lpc` branch is pinned to the default ceiling. Calibration must be invisible to the
-  // displayed metric until Phase 4 retires it.
+test('PHASE 4: one LPC solve per frame at every ceiling, and v1 rides the canonical one', async () => {
+  // THIS TEST INVERTS ITS PHASE-3 SELF, ON PURPOSE. It used to assert "a per-user ceiling does
+  // not reach v1", because v1 was the displayed number and had to stay byte-identical — which
+  // is precisely why a second LPC solve per frame existed whenever the two ceilings differed
+  // (§5's Phase 3 budget table: 0.994 shared, 1.989 split). Phase 4 retires v1 from the display,
+  // so the pin has nothing left to protect and the duplicate solve goes with it.
+  //
+  // What is asserted now is the thing that actually matters to a user: the frame budget. v1
+  // remains COMPUTABLE — `resonanceScoreV1` and its golden vectors are untouched, and for an
+  // uncalibrated user the two ceilings ARE the same number, so nothing about today's behaviour
+  // changes for anyone who has not calibrated.
   const signal = synthVowel({ formants: BASE_FORMANTS });
   const run = async (ceilingHz) => {
     const a = await newAnalyzer('lpc');
     if (ceilingHz) a.lpcCeilingHz = ceilingHz;
     const vals = [];
+    let frames = 0;
     for (let i = 0; i + WINDOW <= signal.length; i += HOP) {
       a.audioCtx._currentChunk = signal.subarray(i, i + WINDOW);
       a.update(DT);
+      frames++;
       vals.push(a.smoothResonance);
     }
-    return vals;
+    return { vals, solvesPerFrame: a._lpcSolveCount / frames };
   };
   const base = await run(null);
   const calibrated = await run(6500);
-  for (let i = 0; i < base.length; i++) {
-    assert.equal(calibrated[i], base[i], `v1 frame ${i} moved when a ceiling was calibrated`);
-  }
+
+  // An uncalibrated user is untouched, which is what keeps every golden vector and every
+  // fixture aggregate valid.
+  assert.ok(base.solvesPerFrame <= 1.001, `default ceiling: ${base.solvesPerFrame.toFixed(3)} solves/frame`);
+  // And a CALIBRATED user now pays the same, where they used to pay twice.
+  assert.ok(calibrated.solvesPerFrame <= 1.001,
+    `calibrated ceiling: ${calibrated.solvesPerFrame.toFixed(3)} solves/frame — the duplicate solve is back`);
+
+  // v1 now follows the chosen ceiling rather than being pinned away from it. That it MOVES is
+  // the evidence the pin is gone; it is not displayed anywhere, so nothing user-visible depends
+  // on the value.
+  const moved = base.vals.some((v, i) => v !== calibrated.vals[i]);
+  assert.ok(moved, 'v1 did not follow the calibrated ceiling — the duplicate solve may still exist');
 });
 
 // ---------------------------------------------------------------------------
