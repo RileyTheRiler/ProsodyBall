@@ -24,3 +24,7 @@
 ## $(date +%Y-%m-%d) - [Inaccessible custom toggle switches due to duplicate IDs]
 **Learning:** Discovered that custom toggle switches built with `<label class="toggle-switch">` wrapping an `<input type="checkbox">` were failing because the `id` on the `<input>` was duplicated elsewhere in the DOM. This breaks the `<label for="[id]">` association, rendering the toggle invisible to screen readers and difficult to click.
 **Action:** Ensure custom toggle `<input>` elements have strictly unique IDs across the entire document so they correctly link with their `<label>` elements.
+
+## 2026-03-22 - [Inaccessible Tab Widgets]
+**Learning:** Found that custom tab widgets in the application (like the `#helpTooltip` `.help-tabs`) were visually functional via CSS classes but lacked semantic ARIA roles and relationships, rendering them essentially invisible or deeply confusing to screen reader users. The relationship between a tab and its content panel must be programmatically defined.
+**Action:** When implementing or modifying custom tab widgets, always enforce semantic ARIA roles (`role="tablist"`, `role="tab"`, `role="tabpanel"`) and use structural attributes (`aria-controls`, `aria-labelledby`, `aria-selected`) to explicitly map the connections. Ensure JS updates `aria-selected` and `hidden` properties simultaneously with visual state changes.
