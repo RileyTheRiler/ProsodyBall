@@ -654,9 +654,21 @@ export function segmentSpeechRuns(samples, {
   minConf = PHRASE_SEG_DEFAULTS.minConf,
 } = {}) {
   if (!Array.isArray(samples) || samples.length === 0) return [];
-  const energy = samples.map((s) => (s && Number.isFinite(s.energy) ? s.energy : 0));
-  const sorted = [...energy].sort((a, b) => a - b);
-  const at = (q) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(sorted.length * q)))];
+
+  // Performance optimization: Avoid intermediate array allocations and slow sorts.
+  // Use a Float64Array to sort energies numerically and simultaneously populate both arrays.
+  const n = samples.length;
+  const energy = new Float64Array(n);
+  const sorted = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const s = samples[i];
+    const e = s && Number.isFinite(s.energy) ? s.energy : 0;
+    energy[i] = e;
+    sorted[i] = e;
+  }
+  sorted.sort();
+
+  const at = (q) => sorted[Math.min(n - 1, Math.max(0, Math.floor(n * q)))];
   const floor = Math.max(noiseFloor, at(0.2));
   const range = Math.max(at(0.9) - floor, minEnergyRange);
   const on = floor + range * onMult;
