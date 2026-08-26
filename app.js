@@ -4982,6 +4982,13 @@ export class VoxBallGame {
       const lastId = this.recordings[lastIdx]?.id;
       const playingLast = !!(this.currentPlayback && this.currentPlayback.recordingId === lastId);
       playBtn.disabled = lastIdx < 0 || this.isRecording;
+      if (this.isRecording) {
+        playBtn.title = 'Cannot play while recording';
+      } else if (lastIdx < 0) {
+        playBtn.title = 'No recording available to play';
+      } else {
+        playBtn.title = 'Play your last recording';
+      }
       playBtn.classList.toggle('playing', playingLast);
       // Keep the practice panel's Record/Done button in sync however recording was toggled.
       if (this.practice?.active) this._renderPractice();
