@@ -24,3 +24,7 @@
 ## $(date +%Y-%m-%d) - [Inaccessible custom toggle switches due to duplicate IDs]
 **Learning:** Discovered that custom toggle switches built with `<label class="toggle-switch">` wrapping an `<input type="checkbox">` were failing because the `id` on the `<input>` was duplicated elsewhere in the DOM. This breaks the `<label for="[id]">` association, rendering the toggle invisible to screen readers and difficult to click.
 **Action:** Ensure custom toggle `<input>` elements have strictly unique IDs across the entire document so they correctly link with their `<label>` elements.
+
+## $(date +%Y-%m-%d) - [Inaccessible ARIA Tabs]
+**Learning:** Found that tab widgets in the UI (e.g., `.help-tabs`) were missing semantic ARIA roles (`role="tablist"`, `role="tab"`, `role="tabpanel"`) and relationship attributes (`aria-controls`, `aria-labelledby`). Without these, screen readers treat them as plain buttons and unassociated content.
+**Action:** When implementing or modifying ARIA tabs, always ensure semantic roles are applied. Furthermore, the `aria-selected` attribute on tabs and the `hidden` attribute on inactive panels must be dynamically updated in JavaScript to accurately reflect the active tab state.
