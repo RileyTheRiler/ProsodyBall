@@ -29,6 +29,82 @@ function assertRectInsideViewport(name, rect, width, height) {
   }
 }
 
+// Reload with a seeded localStorage and report what the span notice does.
+async function readSpanNotice(page, seed) {
+  await page.evaluate((entries) => {
+    localStorage.clear();
+    for (const [k, v] of entries) localStorage.setItem(k, v);
+  }, seed);
+  await page.reload({ waitUntil: 'networkidle2' });
+  await new Promise((r) => setTimeout(r, 900));
+  return page.evaluate(() => {
+    const el = document.getElementById('resonanceSpanNotice');
+    return {
+      exists: !!el,
+      hidden: el ? el.hidden : null,
+      text: el ? el.textContent.trim() : '',
+      buttons: el ? [...el.querySelectorAll('button')].map((b) => b.textContent) : [],
+      status: document.getElementById('resonanceProfileLearned')?.textContent || '',
+    };
+  });
+}
+
+async function checkResonanceSpanNotice(page) {
+  // A fresh install: nothing was reinterpreted, so nothing is said.
+  let n = await readSpanNotice(page, []);
+  if (!n.exists) throw new Error('#resonanceSpanNotice element is missing');
+  if (n.hidden !== true) throw new Error(`first-time user was shown the span notice: "${n.text}"`);
+
+  // A returning user (prior app settings) who never calibrated on this metric.
+  n = await readSpanNotice(page, [['vox:micDeviceId', 'default'], ['vox:goalMode', 'feminization']]);
+  if (n.hidden !== false) throw new Error('returning user was not told the resonance axis changed');
+  if (!/typical adult range/i.test(n.text)) throw new Error(`span notice text unexpected: "${n.text}"`);
+  if (!n.buttons.some((t) => /set up/i.test(t))) {
+    throw new Error(`span notice must offer the remedy, got buttons ${JSON.stringify(n.buttons)}`);
+  }
+
+  // Acknowledging silences it for good — on "Not now" as well, since the user has been told.
+  await page.evaluate(() => {
+    [...document.querySelectorAll('#resonanceSpanNotice button')]
+      .find((b) => /not now/i.test(b.textContent)).click();
+  });
+  await new Promise((r) => setTimeout(r, 200));
+  await page.reload({ waitUntil: 'networkidle2' });
+  await new Promise((r) => setTimeout(r, 900));
+  if (await page.evaluate(() => document.getElementById('resonanceSpanNotice').hidden) !== true) {
+    throw new Error('span notice returned after being acknowledged');
+  }
+
+  // A stored profile from another metric version is REFUSED. That used to read exactly like
+  // never having calibrated; it must name what happened, in the status line and the notice.
+  n = await readSpanNotice(page, [
+    ['vox:micDeviceId', 'default'],
+    ['vox:resonance:profile:v1', JSON.stringify({ metricVersion: 1, span: { min: 0.3, max: 0.6 } })],
+  ]);
+  if (!/older measurement/i.test(n.status)) {
+    throw new Error(`a refused profile must say so in the status line, got "${n.status}"`);
+  }
+  if (n.hidden !== false || !/could not be used/i.test(n.text)) {
+    throw new Error(`a refused profile must raise the notice, got "${n.text}"`);
+  }
+  // A VALID profile must silence both the notice and the status line's warning. This is the
+  // false-positive guard that matters most: nagging a calibrated user to calibrate would be a
+  // worse bug than the one this notice fixes.
+  n = await readSpanNotice(page, [
+    ['vox:micDeviceId', 'default'],
+    ['vox:resonance:profile:v1', JSON.stringify({
+      metricVersion: 2, span: { min: 0.40, max: 0.56 }, spanSource: 'calibrated',
+      calibratedAt: Date.now(),
+    })],
+  ]);
+  if (n.hidden !== false && n.hidden !== true) throw new Error('span notice element vanished');
+  if (n.hidden === false) throw new Error(`a calibrated user was shown the notice: "${n.text}"`);
+  if (!/your range/i.test(n.status)) {
+    throw new Error(`a calibrated user's status line should name their own range, got "${n.status}"`);
+  }
+  await page.evaluate(() => localStorage.clear());
+}
+
 async function checkMobileLayout(page, width, height) {
   await page.setViewport({ width, height, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
   await page.evaluate(() => {
@@ -162,6 +238,14 @@ try {
   if (await page.$eval('#recordingsDrawer', (el) => el.classList.contains('show'))) {
     throw new Error('Recordings drawer did not close on the second click');
   }
+
+  // ---- §3.5's span re-prompt (docs/RESONANCE_REDESIGN.md) --------------------------------
+  // A user reported resonance reading dark after updating. The measurement was correct; they
+  // were on the population span because v1 learned a personal range automatically and v2 needs
+  // a deliberate calibration, and nothing told them. This asserts the notice that now does,
+  // including the half that is easy to get wrong: a FIRST-TIME user must not be nagged, because
+  // nothing was reinterpreted for them.
+  await checkResonanceSpanNotice(page);
 
   // Deterministic recording-resource stress: the fake recorder emits one chunk per take,
   // while the real game code owns timers, callbacks, Blob URLs, audio elements and deletion.

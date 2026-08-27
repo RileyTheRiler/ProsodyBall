@@ -4852,6 +4852,13 @@
           <div class="settings-status-item"><span>Resonance range</span><strong id="resonanceProfileLearned">Typical adult range</strong></div>
           <div class="settings-status-item"><span>Frame confidence</span><strong id="frameConfidenceLabel">0%</strong></div>
         </div>
+        <!-- One-time notice when the resonance AXIS changed under an existing user (§3.5 of
+             docs/RESONANCE_REDESIGN.md: migrated or re-prompted, never silently reinterpreted).
+             Populated by _renderResonanceSpanNotice(); hidden for first-time users, who had
+             nothing reinterpreted. -->
+        <div id="resonanceSpanNotice" class="settings-notice" role="status" hidden
+             style="font-size:0.66rem;line-height:1.4;color:#ffb86b;margin-top:8px;padding:8px;
+                    border:1px solid rgba(255,184,107,0.35);border-radius:6px"></div>
       </div>
 
       <div class="settings-group">

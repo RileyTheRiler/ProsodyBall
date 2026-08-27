@@ -8,11 +8,13 @@ import assert from 'node:assert/strict';
 import {
   RESONANCE_METRIC_VERSION, RESONANCE_METRIC_VERSION_V1,
   RESONANCE_POPULATION_SPAN, RESONANCE_CONTROL_MIN_SPAN, RESONANCE_POOLED_SCALE_SD_20DB,
+  RESONANCE_ACROSS_VOWEL_HALF_EXCURSION,
   RESONANCE_SCALE_ABSOLUTE, RESONANCE_SCALE_CONTROL,
   resonanceControl, spanFromPostures,
   makeResonanceProfile, serializeResonanceProfile, parseResonanceProfile, spanIdFor,
   makeReading, aggregateReadings,
   migrateResonanceRules, ruleMayFire, confirmResonanceRule,
+  resonanceSpanNotice, isReturningUser, RESONANCE_NOTICE_KEY, RESONANCE_PROFILE_KEY,
 } from './resonance-metric.js';
 import { resonanceAbsoluteV2, fitFormantScale, poolFormantScale } from './dsp-utils.js';
 import { BENCH_SET, formantsOf } from './tools/resonance-benchmark.mjs';
@@ -73,16 +75,67 @@ test('control refuses a degenerate span rather than dividing by zero', () => {
 
 // --- the personal span ----------------------------------------------------------------------
 
-test('the two deliberate postures set the ends; habitual is recorded and sets nothing', () => {
+test('the two deliberate postures centre the span; habitual is recorded and sets nothing', () => {
   const span = spanFromPostures({
     darker: [0.40, 0.41, 0.42], brighter: [0.62, 0.63, 0.64], habitual: [0.50, 0.51],
   });
-  // Medians 0.41 and 0.63, spread 0.22 (above the floor), padded 5% each side.
-  assert.ok(span.min < 0.41 && span.min > 0.39, `min ${span.min}`);
-  assert.ok(span.max > 0.63 && span.max < 0.65, `max ${span.max}`);
-  assert.ok(Math.abs(span.habitual - 0.505) < 1e-9);
-  assert.equal(span.spreadFloored, false);
+  // Medians 0.41 and 0.63: spread 0.22, above the floor, centred on 0.52.
   assert.ok(Math.abs(span.observedSpread - 0.22) < 1e-9);
+  assert.ok(Math.abs((span.min + span.max) / 2 - 0.52) < 1e-9, 'postures centre the span');
+  assert.equal(span.spreadFloored, false);
+  assert.ok(Math.abs(span.habitual - 0.505) < 1e-9);
+  // The postures sit strictly INSIDE the span now, not on its ends. The ends carry the
+  // across-vowel allowance on top — see RESONANCE_ACROSS_VOWEL_HALF_EXCURSION. Before that
+  // allowance existed, the ends were the postures and ordinary vowels railed the meter.
+  assert.ok(span.min < 0.41 && span.max > 0.63);
+  const expectedWidth = 0.22 + 2 * RESONANCE_ACROSS_VOWEL_HALF_EXCURSION + 2 * 0.22 * 0.05;
+  assert.ok(Math.abs((span.max - span.min) - expectedWidth) < 1e-9,
+    `width ${(span.max - span.min).toFixed(4)}, expected ${expectedWidth.toFixed(4)}`);
+  assert.equal(span.vowelAllowanceSource, 'published');
+  assert.equal(span.vowelExcursion, null);
+});
+
+test('a measured across-vowel excursion is used in place of the published one', () => {
+  const postures = { darker: [0.44], brighter: [0.50], habitual: [0.47] };
+  const published = spanFromPostures(postures);
+  const measured = spanFromPostures(postures, { vowelExcursion: 0.145 });
+  assert.equal(published.vowelAllowanceSource, 'published');
+  assert.equal(measured.vowelAllowanceSource, 'measured');
+  assert.ok(Math.abs(measured.vowelAllowance - 0.145 / 2) < 1e-9);
+  assert.ok(Math.abs(measured.vowelExcursion - 0.145) < 1e-9);
+  // A speaker with a WIDER vowel space than the published average needs a wider span, and a
+  // narrower one needs less. Both directions, so this cannot be a one-sided fudge.
+  assert.ok(measured.max - measured.min > published.max - published.min, 'wider vowel space -> wider span');
+  const narrow = spanFromPostures(postures, { vowelExcursion: 0.06 });
+  assert.ok(narrow.max - narrow.min < published.max - published.min, 'narrower vowel space -> narrower span');
+  // Garbage is ignored rather than trusted.
+  for (const bad of [0, -1, NaN, null, undefined, 'x']) {
+    assert.equal(spanFromPostures(postures, { vowelExcursion: bad }).vowelAllowanceSource, 'published');
+  }
+});
+
+test('THE REGRESSION: held vowels must not rail a calibrated span', () => {
+  // The reported bug. Live-measured pooled absolutes for one speaker holding four vowels, and
+  // the posture excursion a real calibration produces. Before the allowance, /i/ read 1.00 and
+  // /u/ read 0.00 — the voice-map firefly pinned to the left and right edges.
+  const held = { i: 0.5470, 'ɛ': 0.4667, 'ɑ': 0.4555, u: 0.4015 };
+  const vals = Object.values(held);
+  const excursion = Math.max(...vals) - Math.min(...vals);          // 0.1455
+  const mid = (Math.max(...vals) + Math.min(...vals)) / 2;
+  const postureSpread = 0.06;                                        // a GAVT-sized posture change
+  const span = spanFromPostures({
+    darker: [mid - postureSpread / 2], brighter: [mid + postureSpread / 2], habitual: [mid],
+  }, { vowelExcursion: excursion });
+
+  for (const [vowel, absolute] of Object.entries(held)) {
+    const c = resonanceControl(absolute, span);
+    assert.ok(c > 0 && c < 1, `/${vowel}/ railed at ${c} — the firefly is back on the edge`);
+  }
+  // And the postures themselves still travel a useful part of the meter: the fix must not
+  // flatten the axis into uselessness, which is the opposite failure.
+  const lo = resonanceControl(mid - postureSpread / 2, span);
+  const hi = resonanceControl(mid + postureSpread / 2, span);
+  assert.ok(hi - lo > 0.2, `a deliberate posture change moves only ${(100 * (hi - lo)).toFixed(0)}% of the meter`);
 });
 
 test('a speaker whose postures barely differ gets the floor span and is flagged, not a steep axis', () => {
@@ -280,4 +333,100 @@ test('migrating an already-current rule is a no-op that stamps the version', () 
   assert.equal(needsReprompt.length, 0);
   assert.equal(out[0].suspended, undefined);
   assert.equal(ruleMayFire(out[0]), true);
+});
+
+// ============================================================================
+// §3.5's re-prompt, for the SPAN — the gap a user found
+// ============================================================================
+//
+// Reported symptom: "resonance is now reading darker than it should be". Reproduced: the
+// measurement was fine (a sustained /i/ tracked to within 2 Hz of its true ΔF and read 45.6
+// points brighter than running speech), but the user was on the POPULATION span and had never
+// run the guided calibration — because v1 learned a personal range automatically every session
+// and v2 does not. Nothing told them. These tests pin the notice that now does.
+
+test('a returning user with no calibration is told the axis changed', () => {
+  const n = resonanceSpanNotice({ profileStatus: 'absent', returningUser: true });
+  assert.ok(n, 'a returning user with no profile must be told');
+  assert.equal(n.kind, 'never-calibrated');
+  assert.ok(n.action, 'the notice must offer the remedy, not just describe the problem');
+});
+
+test('the notice is worded to be true for a returning user AND a merely-uncalibrated one', () => {
+  // The "returning" signal is imprecise by design (see isReturningUser): every key it reads is
+  // written on a user action, so a new user who changes one setting trips it. The notice must
+  // therefore not ASSERT a history the reader may not have.
+  const n = resonanceSpanNotice({ profileStatus: 'absent', returningUser: true });
+  assert.ok(/not calibrated|has not been calibrated/i.test(n.body), n.body);
+  assert.ok(/if you used an earlier version/i.test(n.body),
+    'any claim about earlier versions must be conditional, not asserted');
+});
+
+test('a first-time user is NOT nagged — nothing was reinterpreted for them', () => {
+  // The population span is the honest default for a voice the app has never heard, and
+  // onboarding already covers calibration. The notice is for people whose numbers MOVED.
+  assert.equal(resonanceSpanNotice({ profileStatus: 'absent', returningUser: false }), null);
+});
+
+test('a refused profile says so, instead of falling back silently', () => {
+  for (const reason of ['metric-version-older', 'metric-version-newer']) {
+    const n = resonanceSpanNotice({ profileStatus: reason, returningUser: false });
+    assert.ok(n, `${reason} must surface`);
+    assert.equal(n.kind, 'refused');
+    assert.equal(n.reason, reason);
+    // A refusal is worth saying even to someone with no other stored state: they DID calibrate,
+    // so a profile existed and was discarded.
+  }
+  for (const reason of ['span-unusable', 'unparseable', 'not-an-object']) {
+    assert.equal(resonanceSpanNotice({ profileStatus: reason }).kind, 'refused');
+  }
+});
+
+test('a working profile, and an unwritable store, say nothing', () => {
+  assert.equal(resonanceSpanNotice({ profileStatus: 'ok', returningUser: true }), null);
+  // 'unwritable' means the span IS live for this session and simply will not persist. The user
+  // is on their own range right now, so telling them it changed would be false.
+  assert.equal(resonanceSpanNotice({ profileStatus: 'unwritable', returningUser: true }), null);
+});
+
+test('the notice is shown once — acknowledging it silences every kind', () => {
+  for (const profileStatus of ['absent', 'metric-version-older', 'unparseable']) {
+    assert.ok(resonanceSpanNotice({ profileStatus, returningUser: true }));
+    assert.equal(resonanceSpanNotice({ profileStatus, returningUser: true, acknowledged: true }), null);
+  }
+});
+
+test('"returning user" means prior app state, not the resonance keys themselves', () => {
+  assert.equal(isReturningUser([]), false);
+  assert.equal(isReturningUser(['vox:micDeviceId']), true);
+  assert.equal(isReturningUser(['vox:goalMode', 'unrelated']), true);
+  // The notice's own acknowledgement key and the profile key must not count as evidence that
+  // the app was used before — otherwise the first run after this change flags everyone, and
+  // writing the ack would itself make the user look "returning" forever.
+  assert.equal(isReturningUser([RESONANCE_NOTICE_KEY]), false);
+  assert.equal(isReturningUser([RESONANCE_PROFILE_KEY]), false);
+  assert.equal(isReturningUser([RESONANCE_NOTICE_KEY, RESONANCE_PROFILE_KEY]), false);
+  // Non-app keys from another site on the same origin are not evidence either.
+  assert.equal(isReturningUser(['theme', 'analytics_id']), false);
+  assert.equal(isReturningUser(new Set(['vox:speechGate'])), true);
+  assert.equal(isReturningUser(null), false);
+});
+
+test('an implausible measured excursion is capped, so one bad vowel cannot flatten the axis', () => {
+  const postures = { darker: [0.44], brighter: [0.50], habitual: [0.47] };
+  // A vowel whose formants were mis-tracked can inflate max-minus-min without bound. That does
+  // not rail the meter, it does the opposite — it widens the span until a real posture change
+  // moves nothing — so the allowance is capped.
+  const sane = spanFromPostures(postures, { vowelExcursion: 0.145 });
+  const absurd = spanFromPostures(postures, { vowelExcursion: 0.9 });
+  const cap = 4 * RESONANCE_ACROSS_VOWEL_HALF_EXCURSION;
+  assert.ok(absurd.max - absurd.min < sane.max - sane.min + cap,
+    'an absurd excursion must not widen the span without limit');
+  assert.ok(Math.abs(absurd.vowelAllowance - cap / 2) < 1e-9,
+    `allowance capped at ${cap / 2}, got ${absurd.vowelAllowance}`);
+  // A posture change must still move the meter meaningfully even at the cap.
+  const travel = resonanceControl(0.50, absurd) - resonanceControl(0.44, absurd);
+  assert.ok(travel > 0.1, `posture travel collapsed to ${(100 * travel).toFixed(0)}%`);
+  // And a plausible excursion is passed through untouched.
+  assert.ok(Math.abs(sane.vowelAllowance - 0.145 / 2) < 1e-9);
 });

@@ -1225,6 +1225,73 @@ the same stored rule disagrees with itself across the two metrics on up to **85.
 and after migration it fires **0** times until the user confirms it, with the threshold they
 typed preserved verbatim.
 
+**And the inventory was wrong in the other direction too — it missed the SPAN.** Found by a
+user, not by the plan: *"resonance is now reading darker than it should be."* The measurement
+was not at fault. Driven through the live analyzer, a sustained /i/ tracks to **ΔF 1236 Hz
+against a true 1238**, names the vowel on 100% of frames, and reads **45.6 points brighter** than
+the same speaker's running speech. What had changed was the axis underneath it.
+
+v1 learned a personal range **automatically**, after ~6 s of voicing, every session, with nothing
+to opt into. Phase 4 replaced that with a guided calibration that has to be run deliberately —
+and `resonanceControl` falls back to the POPULATION span until one exists. That span is the
+published adult range, so a speaker mid-transition is squeezed into its bottom third and reads 0
+below it: their whole session goes dark at once, exactly as this section's own note on the
+population axis predicted. `clearResonanceProfile()` drops a user there silently for a second
+reason as well — a stored profile refused for being on another metric version.
+
+§3.5 says *"migrated or re-prompted, never silently reinterpreted."* `migrateResonanceRules`
+did that for haptic thresholds. **The span had no such path**, and the only thing the app offered
+was a passive status line. v1's learned range was never persisted — it lived in memory and died
+with the tab — so there is nothing to migrate, which leaves re-prompting as the only option the
+rule allows. `resonanceSpanNotice()` now decides it, and two halves are asserted rather than
+assumed: a returning user with no calibration is told once and handed the flow, and a
+**first-time user is not told at all**, because nothing was reinterpreted for them and the
+population span is the honest default for a voice the app has never heard. A refused profile now
+names its reason instead of reading identically to never having calibrated.
+
+The lesson is the same one Phase 6 recorded about the untested port: **the migration inventory
+listed the state it knew about.** The span was created by the same phase that broke it, so it was
+never on the list.
+
+**And fixing that exposed a second defect immediately underneath it — the personal span had no
+across-vowel allowance.** The same user, having taken the advice above and calibrated, reported
+the voice-map firefly slamming into the left and right edges. `RESONANCE_POPULATION_SPAN` is
+built by extending each published mean outward by half the mean across-vowel excursion (0.0680),
+and its own comment gives the reason: *"so that a speaker sitting exactly at one population's
+mean does not rail when they produce that population's most extreme vowel."* `spanFromPostures`
+carried none of that. It sized the span from the POSTURE excursion and padded it by 5% — about
+0.3 points — while what pours through it is posture **plus vowel**, and vowel is the larger.
+
+Measured on the live analyzer, one speaker holding four vowels:
+
+| /i/ | /ɛ/ | /ɑ/ | /u/ | travel |
+|---|---|---|---|---|
+| 0.5470 | 0.4667 | 0.4555 | 0.4015 | **14.5 pts** |
+
+Pooling does not absorb it, because a sustained hold collapses the pooling window onto the vowel
+being held — the Phase 2 result — and holding a vowel is exactly what the voice map invites.
+Against spans of each width, how many of those rail:
+
+| span | width | railed |
+|---|---|---|
+| floored | 3.0 pts | 3 of 4 |
+| typical calibrated | 6.6 pts | **2 of 4** |
+| population (before calibrating) | 22.3 pts | 0 of 4 |
+
+**So calibrating made the display worse, which is the opposite of what calibration is for.** The
+fix takes the allowance from the speaker rather than from the literature: the guided vowel set
+already captures five held vowels for the LPC ceiling search, so `measureVowelSetExcursion()`
+replays those same segments at the chosen ceiling and returns this speaker's own excursion.
+Measured end to end, 14.5 pts from five vowels; the span goes 6.6 → 21.1 pts and railing 3/5 →
+**0/5**, with a deliberate posture change still travelling 28% of the meter. It falls back to the
+published 0.0680 when too few vowels survive — a worse number than the speaker's own, never a
+fabricated one.
+
+The pattern is worth naming, because it is now three for three: **each of these was a property
+one part of the system had and an adjacent part silently lacked.** The untested third port, the
+missing span migration, and now the missing across-vowel allowance — in every case the correct
+behaviour was already written down nearby, and nothing checked that the neighbour had it.
+
 **Vowel classification is a new failure mode.** A misclassified vowel produces a confidently
 wrong `f2Position`. It must degrade to "no F2 feature this frame" rather than guess — the same
 discipline applied to the centroid's fabricated F3.

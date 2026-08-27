@@ -107,6 +107,32 @@ export const RESONANCE_POPULATION_SPAN = Object.freeze({
 export const RESONANCE_POOLED_SCALE_SD_20DB = 0.0055;
 export const RESONANCE_CONTROL_MIN_SPAN = 5 * RESONANCE_POOLED_SCALE_SD_20DB;   // 0.0275
 
+// --- The across-vowel allowance -------------------------------------------------------------
+//
+// Half the mean within-speaker across-vowel excursion on the absolute axis. RESONANCE_POPULATION_SPAN
+// above is built by extending each published mean outward by exactly this, and its comment gives
+// the reason: "so that a speaker sitting exactly at one population's mean does not rail when they
+// produce that population's most extreme vowel."
+//
+// THE PERSONAL SPAN DID NOT HAVE IT, AND THAT WAS A BUG. Found by a user, immediately after they
+// took this app's own advice to calibrate: the voice-map firefly began slamming into the left and
+// right edges. spanFromPostures sized the span from the POSTURE excursion alone and padded it by
+// 5% of that — about 0.3 points — while the value poured through it moves far more than that from
+// vowel identity alone. Measured on the live analyzer, one speaker holding four vowels in turn:
+//
+//   /i/ 0.5470   /ɛ/ 0.4667   /ɑ/ 0.4555   /u/ 0.4015     -> 14.5 points of travel
+//
+// Pooling does not save it, because a SUSTAINED hold collapses the pooling window onto the one
+// vowel being held (the Phase 2 finding), and holding a vowel is exactly what the voice map
+// invites. Against spans of each width, how many of those four rail:
+//
+//   floored span      3.0 pts   3 of 4 rail
+//   typical span      6.6 pts   2 of 4 rail      <- what calibration produced
+//   population span  22.3 pts   0 of 4 rail      <- what they had BEFORE calibrating
+//
+// So calibrating made the display worse, which is the opposite of what calibration is for.
+export const RESONANCE_ACROSS_VOWEL_HALF_EXCURSION = 0.0680;
+
 // --- resonanceControl ---------------------------------------------------------------------
 //
 // Returns null, not 0, when there is nothing to report. A suppressed frame has no absolute
@@ -128,7 +154,16 @@ export function resonanceControl(absolute, span = RESONANCE_POPULATION_SPAN) {
 // recorded so a later session can tell "the user's range moved" from "the user is having a
 // dark day", and so the span can be sanity-checked (a habitual posture outside the two extremes
 // means the extremes were not extremes).
-export function spanFromPostures(postures, { minSpread = RESONANCE_CONTROL_MIN_SPAN, pad = 0.05 } = {}) {
+// `vowelExcursion` is THIS SPEAKER's measured across-vowel travel on the absolute axis, from the
+// vowel-set holds the calibration already captures for the ceiling search. Passing it makes the
+// allowance personal rather than published, which matters because the excursion is a property of
+// the speaker's own vowel space: a 14.5-point speaker and a 22-point speaker need different room.
+// It falls back to the published half-excursion when the measurement is unavailable — that is
+// still the population span's own construction, and still far better than the 5% pad this
+// replaced.
+export function spanFromPostures(postures, {
+  minSpread = RESONANCE_CONTROL_MIN_SPAN, pad = 0.05, vowelExcursion = null,
+} = {}) {
   const med = (xs) => {
     const s = (Array.isArray(xs) ? xs : []).filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
     if (!s.length) return null;
@@ -147,11 +182,30 @@ export function spanFromPostures(postures, { minSpread = RESONANCE_CONTROL_MIN_S
   const spread = Math.max(minSpread, observed);
   const mid = (lo + hi) / 2;
   const half = spread / 2;
+  // The span has to hold two different things at once: the posture range the user demonstrated,
+  // and the vowel-driven movement that will pour through it while they simply speak. `spread`
+  // covers the first. `allowance` covers the second, and without it the meter rails on ordinary
+  // vowels — see RESONANCE_ACROSS_VOWEL_HALF_EXCURSION for the measurement that caused it.
+  // A measured excursion is max-minus-min over a handful of held vowels, which is robust within
+  // each vowel (its own median) but NOT robust to one vowel whose formants were mis-tracked
+  // outright. An inflated excursion does not rail the meter — it does the opposite, flattening
+  // the axis until nothing moves — so it is capped rather than trusted without limit. Twice the
+  // published excursion is the bound: wider than any speaker measured here, and narrow enough
+  // that one bad vowel cannot take the ball's travel away.
+  const measured = Number.isFinite(vowelExcursion) && vowelExcursion > 0;
+  const allowance = measured
+    ? Math.min(vowelExcursion, 4 * RESONANCE_ACROSS_VOWEL_HALF_EXCURSION) / 2
+    : RESONANCE_ACROSS_VOWEL_HALF_EXCURSION;
+  // The 5% pad stays on top of the allowance. It is a different job: a hair of headroom so a
+  // posture reproduced slightly harder than it was calibrated does not sit exactly on the rail.
   return {
-    min: Math.max(0, mid - half - spread * pad),
-    max: Math.min(1, mid + half + spread * pad),
+    min: Math.max(0, mid - half - allowance - spread * pad),
+    max: Math.min(1, mid + half + allowance + spread * pad),
     habitual,
     observedSpread: observed,
+    vowelExcursion: measured ? vowelExcursion : null,
+    vowelAllowance: allowance,
+    vowelAllowanceSource: measured ? 'measured' : 'published',
     // True when the floor did the work rather than the speaker — the span is real but it is the
     // minimum one, and the UI should say the postures were close together rather than pretend
     // a wide range was demonstrated.
@@ -199,6 +253,10 @@ export function makeResonanceProfile({
     spreadFloored: span ? span.spreadFloored === true : false,
     habitualAbsolute: span && Number.isFinite(span.habitual) ? span.habitual : null,
     observedSpread: span && Number.isFinite(span.observedSpread) ? span.observedSpread : null,
+    // Kept for the same reason observedSpread is: a later calibration can tell "this speaker's
+    // vowel space widened" from "the measurement failed and we used the published figure".
+    vowelExcursion: span && Number.isFinite(span.vowelExcursion) ? span.vowelExcursion : null,
+    vowelAllowanceSource: span ? (span.vowelAllowanceSource || null) : null,
     ceilingHz: Number.isFinite(ceilingHz) ? ceilingHz : null,
     calibratedAt: calibratedAt || null,
     postureSamples: postureSamples || null,
@@ -220,7 +278,8 @@ export function serializeResonanceProfile(profile) {
   return JSON.stringify(makeResonanceProfile({
     span: profile && profile.span
       ? { ...profile.span, source: profile.spanSource, spreadFloored: profile.spreadFloored,
-          habitual: profile.habitualAbsolute, observedSpread: profile.observedSpread }
+          habitual: profile.habitualAbsolute, observedSpread: profile.observedSpread,
+          vowelExcursion: profile.vowelExcursion, vowelAllowanceSource: profile.vowelAllowanceSource }
       : null,
     ceilingHz: profile && profile.ceilingHz,
     calibratedAt: profile && profile.calibratedAt,
@@ -262,6 +321,8 @@ export function parseResonanceProfile(raw) {
         spreadFloored: value.spreadFloored === true,
         habitual: Number.isFinite(value.habitualAbsolute) ? value.habitualAbsolute : null,
         observedSpread: Number.isFinite(value.observedSpread) ? value.observedSpread : null,
+        vowelExcursion: Number.isFinite(value.vowelExcursion) ? value.vowelExcursion : null,
+        vowelAllowanceSource: value.vowelAllowanceSource || null,
       },
       ceilingHz: value.ceilingHz,
       calibratedAt: value.calibratedAt,
@@ -381,4 +442,96 @@ export function confirmResonanceRule(rule, { metricVersion = RESONANCE_METRIC_VE
   delete next.suspendedReason;
   if (Number.isFinite(threshold)) next.threshold = threshold;
   return next;
+}
+
+// ============================================================================
+// TELLING THE USER THE AXIS MOVED (§3.5)
+//
+// §3.5: "Threshold-based rules and hardware calibration are migrated or re-prompted, never
+// silently reinterpreted." `migrateResonanceRules` above does that for haptic rules. THE SPAN
+// ITSELF HAD NO SUCH PATH, and that is the gap this closes.
+//
+// The gap, reported by a user and reproduced: v1 learned a personal range AUTOMATICALLY after
+// ~6 s of voicing, every session, with no calibration step and nothing to opt into. Phase 4
+// replaced that with a guided calibration that has to be run deliberately, and offered no
+// migration — so an existing user who simply updated landed on the POPULATION span without
+// being told. That span is the published adult range, so a speaker mid-transition is squeezed
+// into its bottom third and reads 0 below it. Their whole session goes dark at once.
+//
+// The measurement is not wrong in that state and this does not change it. What was wrong is
+// that nobody said so. The only thing the app offered was a passive status line.
+//
+// This is deliberately NOT shown to a first-time user: nothing was reinterpreted for them, the
+// population span is the honest default for a voice the app has never heard, and onboarding
+// already covers calibration. The notice exists for people whose numbers MOVED.
+export const RESONANCE_NOTICE_KEY = 'vox:resonance:spanNoticeAck:v1';
+
+// Parse reasons that mean "a profile was there and could not be used". Distinguished from
+// 'absent' because they are different messages: one is "your calibration was refused", the
+// other is "you never made one".
+const PROFILE_REFUSED_REASONS = new Set([
+  'metric-version-older', 'metric-version-newer', 'span-unusable', 'unparseable', 'not-an-object',
+]);
+
+// Evidence that this install has been used before. Any one of these keys means the app has
+// held a setting for this person, which is the closest thing available to "you had a range
+// under the old metric" — v1's learned range itself was never persisted (it lived in memory and
+// died with the tab), so it cannot be detected directly and cannot be migrated. That is why the
+// notice asks for a one-time calibration rather than converting anything.
+//
+// THIS SIGNAL IS DELIBERATELY IMPRECISE, and the imprecision runs one way on purpose. Every key
+// it looks at is written on a user ACTION (picking a mic, a colour mode, a goal), so a genuinely
+// new user who changes one setting looks "returning" on their next load. Perfect detection is
+// impossible — a v1 user who never set a haptic rule left no resonance state at all — so the
+// choice is which error to make. A false positive shows a calibration prompt to someone who has
+// not calibrated, which is true and useful for them; a false negative is the reported bug, a
+// user whose numbers moved and who was never told. The notice's wording is therefore written to
+// be accurate for BOTH audiences rather than asserting a history the reader may not have.
+export function isReturningUser(storedKeys) {
+  const keys = storedKeys instanceof Set ? storedKeys : new Set(Array.isArray(storedKeys) ? storedKeys : []);
+  for (const k of keys) {
+    if (typeof k !== 'string') continue;
+    if (k === RESONANCE_NOTICE_KEY || k === RESONANCE_PROFILE_KEY) continue;  // not evidence of prior USE
+    if (k.startsWith('vox:')) return true;
+  }
+  return false;
+}
+
+// Returns null when there is nothing to say, or one notice. Pure: the caller supplies what it
+// read from storage and does the rendering, so the decision is testable without a DOM.
+export function resonanceSpanNotice({
+  profileStatus = 'absent', returningUser = false, acknowledged = false,
+} = {}) {
+  if (acknowledged) return null;
+  if (profileStatus === 'ok' || profileStatus === 'unwritable') return null;
+
+  if (PROFILE_REFUSED_REASONS.has(profileStatus)) {
+    const versioned = profileStatus === 'metric-version-older' || profileStatus === 'metric-version-newer';
+    return {
+      kind: 'refused',
+      reason: profileStatus,
+      title: 'Your saved resonance range could not be used',
+      body: versioned
+        ? 'It was calibrated on an older version of the resonance measurement, so applying it '
+          + 'would point the ring at a different vocal target. You are on the typical adult '
+          + 'range until you set yours up again.'
+        : 'The saved calibration could not be read, so you are on the typical adult range. '
+          + 'Setting it up again takes about a minute.',
+      action: 'Set up my range',
+    };
+  }
+
+  if (profileStatus === 'absent' && returningUser) {
+    return {
+      kind: 'never-calibrated',
+      reason: 'absent',
+      title: 'The ring is using the typical adult range, not yours',
+      body: 'It has not been calibrated to your voice, so readings can sit lower and travel less '
+        + 'than they should — the published range covers all adult speakers, not your own. If you '
+        + 'used an earlier version, it learned your range automatically each session; this one '
+        + 'asks once. The setup takes about a minute.',
+      action: 'Set up my range',
+    };
+  }
+  return null;
 }

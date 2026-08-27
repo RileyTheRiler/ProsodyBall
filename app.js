@@ -5,6 +5,7 @@ import {
   resonanceControl, spanFromPostures, makeResonanceProfile, serializeResonanceProfile,
   parseResonanceProfile, spanIdFor, makeReading, aggregateReadings,
   migrateResonanceRules, ruleMayFire, confirmResonanceRule,
+  resonanceSpanNotice, isReturningUser, RESONANCE_NOTICE_KEY,
 } from './resonance-metric.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { SpeechGate } from './speech-gate.js';
@@ -1062,7 +1063,10 @@ export class VoiceAnalyzer {
   // array of the live `resonanceAbsolute` readings collected during that posture's hold.
   // Suppressed frames contribute nothing — they are not readings — so the caller filters nulls
   // rather than pushing zeros, and `minSamples` is what stops a span being fitted to two frames.
-  applyVowelSetCalibration({ postures, ceilingHz = null, phraseAbsolute = null, at = null, minSamples = 8 } = {}) {
+  applyVowelSetCalibration({
+    postures, ceilingHz = null, phraseAbsolute = null, at = null, minSamples = 8,
+    vowelExcursion = null,
+  } = {}) {
     const counts = {
       habitual: (postures?.habitual || []).length,
       brighter: (postures?.brighter || []).length,
@@ -1071,7 +1075,11 @@ export class VoiceAnalyzer {
     if (counts.brighter < minSamples || counts.darker < minSamples) {
       return { ok: false, reason: 'insufficient-samples', counts };
     }
-    const span = spanFromPostures(postures);
+    // The postures set where the span sits and how much of it a deliberate change traverses;
+    // `vowelExcursion` sets how much room is left over for the vowels the speaker will actually
+    // produce. Passing this speaker's own measured excursion is what stops the meter railing on
+    // ordinary speech — see measureVowelSetExcursion and RESONANCE_ACROSS_VOWEL_HALF_EXCURSION.
+    const span = spanFromPostures(postures, { vowelExcursion });
     if (!span) return { ok: false, reason: 'no-span', counts };
     const profile = makeResonanceProfile({
       span,
@@ -3154,6 +3162,72 @@ export class VoiceAnalyzer {
     return chosen;
   }
 
+  // How far THIS speaker's vowels move the absolute axis, measured from the guided vowel-set
+  // holds the calibration already captures for the ceiling search. No extra prompts, no extra
+  // audio: the same segments, replayed once more.
+  //
+  // WHY THE SPAN NEEDS THIS. A calibrated span is built from the speaker's POSTURE range, but
+  // what pours through it while they use the app is posture PLUS vowel, and vowel is the bigger
+  // of the two — measured live, holding four vowels moves one speaker 14.5 points where a
+  // GAVT-sized posture change moves 6. Without an allowance for it the meter rails on ordinary
+  // speech, which is the bug a user hit the moment they took this app's advice and calibrated.
+  // RESONANCE_POPULATION_SPAN has always carried exactly this allowance; the personal span did
+  // not. See RESONANCE_ACROSS_VOWEL_HALF_EXCURSION in resonance-metric.js.
+  //
+  // MUST RUN AFTER calibrateLpcCeiling, for the same reason the postures do: measuring on a
+  // ceiling that is about to change measures the wrong analysis. Each segment is ONE held vowel,
+  // so its own median IS its pooled value — that is the Phase 2 result that a sustained hold
+  // collapses the pooling window onto the vowel being held, which is why holds rail in the first
+  // place and why they are the right thing to measure here.
+  //
+  // Returns null rather than a guess when there is too little to measure. spanFromPostures then
+  // falls back to the published half-excursion, which is still the population span's own
+  // construction — a worse number than the speaker's own, but never a fabricated one.
+  measureVowelSetExcursion(segments, { minVowels = 3, minFramesPerVowel = 6 } = {}) {
+    const segs = Array.isArray(segments) && segments.length && Array.isArray(segments[0])
+      ? segments : [segments];
+    if (!segs.length) return null;
+    const saved = this.timeDomainData;
+    const perVowel = [];
+    for (const seg of segs) {
+      if (!Array.isArray(seg) || !seg.length) continue;
+      // Same continuity + ageing discipline the ceiling search and the live path use, so the
+      // formants this reads are the formants the app would have read.
+      const ref = [0, 0, 0, 0];
+      const refAge = [Infinity, Infinity, Infinity, Infinity];
+      const deltas = [];
+      for (const frame of seg) {
+        this.timeDomainData = frame;
+        const r = this._resonanceLPC({ ceilingHz: this.lpcCeilingHz || LPC_DEFAULT_CEILING_HZ });
+        const m = (r && r.measured) || [0, 0, 0, 0];
+        const v = frameValidity(m, {
+          bandwidths: r.bandwidths, previous: ref, previousAgeFrames: refAge,
+          residual: r.modelResidual,
+        });
+        if (v.failed.length === 0) {
+          for (let i = 0; i < 4; i++) {
+            if (v.accepted[i] > 0) { ref[i] = v.accepted[i]; refAge[i] = 0; }
+          }
+        }
+        for (let i = 0; i < 4; i++) {
+          if (++refAge[i] > FORMANT_STALE_FRAMES) ref[i] = 0;
+        }
+        // Only frames the app would have believed. A rejected frame is not a quieter vote here,
+        // it is no vote — the same rule the displayed value follows.
+        if (!v.valid) continue;
+        const fit = fitFormantScale(v.accepted);
+        if (fit.deltaF > 0) deltas.push(fit.deltaF);
+      }
+      if (deltas.length < minFramesPerVowel) continue;
+      deltas.sort((a, b) => a - b);
+      perVowel.push(resonanceAbsoluteV2(deltas[Math.floor(deltas.length / 2)]));
+    }
+    this.timeDomainData = saved;
+    if (perVowel.length < minVowels) return null;
+    const excursion = Math.max(...perVowel) - Math.min(...perVowel);
+    return { excursion, perVowel, vowels: perVowel.length };
+  }
+
   // The low-rate background re-check §5 asks for. One alternate ceiling, visited round-robin,
   // once every CEILING_RECHECK_PERIOD_FRAMES — 1/900th of an LPC solve per frame amortised,
   // against the per-frame multi-solve §3.4 rules out. It accumulates evidence over many
@@ -3877,6 +3951,31 @@ export class VoxBallGame {
       if (parsed.profile) this.analyzer.applyResonanceProfile(parsed.profile);
     } catch {
       // Same as above: an unreadable store is not a reason to fail to start.
+    }
+
+    // §3.5's re-prompt, for the SPAN. `migrateResonanceRules` above already does this for
+    // haptic thresholds; the span itself had no such path, and a user found the hole: v1 learned
+    // a personal range AUTOMATICALLY after ~6 s of voicing, every session, with nothing to opt
+    // into. Phase 4 replaced that with a calibration that must be run deliberately and offered
+    // no migration, so anyone who simply updated landed on the population span — which squeezes
+    // a mid-transition voice into its bottom third and reads 0 below it — and was told only by a
+    // passive status line. The measurement is right in that state; nobody had said it changed.
+    //
+    // v1's learned range was never persisted (it lived in memory and died with the tab), so
+    // there is nothing to convert. The remedy is a one-time calibration, and this asks for it.
+    this.resonanceSpanNotice = null;
+    this.resonanceSpanNoticeDismissed = false;
+    try {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
+      this.resonanceSpanNotice = resonanceSpanNotice({
+        profileStatus: this.resonanceProfileStatus,
+        returningUser: isReturningUser(keys),
+        acknowledged: localStorage.getItem(RESONANCE_NOTICE_KEY) === '1',
+      });
+    } catch {
+      // No storage means no evidence the app was used before, so no notice. A first run in a
+      // private window is exactly the case that must not be nagged.
     }
 
     // ====== SESSION STATS ======
@@ -5792,6 +5891,7 @@ export class VoxBallGame {
         tiltProfileLearned.textContent = this._formatAdaptiveStatus(this.analyzer.tiltProfile,
           (t) => `${t.min.toFixed(1)} to ${t.max.toFixed(1)} dB learned`);
       }
+      this._renderResonanceSpanNotice();
       if (resonanceProfileLearned) {
         resonanceProfileLearned.textContent = this._resonanceSpanStatus();
       }
@@ -7455,6 +7555,9 @@ export class VoxBallGame {
           try {
             localStorage.setItem(RESONANCE_PROFILE_KEY, serializeResonanceProfile(profile));
             this.resonanceProfileStatus = 'ok';
+            // They are on their own range now, so the notice has nothing left to say.
+            this.resonanceSpanNotice = null;
+            this._acknowledgeResonanceSpanNotice();
           } catch {
             // An unwritable store means the span is live for this session and gone on reload.
             // That is the pre-Phase-4 behaviour, so it degrades to what the app already did.
@@ -8964,11 +9067,83 @@ export class VoxBallGame {
   // detail" applies to a status string as much as to a second meter.
   _resonanceSpanStatus() {
     const p = this.analyzer.resonanceProfileV2;
-    if (!p) return 'Typical adult range — calibrate to use your own';
-    const width = Math.round((p.span.max - p.span.min) * 100);
+    if (!p) {
+      // A refused profile used to read exactly like never having calibrated. They are different
+      // facts and only one of them is the user's fault, so say which happened (§3.5: refusals
+      // are re-prompted, not silently absorbed).
+      switch (this.resonanceProfileStatus) {
+        case 'metric-version-older':
+        case 'metric-version-newer':
+          return 'Typical adult range — your saved range was calibrated on an older measurement';
+        case 'span-unusable':
+        case 'unparseable':
+        case 'not-an-object':
+          return 'Typical adult range — your saved range could not be read';
+        case 'unwritable':
+          return 'Your range (this session only — it could not be saved)';
+        default:
+          return 'Typical adult range — calibrate to use your own';
+      }
+    }
+    // Report the range the USER demonstrated, not the span's total width. Since the span gained
+    // the across-vowel allowance those are different numbers, and the span's width is not a fact
+    // about the speaker — it is posture plus the room left for their vowels. Quoting it here
+    // would tell someone their postures spanned 21 points when they spanned 6.
+    const demonstrated = Number.isFinite(p.observedSpread)
+      ? Math.round(p.observedSpread * 100)
+      : Math.round((p.span.max - p.span.min) * 100);
     return p.spreadFloored
-      ? `Your range (narrow — ${width} pts; try wider postures)`
-      : `Your range (${width} pts wide)`;
+      ? `Your range (narrow — ${demonstrated} pts; try wider postures)`
+      : `Your range (${demonstrated} pts wide)`;
+  }
+
+  // Render (or clear) the one-time span notice. Mirrors the suspended-rule notice in the
+  // vibration panel: the fact, the reason, and one button that fixes it.
+  _renderResonanceSpanNotice() {
+    const host = document.getElementById('resonanceSpanNotice');
+    if (!host) return;
+    const notice = this.resonanceSpanNoticeDismissed ? null : this.resonanceSpanNotice;
+    host.replaceChildren();
+    if (!notice) { host.hidden = true; return; }
+    host.hidden = false;
+
+    const title = document.createElement('strong');
+    title.textContent = notice.title;
+    title.style.cssText = 'display:block;margin-bottom:3px';
+    const body = document.createElement('span');
+    body.textContent = notice.body;
+    body.style.cssText = 'display:block;margin-bottom:6px';
+
+    const act = document.createElement('button');
+    act.type = 'button';
+    act.className = 'btn btn-help';
+    act.textContent = notice.action;
+    act.style.cssText = 'font-size:0.66rem;padding:4px 10px;margin-right:6px';
+    act.addEventListener('click', () => {
+      this._acknowledgeResonanceSpanNotice();
+      // Hand straight to the guided flow rather than telling them where to find it.
+      document.getElementById('guidedResonanceBtn')?.click();
+    });
+
+    const later = document.createElement('button');
+    later.type = 'button';
+    later.className = 'btn btn-help';
+    later.textContent = 'Not now';
+    later.style.cssText = 'font-size:0.66rem;padding:4px 10px';
+    later.addEventListener('click', () => {
+      this._acknowledgeResonanceSpanNotice();
+      this._renderResonanceSpanNotice();
+    });
+
+    host.append(title, body, act, later);
+  }
+
+  // Once acknowledged, never again — on either button. "Not now" still counts: the user has
+  // been told, and re-asking every load is nagging rather than informing. The status line
+  // above keeps saying which range they are on, which is where a reminder belongs.
+  _acknowledgeResonanceSpanNotice() {
+    this.resonanceSpanNoticeDismissed = true;
+    try { localStorage.setItem(RESONANCE_NOTICE_KEY, '1'); } catch { /* session-only is fine */ }
   }
 
   _formatAdaptiveStatus(profile, learnedFormatter) {
