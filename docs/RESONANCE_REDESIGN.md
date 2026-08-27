@@ -1225,6 +1225,34 @@ the same stored rule disagrees with itself across the two metrics on up to **85.
 and after migration it fires **0** times until the user confirms it, with the threshold they
 typed preserved verbatim.
 
+**And the inventory was wrong in the other direction too — it missed the SPAN.** Found by a
+user, not by the plan: *"resonance is now reading darker than it should be."* The measurement
+was not at fault. Driven through the live analyzer, a sustained /i/ tracks to **ΔF 1236 Hz
+against a true 1238**, names the vowel on 100% of frames, and reads **45.6 points brighter** than
+the same speaker's running speech. What had changed was the axis underneath it.
+
+v1 learned a personal range **automatically**, after ~6 s of voicing, every session, with nothing
+to opt into. Phase 4 replaced that with a guided calibration that has to be run deliberately —
+and `resonanceControl` falls back to the POPULATION span until one exists. That span is the
+published adult range, so a speaker mid-transition is squeezed into its bottom third and reads 0
+below it: their whole session goes dark at once, exactly as this section's own note on the
+population axis predicted. `clearResonanceProfile()` drops a user there silently for a second
+reason as well — a stored profile refused for being on another metric version.
+
+§3.5 says *"migrated or re-prompted, never silently reinterpreted."* `migrateResonanceRules`
+did that for haptic thresholds. **The span had no such path**, and the only thing the app offered
+was a passive status line. v1's learned range was never persisted — it lived in memory and died
+with the tab — so there is nothing to migrate, which leaves re-prompting as the only option the
+rule allows. `resonanceSpanNotice()` now decides it, and two halves are asserted rather than
+assumed: a returning user with no calibration is told once and handed the flow, and a
+**first-time user is not told at all**, because nothing was reinterpreted for them and the
+population span is the honest default for a voice the app has never heard. A refused profile now
+names its reason instead of reading identically to never having calibrated.
+
+The lesson is the same one Phase 6 recorded about the untested port: **the migration inventory
+listed the state it knew about.** The span was created by the same phase that broke it, so it was
+never on the list.
+
 **Vowel classification is a new failure mode.** A misclassified vowel produces a confidently
 wrong `f2Position`. It must degrade to "no F2 feature this frame" rather than guess — the same
 discipline applied to the centroid's fabricated F3.

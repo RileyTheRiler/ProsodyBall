@@ -382,3 +382,95 @@ export function confirmResonanceRule(rule, { metricVersion = RESONANCE_METRIC_VE
   if (Number.isFinite(threshold)) next.threshold = threshold;
   return next;
 }
+
+// ============================================================================
+// TELLING THE USER THE AXIS MOVED (§3.5)
+//
+// §3.5: "Threshold-based rules and hardware calibration are migrated or re-prompted, never
+// silently reinterpreted." `migrateResonanceRules` above does that for haptic rules. THE SPAN
+// ITSELF HAD NO SUCH PATH, and that is the gap this closes.
+//
+// The gap, reported by a user and reproduced: v1 learned a personal range AUTOMATICALLY after
+// ~6 s of voicing, every session, with no calibration step and nothing to opt into. Phase 4
+// replaced that with a guided calibration that has to be run deliberately, and offered no
+// migration — so an existing user who simply updated landed on the POPULATION span without
+// being told. That span is the published adult range, so a speaker mid-transition is squeezed
+// into its bottom third and reads 0 below it. Their whole session goes dark at once.
+//
+// The measurement is not wrong in that state and this does not change it. What was wrong is
+// that nobody said so. The only thing the app offered was a passive status line.
+//
+// This is deliberately NOT shown to a first-time user: nothing was reinterpreted for them, the
+// population span is the honest default for a voice the app has never heard, and onboarding
+// already covers calibration. The notice exists for people whose numbers MOVED.
+export const RESONANCE_NOTICE_KEY = 'vox:resonance:spanNoticeAck:v1';
+
+// Parse reasons that mean "a profile was there and could not be used". Distinguished from
+// 'absent' because they are different messages: one is "your calibration was refused", the
+// other is "you never made one".
+const PROFILE_REFUSED_REASONS = new Set([
+  'metric-version-older', 'metric-version-newer', 'span-unusable', 'unparseable', 'not-an-object',
+]);
+
+// Evidence that this install has been used before. Any one of these keys means the app has
+// held a setting for this person, which is the closest thing available to "you had a range
+// under the old metric" — v1's learned range itself was never persisted (it lived in memory and
+// died with the tab), so it cannot be detected directly and cannot be migrated. That is why the
+// notice asks for a one-time calibration rather than converting anything.
+//
+// THIS SIGNAL IS DELIBERATELY IMPRECISE, and the imprecision runs one way on purpose. Every key
+// it looks at is written on a user ACTION (picking a mic, a colour mode, a goal), so a genuinely
+// new user who changes one setting looks "returning" on their next load. Perfect detection is
+// impossible — a v1 user who never set a haptic rule left no resonance state at all — so the
+// choice is which error to make. A false positive shows a calibration prompt to someone who has
+// not calibrated, which is true and useful for them; a false negative is the reported bug, a
+// user whose numbers moved and who was never told. The notice's wording is therefore written to
+// be accurate for BOTH audiences rather than asserting a history the reader may not have.
+export function isReturningUser(storedKeys) {
+  const keys = storedKeys instanceof Set ? storedKeys : new Set(Array.isArray(storedKeys) ? storedKeys : []);
+  for (const k of keys) {
+    if (typeof k !== 'string') continue;
+    if (k === RESONANCE_NOTICE_KEY || k === RESONANCE_PROFILE_KEY) continue;  // not evidence of prior USE
+    if (k.startsWith('vox:')) return true;
+  }
+  return false;
+}
+
+// Returns null when there is nothing to say, or one notice. Pure: the caller supplies what it
+// read from storage and does the rendering, so the decision is testable without a DOM.
+export function resonanceSpanNotice({
+  profileStatus = 'absent', returningUser = false, acknowledged = false,
+} = {}) {
+  if (acknowledged) return null;
+  if (profileStatus === 'ok' || profileStatus === 'unwritable') return null;
+
+  if (PROFILE_REFUSED_REASONS.has(profileStatus)) {
+    const versioned = profileStatus === 'metric-version-older' || profileStatus === 'metric-version-newer';
+    return {
+      kind: 'refused',
+      reason: profileStatus,
+      title: 'Your saved resonance range could not be used',
+      body: versioned
+        ? 'It was calibrated on an older version of the resonance measurement, so applying it '
+          + 'would point the ring at a different vocal target. You are on the typical adult '
+          + 'range until you set yours up again.'
+        : 'The saved calibration could not be read, so you are on the typical adult range. '
+          + 'Setting it up again takes about a minute.',
+      action: 'Set up my range',
+    };
+  }
+
+  if (profileStatus === 'absent' && returningUser) {
+    return {
+      kind: 'never-calibrated',
+      reason: 'absent',
+      title: 'The ring is using the typical adult range, not yours',
+      body: 'It has not been calibrated to your voice, so readings can sit lower and travel less '
+        + 'than they should — the published range covers all adult speakers, not your own. If you '
+        + 'used an earlier version, it learned your range automatically each session; this one '
+        + 'asks once. The setup takes about a minute.',
+      action: 'Set up my range',
+    };
+  }
+  return null;
+}

@@ -5,6 +5,7 @@ import {
   resonanceControl, spanFromPostures, makeResonanceProfile, serializeResonanceProfile,
   parseResonanceProfile, spanIdFor, makeReading, aggregateReadings,
   migrateResonanceRules, ruleMayFire, confirmResonanceRule,
+  resonanceSpanNotice, isReturningUser, RESONANCE_NOTICE_KEY,
 } from './resonance-metric.js';
 import { SNR_VOICE_BAND_LO_HZ, SNR_VOICE_BAND_HI_HZ, YIN_THRESHOLD, PITCH_CONFIDENCE_FACTOR } from './dsp-constants.generated.js';
 import { SpeechGate } from './speech-gate.js';
@@ -3879,6 +3880,31 @@ export class VoxBallGame {
       // Same as above: an unreadable store is not a reason to fail to start.
     }
 
+    // §3.5's re-prompt, for the SPAN. `migrateResonanceRules` above already does this for
+    // haptic thresholds; the span itself had no such path, and a user found the hole: v1 learned
+    // a personal range AUTOMATICALLY after ~6 s of voicing, every session, with nothing to opt
+    // into. Phase 4 replaced that with a calibration that must be run deliberately and offered
+    // no migration, so anyone who simply updated landed on the population span — which squeezes
+    // a mid-transition voice into its bottom third and reads 0 below it — and was told only by a
+    // passive status line. The measurement is right in that state; nobody had said it changed.
+    //
+    // v1's learned range was never persisted (it lived in memory and died with the tab), so
+    // there is nothing to convert. The remedy is a one-time calibration, and this asks for it.
+    this.resonanceSpanNotice = null;
+    this.resonanceSpanNoticeDismissed = false;
+    try {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
+      this.resonanceSpanNotice = resonanceSpanNotice({
+        profileStatus: this.resonanceProfileStatus,
+        returningUser: isReturningUser(keys),
+        acknowledged: localStorage.getItem(RESONANCE_NOTICE_KEY) === '1',
+      });
+    } catch {
+      // No storage means no evidence the app was used before, so no notice. A first run in a
+      // private window is exactly the case that must not be nagged.
+    }
+
     // ====== SESSION STATS ======
     this.session = {
       startTime: 0,
@@ -5792,6 +5818,7 @@ export class VoxBallGame {
         tiltProfileLearned.textContent = this._formatAdaptiveStatus(this.analyzer.tiltProfile,
           (t) => `${t.min.toFixed(1)} to ${t.max.toFixed(1)} dB learned`);
       }
+      this._renderResonanceSpanNotice();
       if (resonanceProfileLearned) {
         resonanceProfileLearned.textContent = this._resonanceSpanStatus();
       }
@@ -7455,6 +7482,9 @@ export class VoxBallGame {
           try {
             localStorage.setItem(RESONANCE_PROFILE_KEY, serializeResonanceProfile(profile));
             this.resonanceProfileStatus = 'ok';
+            // They are on their own range now, so the notice has nothing left to say.
+            this.resonanceSpanNotice = null;
+            this._acknowledgeResonanceSpanNotice();
           } catch {
             // An unwritable store means the span is live for this session and gone on reload.
             // That is the pre-Phase-4 behaviour, so it degrades to what the app already did.
@@ -8964,11 +8994,77 @@ export class VoxBallGame {
   // detail" applies to a status string as much as to a second meter.
   _resonanceSpanStatus() {
     const p = this.analyzer.resonanceProfileV2;
-    if (!p) return 'Typical adult range — calibrate to use your own';
+    if (!p) {
+      // A refused profile used to read exactly like never having calibrated. They are different
+      // facts and only one of them is the user's fault, so say which happened (§3.5: refusals
+      // are re-prompted, not silently absorbed).
+      switch (this.resonanceProfileStatus) {
+        case 'metric-version-older':
+        case 'metric-version-newer':
+          return 'Typical adult range — your saved range was calibrated on an older measurement';
+        case 'span-unusable':
+        case 'unparseable':
+        case 'not-an-object':
+          return 'Typical adult range — your saved range could not be read';
+        case 'unwritable':
+          return 'Your range (this session only — it could not be saved)';
+        default:
+          return 'Typical adult range — calibrate to use your own';
+      }
+    }
     const width = Math.round((p.span.max - p.span.min) * 100);
     return p.spreadFloored
       ? `Your range (narrow — ${width} pts; try wider postures)`
       : `Your range (${width} pts wide)`;
+  }
+
+  // Render (or clear) the one-time span notice. Mirrors the suspended-rule notice in the
+  // vibration panel: the fact, the reason, and one button that fixes it.
+  _renderResonanceSpanNotice() {
+    const host = document.getElementById('resonanceSpanNotice');
+    if (!host) return;
+    const notice = this.resonanceSpanNoticeDismissed ? null : this.resonanceSpanNotice;
+    host.replaceChildren();
+    if (!notice) { host.hidden = true; return; }
+    host.hidden = false;
+
+    const title = document.createElement('strong');
+    title.textContent = notice.title;
+    title.style.cssText = 'display:block;margin-bottom:3px';
+    const body = document.createElement('span');
+    body.textContent = notice.body;
+    body.style.cssText = 'display:block;margin-bottom:6px';
+
+    const act = document.createElement('button');
+    act.type = 'button';
+    act.className = 'btn btn-help';
+    act.textContent = notice.action;
+    act.style.cssText = 'font-size:0.66rem;padding:4px 10px;margin-right:6px';
+    act.addEventListener('click', () => {
+      this._acknowledgeResonanceSpanNotice();
+      // Hand straight to the guided flow rather than telling them where to find it.
+      document.getElementById('guidedResonanceBtn')?.click();
+    });
+
+    const later = document.createElement('button');
+    later.type = 'button';
+    later.className = 'btn btn-help';
+    later.textContent = 'Not now';
+    later.style.cssText = 'font-size:0.66rem;padding:4px 10px';
+    later.addEventListener('click', () => {
+      this._acknowledgeResonanceSpanNotice();
+      this._renderResonanceSpanNotice();
+    });
+
+    host.append(title, body, act, later);
+  }
+
+  // Once acknowledged, never again — on either button. "Not now" still counts: the user has
+  // been told, and re-asking every load is nagging rather than informing. The status line
+  // above keeps saying which range they are on, which is where a reminder belongs.
+  _acknowledgeResonanceSpanNotice() {
+    this.resonanceSpanNoticeDismissed = true;
+    try { localStorage.setItem(RESONANCE_NOTICE_KEY, '1'); } catch { /* session-only is fine */ }
   }
 
   _formatAdaptiveStatus(profile, learnedFormatter) {

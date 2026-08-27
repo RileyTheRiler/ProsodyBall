@@ -13,6 +13,7 @@ import {
   makeResonanceProfile, serializeResonanceProfile, parseResonanceProfile, spanIdFor,
   makeReading, aggregateReadings,
   migrateResonanceRules, ruleMayFire, confirmResonanceRule,
+  resonanceSpanNotice, isReturningUser, RESONANCE_NOTICE_KEY, RESONANCE_PROFILE_KEY,
 } from './resonance-metric.js';
 import { resonanceAbsoluteV2, fitFormantScale, poolFormantScale } from './dsp-utils.js';
 import { BENCH_SET, formantsOf } from './tools/resonance-benchmark.mjs';
@@ -280,4 +281,81 @@ test('migrating an already-current rule is a no-op that stamps the version', () 
   assert.equal(needsReprompt.length, 0);
   assert.equal(out[0].suspended, undefined);
   assert.equal(ruleMayFire(out[0]), true);
+});
+
+// ============================================================================
+// §3.5's re-prompt, for the SPAN — the gap a user found
+// ============================================================================
+//
+// Reported symptom: "resonance is now reading darker than it should be". Reproduced: the
+// measurement was fine (a sustained /i/ tracked to within 2 Hz of its true ΔF and read 45.6
+// points brighter than running speech), but the user was on the POPULATION span and had never
+// run the guided calibration — because v1 learned a personal range automatically every session
+// and v2 does not. Nothing told them. These tests pin the notice that now does.
+
+test('a returning user with no calibration is told the axis changed', () => {
+  const n = resonanceSpanNotice({ profileStatus: 'absent', returningUser: true });
+  assert.ok(n, 'a returning user with no profile must be told');
+  assert.equal(n.kind, 'never-calibrated');
+  assert.ok(n.action, 'the notice must offer the remedy, not just describe the problem');
+});
+
+test('the notice is worded to be true for a returning user AND a merely-uncalibrated one', () => {
+  // The "returning" signal is imprecise by design (see isReturningUser): every key it reads is
+  // written on a user action, so a new user who changes one setting trips it. The notice must
+  // therefore not ASSERT a history the reader may not have.
+  const n = resonanceSpanNotice({ profileStatus: 'absent', returningUser: true });
+  assert.ok(/not calibrated|has not been calibrated/i.test(n.body), n.body);
+  assert.ok(/if you used an earlier version/i.test(n.body),
+    'any claim about earlier versions must be conditional, not asserted');
+});
+
+test('a first-time user is NOT nagged — nothing was reinterpreted for them', () => {
+  // The population span is the honest default for a voice the app has never heard, and
+  // onboarding already covers calibration. The notice is for people whose numbers MOVED.
+  assert.equal(resonanceSpanNotice({ profileStatus: 'absent', returningUser: false }), null);
+});
+
+test('a refused profile says so, instead of falling back silently', () => {
+  for (const reason of ['metric-version-older', 'metric-version-newer']) {
+    const n = resonanceSpanNotice({ profileStatus: reason, returningUser: false });
+    assert.ok(n, `${reason} must surface`);
+    assert.equal(n.kind, 'refused');
+    assert.equal(n.reason, reason);
+    // A refusal is worth saying even to someone with no other stored state: they DID calibrate,
+    // so a profile existed and was discarded.
+  }
+  for (const reason of ['span-unusable', 'unparseable', 'not-an-object']) {
+    assert.equal(resonanceSpanNotice({ profileStatus: reason }).kind, 'refused');
+  }
+});
+
+test('a working profile, and an unwritable store, say nothing', () => {
+  assert.equal(resonanceSpanNotice({ profileStatus: 'ok', returningUser: true }), null);
+  // 'unwritable' means the span IS live for this session and simply will not persist. The user
+  // is on their own range right now, so telling them it changed would be false.
+  assert.equal(resonanceSpanNotice({ profileStatus: 'unwritable', returningUser: true }), null);
+});
+
+test('the notice is shown once — acknowledging it silences every kind', () => {
+  for (const profileStatus of ['absent', 'metric-version-older', 'unparseable']) {
+    assert.ok(resonanceSpanNotice({ profileStatus, returningUser: true }));
+    assert.equal(resonanceSpanNotice({ profileStatus, returningUser: true, acknowledged: true }), null);
+  }
+});
+
+test('"returning user" means prior app state, not the resonance keys themselves', () => {
+  assert.equal(isReturningUser([]), false);
+  assert.equal(isReturningUser(['vox:micDeviceId']), true);
+  assert.equal(isReturningUser(['vox:goalMode', 'unrelated']), true);
+  // The notice's own acknowledgement key and the profile key must not count as evidence that
+  // the app was used before — otherwise the first run after this change flags everyone, and
+  // writing the ack would itself make the user look "returning" forever.
+  assert.equal(isReturningUser([RESONANCE_NOTICE_KEY]), false);
+  assert.equal(isReturningUser([RESONANCE_PROFILE_KEY]), false);
+  assert.equal(isReturningUser([RESONANCE_NOTICE_KEY, RESONANCE_PROFILE_KEY]), false);
+  // Non-app keys from another site on the same origin are not evidence either.
+  assert.equal(isReturningUser(['theme', 'analytics_id']), false);
+  assert.equal(isReturningUser(new Set(['vox:speechGate'])), true);
+  assert.equal(isReturningUser(null), false);
 });
