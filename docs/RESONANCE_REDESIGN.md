@@ -1,6 +1,6 @@
 # Resonance: measurement redesign
 
-**Status: Phases 0-4 landed; Phases 5-6 are plan.** `resonanceControl` (v2) is the displayed
+**Status: Phases 0-4 landed; Phase 6's C++ leg landed; Phase 5 and Phase 6's Kotlin leg are plan.** `resonanceControl` (v2) is the displayed
 metric; `resonanceScoreV1` remains computable and is displayed nowhere. Extends `DSP_CONTRACT.md`, which stays the cross-port
 contract. This document covers one question: what `smoothResonance` should *be*.
 
@@ -1132,11 +1132,50 @@ test:resonance-two-scale` is the standing check.
 
 Stratify by F0, vowel, SNR, device/microphone, breathiness, nasality, loudness, speaker.
 
-### Phase 6 — Port alignment
+### Phase 6 — Port alignment — **C++ LANDED; Kotlin still open**
 
-- Kotlin `ResonanceEstimator` moved onto the decomposed model (D1 debt, still open).
-- C++ extended from ΔF-only to the scale/pattern split.
-- Cross-port golden vectors extended past ΔF to the full feature set.
+- **C++ extended from ΔF-only to the scale/pattern split.** `voxFitFormantScale`,
+  `voxFormantPatternResiduals`, `voxResidualScaleFactor`, `voxResonanceAbsolute` and
+  `voxPoolFormantScale` ported to `hardware/twatch_voxball/` from `dsp-utils.js`, with the
+  pooled scale wired into the frame loop and exposed on `VoxResult`.
+- **Cross-port golden vectors extended past ΔF to the full feature set.** The same vectors are
+  now asserted on all three legs — `dsp-golden.test.mjs`, the T-Watch host test, and the
+  necklace host test — including the `Σ L_i·r_i ≡ 1` identity, which is what catches a port
+  whose weights are subtly wrong: such a port still reproduces every residual vector and fails
+  only there.
+- **A third port was found outside the contract entirely.** `hardware/prosody_necklace/` was
+  still computing ΔF as `(F3−F1)/2` with an `F2−F1` fallback — the exact bug the contract
+  records as fixed — because it had **no host test and no CI job**, so no golden vector ever
+  reached it. Fixed, given both, and folded into the shared vectors. Worst measured case: /i/
+  with F3 missing returned an apparent tract of **8.7 cm**, pinned at the bright rail, against
+  12.3 cm from the fit on the same two formants.
+
+*Still open:* the **Kotlin leg**. `SpectralBrightnessEstimator.kt` remains brightness-primary
+(`0.65·formantScore + 0.35·brightness`), fits no ΔF anywhere, and so has no scale to split.
+Moving it onto the decomposed model is the D1 debt and needs the Android toolchain to verify —
+writing a formant tracker that has never been compiled, let alone run against the golden
+vectors, would put the watch in exactly the position the necklace was just found in. It is
+named `spectralBrightness` rather than resonance and is excluded from shared statistics, so the
+divergence is visible rather than silently miscoaching; that is containment, not a fix.
+
+**What the C++ port does NOT yet do, and why it is not a shortfall to be quietly closed.** The
+split is computed on every frame and displayed nowhere: `r.resonance` (v1) still drives the LED,
+the haptics and the gender blend on both firmware ports. Two things gate the display switch, and
+neither is a porting detail:
+
+1. **The formants underneath it are unmeasured on this path.** Both firmware ports use
+   harmonic-envelope peak-picking — a documented approximation tier, no LPC, no F4. The scale
+   fit is F3-dominated by design, so its accuracy here is bounded by an F3 nobody has measured
+   on this path. Moving the displayed value onto that is the "more valid, less available" trap
+   §6 warns about, and Phase 5's validation ladder is what would answer it.
+2. **The web app displays `resonanceControl`, not `resonanceAbsolute`.** The absolute axis is
+   deliberately shallow — a speaker's whole across-vowel excursion occupies ~14 points — and
+   neither firmware port has the personal calibration that restores display travel. Whether the
+   watch/necklace haptic threshold belongs on absolute or control is **open question #3**, a
+   product call.
+
+So Phase 6 lands the canonical computation and the shared vectors — the part with a contract to
+break — and leaves the Layer B display switch to whichever phase answers those two.
 
 ---
 

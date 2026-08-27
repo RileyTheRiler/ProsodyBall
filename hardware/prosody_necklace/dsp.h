@@ -46,6 +46,46 @@
 #define VOX_GENDER_PITCH_MAX_HZ 220.0f
 
 // Per-frame analysis result.
+// ---- Formant dispersion, and the scale/pattern split (RESONANCE_REDESIGN.md, Phase 6) ----
+//
+// This port was still computing ΔF as an endpoint difference over a COMPACTED formant list --
+// (F3-F1)/2, with F2-F1 substituted whenever F3 went missing -- long after the web app and the
+// T-Watch port were both moved onto the least-squares uniform-tube fit. docs/DSP_CONTRACT.md
+// said "both ports" were fixed; "both" meant web and the watch, and this third port was never
+// in that count and had no host test to notice.
+//
+// Both halves of that were the same bug: array POSITION was being read as adjacency rather than
+// as formant number. A dropped F2 doubled ΔF, halving the apparent tract length and pinning
+// resonance at the bright rail off one bad frame; a dropped F3 silently swapped in F2-F1, one
+// of the most vowel-dependent quantities in the spectrum (~2200 Hz on /i/, ~700 Hz on /u/), as
+// a "vocal-tract length". On a device whose whole output is a vibration motor and an LED, that
+// fires the wrong haptic against the wrong vocal target.
+//
+// Declared (not file-static) so test/dsp_host_test.cpp can assert the same input->output
+// vectors dsp-golden.test.mjs pins on the web side and the T-Watch port already reproduces.
+
+// Least-squares fit of F_i = (2i-1)*ΔF/2 through the origin. Pass 0 for a formant the estimator
+// did not find: the SLOT is the formant number. Returns 0 below two formants.
+float voxFitFormantDispersion(float f1, float f2, float f3);
+
+// The upper-formant-weighted scale fit. w_i = 1/(CV_i*Fbar_i)^2 with the CVs published in the
+// redesign: F1 and F2 define the vowel and so carry almost no leverage in a tract-SIZE
+// estimate, while F3 is the only one of the three that is more speaker- than vowel-determined.
+extern const float VOX_FORMANT_SCALE_CV[4];
+extern const float VOX_FORMANT_SCALE_CENTRE_HZ[4];
+float voxFormantScaleWeight(int i);
+float voxFitFormantScale(float f1, float f2, float f3, float f4);
+
+// FORMANT PATTERN: r_i = F_i / ((i-0.5)*ΔF), written into out[4]; 0 in a slot means "not
+// measured", never "a residual of zero".
+void voxFormantPatternResiduals(float f1, float f2, float f3, float f4, float deltaF, float out[4]);
+
+// rho = sum(L_i*r_i), exactly 1 when ΔF was fitted to the same frame's formants.
+float voxResidualScaleFactor(const float r[4], int limit);
+
+#define VOX_RESONANCE_V2_REF_DELTA_F_HZ 1078.0f
+float voxResonanceAbsolute(float deltaFScaleHz);
+
 struct VoxResult {
   float rms;             // raw RMS energy of the frame (0..~1)
   float pitchHz;         // detected fundamental, 0 if silent/unvoiced
@@ -57,6 +97,11 @@ struct VoxResult {
   float centroidHz;      // raw spectral centroid in Hz (0 if silent)
   float f1, f2, f3;      // estimated formants in Hz (0 if unavailable)
   float resonance;       // dispersion/VTL-based resonance 0..1 (dark..bright)
+  // The scale/pattern split, computed per frame and displayed nowhere on this port yet --
+  // `resonance` above still drives the motor and the LED. Unpooled here: this port has no
+  // rolling-window state and adding one is a separate change from fixing the fit.
+  float formantScaleHz;    // upper-formant-weighted ΔF for this frame (Hz), 0 if unavailable
+  float resonanceAbsolute; // ΔF_scale / (2*1078 Hz), 0 = no reading
   float formantConf;     // formant estimate confidence 0..1
   float weight;          // vocal weight 0..1 (0 light/breathy .. 1 heavy/pressed), H1-H2
   float genderScore;     // perceived gender 0..1 (0 masc .. 1 fem), smoothed
