@@ -4,6 +4,31 @@ export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
 
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  const urlStr = String(url);
+  try {
+    const parsed = new URL(urlStr);
+    const safeProtocols = ['http:', 'https:', 'mailto:', 'tel:', 'blob:', 'file:'];
+    if (safeProtocols.includes(parsed.protocol)) {
+      return urlStr;
+    }
+    return 'about:blank';
+  } catch (e) {
+    // If it's a relative URL, check if it behaves dangerously
+    try {
+      const parsedWithBase = new URL(urlStr, 'https://fallback.invalid');
+      // If it starts with '://', the URL constructor might incorrectly parse it
+      if (urlStr.trim().startsWith('://')) {
+        return 'about:blank';
+      }
+      return urlStr;
+    } catch (e2) {
+      return 'about:blank';
+    }
+  }
+}
+
 export function computeRawProsody(metrics) {
   return (
     metrics.bounce * 0.50 +
