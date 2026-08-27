@@ -153,6 +153,21 @@ export class CalibrationWizard {
       this._clearVisual();
       // Not real time: this is the multi-solve §3.4 forbids per frame and permits here.
       const ceiling = analyzer.calibrateLpcCeiling(segments);
+      // Re-read the same holds at the chosen ceiling to learn how far this speaker's vowels
+      // move the axis. The span needs that number or it rails on ordinary speech.
+      //
+      // Optional by construction: this is one more measurement over audio already captured, and
+      // failing to get it must cost the user their calibration under no circumstances. A missing
+      // method or a throw degrades to the published allowance, which is the population span's
+      // own construction — the same fallback a measurement that finds too few vowels takes.
+      let vowelExcursionResult = null;
+      try {
+        if (typeof analyzer.measureVowelSetExcursion === 'function') {
+          vowelExcursionResult = analyzer.measureVowelSetExcursion(segments);
+        }
+      } catch {
+        vowelExcursionResult = null;
+      }
 
       // ---- Part 2: three postures on the standard phrase -> the personal span --------------
       const postures = { habitual: [], brighter: [], darker: [] };
@@ -171,6 +186,11 @@ export class CalibrationWizard {
 
       const applied = analyzer.applyVowelSetCalibration({
         postures,
+        // This speaker's own across-vowel travel, from the vowel-set holds already captured
+        // above. Measured AFTER the ceiling was applied, for the same reason the postures were:
+        // on the analysis the app will actually run. Null when too few vowels survived, and the
+        // span then falls back to the published allowance rather than to none.
+        vowelExcursion: vowelExcursionResult ? vowelExcursionResult.excursion : null,
         ceilingHz: ceiling && ceiling.selected ? ceiling.ceilingHz : null,
         // The habitual reading is stored on the profile so a later session can compare like
         // with like without re-running the whole flow.

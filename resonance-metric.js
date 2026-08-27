@@ -107,6 +107,32 @@ export const RESONANCE_POPULATION_SPAN = Object.freeze({
 export const RESONANCE_POOLED_SCALE_SD_20DB = 0.0055;
 export const RESONANCE_CONTROL_MIN_SPAN = 5 * RESONANCE_POOLED_SCALE_SD_20DB;   // 0.0275
 
+// --- The across-vowel allowance -------------------------------------------------------------
+//
+// Half the mean within-speaker across-vowel excursion on the absolute axis. RESONANCE_POPULATION_SPAN
+// above is built by extending each published mean outward by exactly this, and its comment gives
+// the reason: "so that a speaker sitting exactly at one population's mean does not rail when they
+// produce that population's most extreme vowel."
+//
+// THE PERSONAL SPAN DID NOT HAVE IT, AND THAT WAS A BUG. Found by a user, immediately after they
+// took this app's own advice to calibrate: the voice-map firefly began slamming into the left and
+// right edges. spanFromPostures sized the span from the POSTURE excursion alone and padded it by
+// 5% of that — about 0.3 points — while the value poured through it moves far more than that from
+// vowel identity alone. Measured on the live analyzer, one speaker holding four vowels in turn:
+//
+//   /i/ 0.5470   /ɛ/ 0.4667   /ɑ/ 0.4555   /u/ 0.4015     -> 14.5 points of travel
+//
+// Pooling does not save it, because a SUSTAINED hold collapses the pooling window onto the one
+// vowel being held (the Phase 2 finding), and holding a vowel is exactly what the voice map
+// invites. Against spans of each width, how many of those four rail:
+//
+//   floored span      3.0 pts   3 of 4 rail
+//   typical span      6.6 pts   2 of 4 rail      <- what calibration produced
+//   population span  22.3 pts   0 of 4 rail      <- what they had BEFORE calibrating
+//
+// So calibrating made the display worse, which is the opposite of what calibration is for.
+export const RESONANCE_ACROSS_VOWEL_HALF_EXCURSION = 0.0680;
+
 // --- resonanceControl ---------------------------------------------------------------------
 //
 // Returns null, not 0, when there is nothing to report. A suppressed frame has no absolute
@@ -128,7 +154,16 @@ export function resonanceControl(absolute, span = RESONANCE_POPULATION_SPAN) {
 // recorded so a later session can tell "the user's range moved" from "the user is having a
 // dark day", and so the span can be sanity-checked (a habitual posture outside the two extremes
 // means the extremes were not extremes).
-export function spanFromPostures(postures, { minSpread = RESONANCE_CONTROL_MIN_SPAN, pad = 0.05 } = {}) {
+// `vowelExcursion` is THIS SPEAKER's measured across-vowel travel on the absolute axis, from the
+// vowel-set holds the calibration already captures for the ceiling search. Passing it makes the
+// allowance personal rather than published, which matters because the excursion is a property of
+// the speaker's own vowel space: a 14.5-point speaker and a 22-point speaker need different room.
+// It falls back to the published half-excursion when the measurement is unavailable — that is
+// still the population span's own construction, and still far better than the 5% pad this
+// replaced.
+export function spanFromPostures(postures, {
+  minSpread = RESONANCE_CONTROL_MIN_SPAN, pad = 0.05, vowelExcursion = null,
+} = {}) {
   const med = (xs) => {
     const s = (Array.isArray(xs) ? xs : []).filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
     if (!s.length) return null;
@@ -147,11 +182,30 @@ export function spanFromPostures(postures, { minSpread = RESONANCE_CONTROL_MIN_S
   const spread = Math.max(minSpread, observed);
   const mid = (lo + hi) / 2;
   const half = spread / 2;
+  // The span has to hold two different things at once: the posture range the user demonstrated,
+  // and the vowel-driven movement that will pour through it while they simply speak. `spread`
+  // covers the first. `allowance` covers the second, and without it the meter rails on ordinary
+  // vowels — see RESONANCE_ACROSS_VOWEL_HALF_EXCURSION for the measurement that caused it.
+  // A measured excursion is max-minus-min over a handful of held vowels, which is robust within
+  // each vowel (its own median) but NOT robust to one vowel whose formants were mis-tracked
+  // outright. An inflated excursion does not rail the meter — it does the opposite, flattening
+  // the axis until nothing moves — so it is capped rather than trusted without limit. Twice the
+  // published excursion is the bound: wider than any speaker measured here, and narrow enough
+  // that one bad vowel cannot take the ball's travel away.
+  const measured = Number.isFinite(vowelExcursion) && vowelExcursion > 0;
+  const allowance = measured
+    ? Math.min(vowelExcursion, 4 * RESONANCE_ACROSS_VOWEL_HALF_EXCURSION) / 2
+    : RESONANCE_ACROSS_VOWEL_HALF_EXCURSION;
+  // The 5% pad stays on top of the allowance. It is a different job: a hair of headroom so a
+  // posture reproduced slightly harder than it was calibrated does not sit exactly on the rail.
   return {
-    min: Math.max(0, mid - half - spread * pad),
-    max: Math.min(1, mid + half + spread * pad),
+    min: Math.max(0, mid - half - allowance - spread * pad),
+    max: Math.min(1, mid + half + allowance + spread * pad),
     habitual,
     observedSpread: observed,
+    vowelExcursion: measured ? vowelExcursion : null,
+    vowelAllowance: allowance,
+    vowelAllowanceSource: measured ? 'measured' : 'published',
     // True when the floor did the work rather than the speaker — the span is real but it is the
     // minimum one, and the UI should say the postures were close together rather than pretend
     // a wide range was demonstrated.
@@ -199,6 +253,10 @@ export function makeResonanceProfile({
     spreadFloored: span ? span.spreadFloored === true : false,
     habitualAbsolute: span && Number.isFinite(span.habitual) ? span.habitual : null,
     observedSpread: span && Number.isFinite(span.observedSpread) ? span.observedSpread : null,
+    // Kept for the same reason observedSpread is: a later calibration can tell "this speaker's
+    // vowel space widened" from "the measurement failed and we used the published figure".
+    vowelExcursion: span && Number.isFinite(span.vowelExcursion) ? span.vowelExcursion : null,
+    vowelAllowanceSource: span ? (span.vowelAllowanceSource || null) : null,
     ceilingHz: Number.isFinite(ceilingHz) ? ceilingHz : null,
     calibratedAt: calibratedAt || null,
     postureSamples: postureSamples || null,
@@ -220,7 +278,8 @@ export function serializeResonanceProfile(profile) {
   return JSON.stringify(makeResonanceProfile({
     span: profile && profile.span
       ? { ...profile.span, source: profile.spanSource, spreadFloored: profile.spreadFloored,
-          habitual: profile.habitualAbsolute, observedSpread: profile.observedSpread }
+          habitual: profile.habitualAbsolute, observedSpread: profile.observedSpread,
+          vowelExcursion: profile.vowelExcursion, vowelAllowanceSource: profile.vowelAllowanceSource }
       : null,
     ceilingHz: profile && profile.ceilingHz,
     calibratedAt: profile && profile.calibratedAt,
@@ -262,6 +321,8 @@ export function parseResonanceProfile(raw) {
         spreadFloored: value.spreadFloored === true,
         habitual: Number.isFinite(value.habitualAbsolute) ? value.habitualAbsolute : null,
         observedSpread: Number.isFinite(value.observedSpread) ? value.observedSpread : null,
+        vowelExcursion: Number.isFinite(value.vowelExcursion) ? value.vowelExcursion : null,
+        vowelAllowanceSource: value.vowelAllowanceSource || null,
       },
       ceilingHz: value.ceilingHz,
       calibratedAt: value.calibratedAt,

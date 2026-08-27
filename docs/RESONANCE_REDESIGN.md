@@ -1253,6 +1253,45 @@ The lesson is the same one Phase 6 recorded about the untested port: **the migra
 listed the state it knew about.** The span was created by the same phase that broke it, so it was
 never on the list.
 
+**And fixing that exposed a second defect immediately underneath it — the personal span had no
+across-vowel allowance.** The same user, having taken the advice above and calibrated, reported
+the voice-map firefly slamming into the left and right edges. `RESONANCE_POPULATION_SPAN` is
+built by extending each published mean outward by half the mean across-vowel excursion (0.0680),
+and its own comment gives the reason: *"so that a speaker sitting exactly at one population's
+mean does not rail when they produce that population's most extreme vowel."* `spanFromPostures`
+carried none of that. It sized the span from the POSTURE excursion and padded it by 5% — about
+0.3 points — while what pours through it is posture **plus vowel**, and vowel is the larger.
+
+Measured on the live analyzer, one speaker holding four vowels:
+
+| /i/ | /ɛ/ | /ɑ/ | /u/ | travel |
+|---|---|---|---|---|
+| 0.5470 | 0.4667 | 0.4555 | 0.4015 | **14.5 pts** |
+
+Pooling does not absorb it, because a sustained hold collapses the pooling window onto the vowel
+being held — the Phase 2 result — and holding a vowel is exactly what the voice map invites.
+Against spans of each width, how many of those rail:
+
+| span | width | railed |
+|---|---|---|
+| floored | 3.0 pts | 3 of 4 |
+| typical calibrated | 6.6 pts | **2 of 4** |
+| population (before calibrating) | 22.3 pts | 0 of 4 |
+
+**So calibrating made the display worse, which is the opposite of what calibration is for.** The
+fix takes the allowance from the speaker rather than from the literature: the guided vowel set
+already captures five held vowels for the LPC ceiling search, so `measureVowelSetExcursion()`
+replays those same segments at the chosen ceiling and returns this speaker's own excursion.
+Measured end to end, 14.5 pts from five vowels; the span goes 6.6 → 21.1 pts and railing 3/5 →
+**0/5**, with a deliberate posture change still travelling 28% of the meter. It falls back to the
+published 0.0680 when too few vowels survive — a worse number than the speaker's own, never a
+fabricated one.
+
+The pattern is worth naming, because it is now three for three: **each of these was a property
+one part of the system had and an adjacent part silently lacked.** The untested third port, the
+missing span migration, and now the missing across-vowel allowance — in every case the correct
+behaviour was already written down nearby, and nothing checked that the neighbour had it.
+
 **Vowel classification is a new failure mode.** A misclassified vowel produces a confidently
 wrong `f2Position`. It must degrade to "no F2 feature this frame" rather than guess — the same
 discipline applied to the centroid's fabricated F3.

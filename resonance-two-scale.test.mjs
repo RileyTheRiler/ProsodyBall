@@ -237,3 +237,95 @@ test('the assignment switch changes the measurement and nothing else about the p
   // And it costs no extra solve: it is a second pass over poles the same solve already produced.
   assert.ok(rho.solvesPerFrame <= 1.001, `${rho.solvesPerFrame.toFixed(3)} solves/frame`);
 });
+
+// ---------------------------------------------------------------------------
+// The across-vowel allowance — the bug a user hit by taking the app's own advice.
+// ---------------------------------------------------------------------------
+//
+// Reported: after running the guided calibration, the voice-map firefly slammed into the left
+// and right edges. Root cause: spanFromPostures sized the span from the POSTURE excursion and
+// padded it 5%, while the value poured through it also carries the speaker's VOWEL excursion,
+// which is the larger of the two. RESONANCE_POPULATION_SPAN had always carried an allowance for
+// exactly that; the personal span had none, so calibrating made the display worse.
+
+// The five holds the guided vowel set asks for, as frame arrays the calibration replays.
+function vowelSetSegments(scale = 1, f0 = 120) {
+  return [[270, 2290, 3010], [530, 1840, 2480], [730, 1090, 2440], [440, 1020, 2240], [300, 870, 2240]]
+    .map((formants) => {
+      const sig = synthVowel({ f0, formants: formants.map((x) => x * scale), seconds: 1.6, sampleRate: SAMPLE_RATE });
+      const frames = [];
+      for (let i = 0; i + WINDOW <= sig.length; i += HOP) frames.push(sig.subarray(i, i + WINDOW));
+      return frames;
+    });
+}
+
+test("the calibration measures the speaker's OWN across-vowel excursion from the holds it already takes", async () => {
+  const a = await newAnalyzer();
+  const segments = vowelSetSegments();
+  a.calibrateLpcCeiling(segments);           // must come first: the excursion is measured at the chosen ceiling
+  const ex = a.measureVowelSetExcursion(segments);
+  assert.ok(ex, 'the excursion must be measurable from the guided vowel set');
+  assert.equal(ex.vowels, 5, 'every hold should contribute');
+  // ~14.5 points for this speaker. Asserted as a band, not a point: it is a measurement through
+  // the real estimator, and pinning it exactly would make the test about the estimator's noise.
+  assert.ok(ex.excursion > 0.10 && ex.excursion < 0.20,
+    `across-vowel excursion = ${(100 * ex.excursion).toFixed(1)} pts`);
+  // It is a property of the SPEAKER, so a different tract must give a different number.
+  const b = await newAnalyzer();
+  const bigger = vowelSetSegments(1.15);
+  b.calibrateLpcCeiling(bigger);
+  const exB = b.measureVowelSetExcursion(bigger);
+  assert.ok(exB, 'a shorter tract must also measure');
+  assert.ok(Math.abs(exB.excursion - ex.excursion) > 1e-6, 'a different tract, a different excursion');
+});
+
+test('THE REGRESSION, end to end: a calibrated span must not rail on the speaker\'s own vowels', async () => {
+  const a = await newAnalyzer();
+  const segments = vowelSetSegments();
+  a.calibrateLpcCeiling(segments);
+  const ex = a.measureVowelSetExcursion(segments);
+  const mid = (Math.max(...ex.perVowel) + Math.min(...ex.perVowel)) / 2;
+  const postureSpread = 0.06;                 // a GAVT-sized deliberate posture change
+  const sample = (v) => new Array(10).fill(v);
+  const applied = a.applyVowelSetCalibration({
+    postures: {
+      darker: sample(mid - postureSpread / 2),
+      brighter: sample(mid + postureSpread / 2),
+      habitual: sample(mid),
+    },
+    vowelExcursion: ex.excursion,
+  });
+  assert.ok(applied.ok, `calibration failed: ${applied.reason}`);
+  assert.equal(applied.span.vowelAllowanceSource, 'measured');
+
+  // Every vowel this speaker actually produced must land strictly inside the meter. Before the
+  // allowance, three of these five read exactly 0.00 or 1.00.
+  for (const [i, absolute] of ex.perVowel.entries()) {
+    const c = resonanceControl(absolute, a.resonanceSpan);
+    assert.ok(c > 0 && c < 1, `vowel ${i} railed at ${c.toFixed(2)}`);
+  }
+  // And the axis must not be flattened into uselessness by the fix, which is the opposite
+  // failure: a deliberate posture change still has to move the ball visibly.
+  const travel = resonanceControl(mid + postureSpread / 2, a.resonanceSpan)
+    - resonanceControl(mid - postureSpread / 2, a.resonanceSpan);
+  assert.ok(travel > 0.15, `a deliberate posture change moves only ${(100 * travel).toFixed(0)}% of the meter`);
+});
+
+test('a failed excursion measurement falls back to the published allowance, never to none', async () => {
+  const a = await newAnalyzer();
+  // Silence yields no valid frames, so there is nothing to measure.
+  const silence = [new Array(20).fill(new Float32Array(WINDOW))];
+  assert.equal(a.measureVowelSetExcursion(silence), null);
+  assert.equal(a.measureVowelSetExcursion([]), null);
+  assert.equal(a.measureVowelSetExcursion(null), null);
+  // With no measurement the span still gets the population span's own allowance — the fallback
+  // is a worse number than the speaker's own, but it is never zero, because zero is the bug.
+  const sample = (v) => new Array(10).fill(v);
+  const applied = a.applyVowelSetCalibration({
+    postures: { darker: sample(0.44), brighter: sample(0.50), habitual: sample(0.47) },
+    vowelExcursion: null,
+  });
+  assert.ok(applied.ok);
+  assert.equal(applied.span.vowelAllowanceSource, 'published');
+  assert.ok(applied.span.max - applied.span.min > 0.13, `width ${applied.span.max - applied.span.min}`);
+});

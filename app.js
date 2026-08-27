@@ -1063,7 +1063,10 @@ export class VoiceAnalyzer {
   // array of the live `resonanceAbsolute` readings collected during that posture's hold.
   // Suppressed frames contribute nothing — they are not readings — so the caller filters nulls
   // rather than pushing zeros, and `minSamples` is what stops a span being fitted to two frames.
-  applyVowelSetCalibration({ postures, ceilingHz = null, phraseAbsolute = null, at = null, minSamples = 8 } = {}) {
+  applyVowelSetCalibration({
+    postures, ceilingHz = null, phraseAbsolute = null, at = null, minSamples = 8,
+    vowelExcursion = null,
+  } = {}) {
     const counts = {
       habitual: (postures?.habitual || []).length,
       brighter: (postures?.brighter || []).length,
@@ -1072,7 +1075,11 @@ export class VoiceAnalyzer {
     if (counts.brighter < minSamples || counts.darker < minSamples) {
       return { ok: false, reason: 'insufficient-samples', counts };
     }
-    const span = spanFromPostures(postures);
+    // The postures set where the span sits and how much of it a deliberate change traverses;
+    // `vowelExcursion` sets how much room is left over for the vowels the speaker will actually
+    // produce. Passing this speaker's own measured excursion is what stops the meter railing on
+    // ordinary speech — see measureVowelSetExcursion and RESONANCE_ACROSS_VOWEL_HALF_EXCURSION.
+    const span = spanFromPostures(postures, { vowelExcursion });
     if (!span) return { ok: false, reason: 'no-span', counts };
     const profile = makeResonanceProfile({
       span,
@@ -3153,6 +3160,72 @@ export class VoiceAnalyzer {
       this.lpcCeilingSource = 'calibrated';
     }
     return chosen;
+  }
+
+  // How far THIS speaker's vowels move the absolute axis, measured from the guided vowel-set
+  // holds the calibration already captures for the ceiling search. No extra prompts, no extra
+  // audio: the same segments, replayed once more.
+  //
+  // WHY THE SPAN NEEDS THIS. A calibrated span is built from the speaker's POSTURE range, but
+  // what pours through it while they use the app is posture PLUS vowel, and vowel is the bigger
+  // of the two — measured live, holding four vowels moves one speaker 14.5 points where a
+  // GAVT-sized posture change moves 6. Without an allowance for it the meter rails on ordinary
+  // speech, which is the bug a user hit the moment they took this app's advice and calibrated.
+  // RESONANCE_POPULATION_SPAN has always carried exactly this allowance; the personal span did
+  // not. See RESONANCE_ACROSS_VOWEL_HALF_EXCURSION in resonance-metric.js.
+  //
+  // MUST RUN AFTER calibrateLpcCeiling, for the same reason the postures do: measuring on a
+  // ceiling that is about to change measures the wrong analysis. Each segment is ONE held vowel,
+  // so its own median IS its pooled value — that is the Phase 2 result that a sustained hold
+  // collapses the pooling window onto the vowel being held, which is why holds rail in the first
+  // place and why they are the right thing to measure here.
+  //
+  // Returns null rather than a guess when there is too little to measure. spanFromPostures then
+  // falls back to the published half-excursion, which is still the population span's own
+  // construction — a worse number than the speaker's own, but never a fabricated one.
+  measureVowelSetExcursion(segments, { minVowels = 3, minFramesPerVowel = 6 } = {}) {
+    const segs = Array.isArray(segments) && segments.length && Array.isArray(segments[0])
+      ? segments : [segments];
+    if (!segs.length) return null;
+    const saved = this.timeDomainData;
+    const perVowel = [];
+    for (const seg of segs) {
+      if (!Array.isArray(seg) || !seg.length) continue;
+      // Same continuity + ageing discipline the ceiling search and the live path use, so the
+      // formants this reads are the formants the app would have read.
+      const ref = [0, 0, 0, 0];
+      const refAge = [Infinity, Infinity, Infinity, Infinity];
+      const deltas = [];
+      for (const frame of seg) {
+        this.timeDomainData = frame;
+        const r = this._resonanceLPC({ ceilingHz: this.lpcCeilingHz || LPC_DEFAULT_CEILING_HZ });
+        const m = (r && r.measured) || [0, 0, 0, 0];
+        const v = frameValidity(m, {
+          bandwidths: r.bandwidths, previous: ref, previousAgeFrames: refAge,
+          residual: r.modelResidual,
+        });
+        if (v.failed.length === 0) {
+          for (let i = 0; i < 4; i++) {
+            if (v.accepted[i] > 0) { ref[i] = v.accepted[i]; refAge[i] = 0; }
+          }
+        }
+        for (let i = 0; i < 4; i++) {
+          if (++refAge[i] > FORMANT_STALE_FRAMES) ref[i] = 0;
+        }
+        // Only frames the app would have believed. A rejected frame is not a quieter vote here,
+        // it is no vote — the same rule the displayed value follows.
+        if (!v.valid) continue;
+        const fit = fitFormantScale(v.accepted);
+        if (fit.deltaF > 0) deltas.push(fit.deltaF);
+      }
+      if (deltas.length < minFramesPerVowel) continue;
+      deltas.sort((a, b) => a - b);
+      perVowel.push(resonanceAbsoluteV2(deltas[Math.floor(deltas.length / 2)]));
+    }
+    this.timeDomainData = saved;
+    if (perVowel.length < minVowels) return null;
+    const excursion = Math.max(...perVowel) - Math.min(...perVowel);
+    return { excursion, perVowel, vowels: perVowel.length };
   }
 
   // The low-rate background re-check §5 asks for. One alternate ceiling, visited round-robin,
@@ -9012,10 +9085,16 @@ export class VoxBallGame {
           return 'Typical adult range — calibrate to use your own';
       }
     }
-    const width = Math.round((p.span.max - p.span.min) * 100);
+    // Report the range the USER demonstrated, not the span's total width. Since the span gained
+    // the across-vowel allowance those are different numbers, and the span's width is not a fact
+    // about the speaker — it is posture plus the room left for their vowels. Quoting it here
+    // would tell someone their postures spanned 21 points when they spanned 6.
+    const demonstrated = Number.isFinite(p.observedSpread)
+      ? Math.round(p.observedSpread * 100)
+      : Math.round((p.span.max - p.span.min) * 100);
     return p.spreadFloored
-      ? `Your range (narrow — ${width} pts; try wider postures)`
-      : `Your range (${width} pts wide)`;
+      ? `Your range (narrow — ${demonstrated} pts; try wider postures)`
+      : `Your range (${demonstrated} pts wide)`;
   }
 
   // Render (or clear) the one-time span notice. Mirrors the suspended-rule notice in the

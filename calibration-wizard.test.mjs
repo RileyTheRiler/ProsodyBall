@@ -157,7 +157,7 @@ test('calibration wizard completes when analyzer passes checks', async () => {
 // A stand-in analyzer that records the order of what happened to it. It is deliberately not a
 // VoiceAnalyzer: this test is about the wizard's protocol, and the DSP is measured elsewhere
 // (tools/lpc-ceiling.mjs, tools/resonance-two-scale.mjs).
-function scriptedAnalyzer({ absoluteByPosture = [0.50, 0.62, 0.40], windowSize = 8 } = {}) {
+function scriptedAnalyzer({ absoluteByPosture = [0.50, 0.62, 0.40], windowSize = 8, vowelExcursion = 0.145 } = {}) {
   const events = [];
   let postureIdx = -1;
   let framesInPosture = 0;
@@ -189,6 +189,13 @@ function scriptedAnalyzer({ absoluteByPosture = [0.50, 0.62, 0.40], windowSize =
       a.lpcCeilingSource = 'calibrated';
       postureIdx = -1;
       return { selected: true, ceilingHz: 5000, scored: [] };
+    },
+    // The across-vowel excursion, read back from the SAME holds. Recorded as an event so the
+    // order can be pinned: it has to happen after the ceiling, for the same reason the postures
+    // do — measuring on a ceiling that is about to change measures the wrong analysis.
+    measureVowelSetExcursion(segments) {
+      events.push({ kind: 'excursion', segments: segments.map((s) => s.length) });
+      return vowelExcursion == null ? null : { excursion: vowelExcursion, perVowel: [], vowels: 5 };
     },
     beginPosture() { postureIdx++; framesInPosture = 0; },
     applyVowelSetCalibration(args) {
@@ -243,7 +250,7 @@ test('the postures are measured AFTER the ceiling is applied, and only the two e
   await run;
 
   const order = analyzer.events.map((e) => e.kind);
-  assert.deepEqual(order, ['ceiling', 'apply'], 'the ceiling must be chosen before the span is built');
+  assert.deepEqual(order, ['ceiling', 'excursion', 'apply'], 'the ceiling must be chosen before the span is built');
   const applied = analyzer.events.find((e) => e.kind === 'apply').args;
   assert.equal(applied.ceilingHz, 5000, 'the chosen ceiling must be handed to the profile');
   // Every posture collected readings, which is only possible if they ran after the ceiling was
@@ -296,4 +303,48 @@ test('too few usable vowel productions declines instead of calibrating on what i
   assert.equal(result.outcome, 'incomplete');
   assert.equal(result.reason, 'insufficient-vowels');
   assert.equal(analyzer.events.length, 0, 'the ceiling search must not run on too little audio');
+});
+
+// A vowel-set run, driven the way the tests above drive it. Returns the analyzer's event log.
+async function runVowelSetWith(analyzer) {
+  const { wizard, els } = buildWizard();
+  const origSetStep = wizard._setStep.bind(wizard);
+  wizard._setStep = (title, desc, pct) => {
+    if (typeof title === 'string' && title.startsWith('Your range')) analyzer.beginPosture();
+    return origSetStep(title, desc, pct);
+  };
+  const run = wizard.runVowelSetCalibration(analyzer);
+  els.calNextBtn.click();
+  return run;
+}
+
+test('the measured across-vowel excursion reaches applyVowelSetCalibration', async () => {
+  // The span needs this number or it rails on the speaker's own vowels — see
+  // RESONANCE_ACROSS_VOWEL_HALF_EXCURSION in resonance-metric.js. It comes from the vowel-set
+  // holds the wizard has already captured, so this pins that it is measured and passed through.
+  const analyzer = scriptedAnalyzer({ vowelExcursion: 0.145 });
+  const result = await runVowelSetWith(analyzer);
+  assert.equal(result.outcome, 'completed', `outcome was ${result.outcome}/${result.reason}`);
+  const apply = analyzer.events.find((e) => e.kind === 'apply');
+  assert.ok(Math.abs(apply.args.vowelExcursion - 0.145) < 1e-9,
+    `vowelExcursion reached calibration as ${apply.args.vowelExcursion}`);
+  // Measured AFTER the ceiling: measuring on a ceiling about to change measures the wrong analysis.
+  const order = analyzer.events.map((e) => e.kind).filter((k) => k === 'ceiling' || k === 'excursion');
+  assert.deepEqual(order, ['ceiling', 'excursion']);
+});
+
+test('an analyzer without the excursion method still calibrates, and takes the published allowance', async () => {
+  // The realistic degradation path: this measurement is one extra pass over audio already
+  // captured, so losing it must never cost the user their calibration. `vowelExcursion: null`
+  // makes spanFromPostures fall back to the published half-excursion — the population span's
+  // own construction — rather than to no allowance at all, which is the bug being fixed.
+  //
+  // Only ONE degradation case is exercised here: each vowel-set run costs ~34 s of wall clock
+  // (the wizard holds are real durations), and the null-result and throwing variants land on the
+  // same branch. The branch itself is pinned cheaply in resonance-two-scale.test.mjs.
+  const analyzer = scriptedAnalyzer();
+  delete analyzer.measureVowelSetExcursion;
+  const result = await runVowelSetWith(analyzer);
+  assert.equal(result.outcome, 'completed', 'a missing method must degrade, not abort');
+  assert.equal(analyzer.events.find((e) => e.kind === 'apply').args.vowelExcursion, null);
 });
