@@ -317,6 +317,99 @@ float voxFitFormantDispersion(float f1, float f2, float f3) {
   return sxy / sxx;
 }
 
+// ---- Resonance construct redesign: scale + pattern (Phase 6) ---------------------------
+// Direct port of fitFormantScale / formantPatternResiduals / residualScaleFactor /
+// resonanceAbsoluteV2 in dsp-utils.js. Golden-tested against the same vectors
+// dsp-golden.test.mjs pins on the web side -- shared vectors are the only mechanism that
+// catches the two ports computing the same field by different formulas.
+
+const float VOX_FORMANT_SCALE_CV[4]        = { 0.32f, 0.38f, 0.08f, 0.08f };
+const float VOX_FORMANT_SCALE_CENTRE_HZ[4] = { 500.0f, 1500.0f, 2500.0f, 3500.0f };
+
+// w_i = 1 / (CV_i * Fbar_i)^2. Computed rather than tabulated so the weights cannot drift away
+// from the CVs they are derived from -- the same discipline the JS side uses, where
+// FORMANT_SCALE_WEIGHTS is a map over FORMANT_SCALE_CV rather than a literal.
+float voxFormantScaleWeight(int i) {
+  if (i < 0 || i > 3) return 0.0f;
+  const float sigma = VOX_FORMANT_SCALE_CV[i] * VOX_FORMANT_SCALE_CENTRE_HZ[i];
+  return 1.0f / (sigma * sigma);
+}
+
+// x_i = (2i-1)/2 for a 0-based slot i: F1 -> 0.5, F2 -> 1.5, F3 -> 2.5, F4 -> 3.5.
+static inline float voxFormantSeriesX(int i) {
+  return (2.0f * (float)(i + 1) - 1.0f) * 0.5f;
+}
+
+float voxFitFormantScale(float f1, float f2, float f3, float f4) {
+  const float freqs[4] = { f1, f2, f3, f4 };
+  float sxy = 0.0f, sxx = 0.0f;
+  int n = 0;
+  for (int i = 0; i < 4; i++) {
+    if (!(freqs[i] > 0)) continue;
+    const float w = voxFormantScaleWeight(i);
+    const float x = voxFormantSeriesX(i);
+    sxy += w * x * freqs[i];
+    sxx += w * x * x;
+    n++;
+  }
+  // Same floor as the unweighted fit: one formant cannot separate tract length from vowel
+  // identity, and with this weight vector a lone F1 would carry almost no leverage anyway.
+  if (n < 2 || sxx <= 0.0f) return 0.0f;
+  return sxy / sxx;
+}
+
+void voxFormantPatternResiduals(float f1, float f2, float f3, float f4, float deltaF, float out[4]) {
+  const float freqs[4] = { f1, f2, f3, f4 };
+  for (int i = 0; i < 4; i++) {
+    out[i] = (freqs[i] > 0 && deltaF > 0) ? freqs[i] / (voxFormantSeriesX(i) * deltaF) : 0.0f;
+  }
+}
+
+float voxResidualScaleFactor(const float r[4], int limit) {
+  if (limit > 4) limit = 4;
+  float sxx = 0.0f, acc = 0.0f;
+  for (int i = 0; i < limit; i++) {
+    if (!(r[i] > 0)) continue;
+    const float w = voxFormantScaleWeight(i);
+    const float x = voxFormantSeriesX(i);
+    sxx += w * x * x;
+    acc += w * x * x * r[i];
+  }
+  return sxx > 0.0f ? acc / sxx : 0.0f;
+}
+
+// Weighted median of the pooled per-frame scales. Port of poolFormantScale in dsp-utils.js,
+// including its refusal to report anything until the window holds enough: a returned 0 means
+// "no scale yet", which callers must not read as "a very short tract".
+//
+// Insertion sort on <= 26 entries, on a device with no allocator and a hard frame budget. The
+// JS side sorts a copy; the arithmetic is identical, and the host test asserts the two agree.
+float voxPoolFormantScale(const float* deltaF, const float* weight, int n, int minSamples) {
+  float dF[VOX_SCALE_POOL_MAX], w[VOX_SCALE_POOL_MAX];
+  int m = 0;
+  for (int i = 0; i < n && m < VOX_SCALE_POOL_MAX; i++) {
+    if (!(deltaF[i] > 0) || !(weight[i] > 0)) continue;
+    // Insert in ascending dF, carrying the weight with it.
+    int j = m++;
+    while (j > 0 && dF[j - 1] > deltaF[i]) { dF[j] = dF[j - 1]; w[j] = w[j - 1]; j--; }
+    dF[j] = deltaF[i]; w[j] = weight[i];
+  }
+  if (m < minSamples) return 0.0f;
+  float total = 0.0f;
+  for (int i = 0; i < m; i++) total += w[i];
+  float acc = 0.0f;
+  for (int i = 0; i < m; i++) {
+    acc += w[i];
+    if (acc >= total * 0.5f) return dF[i];
+  }
+  return dF[m - 1];
+}
+
+float voxResonanceAbsolute(float deltaFScaleHz) {
+  if (!(deltaFScaleHz > 0)) return 0.0f;
+  return clamp01f(deltaFScaleHz / (2.0f * VOX_RESONANCE_V2_REF_DELTA_F_HZ));
+}
+
 // computeGenderScore(pitch + resonance blend, confidence-weighted) from dsp-utils.js.
 static float computeGenderScore(float pitchHz, float resonance, float pitchConf, float formantConf) {
   float pitchNorm = pitchHz > 0
@@ -352,6 +445,9 @@ VoxDsp::VoxDsp() {
   _timeSinceSyllable = 999.0f;
   _energyHistLen = 0;
   _energyHistPos = 0;
+  _scalePoolLen = 0;
+  _scalePoolPos = 0;
+  _pooledScaleHz = 0.0f;
 }
 
 void VoxDsp::recalibrate() {
@@ -491,6 +587,34 @@ VoxResult VoxDsp::process(const float* frame, size_t n, float dtSecs) {
   computeFormants(hz, &r.f1, &r.f2, &r.f3, &r.formantConf);
   float meanSpacing = voxFitFormantDispersion(r.f1, r.f2, r.f3);
   r.resonance = dispersionToFemininity(meanSpacing);
+
+  // ---- The scale/pattern split (RESONANCE_REDESIGN.md, Phase 6) ----------------------
+  // Computed beside the v1 value above, never instead of it. `r.resonance` is still what the
+  // LED, the haptics and the gender blend read on this port; see the _scalePool note in dsp.h
+  // for the two things the display switch is waiting on.
+  //
+  // This port has no F4 -- the harmonic-envelope path resolves three formants -- so the fit
+  // runs on F1-F3, which is a supported operating point rather than a degraded one.
+  const float frameScale = voxFitFormantScale(r.f1, r.f2, r.f3, 0.0f);
+  if (frameScale > 0.0f) {
+    // Frames the estimator is unsure of dilute the pool rather than voting in it, matching the
+    // web app's confidence weighting. This port has no steadiness or fit-quality term yet, so
+    // formant confidence alone carries it; the floor keeps a zero-confidence frame from
+    // vanishing entirely rather than counting a little.
+    _scalePoolDeltaF[_scalePoolPos] = frameScale;
+    _scalePoolWeight[_scalePoolPos] = fmaxf(1e-3f, r.formantConf);
+    _scalePoolPos = (_scalePoolPos + 1) % SCALE_POOL;
+    if (_scalePoolLen < SCALE_POOL) _scalePoolLen++;
+  }
+  // minSamples 8, the same floor the web app uses: fewer than eight frames is not a speaker.
+  const float pooled = voxPoolFormantScale(_scalePoolDeltaF, _scalePoolWeight, _scalePoolLen, 8);
+  if (pooled > 0.0f) _pooledScaleHz = pooled;
+  r.formantScaleHz = _pooledScaleHz;
+  r.apparentVtlCm = _pooledScaleHz > 0.0f ? 35000.0f / (2.0f * _pooledScaleHz) : 0.0f;
+  r.resonanceAbsolute = voxResonanceAbsolute(_pooledScaleHz);
+  // Residuals against the POOLED scale, not this frame's: dividing a frame's formants by a
+  // scale fitted to those same formants normalises away the shape it is meant to expose.
+  voxFormantPatternResiduals(r.f1, r.f2, r.f3, 0.0f, _pooledScaleHz, r.formantPattern);
 
   // Vocal weight (breathy/light .. pressed/heavy) from H1-H2.
   r.weight = computeWeight(hz);

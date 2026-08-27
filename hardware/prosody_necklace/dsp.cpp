@@ -284,6 +284,79 @@ float VoxDsp::computeWeight(float f0) {
   return _smoothWeight;
 }
 
+// ---- Formant dispersion + the scale/pattern split (RESONANCE_REDESIGN.md, Phase 6) ------
+// Ported from dsp-utils.js, identical to hardware/twatch_voxball/dsp.cpp, and golden-tested
+// against the same vectors on all three. See dsp.h for what this replaced and why it mattered.
+
+float voxFitFormantDispersion(float f1, float f2, float f3) {
+  const float freqs[3] = { f1, f2, f3 };
+  float sxy = 0.0f, sxx = 0.0f;
+  int n = 0;
+  for (int i = 0; i < 3; i++) {
+    if (!(freqs[i] > 0)) continue;
+    float x = (2.0f * (float)(i + 1) - 1.0f) * 0.5f;   // F1 -> 0.5, F2 -> 1.5, F3 -> 2.5
+    sxy += x * freqs[i];
+    sxx += x * x;
+    n++;
+  }
+  if (n < 2 || sxx <= 0.0f) return 0.0f;               // one formant cannot fix a tract length
+  return sxy / sxx;
+}
+
+const float VOX_FORMANT_SCALE_CV[4]        = { 0.32f, 0.38f, 0.08f, 0.08f };
+const float VOX_FORMANT_SCALE_CENTRE_HZ[4] = { 500.0f, 1500.0f, 2500.0f, 3500.0f };
+
+float voxFormantScaleWeight(int i) {
+  if (i < 0 || i > 3) return 0.0f;
+  const float sigma = VOX_FORMANT_SCALE_CV[i] * VOX_FORMANT_SCALE_CENTRE_HZ[i];
+  return 1.0f / (sigma * sigma);
+}
+
+static inline float voxFormantSeriesX(int i) {
+  return (2.0f * (float)(i + 1) - 1.0f) * 0.5f;
+}
+
+float voxFitFormantScale(float f1, float f2, float f3, float f4) {
+  const float freqs[4] = { f1, f2, f3, f4 };
+  float sxy = 0.0f, sxx = 0.0f;
+  int n = 0;
+  for (int i = 0; i < 4; i++) {
+    if (!(freqs[i] > 0)) continue;
+    const float w = voxFormantScaleWeight(i);
+    const float x = voxFormantSeriesX(i);
+    sxy += w * x * freqs[i];
+    sxx += w * x * x;
+    n++;
+  }
+  if (n < 2 || sxx <= 0.0f) return 0.0f;
+  return sxy / sxx;
+}
+
+void voxFormantPatternResiduals(float f1, float f2, float f3, float f4, float deltaF, float out[4]) {
+  const float freqs[4] = { f1, f2, f3, f4 };
+  for (int i = 0; i < 4; i++) {
+    out[i] = (freqs[i] > 0 && deltaF > 0) ? freqs[i] / (voxFormantSeriesX(i) * deltaF) : 0.0f;
+  }
+}
+
+float voxResidualScaleFactor(const float r[4], int limit) {
+  if (limit > 4) limit = 4;
+  float sxx = 0.0f, acc = 0.0f;
+  for (int i = 0; i < limit; i++) {
+    if (!(r[i] > 0)) continue;
+    const float w = voxFormantScaleWeight(i);
+    const float x = voxFormantSeriesX(i);
+    sxx += w * x * x;
+    acc += w * x * x * r[i];
+  }
+  return sxx > 0.0f ? acc / sxx : 0.0f;
+}
+
+float voxResonanceAbsolute(float deltaFScaleHz) {
+  if (!(deltaFScaleHz > 0)) return 0.0f;
+  return clamp01f(deltaFScaleHz / (2.0f * VOX_RESONANCE_V2_REF_DELTA_F_HZ));
+}
+
 // dispersionToFemininity(meanSpacingHz, 900, 1200) from dsp-utils.js.
 static float dispersionToFemininity(float meanSpacingHz) {
   if (!(meanSpacingHz > 0)) return 0.5f;
@@ -459,10 +532,14 @@ VoxResult VoxDsp::process(const float* frame, size_t n, float dtSecs) {
 
   // Formants -> resonance (vocal-tract length via formant dispersion) -> perceived gender.
   computeFormants(hz, &r.f1, &r.f2, &r.f3, &r.formantConf);
-  float meanSpacing = 0.0f;
-  if (r.f1 > 0 && r.f2 > 0 && r.f3 > 0) meanSpacing = (r.f3 - r.f1) * 0.5f;
-  else if (r.f1 > 0 && r.f2 > 0)        meanSpacing = (r.f2 - r.f1);
+  // Least-squares uniform-tube fit over whichever formants this frame produced, in their own
+  // slots. This replaced an endpoint difference over a compacted list -- see dsp.h.
+  float meanSpacing = voxFitFormantDispersion(r.f1, r.f2, r.f3);
   r.resonance = dispersionToFemininity(meanSpacing);
+
+  // The scale/pattern split, computed beside the v1 value and displayed nowhere on this port.
+  r.formantScaleHz = voxFitFormantScale(r.f1, r.f2, r.f3, 0.0f);
+  r.resonanceAbsolute = voxResonanceAbsolute(r.formantScaleHz);
 
   // Vocal weight (breathy/light .. pressed/heavy) from H1-H2.
   r.weight = computeWeight(hz);

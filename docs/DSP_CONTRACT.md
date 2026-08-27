@@ -203,6 +203,14 @@ ranges on aggregate pitch/F1/F2/SNR/resonance (catches e.g. formants collapsing 
 `voxFitFormantDispersion()` against the same five ΔF vectors `dsp-golden.test.mjs` pins on the
 JS side, and both now return identical values (1000, 1174.286, 1000, 1000, 0). It compiles the
 same translation unit the watch flashes, and already runs in `.github/workflows/twatch-build.yml`.
+Phase 6 extended it **past ΔF to the scale/pattern split**: the weighted scale fit, the residual
+vector, `resonanceAbsolute`, the pooling median, and the `Σ L_i·r_i ≡ 1` identity are now all
+asserted on the same vectors as the JS leg. That closes the gap the golden contract had left
+wide open — through Phases 1–5 the two ports agreed on formant dispersion and on *nothing built
+above it*, while the web app moved its entire displayed metric onto the split.
+(3b) `hardware/prosody_necklace/test/dsp_host_test.cpp` — the **third** cross-port leg, added
+with Phase 6. Same shape as the watch's: it compiles the translation unit the necklace flashes
+and asserts the shared ΔF and scale/pattern vectors. Runs in `.github/workflows/necklace-build.yml`.
 (4) `resonance-reliability.test.mjs` — drives the real `VoiceAnalyzer` over **synthesized**
 vowels whose F1/F2/F3 are known by construction, so the resonance score has a ground truth to
 be right or wrong about, at the live frame rate. (5) `resonance-dprime.test.mjs` +
@@ -263,11 +271,26 @@ missing. Both are the same class of bug: array position was being read as adjace
 as formant number, so a dropped F2 doubled ΔF (halving apparent tract length, pinning resonance
 at the feminine rail off one bad frame) and a dropped F3 silently swapped in one of the most
 vowel-dependent quantities in the spectrum (F2−F1 is ~2200 Hz on /i/, ~700 Hz on /u/) as a
-"vocal-tract length". Constant codegen could not have caught either. Both ports now fit the
+"vocal-tract length". Constant codegen could not have caught either. All three ports now fit the
 uniform-tube series `F_i = (2i-1)·ΔF/2` by least squares through the origin over whichever
 formants are present, which agrees with mean-adjacent-spacing on ideal data, degrades correctly
 on a dropout, and carries ~4.4× less variance against per-formant error (measured: aVTL standard
 error ±1.38 cm → ±0.68 cm at σ=120 Hz per formant).
+
+**"Both ports" was wrong for four phases, and the correction is the point.** That sentence used
+to read *both*, meaning web and the T-Watch. There is a **third** C++ port —
+`hardware/prosody_necklace/` — and it was never in the count. It went on computing
+`(F3−F1)/2`, with `F2−F1` substituted whenever F3 went missing, through Phases 1–5, because
+nothing compiled it, nothing ran it, and no golden vector reached it: the necklace had **no host
+test and no CI job at all**. Phase 6 fixed the fit, gave it
+`hardware/prosody_necklace/test/dsp_host_test.cpp` against the same vectors the other two legs
+assert, and added `.github/workflows/necklace-build.yml`. Measured effect of the bug on the worst
+case it hit: /i/ with F3 missing returned 2020 Hz, an apparent tract of **8.7 cm** — shorter than
+any adult's, pinned hard at the bright rail — where the fit returns 1428 Hz and 12.3 cm from the
+same two formants. On a device whose entire output is a vibration motor and an LED, that fired
+the wrong haptic against the wrong vocal target. **The lesson is not about ΔF.** A port with no
+test is outside the contract no matter what the contract says about it, and the document asserted
+a property of a port it had never checked.
 
 Still to do: the Kotlin leg (needs the Android toolchain, and D1's VTL unification has not
 landed there yet — `SpectralBrightnessEstimator.kt` is still brightness-primary), the

@@ -179,6 +179,139 @@ int main() {
           "dF=" + f2s(voxFitFormantDispersion(500.0f, 0.0f, 0.0f)));
   }
 
+  // --- The scale/pattern split must match the web app, vector for vector (Phase 6) --------
+  // Through Phases 1-5 the two ports agreed on formant dispersion and on NOTHING built above
+  // it, while the web app moved its entire displayed metric onto the split. These are the same
+  // input->output pairs dsp-golden.test.mjs asserts on the JS side. Per DSP_CONTRACT D1 the
+  // resonance scale must mean the same thing on the watch as on the ball; constant codegen
+  // cannot catch a formula diverging, only a shared vector can.
+  {
+    auto nearHz = [](float actual, float expected) { return std::fabs(actual - expected) < 0.05f; };
+    // Tolerance for the 0..1 fields is looser than the JS leg's 1e-5: this port is float32
+    // where the reference is float64, and DSP_CONTRACT's tolerance tiers put the C++ leg wider
+    // by design. It is still far tighter than any drift that would change a vocal target.
+    auto near01 = [](float actual, float expected) { return std::fabs(actual - expected) < 1e-4f; };
+
+    // Weights derived from the published CVs, not tabulated -- the same derivation the JS side
+    // pins. If a port ever hardcodes these and the CVs move, this is what notices.
+    check("scale weights: F3 outweighs F2 by ~8x per unit x^2",
+          voxFormantScaleWeight(2) > voxFormantScaleWeight(1) * 8.0f,
+          "w2=" + f2s(voxFormantScaleWeight(1)) + " w3=" + f2s(voxFormantScaleWeight(2)));
+
+    // An ideal uniform-tube series fits exactly whatever the weights are.
+    check("scale: ideal tube series F1/F2/F3",
+          nearHz(voxFitFormantScale(500.0f, 1500.0f, 2500.0f, 0.0f), 1000.0f),
+          "dF=" + f2s(voxFitFormantScale(500.0f, 1500.0f, 2500.0f, 0.0f)));
+    check("scale: an F4 on the same series changes nothing",
+          nearHz(voxFitFormantScale(500.0f, 1500.0f, 2500.0f, 3500.0f), 1000.0f),
+          "dF=" + f2s(voxFitFormantScale(500.0f, 1500.0f, 2500.0f, 3500.0f)));
+    // A real vowel does not lie on a tube, so the weights decide and F3 dominates.
+    check("scale: weighted fit on a non-tube frame",
+          nearHz(voxFitFormantScale(650.0f, 1800.0f, 2900.0f, 0.0f), 1169.507274f),
+          "dF=" + f2s(voxFitFormantScale(650.0f, 1800.0f, 2900.0f, 0.0f)));
+    // Array SLOT is the formant number -- the bug class that started the cross-port testing.
+    check("scale: F2 missing keeps F1/F3 in their slots",
+          nearHz(voxFitFormantScale(500.0f, 0.0f, 2500.0f, 0.0f), 1000.0f),
+          "dF=" + f2s(voxFitFormantScale(500.0f, 0.0f, 2500.0f, 0.0f)));
+    check("scale: F3 missing falls back to the F1/F2 fit",
+          nearHz(voxFitFormantScale(500.0f, 1500.0f, 0.0f, 0.0f), 1000.0f),
+          "dF=" + f2s(voxFitFormantScale(500.0f, 1500.0f, 0.0f, 0.0f)));
+    check("scale: one formant cannot fix a tract length",
+          voxFitFormantScale(500.0f, 0.0f, 0.0f, 0.0f) == 0.0f,
+          "dF=" + f2s(voxFitFormantScale(500.0f, 0.0f, 0.0f, 0.0f)));
+
+    // Peterson & Barney adult-male means -- the three vowels that anchor the redesign.
+    check("scale: P&B /i/ (heed)",
+          nearHz(voxFitFormantScale(270.0f, 2290.0f, 3010.0f, 0.0f), 1179.426039f),
+          "dF=" + f2s(voxFitFormantScale(270.0f, 2290.0f, 3010.0f, 0.0f)));
+    check("scale: P&B /a/ (hod)",
+          nearHz(voxFitFormantScale(730.0f, 1090.0f, 2440.0f, 0.0f), 993.346264f),
+          "dF=" + f2s(voxFitFormantScale(730.0f, 1090.0f, 2440.0f, 0.0f)));
+    check("scale: P&B rhotic (heard) reads as an impossibly long tract",
+          nearHz(voxFitFormantScale(490.0f, 1350.0f, 1690.0f, 0.0f), 702.136086f),
+          "dF=" + f2s(voxFitFormantScale(490.0f, 1350.0f, 1690.0f, 0.0f)));
+
+    // resonanceAbsolute on the population axis.
+    check("resonanceAbsolute: tube-series speaker",
+          near01(voxResonanceAbsolute(1000.0f), 0.463822f),
+          "abs=" + f2s(voxResonanceAbsolute(1000.0f)));
+    check("resonanceAbsolute: top of the axis is 2x the reference dispersion",
+          near01(voxResonanceAbsolute(2.0f * VOX_RESONANCE_V2_REF_DELTA_F_HZ), 1.0f),
+          "abs=" + f2s(voxResonanceAbsolute(2.0f * VOX_RESONANCE_V2_REF_DELTA_F_HZ)));
+    check("resonanceAbsolute: no scale is no reading, not a very long tract",
+          voxResonanceAbsolute(0.0f) == 0.0f,
+          "abs=" + f2s(voxResonanceAbsolute(0.0f)));
+
+    // FORMANT PATTERN. A tube reads all-ones; /i/ spreads far either side of it, and that
+    // spread is the vowel rather than the speaker.
+    float r[4];
+    voxFormantPatternResiduals(500.0f, 1500.0f, 2500.0f, 0.0f, 1000.0f, r);
+    check("pattern: a uniform tube reads all ones",
+          near01(r[0], 1.0f) && near01(r[1], 1.0f) && near01(r[2], 1.0f),
+          "r=[" + f2s(r[0]) + ", " + f2s(r[1]) + ", " + f2s(r[2]) + "]");
+    voxFormantPatternResiduals(270.0f, 2290.0f, 3010.0f, 0.0f,
+                               voxFitFormantScale(270.0f, 2290.0f, 3010.0f, 0.0f), r);
+    check("pattern: P&B /i/ residual vector",
+          near01(r[0], 0.457850f) && near01(r[1], 1.294415f) && near01(r[2], 1.020836f),
+          "r=[" + f2s(r[0]) + ", " + f2s(r[1]) + ", " + f2s(r[2]) + "]");
+    voxFormantPatternResiduals(730.0f, 1090.0f, 2440.0f, 0.0f,
+                               voxFitFormantScale(730.0f, 1090.0f, 2440.0f, 0.0f), r);
+    check("pattern: P&B /a/ residual vector",
+          near01(r[0], 1.469780f) && near01(r[1], 0.731534f) && near01(r[2], 0.982538f),
+          "r=[" + f2s(r[0]) + ", " + f2s(r[1]) + ", " + f2s(r[2]) + "]");
+    voxFormantPatternResiduals(500.0f, 0.0f, 2500.0f, 0.0f, 1000.0f, r);
+    check("pattern: an unmeasured formant yields no residual, not a residual of zero",
+          r[1] == 0.0f && near01(r[0], 1.0f) && near01(r[2], 1.0f),
+          "r2=" + f2s(r[1]));
+
+    // THE IDENTITY: sum(L_i * r_i) == 1 whenever dF was fitted to the same frame. Exact, not
+    // approximate. A port with subtly wrong weights would still look plausible on the residual
+    // vectors above and would fail right here.
+    const float vecs[5][3] = {
+      { 500.0f, 1500.0f, 2500.0f }, { 650.0f, 1800.0f, 2900.0f }, { 270.0f, 2290.0f, 3010.0f },
+      { 730.0f, 1090.0f, 2440.0f }, { 490.0f, 1350.0f, 1690.0f },
+    };
+    bool identityHolds = true;
+    float worst = 0.0f;
+    for (const auto& v : vecs) {
+      const float dF = voxFitFormantScale(v[0], v[1], v[2], 0.0f);
+      voxFormantPatternResiduals(v[0], v[1], v[2], 0.0f, dF, r);
+      const float rho = voxResidualScaleFactor(r, 3);
+      worst = fmaxf(worst, std::fabs(rho - 1.0f));
+      if (std::fabs(rho - 1.0f) > 1e-4f) identityHolds = false;
+    }
+    check("pattern: sum(L_i*r_i) == 1 on a self-fitted frame, every vector",
+          identityHolds, "max |rho-1|=" + f2s(worst));
+
+    // Pooling: the same vectors dsp-golden.test.mjs pins for poolFormantScale.
+    {
+      const float d1[8]  = { 900, 950, 1000, 1050, 1100, 1150, 1200, 1250 };
+      const float d2[8]  = { 900, 950, 1000, 1050, 1100, 1150, 1200, 2400 };
+      const float d3[8]  = { 1000, 1000, 1000, 1000, 1000, 1000, 1000, 3000 };
+      const float w1[8]  = { 1, 1, 1, 1, 1, 1, 1, 1 };
+      const float w3[8]  = { 1, 1, 1, 1, 1, 1, 1, 9 };
+      check("pool: weighted median of eight equally-trusted frames",
+            nearHz(voxPoolFormantScale(d1, w1, 8, 8), 1050.0f),
+            "pooled=" + f2s(voxPoolFormantScale(d1, w1, 8, 8)));
+      // The reason it is a median: one frame whose F3 locked onto F4 must not drag the pool.
+      check("pool: a doubled-dF outlier does not move the median",
+            nearHz(voxPoolFormantScale(d2, w1, 8, 8), 1050.0f),
+            "pooled=" + f2s(voxPoolFormantScale(d2, w1, 8, 8)));
+      check("pool: a heavily-weighted frame can win, which is the contract",
+            nearHz(voxPoolFormantScale(d3, w3, 8, 8), 3000.0f),
+            "pooled=" + f2s(voxPoolFormantScale(d3, w3, 8, 8)));
+      check("pool: fewer than eight usable frames is no scale, not a short tract",
+            voxPoolFormantScale(d1, w1, 7, 8) == 0.0f,
+            "pooled=" + f2s(voxPoolFormantScale(d1, w1, 7, 8)));
+    }
+
+    // And it departs from 1 exactly when the scale came from elsewhere -- the rhotic signal.
+    voxFormantPatternResiduals(490.0f, 1350.0f, 1690.0f, 0.0f, 968.0f, r);
+    const float rhoRhotic = voxResidualScaleFactor(r, 3);
+    check("pattern: a rhotic against a pooled scale drives rho well below 1",
+          rhoRhotic < 0.8f, "rho=" + f2s(rhoRhotic));
+  }
+
   std::printf("\n%s (%d failure%s)\n", g_failures == 0 ? "ALL PASS" : "FAILURES",
               g_failures, g_failures == 1 ? "" : "s");
   return g_failures == 0 ? 0 : 1;

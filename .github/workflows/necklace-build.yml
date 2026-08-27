@@ -1,0 +1,38 @@
+name: Build necklace firmware
+
+# Host-tests the ProsodyBall necklace DSP (hardware/prosody_necklace).
+#
+# This port had no CI at all until Phase 6 of docs/RESONANCE_REDESIGN.md, and that is precisely
+# how it kept a formant-dispersion bug the web app and the T-Watch had both already fixed:
+# docs/DSP_CONTRACT.md recorded that "both ports" were on the least-squares uniform-tube fit,
+# and this third port was never in that count. Nothing compiled it, nothing ran it, nothing
+# compared it against the shared golden vectors.
+#
+# dsp.cpp is hardware-agnostic (no Arduino / I2S / LED includes), so the same translation unit
+# the necklace flashes compiles and runs on the host in seconds. There is no firmware-compile
+# job here yet — the necklace sketch's board/library pinning is not captured the way
+# hardware/twatch_voxball/SETUP.md captures the watch's — so this guards the voice math only,
+# which is the part with a cross-port contract to break.
+
+on:
+  push:
+    branches:
+      - main
+      - "claude/**"
+    paths:
+      - "hardware/prosody_necklace/**"
+      - ".github/workflows/necklace-build.yml"
+  workflow_dispatch:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build & run DSP host tests
+        working-directory: hardware/prosody_necklace
+        run: |
+          g++ -std=c++17 -O2 -Wall -I. dsp.cpp test/dsp_host_test.cpp -o dsp_host_test
+          ./dsp_host_test
