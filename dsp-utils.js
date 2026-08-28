@@ -1,5 +1,33 @@
 import * as DSP_CONST from './dsp-constants.generated.js';
 
+// Security: Sanitizes dynamically constructed URLs to prevent DOM-based XSS via unsafe protocol injection.
+export function sanitizeUrl(urlStr) {
+  if (!urlStr) return 'about:blank';
+
+  let parsed;
+  let hasBase = false;
+  try {
+    parsed = new URL(urlStr);
+  } catch (e) {
+    hasBase = true;
+    try {
+      parsed = new URL(urlStr, 'http://fallback-base');
+    } catch (err) {
+      return 'about:blank';
+    }
+  }
+
+  if (hasBase && urlStr.trim().startsWith('://')) {
+    return 'about:blank';
+  }
+
+  const allowed = ['http:', 'https:', 'mailto:', 'tel:', 'blob:', 'file:'];
+  if (allowed.includes(parsed.protocol)) {
+    return urlStr;
+  }
+  return 'about:blank';
+}
+
 export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
