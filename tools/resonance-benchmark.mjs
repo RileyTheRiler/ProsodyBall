@@ -21,6 +21,7 @@ import {
   resonanceScoreV1, resonanceAbsoluteV2, RESONANCE_V2_REFERENCE_DELTA_F_HZ,
   poolFormantScale, classifyVowel, f2PositionFromResidual, VOWEL_TEMPLATES, VOWEL_RESIDUAL_SD,
   VOWEL_SPEAKER_SCATTER, findVowelNuclei, normalizeResidualScale, residualScaleFactor,
+  clamp01,
 } from '../dsp-utils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -672,4 +673,691 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log('    visible. Note these numbers use the classifier\'s own vowel decisions, not oracle');
   console.log('    labels, so classifier errors and abstentions are already priced in.');
   console.log('');
+}
+
+// =============================================================================================
+// PHASE 5 — REAL SPEAKERS (docs/RESONANCE_REDESIGN.md §5)
+// =============================================================================================
+//
+// Everything above this line is measured on Peterson & Barney's TWO population MEANS. That is
+// the whole limitation Phase 5 exists to remove: two mean speakers cannot tell you whether a
+// classifier is speaker-independent, cannot give you an across-SPEAKER standard deviation, and
+// (P&B published no F4) cannot give you a measured r₄ at all.
+//
+// The functions below are the SAME machinery pointed at fixtures/hillenbrand-1995.json —
+// 139 individual speakers × 12 vowels, hand-corrected F0 and F1–F4. `pbSpeaker` and
+// `realSpeaker` build the identical object shape, so every routine above (templates,
+// classifier evaluation, f2Position, the d′ arithmetic) runs on either corpus unchanged.
+//
+// The report front-end is tools/real-speaker-benchmark.mjs; the assertions are in
+// resonance-dprime.test.mjs. There is one implementation of the benchmark, not two.
+
+export const HB = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'hillenbrand-1995.json'), 'utf8'));
+
+// The ten vowels Hillenbrand shares with P&B. Every cross-corpus number runs on exactly this
+// set, so a difference between the corpora is never the two of them covering different vowels.
+export const HB_SET = HB.petersonBarneyOverlap;
+// /e/ ("hayed") and /o/ ("hoed") — real vowels of the language that the SHIPPED templates have
+// no entry for. Never folded into an accuracy figure; reported as its own out-of-inventory line.
+export const HB_EXTRA = HB.hillenbrandOnly;
+export const HB_FULL = [...HB_SET, ...HB_EXTRA];
+
+export const HB_GROUPS = ['men', 'women', 'boys', 'girls'];
+export const HB_ADULT_GROUPS = ['men', 'women'];
+export const HB_CHILD_GROUPS = HB.childGroups;
+
+// app.js's two F3 admission floors, duplicated here as data rather than imported because app.js
+// is a browser module. The rhotic question in §5's Phase 4 entry is entirely about these two
+// numbers, and this is the first corpus that can say how many REAL /ɝ/ productions fall below
+// each of them.
+export const F3_FLOOR_HZ = 2000;
+export const F3_RHOTIC_FLOOR_HZ = 1500;
+
+export const hbSpeakers = (groups = HB_GROUPS) => HB.speakers.filter((s) => groups.includes(s.group));
+
+// [F1, F2, F3, F4] for one token, in the array-position-is-the-formant-number convention
+// fitFormantScale requires. A formant the author could not measure is 0 — "not measured",
+// which fitFormantScale skips — never an invented value.
+//
+// `includeF4: false` is the DEFAULT and it is deliberate: it is the F4-unavailable operating
+// point every number in Phases 1–4 was measured at, so a Hillenbrand-vs-P&B comparison is a
+// comparison of corpora rather than of how many formants each had. F4 gets its own section.
+export function hbFormants(token, { includeF4 = false, f2Gain = 1 } = {}) {
+  if (!token) return null;
+  return [
+    token.f1 || 0,
+    (token.f2 || 0) * f2Gain,
+    token.f3 || 0,
+    includeF4 ? (token.f4 || 0) : 0,
+  ];
+}
+
+// One real speaker, in exactly the shape `pbSpeaker` returns, so everything downstream is
+// corpus-agnostic.
+//
+// The scale is POOLED over the speaker's own vowel inventory by `poolFormantScale` — the same
+// weighted median the live rolling window uses — because a frame is one vowel and one vowel's
+// apparent tract length is not the speaker's (§1.1). A token whose fit failed (fewer than two
+// measurable formants) is dropped from `vowels` rather than filled in.
+export function realSpeaker(speaker, { vowels = HB_SET, includeF4 = false, f2Gain = 1 } = {}) {
+  const kept = [], formants = [];
+  for (const v of vowels) {
+    const f = hbFormants(speaker.tokens[v], { includeF4, f2Gain });
+    if (!f) continue;
+    if (fitFormantScale(f).deltaF <= 0) continue;
+    kept.push(v); formants.push(f);
+  }
+  const scaleHz = poolFormantScale(
+    formants.map((f) => ({ deltaF: fitFormantScale(f).deltaF, weight: 1 })),
+    { minSamples: 4 },
+  ).deltaF;
+  const pooled = formants.map((f) => formantPatternResiduals(f, scaleHz).slice(0, includeF4 ? 4 : 3));
+  return {
+    id: speaker.id, group: speaker.group, sex: speaker.sex, adult: speaker.adult,
+    vowels: kept, formants, scaleHz, includeF4,
+    pooledResiduals: pooled,
+    residuals: pooled.map((r) => normalizeResidualScale(r).residuals),
+    rho: pooled.map((r) => residualScaleFactor(r)),
+    // Index by vowel, because a real speaker can be missing one and the arrays are no longer
+    // positionally aligned with the requested vowel list the way P&B's always are.
+    index: Object.fromEntries(kept.map((v, i) => [v, i])),
+  };
+}
+
+export const realSpeakers = (opts = {}) =>
+  hbSpeakers(opts.groups || HB_GROUPS).map((s) => realSpeaker(s, opts));
+
+// ---------------------------------------------------------------------------------------------
+// (c) THE d′ DENOMINATOR
+// ---------------------------------------------------------------------------------------------
+//
+// §1.3 defines d′ = (female mean − male mean) ÷ pooled within-sex ACROSS-VOWEL SD. With two mean
+// speakers there was no alternative: the only variance P&B exposes within a sex is variance
+// across vowels. But that denominator is why conditioning on the vowel inflates d′ almost
+// tautologically — a measure that removes across-vowel variance shrinks its own denominator, and
+// §5's Phase 2 α-sweep is that effect isolated in one parameter.
+//
+// 139 speakers give the denominator this was always supposed to be: the SD across SPEAKERS
+// within a sex. Both are returned from one function, on one numerator, so the historical number
+// stays comparable and the honest one sits beside it.
+//
+//   acrossVowel   — collapse to one value per VOWEL within the group, then SD over vowels.
+//                   §1.3's denominator, reproduced exactly on P&B's two mean speakers.
+//   acrossSpeaker — collapse to one value per SPEAKER within the group, then SD over speakers.
+//                   What "can this measure tell two people apart" actually asks.
+//   token         — no collapsing: SD over every token. Carries both sources at once; reported
+//                   for context because it is the variance a single live frame really faces.
+//
+// `values` is a list of {group, speaker, vowel, value}. One shape for every measure, so no
+// measure gets a denominator computed a different way from another's.
+export function dPrimeDenominators(values, groupA, groupB) {
+  const clean = values.filter((v) => v && v.value != null && Number.isFinite(v.value));
+  const of = (g) => clean.filter((v) => v.group === g);
+  const collapse = (rows, key) => {
+    const by = new Map();
+    for (const r of rows) {
+      if (!by.has(r[key])) by.set(r[key], []);
+      by.get(r[key]).push(r.value);
+    }
+    return [...by.values()].filter((xs) => xs.length).map(mean);
+  };
+  const A = of(groupA), B = of(groupB);
+  const raw = { A: A.map((r) => r.value), B: B.map((r) => r.value) };
+  if (!raw.A.length || !raw.B.length) return null;
+  const shift = mean(raw.B) - mean(raw.A);
+  const pooled = (a, b) =>
+    (a.length > 1 && b.length > 1) ? Math.sqrt((sd(a) ** 2 + sd(b) ** 2) / 2) : NaN;
+  const den = {
+    acrossVowel: pooled(collapse(A, 'vowel'), collapse(B, 'vowel')),
+    acrossSpeaker: pooled(collapse(A, 'speaker'), collapse(B, 'speaker')),
+    token: pooled(raw.A, raw.B),
+  };
+  // AUC over per-SPEAKER means, reported beside the d′ it corresponds to. d′ assumes two normal
+  // distributions with equal variance and blows up when a measure's own clamping compresses the
+  // denominator; AUC is the rank statistic and makes no such assumption, so a large d′ next to an
+  // AUC of 0.99 says "these are both near-perfect and d′ is magnifying the difference between
+  // them", which is a thing this phase measured and needed to be able to say.
+  const perSpeaker = (rows) => {
+    const by = new Map();
+    for (const r of rows) { if (!by.has(r.speaker)) by.set(r.speaker, []); by.get(r.speaker).push(r.value); }
+    return [...by.values()].map(mean);
+  };
+  const sA = perSpeaker(A), sB = perSpeaker(B);
+  let pairs = 0, wins = 0;
+  for (const a of sA) for (const b of sB) { pairs++; if (b > a) wins++; else if (b === a) wins += 0.5; }
+  return {
+    shift, meanA: mean(raw.A), meanB: mean(raw.B),
+    nA: raw.A.length, nB: raw.B.length,
+    nSpeakersA: sA.length, nSpeakersB: sB.length,
+    sd: den,
+    dAcrossVowel: shift / den.acrossVowel,
+    dAcrossSpeaker: shift / den.acrossSpeaker,
+    dToken: shift / den.token,
+    aucSpeaker: pairs ? wins / pairs : NaN,
+  };
+}
+
+// The §1.3 measure ladder, as code.
+//
+// READ THIS BEFORE COMPARING TO §1.3's TABLE. Only two of these rows were ever committed:
+// `v1` is `resonanceScoreV1` and `v2` is `resonanceAbsoluteV2`, and both reproduce §1.3
+// exactly (0.858 and 1.734 on the seven-vowel set). The other six are THIS FILE'S restatement
+// of §1.3's one-line descriptions — that table was prose, not code, so the normalisation ranges
+// and clamping it used are not recoverable. They reproduce §1.3's ordering and not its values,
+// and the report prints the published number beside the recomputed one so the discrepancy is
+// visible rather than absorbed. Nothing in Phase 5 depends on the six matching; what the ladder
+// is for is RANK under two different denominators, and rank is unaffected by which affine
+// restatement of a measure is used.
+export const MEASURE_LADDER = [
+  { key: 'f3Norm', label: 'F3 normalised (2200–3300 Hz)', published: 1.98, committed: false,
+    fn: (f) => clamp01((f[2] - 2200) / 1100) },
+  { key: 'v2', label: 'resonanceAbsolute v2', published: 1.73, committed: true,
+    fn: (f) => scoreV2(f) },
+  { key: 'dfF3', label: 'ΔF from F3 alone', published: 1.67, committed: false,
+    fn: (f) => (f[2] > 0 ? resonanceAbsoluteV2(f[2] / 2.5) : null) },
+  { key: 'meanF123', label: 'mean(F1,F2,F3) normalised', published: 0.96, committed: false,
+    fn: (f) => clamp01(((f[0] + f[1] + f[2]) / 3 - 1000) / 1000) },
+  { key: 'v1', label: 'current app score (v1)', published: 0.85, committed: true,
+    fn: (f) => scoreV1(f) },
+  { key: 'dfF123', label: 'ΔF(F1,F2,F3) alone', published: 0.81, committed: false,
+    fn: (f) => resonanceAbsoluteV2(fitFormantDispersion([f[0], f[1], f[2]]).deltaF) },
+  { key: 'dfF23', label: 'ΔF(F2,F3)', published: 0.73, committed: false,
+    fn: (f) => resonanceAbsoluteV2(fitFormantDispersion([0, f[1], f[2]]).deltaF) },
+  { key: 'f2Norm', label: 'F2 normalised (1000–2400 Hz)', published: 0.38, committed: false,
+    fn: (f) => rawF2Score(f) },
+];
+
+// Every ladder measure scored token by token over a set of speakers, in the {group, speaker,
+// vowel, value} shape `dPrimeDenominators` consumes. `groupOf` lets the same speakers be split
+// by sex, by age, or by anything else without re-scoring them.
+export function ladderValues(speakers, { vowels = HB_SET, groupOf = (s) => s.group } = {}) {
+  const out = {};
+  for (const m of MEASURE_LADDER) out[m.key] = [];
+  for (const sp of speakers) {
+    for (const v of vowels) {
+      const i = sp.index[v];
+      if (i == null) continue;
+      const f = sp.formants[i];
+      for (const m of MEASURE_LADDER) {
+        const value = m.fn(f);
+        out[m.key].push({ group: groupOf(sp), speaker: sp.id, vowel: v, value });
+      }
+    }
+  }
+  return out;
+}
+
+// The same ladder on P&B, so the two corpora are compared on one arithmetic. P&B has one
+// "speaker" per sex, so its acrossSpeaker denominator is undefined by construction — which is
+// the point, and the report says so rather than printing NaN as if it were a result.
+export function pbLadderValues(vowels = FULL_SET) {
+  const out = {};
+  for (const m of MEASURE_LADDER) out[m.key] = [];
+  for (const sex of ['male', 'female']) {
+    for (const v of vowels) {
+      const f = formantsOf(v, sex);
+      for (const m of MEASURE_LADDER) {
+        out[m.key].push({ group: sex === 'male' ? 'men' : 'women', speaker: sex, vowel: v, value: m.fn(f) });
+      }
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------
+// (d) THE SHIPPED CONSTANTS, RE-DERIVED FROM REAL SPEAKERS
+// ---------------------------------------------------------------------------------------------
+//
+// VOWEL_TEMPLATES, VOWEL_RESIDUAL_SD and VOWEL_SPEAKER_SCATTER are all derived from P&B's two
+// means. This re-derives each from 139 real speakers by the identical definition and reports the
+// distance. NOTHING IS SWAPPED — §3.5's versioning applies to any change that moves a displayed
+// number, so the output is a proposal with numbers attached, not an edit.
+export function realTemplates(speakers, { vowels = HB_SET, dims = 3 } = {}) {
+  const out = {};
+  for (const v of vowels) {
+    const rows = [];
+    for (const sp of speakers) {
+      const i = sp.index[v];
+      if (i == null) continue;
+      const r = sp.residuals[i];
+      if (r && r.slice(0, dims).every((x) => x != null && x > 0)) rows.push(r);
+    }
+    if (rows.length) out[v] = Array.from({ length: dims }, (_, k) => mean(rows.map((r) => r[k])));
+  }
+  return out;
+}
+
+// VOWEL_RESIDUAL_SD's definition: the across-vowel SD of each residual dimension over the
+// template set. Recomputed here on real-speaker templates.
+export function realResidualSd(templates, dims = 3) {
+  const rows = Object.values(templates);
+  return Array.from({ length: dims }, (_, i) => sd(rows.map((r) => r[i])));
+}
+
+// VOWEL_SPEAKER_SCATTER's definition: "the mean distance, in the classifier's metric, between
+// two speakers' productions of THE SAME vowel". P&B could only offer one such pair — male norm
+// vs female norm — so the shipped 0.195 is a single difference. With 139 speakers it is the
+// mean distance from each speaker's own residual to the population template for that vowel,
+// which is the quantity the posterior actually needs: how far a genuine production sits from
+// the template because the speaker is a different person.
+//
+// Reported per group as well as pooled, because the shipped constant was derived from two ADULT
+// means and the children are the population it was never shown.
+export function realSpeakerScatter(speakers, { templates, vowels = HB_SET, dims = 2, sdVec = VOWEL_RESIDUAL_SD } = {}) {
+  const all = [], byGroup = {};
+  for (const sp of speakers) {
+    for (const v of vowels) {
+      const i = sp.index[v];
+      if (i == null || !templates[v]) continue;
+      const d = templateDistance(sp.residuals[i], templates[v], dims, sdVec);
+      if (!Number.isFinite(d)) continue;
+      all.push(d);
+      (byGroup[sp.group] ||= []).push(d);
+    }
+  }
+  return {
+    mean: all.length ? mean(all) : NaN,
+    median: all.length ? all.slice().sort((a, b) => a - b)[Math.floor(all.length / 2)] : NaN,
+    n: all.length,
+    byGroup: Object.fromEntries(Object.entries(byGroup).map(([g, xs]) => [g, { mean: mean(xs), n: xs.length }])),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE ACCEPTANCE CRITERION: classification held out across REAL SPEAKERS
+// ---------------------------------------------------------------------------------------------
+//
+// The Phase 2 claim is 95% correct at 0% abstention "held out across sexes" — which is n = 20
+// decisions over TWO mean speakers. This is the same test where the held-out unit is a person.
+//
+// `templates: 'shipped'` runs VOWEL_TEMPLATES, i.e. the constants the app ships, against
+// speakers they have never seen. That is the number that says whether the app works.
+// `templates: 'derived'` rebuilds them from the training speakers of each fold, which separates
+// "the shipped constants are wrong" from "the method does not generalise".
+//
+// `trainGroups` / `testGroups` are what makes children a stress test rather than a footnote:
+// train on adults only, test on children, and the classifier faces tract lengths outside the
+// range every template was built from.
+export function speakerHeldOutEval({
+  vowels = HB_SET,
+  templates: mode = 'shipped',
+  folds = 5,
+  trainGroups = HB_GROUPS,
+  testGroups = HB_GROUPS,
+  dims = null,
+  includeF4 = false,
+  seed = 1,
+} = {}) {
+  const all = realSpeakers({ vowels, includeF4 });
+  const train = all.filter((s) => trainGroups.includes(s.group));
+  const test = all.filter((s) => testGroups.includes(s.group));
+  const disjointGroups = testGroups.some((g) => !trainGroups.includes(g));
+
+  const perVowel = {}, confusion = {}, matrix = {}, byGroup = {};
+  for (const v of vowels) { perVowel[v] = { correct: 0, wrong: 0, abstain: 0 }; matrix[v] = {}; }
+  let correct = 0, wrong = 0, abstain = 0;
+  const abstainReasons = {};
+
+  // Deterministic speaker assignment to folds: sorted ids, round robin offset by `seed`.
+  // Round robin over the sorted list keeps every group represented in every fold, so a fold is
+  // never accidentally all-men.
+  const foldOf = new Map();
+  test.slice().sort((a, b) => a.id.localeCompare(b.id))
+    .forEach((s, i) => foldOf.set(s.id, (i + seed) % folds));
+
+  const score = (sp, templatesForFold) => {
+    for (const v of vowels) {
+      const i = sp.index[v];
+      if (i == null) continue;
+      const c = classifyVowel(sp.residuals[i], { templates: templatesForFold, dims, preNormalized: true });
+      const cell = c.vowel || '—';
+      matrix[v][cell] = (matrix[v][cell] || 0) + 1;
+      const g = (byGroup[sp.group] ||= { correct: 0, wrong: 0, abstain: 0 });
+      if (c.vowel === null) {
+        abstain++; perVowel[v].abstain++; g.abstain++;
+        abstainReasons[c.reason] = (abstainReasons[c.reason] || 0) + 1;
+      } else if (c.vowel === v) { correct++; perVowel[v].correct++; g.correct++; } else {
+        wrong++; perVowel[v].wrong++; g.wrong++;
+        confusion[`${v}→${c.vowel}`] = (confusion[`${v}→${c.vowel}`] || 0) + 1;
+      }
+    }
+  };
+
+  if (mode === 'shipped') {
+    // No folds needed: the templates come from P&B and have seen none of these speakers.
+    for (const sp of test) score(sp, VOWEL_TEMPLATES);
+  } else if (disjointGroups) {
+    // Train and test populations are already disjoint (adults → children); one split, no folds.
+    const t = realTemplates(train, { vowels, dims: 3 });
+    for (const sp of test) score(sp, t);
+  } else {
+    for (let k = 0; k < folds; k++) {
+      const trainFold = train.filter((s) => foldOf.get(s.id) !== k);
+      const t = realTemplates(trainFold, { vowels, dims: 3 });
+      for (const sp of test.filter((s) => foldOf.get(s.id) === k)) score(sp, t);
+    }
+  }
+
+  const n = correct + wrong + abstain;
+  return {
+    mode, n, correct, wrong, abstain, confusion, perVowel, matrix, abstainReasons, byGroup,
+    nSpeakers: test.length,
+    accuracy: n ? correct / n : 0,
+    accuracyDecided: (correct + wrong) ? correct / (correct + wrong) : 0,
+    abstentionRate: n ? abstain / n : 0,
+  };
+}
+
+// Vowels the shipped inventory has no template for — /e/ and /o/. Every decision here is by
+// construction either an abstention or an error; reported on its own so it can neither flatter
+// nor deflate the accuracy above.
+export function outOfInventoryEval({ vowels = HB_EXTRA, dims = null } = {}) {
+  const all = realSpeakers({ vowels: HB_FULL });
+  const got = {};
+  let abstain = 0, named = 0;
+  for (const sp of all) {
+    for (const v of vowels) {
+      const i = sp.index[v];
+      if (i == null) continue;
+      const c = classifyVowel(sp.residuals[i], { templates: VOWEL_TEMPLATES, dims, preNormalized: true });
+      if (c.vowel === null) abstain++;
+      else { named++; (got[v] ||= {}); got[v][c.vowel] = (got[v][c.vowel] || 0) + 1; }
+    }
+  }
+  return { n: abstain + named, abstain, named, abstentionRate: (abstain + named) ? abstain / (abstain + named) : 0, got };
+}
+
+// ---------------------------------------------------------------------------------------------
+// F4 — THE FIRST MEASURED ONE
+// ---------------------------------------------------------------------------------------------
+//
+// §7's open question 2 ("Is F4 worth its miss rate?") has been open since Phase 2 and every
+// datum against it was synthetic: P&B published no F4, so Phase 1's yield figure came from the
+// live extractor and Phase 2's classifier test supplied F4 model-consistently at 3.5·ΔF of the
+// vowel's own fit. A synthetic F4 placed from the vowel's own fit cannot answer whether F4 helps,
+// because it was constructed to agree with the other three formants.
+//
+// Hillenbrand measured F4 by hand on 85.4% of tokens. Three questions, three measurements:
+//
+//   1. Does F4 make the SCALE better determined? The test is not "does ΔF change" — it will —
+//      but whether the speaker's scale becomes less dependent on which vowel they happened to
+//      say. That is the within-speaker across-vowel SD of per-token ΔF, relative to the
+//      speaker's own pooled ΔF. Lower is better and it is the property Phase 1 claims for the
+//      upper-formant weighting.
+//   2. Does it move d′? Both denominators, F1–F3 against F1–F4, on the same speakers.
+//   3. Is there a measured r₄ TEMPLATE — the thing Phase 2 said "Phase 5's real-vowel validation
+//      is where that could come from honestly"? A template exists if r₄ separates vowels by more
+//      than it scatters across speakers. That ratio is the answer, and it is reported whether or
+//      not it is flattering.
+export function f4ScaleStability({ vowels = HB_SET } = {}) {
+  const rows = [];
+  for (const sp of hbSpeakers()) {
+    const out = {};
+    for (const includeF4 of [false, true]) {
+      // Only tokens where ALL FOUR formants were measurable, so the comparison is paired: the
+      // same tokens with and without F4, never "F4 present" versus a different token set.
+      const usable = vowels.filter((v) => {
+        const t = sp.tokens[v];
+        return t && t.f1 > 0 && t.f2 > 0 && t.f3 > 0 && t.f4 > 0;
+      });
+      if (usable.length < 4) { out.skip = true; continue; }
+      const dfs = usable.map((v) => fitFormantScale(hbFormants(sp.tokens[v], { includeF4 })).deltaF);
+      const pooled = poolFormantScale(dfs.map((d) => ({ deltaF: d, weight: 1 })), { minSamples: 4 }).deltaF;
+      out[includeF4 ? 'withF4' : 'withoutF4'] = {
+        pooled, n: usable.length,
+        // Across-vowel scatter of the per-token scale, as a fraction of the speaker's own
+        // pooled scale. Scale-free, so men and children are on one ruler.
+        cv: pooled > 0 ? sd(dfs) / pooled : NaN,
+      };
+    }
+    if (!out.skip && out.withF4 && out.withoutF4) rows.push({ id: sp.id, group: sp.group, ...out });
+  }
+  const cvOf = (k) => rows.map((r) => r[k].cv).filter(Number.isFinite);
+  const improved = rows.filter((r) => r.withF4.cv < r.withoutF4.cv).length;
+  return {
+    n: rows.length,
+    meanCvWithoutF4: mean(cvOf('withoutF4')),
+    meanCvWithF4: mean(cvOf('withF4')),
+    improved, improvedRate: rows.length ? improved / rows.length : 0,
+    byGroup: Object.fromEntries(HB_GROUPS.map((g) => {
+      const sub = rows.filter((r) => r.group === g);
+      return [g, sub.length ? {
+        n: sub.length,
+        withoutF4: mean(sub.map((r) => r.withoutF4.cv)),
+        withF4: mean(sub.map((r) => r.withF4.cv)),
+      } : null];
+    })),
+    rows,
+  };
+}
+
+// Is there a measured r₄ template? Four formants carry THREE free residual dimensions (the rank
+// identity in dsp-utils.js), so r₄ is a real observation rather than r₁–r₃ rearranged — provided
+// it separates vowels.
+//
+// The criterion is the same one VOWEL_RESIDUAL_SD and VOWEL_SPEAKER_SCATTER express for r₁ and
+// r₂: across-vowel SD (signal) against across-speaker scatter within a vowel (noise). A template
+// is worth having when the first is comfortably larger than the second.
+export function r4TemplateEvidence({ vowels = HB_SET } = {}) {
+  const speakers = realSpeakers({ includeF4: true });
+  const byVowel = {};
+  for (const v of vowels) byVowel[v] = { r1: [], r2: [], r3: [], r4: [] };
+  for (const sp of speakers) {
+    for (const v of vowels) {
+      const i = sp.index[v];
+      if (i == null) continue;
+      const r = sp.residuals[i];
+      if (!r || r.length < 4 || r.slice(0, 4).some((x) => x == null || !(x > 0))) continue;
+      byVowel[v].r1.push(r[0]); byVowel[v].r2.push(r[1]);
+      byVowel[v].r3.push(r[2]); byVowel[v].r4.push(r[3]);
+    }
+  }
+  const present = vowels.filter((v) => byVowel[v].r4.length >= 10);
+  const dim = (k) => {
+    const templates = present.map((v) => mean(byVowel[v][k]));
+    const withinSd = mean(present.map((v) => sd(byVowel[v][k])));   // across-speaker, within vowel
+    const acrossSd = sd(templates);                                  // across-vowel
+    return {
+      template: Object.fromEntries(present.map((v, i) => [v, templates[i]])),
+      acrossVowelSd: acrossSd,
+      acrossSpeakerSd: withinSd,
+      // How many across-speaker scatters apart the vowels sit. Above ~1 the dimension carries
+      // vowel identity; at or below it, it is mostly reporting who is talking.
+      separability: withinSd > 0 ? acrossSd / withinSd : NaN,
+    };
+  };
+  return { n: present.length, vowels: present, r1: dim('r1'), r2: dim('r2'), r3: dim('r3'), r4: dim('r4') };
+}
+
+// Does a 4-dimension classifier actually beat the shipped 2-dimension one on real speakers?
+// Templates and the distance metric are both re-derived from the training speakers, because the
+// shipped VOWEL_TEMPLATES has three dimensions and VOWEL_RESIDUAL_SD three entries — a 4-d test
+// cannot borrow either. Held out by speaker, same folds as everything else.
+export function f4ClassifierEval({ vowels = HB_SET, folds = 5, seed = 1 } = {}) {
+  const speakers = realSpeakers({ vowels, includeF4: true });
+  const foldOf = new Map();
+  speakers.slice().sort((a, b) => a.id.localeCompare(b.id))
+    .forEach((s, i) => foldOf.set(s.id, (i + seed) % folds));
+  const out = {};
+  for (const dims of [2, 3, 4]) out[dims] = { correct: 0, wrong: 0, n: 0 };
+  for (let k = 0; k < folds; k++) {
+    const train = speakers.filter((s) => foldOf.get(s.id) !== k);
+    const templates = realTemplates(train, { vowels, dims: 4 });
+    const keys = Object.keys(templates);
+    const sdVec = [0, 1, 2, 3].map((i) => sd(keys.map((v) => templates[v][i])));
+    for (const sp of speakers.filter((s) => foldOf.get(s.id) === k)) {
+      for (const v of vowels) {
+        const i = sp.index[v];
+        if (i == null) continue;
+        const r = sp.residuals[i];
+        if (!r || r.length < 4 || r.slice(0, 4).some((x) => x == null || !(x > 0))) continue;
+        for (const dims of [2, 3, 4]) {
+          const ranked = keys.map((u) => [u, templateDistance(r, templates[u], dims, sdVec)])
+            .sort((a, b) => a[1] - b[1]);
+          out[dims].n++;
+          if (ranked[0][0] === v) out[dims].correct++; else out[dims].wrong++;
+        }
+      }
+    }
+  }
+  // Nearest-template with no abstention gate, because the gates are calibrated in
+  // VOWEL_RESIDUAL_SD units and a re-derived 4-d metric is not on that ruler. Reported as
+  // "which dimensionality wins", not as an accuracy comparable to the shipped classifier's.
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------
+// /ɝ/ — WHAT REAL SPEAKERS CAN AND CANNOT SETTLE
+// ---------------------------------------------------------------------------------------------
+//
+// The brief for this phase said Hillenbrand's set does not include /ɝ/. It does: the author's
+// own key maps `er` to "heard", and there are 139 tokens, one per speaker. That makes this the
+// real-speaker evidence Phase 4 named as its remaining blocker — "validated against real rhotic
+// recordings rather than a Klatt cascade" — at the FORMANT level.
+//
+// What it settles: where a real rhotic's F3 actually sits, in 139 mouths spanning men, women and
+// children, against the two F3 admission floors in app.js; whether the shipped classifier can
+// name a real /ɝ/ from hand-corrected formants; and whether ρ separates it across real speakers.
+//
+// What it CANNOT settle: whether the live LPC extractor can FIND that F3 in audio. The floors are
+// a property of the pole-assignment loop, and this corpus supplies formants rather than poles.
+// That is Tier 2 and it is out of scope, so the report says so instead of implying coverage.
+export function rhoticReal({ vowel = 'ɝ', vowels = HB_SET } = {}) {
+  const f3 = { all: [], byGroup: {} };
+  for (const sp of hbSpeakers()) {
+    const t = sp.tokens[vowel];
+    if (!t || !(t.f3 > 0)) continue;
+    f3.all.push(t.f3);
+    (f3.byGroup[sp.group] ||= []).push(t.f3);
+  }
+  const q = (xs, p) => { const s = xs.slice().sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
+  const summary = (xs) => ({
+    n: xs.length, mean: mean(xs), sd: sd(xs), min: Math.min(...xs), max: Math.max(...xs),
+    p05: q(xs, 0.05), median: q(xs, 0.5), p95: q(xs, 0.95),
+    belowStandardFloor: xs.filter((x) => x < F3_FLOOR_HZ).length,
+    belowRhoticFloor: xs.filter((x) => x < F3_RHOTIC_FLOOR_HZ).length,
+  });
+
+  // The false-positive surface the widened floor opens: NON-rhotic tokens whose F3 sits in
+  // [1500, 2000). Those are the productions a 1500 Hz floor newly admits, and the only ones the
+  // rhotic assignment can be wrong about at the formant level.
+  let nonRhoticInBand = 0, nonRhoticTotal = 0;
+  const bandByVowel = {};
+  for (const sp of hbSpeakers()) {
+    for (const v of vowels) {
+      if (v === vowel) continue;
+      const t = sp.tokens[v];
+      if (!t || !(t.f3 > 0)) continue;
+      nonRhoticTotal++;
+      if (t.f3 >= F3_RHOTIC_FLOOR_HZ && t.f3 < F3_FLOOR_HZ) {
+        nonRhoticInBand++; bandByVowel[v] = (bandByVowel[v] || 0) + 1;
+      }
+    }
+  }
+
+  // ρ, held out across 139 speakers. §5's Phase 3 entry measured /ɝ/ at ρ 0.7212 against
+  // 0.9053–1.1882 for every other vowel, on the norms. Same statistic, real speakers.
+  const speakers = realSpeakers({ vowels });
+  const rhoBy = {};
+  for (const sp of speakers) {
+    for (const v of vowels) {
+      const i = sp.index[v];
+      if (i == null) continue;
+      const r = sp.rho[i];
+      if (Number.isFinite(r) && r > 0) (rhoBy[v] ||= []).push(r);
+    }
+  }
+  const rho = Object.fromEntries(Object.entries(rhoBy).map(([v, xs]) => [v, { mean: mean(xs), sd: sd(xs), n: xs.length, p05: q(xs, 0.05), p95: q(xs, 0.95) }]));
+  // The shipped threshold, √(0.7212·0.9053) = 0.8080, applied to real speakers.
+  const threshold = Math.sqrt(0.7212 * 0.9053);
+  let tp = 0, fn = 0, fp = 0, tn = 0;
+  for (const sp of speakers) {
+    for (const v of vowels) {
+      const i = sp.index[v];
+      if (i == null) continue;
+      const flagged = sp.rho[i] < threshold;
+      if (v === vowel) { if (flagged) tp++; else fn++; } else if (flagged) fp++; else tn++;
+    }
+  }
+
+  return {
+    f3: { all: summary(f3.all), byGroup: Object.fromEntries(Object.entries(f3.byGroup).map(([g, xs]) => [g, summary(xs)])) },
+    nonRhoticInBand, nonRhoticTotal,
+    nonRhoticInBandRate: nonRhoticTotal ? nonRhoticInBand / nonRhoticTotal : 0,
+    bandByVowel, rho, rhoThreshold: threshold,
+    rhoDetector: {
+      recall: (tp + fn) ? tp / (tp + fn) : 0,
+      falsePositiveRate: (fp + tn) ? fp / (fp + tn) : 0,
+      tp, fn, fp, tn,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// f2Position, ON REAL SPEAKERS
+// ---------------------------------------------------------------------------------------------
+//
+// Both §5 contrasts, re-run. Contrast 1 (women vs men) is the descriptive figure Phase 4 demoted
+// from an acceptance gate; contrast 2 (the published GAVT within-speaker F2 shift) is the one the
+// feature is scored on. Vowels come from the SHIPPED classifier's own decisions, not from oracle
+// labels, so its mistakes and abstentions are priced in exactly as they are in the P&B version.
+// `oracle: true` supplies the true vowel label instead of the classifier's decision. It is not
+// a shippable configuration — nothing knows the vowel in advance — but it is the only way to
+// tell "the conditioning is weak on real speakers" apart from "the classifier is weak on real
+// speakers", and after the classification result above that distinction is the whole question.
+export function f2PositionReal({ vowels = HB_SET, groupsA = ['men'], groupsB = ['women'], templates = VOWEL_TEMPLATES, oracle = false } = {}) {
+  const rows = (speakers, groupLabel) => {
+    const out = { f2Position: [], rawF2: [] };
+    for (const sp of speakers) {
+      for (const v of vowels) {
+        const i = sp.index[v];
+        if (i == null) continue;
+        const named = oracle
+          ? (templates[v] ? v : null)
+          : classifyVowel(sp.residuals[i], { templates, preNormalized: true }).vowel;
+        out.f2Position.push({
+          group: groupLabel, speaker: sp.id, vowel: v,
+          value: named ? f2PositionFromResidual(sp.residuals[i], named, templates) : null,
+        });
+        out.rawF2.push({ group: groupLabel, speaker: sp.id, vowel: v, value: rawF2Score(sp.formants[i]) });
+      }
+    }
+    return out;
+  };
+  const A = rows(realSpeakers({ vowels, groups: groupsA }), 'A');
+  const B = rows(realSpeakers({ vowels, groups: groupsB }), 'B');
+  const sex = {
+    f2Position: dPrimeDenominators([...A.f2Position, ...B.f2Position], 'A', 'B'),
+    rawF2: dPrimeDenominators([...A.rawF2, ...B.rawF2], 'A', 'B'),
+  };
+
+  // Contrast 2: the same speakers before and after §1.5's published F2 increment. Same tract,
+  // different posture — a paired within-speaker change, which is what an F2 target trains.
+  const pre = rows(realSpeakers({ vowels }), 'A');
+  const post = rows(realSpeakers({ vowels, f2Gain: GAVT_F2_GAIN }), 'B');
+  const training = {
+    f2Position: dPrimeDenominators([...pre.f2Position, ...post.f2Position], 'A', 'B'),
+    rawF2: dPrimeDenominators([...pre.rawF2, ...post.rawF2], 'A', 'B'),
+  };
+
+  // §3.1's actual claim: how much across-vowel variance the conditioning removes.
+  const men = realSpeakers({ vowels, groups: ['men'] });
+  const rawVals = [], posVals = [];
+  for (const sp of men) {
+    for (const v of vowels) {
+      const i = sp.index[v];
+      if (i == null) continue;
+      rawVals.push(sp.formants[i][1]);
+      const named = oracle
+        ? (templates[v] ? v : null)
+        : classifyVowel(sp.residuals[i], { templates, preNormalized: true }).vowel;
+      if (named) posVals.push(f2PositionFromResidual(sp.residuals[i], named, templates));
+    }
+  }
+  const rel = (xs) => 100 * sd(xs) / mean(xs);
+  return {
+    sex, training,
+    varianceRemoved: { rawPct: rel(rawVals), positionPct: rel(posVals), ratio: rel(rawVals) / rel(posVals) },
+  };
 }

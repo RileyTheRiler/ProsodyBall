@@ -1,6 +1,6 @@
 # Resonance: measurement redesign
 
-**Status: Phases 0-4 landed; Phase 6's C++ leg landed; Phase 5 and Phase 6's Kotlin leg are plan.** `resonanceControl` (v2) is the displayed
+**Status: Phases 0-4 landed; Phase 5's Tier 1 landed; Phase 6's C++ leg landed; Phase 5's Tier 2 and Phase 6's Kotlin leg are plan.** `resonanceControl` (v2) is the displayed
 metric; `resonanceScoreV1` remains computable and is displayed nowhere. Extends `DSP_CONTRACT.md`, which stays the cross-port
 contract. This document covers one question: what `smoothResonance` should *be*.
 
@@ -1121,16 +1121,276 @@ them and report how many they refused. No hardware threshold fires against a val
 different version: measured, the mis-fire reached 85.4% of frames and is now 0. `npm run
 test:resonance-two-scale` is the standing check.
 
-### Phase 5 — Validation ladder
+### Phase 5 — Validation ladder — **TIER 1 LANDED** *(measurement only; nothing displayed moved)*
 
 | level | establishes | status |
 |---|---|---|
 | synthetic vowels | algorithmic accuracy | **done** |
-| real sustained vowels vs manually checked Praat F1–F4 | formant accuracy | **the next real gap** |
+| real vowels vs hand-corrected F1–F4 (**Tier 1**) | formant accuracy | **done — this entry** |
+| the same corpus's audio through the live extractor (**Tier 2**) | estimator accuracy | not started — and it is now the only blocker on the rhotic |
 | connected speech | in-use robustness | not started |
 | listener ratings | construct validity for perceived gender | research programme, §3.3 |
 
 Stratify by F0, vowel, SNR, device/microphone, breathiness, nasality, loudness, speaker.
+
+The corpus is **Hillenbrand, Getty, Clark & Wheeler (1995)**, JASA 97(5) 3099–3111:
+`fixtures/hillenbrand-1995.json`, 139 speakers (45 men, 48 women, 27 boys, 19 girls) × 12
+vowels, hand-corrected F0 and **F1–F4**. Provenance, copyright and what is deliberately absent
+are recorded in the fixture the way `fixtures/peterson-barney-1952.json` records them;
+`tools/fetch-hillenbrand.mjs` rebuilds it from the author's own file so the committed bytes are
+reproducible. Two things about the retrieval are recorded rather than glossed: the canonical
+host `homepages.wmich.edu` **does not serve** — WMU points it at a redirect server presenting a
+certificate for `redirect.wmich.edu`, and `wmich.edu/~hillenbr/` 404s — so the file comes from
+the Internet Archive's capture of the author's own URL; and `vowdata.dat` carries **no licence**,
+only the line `(c) 1995 James Hillenbrand`. Free download is not a redistribution grant, the
+fixture says so, and the audio (`men.zip` / `women.zip` / `kids.zip`) is neither fetched nor
+wanted — Tier 2 is out of scope here.
+
+The benchmark was **extended, not forked**: `realSpeaker()` returns the same object `pbSpeaker()`
+does, so every routine in `tools/resonance-benchmark.mjs` runs on either corpus.
+`npm run report:resonance-real-speakers` prints it; `npm run test:resonance-real-speakers` and
+eleven tests in `resonance-dprime.test.mjs` assert it. **Nothing displayed moved**: `npm run
+test:all`, the eval-harness aggregates and the dsp-golden vectors are untouched, and no
+threshold, template or weight changed.
+
+#### The corpus that made this possible, and one correction to the brief
+
+The brief for this phase said Hillenbrand's set does not include /ɝ/. **It does** — the author's
+key maps `er` to "heard", one token per speaker, 139 of them. That is why the rhotic section
+below exists at all, and it is the single most consequential thing this phase found.
+
+| group | n | pooled ΔF | range | apparent VTL |
+|---|---|---|---|---|
+| men | 45 | 1014.7 ± 39.6 Hz | 920–1101 | 17.2 cm |
+| women | 48 | 1154.9 ± 56.3 Hz | 1045–1320 | 15.2 cm |
+| boys | 27 | 1211.1 ± 61.7 Hz | 1105–1352 | 14.4 cm |
+| girls | 19 | 1277.0 ± 70.6 Hz | 1146–1384 | 13.7 cm |
+
+The children's scales are **disjoint from the men's**, which is what makes them the strongest
+available test that the residuals are genuinely scale-normalised. They are reported as their own
+group throughout and are not pooled into the adult numbers anywhere.
+
+#### The d′ denominator: both are reported, and they rank the ladder differently
+
+§1.3 divides by the within-sex **across-vowel** SD because two mean speakers expose no other
+within-sex variance — which is exactly why conditioning on the vowel inflates d′ almost
+tautologically (§5's Phase 2 α-sweep is that effect isolated). 139 speakers give the
+**across-speaker** SD the definition always wanted. Both run off one numerator, so the historical
+column stays comparable and nothing is restated retroactively.
+
+Only `v1` and `v2` are committed code; on the ten vowels Hillenbrand shares with P&B they
+reproduce this document exactly (0.757 against Phase 1's quoted 0.76, 1.220 against 1.22). The
+other six rows are the benchmark's restatement of §1.3's one-line descriptions — that table was
+prose, not code, so its ranges and clamping are unrecoverable. They reproduce §1.3's **ordering**,
+not its values, and the report prints the published figure beside each so the discrepancy is
+visible rather than absorbed.
+
+| measure | §1.3 (7-vowel) | P&B (10-vowel) | REAL across-vowel | REAL across-speaker | REAL per-token | AUC |
+|---|---|---|---|---|---|---|
+| F3 normalised | 1.98 | 1.405 | **1.293** | 3.051 | 1.093 | 0.988 |
+| **`resonanceAbsolute` v2** | 1.73 | 1.220 | **1.149** | 3.347 | **1.051** | 0.999 |
+| ΔF from F3 alone | 1.67 | 1.171 | 1.001 | 3.063 | 0.977 | 0.999 |
+| mean(F1,F2,F3) normalised | 0.96 | 0.905 | 0.851 | 3.498 | 0.806 | 0.981 |
+| **current app score (v1)** | 0.85 | 0.757 | 0.906 | **3.934** | 0.889 | 0.999 |
+| ΔF(F1,F2,F3) alone | 0.81 | 0.947 | 0.911 | 3.394 | 0.878 | 0.993 |
+| ΔF(F2,F3) | 0.73 | 0.913 | 0.708 | 1.928 | 0.547 | 0.945 |
+| F2 normalised | 0.38 | 0.459 | 0.456 | 3.366 | 0.462 | 0.998 |
+
+**All eight positions move**, so the across-speaker SD is a different measurement rather than a
+rescaling. Which measures change rank, plainly: F3-normalised 1 → 7, v2 2 → 5, ΔF-from-F3 3 → 6,
+ΔF(F1,F2,F3) 4 → 3, **v1 5 → 1**, mean(F1,F2,F3) 6 → 2, ΔF(F2,F3) 7 → 8, raw F2 8 → 4.
+
+**The headline is uncomfortable and it is stated rather than buried: under the across-speaker
+denominator v1 — the measure this redesign exists to replace — ranks first and v2 fifth.** Two
+things make that a fact about the denominator rather than an argument for reverting:
+
+1. **Read the AUC column.** Every scale measure sits at 0.98–1.00. Averaged over a speaker's
+   whole ten-vowel inventory they all separate men from women essentially perfectly, and d′ is
+   magnifying differences between measures that are already at ceiling. v1 3.934 vs v2 3.347 is
+   AUC 0.9991 vs 0.9986.
+2. **The app lives in the per-token column**, where v2 is still ahead (1.051 vs 0.889). A frame
+   is *one vowel from one speaker*, and §1.1's 73-point across-vowel swing is precisely the
+   within-speaker variance the across-speaker denominator averages away by construction.
+
+The two denominators ask different questions — *can a single frame tell two speakers apart
+despite the vowel* versus *can a speaker's whole inventory tell them apart* — and the app
+displays the first. The second is reported because it is finally measurable, not because it is
+the operating point.
+
+#### Speaker-independence does not survive 139 speakers, and the failure splits in two
+
+Phase 2's "95% correct, 0% abstention, held out across sexes" is **n = 20 decisions over two mean
+speakers**. Held out across *people*:
+
+| | n | correct | misclassified | abstained |
+|---|---|---|---|---|
+| **shipped `VOWEL_TEMPLATES` vs all 139 real speakers** | 1390 | **50.9%** | 38.9% | 10.2% |
+| templates re-derived from real speakers, 5-fold held out **by speaker** | 1390 | **69.6%** | 21.3% | 9.1% |
+| shipped templates, **children only** | 460 | 46.5% | 39.6% | 13.9% |
+| trained on **adults only**, tested on **children** | 460 | 59.6% | 25.7% | 14.8% |
+
+By group under the shipped templates: men 59.3%, women 47.1%, boys 48.5%, girls 43.7%. Per vowel:
+/i/ 37% /ɪ/ 92% /ɛ/ 64% **/æ/ 6%** /ɑ/ 30% /ɔ/ 24% /ʊ/ 90% /u/ 32% /ʌ/ 68% /ɝ/ 65%.
+
+**Answering the question as asked: no, speaker-independence was substantially an artefact of
+averaging.** But only half the loss is about the method. Re-deriving the templates from real
+speakers recovers **18.8 points** on the identical test, so most of the gap is that the shipped
+*constants* are wrong rather than that residual matching fails on real voices — and the remaining
+half is real: 70% is not 95%, because real speakers scatter around a vowel template far more than
+two population means implied.
+
+The errors are not random. They are overwhelmingly to the **adjacent** vowel — /i/→/ɪ/ 53%,
+/u/→/ʊ/ 58%, /æ/→/ɛ/ 62%, /ɔ/→/ɑ/ 43% — which is what a template set spaced too widely for the
+real scatter produces. It is failing to resolve neighbours, not naming vowels at random.
+
+One further §6 finding, from the two vowels P&B has no counterpart for. /e/ ("hayed") and /o/
+("hoed") have **no shipped template**, and over 278 such tokens the classifier abstains on only
+**5.8%** and confidently names something on the rest (/e/ → /ɪ/ or /ɛ/; /o/ → /ɔ/, /ʊ/ or /u/).
+The two abstention gates catch a frame thrown *away* from every template or landing *between*
+two; an unmodelled vowel lands squarely on a neighbour, which is the same hole this section's
+Phase 2 entry names at the frame level, now measured on real productions.
+
+#### The shipped constants against the real corpus — reported, not swapped
+
+Re-derived by the identical definitions. **Nothing is applied**: all three feed `f2Position` and
+therefore a displayed statistic, so §3.5's versioning makes changing them a separate, versioned
+change and the user's call.
+
+| constant | shipped (P&B) | real (139 speakers) | gap |
+|---|---|---|---|
+| `VOWEL_TEMPLATES` | — | — | mean **0.312** across-vowel SDs, worst **/æ/ 0.635** |
+| `VOWEL_RESIDUAL_SD` | [0.3325, 0.3092, 0.0219] | [0.2934, 0.2650, 0.0181] | shipped is **12–18% wide** |
+| `VOWEL_SPEAKER_SCATTER` | 0.195 | **0.277** (0.423 against the shipped templates) | shipped is **42% small** |
+
+Three consequences, each a number rather than an adjective:
+
+- `VOWEL_ABSTAIN_MAX_DISTANCE` is 0.585. **The shipped /æ/ template sits 0.635 from the real /æ/
+  centroid — further than the classifier's own "this is not a vowel" gate**, which is most of why
+  /æ/ scores 6%.
+- Distances are divided by `VOWEL_RESIDUAL_SD`, so every distance the classifier reports is ~13%
+  smaller than it is and **both abstention gates are correspondingly looser than specified**.
+- The shipped scatter is one difference (the P&B male norm against the female norm for the same
+  vowel). Measured as what it is meant to be — how far a genuine production sits from the
+  template because the speaker is a different person — it is 0.277, and it is largest for the
+  population it was never shown: men 0.233, women 0.282, **boys 0.317, girls 0.312**.
+
+**Proposal, with the number:** all three are wrong in the same direction — two population means
+understate how far real speakers sit from a template — and re-deriving them from this corpus is
+worth **~19 points of classifier accuracy on real speakers**. It moves `f2Position`, therefore
+the vowel-nucleus statistics, therefore a displayed metric. §3.5 applies.
+
+#### F4: the first measured one. It sharpens the scale and does not earn a template
+
+Every F4 claim in Phases 1–2 rests on either the live extractor's own output or a synthetic F4
+placed at 3.5·ΔF of *the vowel's own fit* — an F4 constructed to agree with the other three
+formants cannot answer whether F4 adds anything. Hillenbrand measured it by hand on **85.4%** of
+tokens.
+
+**1. Does it make the scale better determined? Yes, and this is the first non-circular evidence.**
+The test is not whether ΔF changes but whether the speaker's scale stops depending on which vowel
+they said — the within-speaker across-vowel CV of per-token ΔF, on the same F4-complete tokens
+scored both ways:
+
+| | F1–F3 | F1–F4 | |
+|---|---|---|---|
+| mean within-speaker CV of ΔF | 0.1250 | **0.0899** | **28.1% tighter** |
+| speakers improved | — | **131 / 136 (96.3%)** | |
+| men / women / boys / girls | .1215 / .1209 / .1292 / .1372 | .0823 / .0844 / .1029 / .1019 | |
+
+§3.2 called upper-formant weighting "the single largest validity gain available". On real
+speakers F4 removes 28% of the vowel-dependence of the scale.
+
+**2. Is there a measured r₄ template? No — §7's open question 2, answered.** A dimension carries
+vowel identity when its across-vowel spread exceeds its across-speaker scatter within a vowel:
+
+| dim | across-vowel SD | across-speaker SD | separability |
+|---|---|---|---|
+| r₁ | 0.2804 | 0.1047 | **2.68** |
+| r₂ | 0.2649 | 0.0847 | **3.13** |
+| r₃ | 0.0554 | 0.0414 | 1.34 |
+| **r₄** | 0.0508 | 0.0429 | **1.18** |
+
+r₄ reports who is talking nearly as much as what they said, and the direct test agrees: held out
+by speaker, a nearest-template classifier scores 71.4% on 2 dimensions, **74.5% on 3** and 68.2%
+on 4. `VOWEL_TEMPLATE_FORMANTS` stays at 3, now for a measured reason rather than because P&B
+published no F4. **§7's question 2 is answered: F4 is worth its miss rate for the scale and is
+not worth a template.**
+
+**3. One exception, and it is the one Phase 4 had to abandon.** The r₄ templates are 0.94–1.03 for
+every vowel except **/ɝ/ at 1.142**. A real rhotic lowers F3 and *leaves F4 up*. This section's
+Phase 4 entry abandoned exactly this test — "restricting the widened slot to poles corroborated by
+F4 is a physical claim and cannot be evaluated here, because the synthesized corpus places every
+vowel's F4 at 3.5·ΔF of that vowel's own fit, so the synthetic /ɝ/'s F4 has already been dragged
+down with its F3". On real speakers it has not been. **The physical claim holds.**
+
+#### /ɝ/ — the blocker is the extractor, and nothing else
+
+Phase 4 left the rhotic assignment measured, exposed and switched off with one stated blocker:
+"every number above is from a Klatt cascade whose /ɝ/ F3 is placed by construction … The remaining
+blocker is that validation." Here it is, at the formant level.
+
+| group | n | mean F3 | median | below the 2000 Hz standard floor | below the 1500 Hz widened floor |
+|---|---|---|---|---|---|
+| men | 40 | **1711 Hz** | 1716 | **40 / 40** | 1 |
+| women | 40 | 1930 Hz | 1928 | 31 / 40 | 0 |
+| boys | 26 | 2078 Hz | 2074 | 8 / 26 | 0 |
+| girls | 18 | 2264 Hz | 2278 | 1 / 18 | 0 |
+| **all** | **124** | 1939 Hz | 1928 | **80 (64.5%)** | **1 (0.8%)** |
+
+- **Every one of the 40 men is below the standard floor.** P&B's adult-male /ɝ/ F3 of 1690 Hz was
+  not an averaging artefact — the real adult-male mean is 1711 Hz. The shipped assignment
+  structurally cannot resolve an F3 for a rhotic in an adult male voice.
+- **The widened floor's false-positive surface is empty: 0 of 1232 non-rhotic tokens have an F3
+  in [1500, 2000) Hz.** Phase 3 predicted the widening "manufactures rhotics"; Phase 4 measured
+  that it does not on synthetic vowels; real speakers say there is not even a candidate to be
+  wrong about.
+- **ρ separates the rhotic across 139 real speakers**: /ɝ/ 0.727 against 0.926–1.170 for every
+  other vowel. The shipped threshold √(0.7212·0.9053) = 0.8080 — derived from two published norms
+  and never tuned — gives **87.8% recall at 0.1% false positives**, clearing Phase 3's strict
+  criterion (≥50% recall, ≤5% false positives) on both counts.
+- The shipped classifier names a real /ɝ/ correctly on **65%** of tokens, against **0%** on the
+  live path.
+
+**What this does not settle, stated rather than implied.** Every number above starts from the
+author's *hand-corrected* formants. The live path's 0% /ɝ/ recall is not a thresholding failure,
+it is an extraction failure: whether a root-solved LPC can produce a pole at 1700 Hz and have the
+assignment loop accept it as F3 *from audio*. This corpus contains that audio and this phase
+deliberately does not fetch it. **Tier 2 is now the only remaining blocker on the rhotic**, and
+it is a narrower one than Phase 4 left: the thresholds, the ρ statistic and the widened floor are
+all validated on real voices, and what is unvalidated is the pole-finding.
+
+#### f2Position: the GAVT result survives, at a much smaller margin
+
+| contrast | raw F2 d′ | f2Position d′ (shipped classifier) | f2Position d′ (oracle vowel) |
+|---|---|---|---|
+| women vs men, across-vowel SD | 0.456 | −0.008 | **0.106** |
+| **GAVT within-speaker shift, across-vowel SD** | **0.186** | **0.908** | **0.584** |
+| GAVT, across-speaker SD | 0.525 | 1.108 | — |
+
+**Contrast 1 reproduces P&B exactly**: with an oracle vowel the real-speaker figure is 0.106
+against P&B's 0.105. f2Position carries no tract size on real speakers either, which is what it
+is designed not to carry, and the criterion as originally written is still missed and still
+deliberately.
+
+**Contrast 2 survives, and the effect size does not.** On P&B, f2Position beat raw F2 by **13×**.
+On 139 real speakers it is **4.9×** (3.1× with the vowel supplied). §3.1's across-vowel variance
+removal is **3.4×** against P&B's 11.4×. The direction and the conclusion hold; the margin is
+about a third of what two mean speakers suggested. Two reasons, both stated:
+
+- the classifier is right on about half of real tokens, so `f2Position` is often computed against
+  the wrong template;
+- **and the shipped, classifier-driven figure is partly self-fulfilling** — picking the *nearest*
+  template makes the observed r₂ close to the template r₂ by construction, narrowing
+  `f2Position`'s own spread. That is why the oracle column is *lower* and is the one to quote
+  against a future estimator.
+
+*Done when:* the benchmark runs against real speakers as well as P&B; d′ is reported on both
+denominators; the classifier's speaker-independence is measured across real speakers including
+children; the gap between the shipped P&B-derived constants and the real-corpus ones is written
+down; nothing displayed has moved. **Met on all five**, and the two most load-bearing answers are
+negative ones: speaker-independence was substantially an artefact of averaging (50.9%, not 95%),
+and under an across-speaker denominator the §1.3 ladder does not hold its order. Neither is
+acted on here — this phase measures and does not tune.
 
 ### Phase 6 — Port alignment — **C++ LANDED; Kotlin still open**
 
@@ -1306,6 +1566,19 @@ fourfold and puts abstention above it. The per-frame and per-nucleus rates are t
 Phase 2 entry and asserted in `resonance-dprime.test.mjs`. Tightening the frame-level gates
 further is Phase 3.
 
+**And Phase 5 measured it on real voices, where it is worse than either synthetic estimate.**
+Held out across 139 real speakers the shipped templates are **50.9%** correct at 10.2%
+abstention, against Phase 2's 95% / 0% on two mean speakers — so the gates decline on a tenth of
+real productions while a further 38.9% are named wrongly, almost always as the *adjacent* vowel.
+Two measurements say the gates are the wrong place to look for the fix. First, most of the loss
+is the constants rather than the method: re-deriving the templates from real speakers recovers
+18.8 points on the identical test, and the shipped /æ/ template sits **0.635** from the real /æ/
+centroid — past the 0.585 distance gate itself. Second, on the two vowels with no template at
+all (/e/, /o/) the gates abstain on only **5.8%** of 278 tokens: an unmodelled vowel lands
+squarely on a neighbour, which is the one failure neither gate can see. The nucleus rule remains
+what satisfies this risk; the constants are §5's Phase 5 proposal and a versioned change under
+§3.5.
+
 ---
 
 ## 7. Open questions
@@ -1337,15 +1610,27 @@ The cost, stated: control is not comparable between people or across a recalibra
 why absolute exists, why stored readings carry a span id, and why §3.5's machinery treats a span
 change exactly as it treats a version change.
 
-### 2. Is F4 worth its miss rate? — **still open, and Phase 4 did not move it.**
+### 2. Is F4 worth its miss rate? — **DECIDED by Phase 5: yes for the scale, no for a template.**
 
-Unchanged since Phase 2: F4's yield is 92.4% against F1–F3's 98.4%, it sharpens `formantScale`
-and it does not reach the vowel classifier (`VOWEL_TEMPLATE_FORMANTS` pins that at three, because
-P&B published no F4 and normalising a 4-element residual against 3-formant templates cost 47
-points of yield when it was live). The question needs a *measured* r₄, which is Phase 5's to
-provide. Phase 4 adds one datum against dropping it: the F3–F4 gap is the natural discriminator
-for a rhotic F3, and it could not be evaluated here only because the synthesized corpus places F4
-from each vowel's own fit rather than the speaker's.
+Phase 4 left this needing "a *measured* r₄, which is Phase 5's to provide". Provided, from 1425
+hand-measured F4s across 139 speakers, and the answer splits:
+
+1. **For `formantScale`, F4 earns its miss rate outright.** Including it cuts the within-speaker
+   across-vowel CV of ΔF from 0.1250 to **0.0899** — 28% less of the speaker's scale depending on
+   which vowel they said — and it improves for **131 of 136** speakers. Every prior datum for
+   this was circular: the synthetic F4 was placed at 3.5·ΔF of the vowel's own fit, i.e.
+   constructed to agree with the other three formants.
+2. **There is no measured r₄ template worth having.** r₄'s across-vowel spread is only **1.18×**
+   its across-speaker scatter, against 2.68 for r₁ and 3.13 for r₂ — it reports who is talking
+   nearly as much as what they said. A 4-dimension nearest-template classifier held out by
+   speaker scores 68.2% against 74.5% for 3 dimensions. `VOWEL_TEMPLATE_FORMANTS` stays at 3 for
+   a measured reason now, not for want of published data.
+3. **Phase 4's datum against dropping F4 is confirmed, on the one thing it could not test.** The
+   F3–F4 gap *is* the natural discriminator for a rhotic F3: real /ɝ/ has r₄ **1.142** against
+   0.94–1.03 for every other vowel. A real rhotic lowers F3 and leaves F4 up. The synthesized
+   corpus could not show this because it had dragged the synthetic /ɝ/'s F4 down with its F3.
+
+See §5's Phase 5 entry for the tables.
 
 ### 3. Does the haptic threshold belong on absolute or control? — **DECIDED: control.**
 

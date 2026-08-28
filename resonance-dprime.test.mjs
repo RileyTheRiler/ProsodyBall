@@ -28,7 +28,7 @@ import {
   resonanceAbsoluteV2, RESONANCE_V2_REFERENCE_DELTA_F_HZ,
   classifyVowel, normalizeResidualScale, residualScaleFactor, f2PositionFromResidual,
   VOWEL_TEMPLATES, VOWEL_RESIDUAL_SD, VOWEL_SPEAKER_SCATTER, VOWEL_TEMPLATE_FORMANTS,
-  vowelDimsFor, expectedF2Hz, f2Position, f2PositionToDisplay,
+  vowelDimsFor, expectedF2Hz, f2Position, f2PositionToDisplay, VOWEL_ABSTAIN_MAX_DISTANCE,
 } from './dsp-utils.js';
 import {
   BENCH_SET, FULL_SET, formantsOf, mean, sd, dPrime, scoreV1, scoreV2,
@@ -607,4 +607,326 @@ test('the f2Position display mapping does not clamp on any real reading', () => 
   assert.ok(f2PositionToDisplay(1.1) > f2PositionToDisplay(1) && f2PositionToDisplay(0.9) < f2PositionToDisplay(1));
   // "No reading" is not a position on the axis.
   assert.equal(f2PositionToDisplay(0), 0);
+});
+
+// =============================================================================================
+// PHASE 5 (Tier 1) — REAL SPEAKERS
+// =============================================================================================
+//
+// docs/RESONANCE_REDESIGN.md §5's ladder: "real sustained vowels vs manually checked Praat
+// F1–F4 — the next real gap". Everything above this line is Peterson & Barney's two population
+// MEANS. The tests below are the same benchmark machinery over 139 individual speakers from
+// Hillenbrand, Getty, Clark & Wheeler (1995), with hand-corrected F0 and F1–F4.
+//
+// Several of these pin results that are WORSE than the numbers Phases 1–4 quote. That is the
+// point: the gap between a constant derived from two means and the same constant measured on
+// real voices is the finding, and a test that only pinned good news would let it be forgotten.
+// The report is `npm run report:resonance-real-speakers`.
+import {
+  HB, HB_SET, HB_EXTRA, HB_ADULT_GROUPS, HB_CHILD_GROUPS,
+  F3_FLOOR_HZ, F3_RHOTIC_FLOOR_HZ,
+  realSpeaker, realSpeakers, realTemplates, realResidualSd, realSpeakerScatter,
+  ladderValues, dPrimeDenominators, MEASURE_LADDER,
+  speakerHeldOutEval, outOfInventoryEval,
+  f4ScaleStability, r4TemplateEvidence, f4ClassifierEval,
+  rhoticReal, f2PositionReal,
+} from './tools/resonance-benchmark.mjs';
+
+test('the Hillenbrand fixture is the corpus it says it is, and records what it lacks', () => {
+  assert.equal(HB.speakers.length, 139);
+  assert.equal(HB.tokenCount, 1668);
+  assert.deepEqual(HB.groups, { men: 45, women: 48, boys: 27, girls: 19 });
+  // Provenance is not decoration: a fixture nobody can trace is not evidence.
+  assert.ok(/Hillenbrand/.test(HB.source) && /3099/.test(HB.source), 'carries its citation');
+  assert.ok(/1995 James Hillenbrand/.test(HB.copyright), 'carries the copyright notice verbatim');
+  assert.ok(HB.retrieval.canonicalUrl && HB.retrieval.retrievedFrom && HB.retrieval.sourceSha256);
+  assert.ok(HB.absent.length >= 4, 'records what is deliberately absent');
+  assert.ok(HB.absent.some((a) => /Audio/i.test(a)), 'names the audio as out of scope — Tier 2');
+
+  // A formant the author could not measure is null, never 0. §6's whole abstention discipline
+  // rests on the difference, and a fixture that quietly wrote 0 would put a fabricated formant
+  // into every downstream fit.
+  for (const s of HB.speakers) {
+    for (const t of Object.values(s.tokens)) {
+      for (const k of ['f0', 'f1', 'f2', 'f3', 'f4']) {
+        assert.ok(t[k] === null || t[k] > 0, `${s.id} ${k} is ${t[k]}`);
+      }
+    }
+  }
+  // The first measured F4 this redesign has had. P&B published none.
+  assert.equal(HB.formantYield.f4.measured, 1425);
+  assert.ok(HB.formantYield.f4.rate > 0.85 && HB.formantYield.f4.rate < 0.86);
+});
+
+test('/ɝ/ is present in the corpus — the Phase 5 brief assumed it was not', () => {
+  // The author's own key maps `er` to "heard". Recorded as a test rather than a comment because
+  // "the corpus does not cover the rhotic" was the stated premise and it is false.
+  assert.ok(HB_SET.includes('ɝ'));
+  const n = HB.speakers.filter((s) => s.tokens['ɝ']).length;
+  assert.equal(n, 139, 'one /ɝ/ token per speaker');
+  // And two vowels P&B has no counterpart for, carried but never folded into a P&B comparison.
+  assert.deepEqual(HB_EXTRA, ['e', 'o']);
+});
+
+test('a real speaker builds the same object a P&B mean speaker does', () => {
+  // The reason the benchmark is EXTENDED rather than forked: one shape, so every routine
+  // written for P&B runs on Hillenbrand unchanged.
+  const real = realSpeaker(HB.speakers[0]);
+  const pb = pbSpeaker('male');
+  for (const k of ['scaleHz', 'formants', 'residuals', 'pooledResiduals', 'rho']) {
+    assert.ok(k in real && k in pb, `both carry ${k}`);
+  }
+  assert.equal(real.residuals.length, real.formants.length);
+  assert.ok(real.scaleHz > 500 && real.scaleHz < 2000);
+  // The scale-invariant frame is what the classifier matches in, on either corpus.
+  for (const r of real.residuals) {
+    assert.ok(Math.abs(residualScaleFactor(r) - 1) < 1e-9, 'normalised onto Σ L_i r_i = 1');
+  }
+});
+
+test('children sit outside the adult scale range the templates were built from', () => {
+  // This is what makes them the stress test rather than an afterthought: if the residuals were
+  // not genuinely scale-normalised, a population whose tract length the templates never saw is
+  // where it would show.
+  const range = (g) => {
+    const xs = realSpeakers({ groups: [g] }).map((s) => s.scaleHz);
+    return [Math.min(...xs), Math.max(...xs)];
+  };
+  const [menLo, menHi] = range('men');
+  const [girlsLo] = range('girls');
+  assert.ok(girlsLo > menHi, `girls' scales (from ${girlsLo.toFixed(0)} Hz) are disjoint from men's (to ${menHi.toFixed(0)} Hz)`);
+  assert.ok(menLo > 800 && menHi < 1200);
+});
+
+test('speaker-independence does NOT survive contact with 139 real speakers', () => {
+  // Phase 2's claim is 95% correct at 0% abstention held out across sexes — n = 20 decisions
+  // over TWO mean speakers. Held out across PEOPLE, the shipped templates manage about half
+  // that. Bounded on both sides: below so a regression is caught, above so the Phase 2 figure
+  // can never be quoted as if it transferred.
+  const shipped = speakerHeldOutEval({ templates: 'shipped' });
+  assert.equal(shipped.nSpeakers, 139);
+  assert.ok(shipped.accuracy > 0.45 && shipped.accuracy < 0.60,
+    `shipped VOWEL_TEMPLATES: ${(100 * shipped.accuracy).toFixed(1)}% on real speakers`);
+  assert.ok(shipped.abstentionRate > 0.05,
+    `and it abstains on ${(100 * shipped.abstentionRate).toFixed(1)}%, against Phase 2's 0%`);
+
+  // But the METHOD generalises further than the CONSTANTS do. Re-deriving templates from real
+  // speakers and holding out by speaker recovers most of the loss, which is what separates
+  // "the P&B templates are wrong" from "residual matching does not work on real voices".
+  const derived = speakerHeldOutEval({ templates: 'derived' });
+  assert.ok(derived.accuracy > shipped.accuracy + 0.15,
+    `real-speaker templates: ${(100 * derived.accuracy).toFixed(1)}% vs ${(100 * shipped.accuracy).toFixed(1)}%`);
+  assert.ok(derived.accuracy < 0.80, 'and still nowhere near 95% — the averaging hid real scatter too');
+
+  // Errors are to the ADJACENT vowel, not random: a template set spaced too widely for the
+  // real scatter fails to resolve neighbours.
+  const top = Object.entries(shipped.confusion).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k]) => k);
+  for (const pair of top) {
+    assert.ok(['æ→ɛ', 'u→ʊ', 'i→ɪ', 'ɔ→ɑ', 'ɑ→ʌ', 'ɛ→æ'].includes(pair), `${pair} is a neighbour confusion`);
+  }
+});
+
+test('children are reported as their own group and are not quietly dropped', () => {
+  const kids = speakerHeldOutEval({ templates: 'shipped', testGroups: HB_CHILD_GROUPS });
+  assert.equal(kids.nSpeakers, 46);
+  assert.equal(kids.n, 460);
+  assert.ok(kids.byGroup.boys && kids.byGroup.girls, 'boys and girls reported separately');
+  // Children score WORSE than adults on the shipped templates, and the number is pinned rather
+  // than averaged into an aggregate.
+  const adults = speakerHeldOutEval({ templates: 'shipped', testGroups: HB_ADULT_GROUPS });
+  assert.ok(kids.accuracy < adults.accuracy,
+    `children ${(100 * kids.accuracy).toFixed(1)}% vs adults ${(100 * adults.accuracy).toFixed(1)}%`);
+
+  // The extrapolation that actually tests scale-normalisation: templates from adults only,
+  // tested on tract lengths outside the adult range entirely.
+  const extrap = speakerHeldOutEval({
+    templates: 'derived', trainGroups: HB_ADULT_GROUPS, testGroups: HB_CHILD_GROUPS,
+  });
+  assert.ok(extrap.accuracy > 0.5,
+    `adults → children: ${(100 * extrap.accuracy).toFixed(1)}% — the residuals do carry across ` +
+    'a tract length the templates never saw, imperfectly');
+});
+
+test('the two d′ denominators are different measurements, and they change the ranking', () => {
+  // §1.3 divides by the within-sex ACROSS-VOWEL SD because two mean speakers expose nothing
+  // else. That is why conditioning on the vowel inflates d′ almost tautologically. With 139
+  // speakers the across-SPEAKER SD is available; both are reported on ONE numerator so the
+  // historical column stays comparable.
+  const adults = realSpeakers({ groups: HB_ADULT_GROUPS });
+  const L = ladderValues(adults);
+  const rows = MEASURE_LADDER.map((m) => ({ key: m.key, r: dPrimeDenominators(L[m.key], 'men', 'women') }));
+  for (const { key, r } of rows) {
+    assert.ok(r.nSpeakersA === 45 && r.nSpeakersB === 48, `${key}: 45 men, 48 women`);
+    assert.ok(Number.isFinite(r.dAcrossVowel) && Number.isFinite(r.dAcrossSpeaker));
+    // Averaging a speaker removes their across-vowel excursion, so the across-speaker SD is
+    // always the smaller of the two and its d′ always the larger. Asserted as the structural
+    // fact it is, not as a happy result.
+    assert.ok(r.sd.acrossSpeaker < r.sd.acrossVowel, `${key}: speaker SD < vowel SD`);
+  }
+  const rankBy = (k) => rows.slice().sort((a, b) => b.r[k] - a.r[k]).map((x) => x.key);
+  const rv = rankBy('dAcrossVowel'), rs = rankBy('dAcrossSpeaker');
+  assert.ok(rv.some((k, i) => rs[i] !== k), 'the ranking is not merely rescaled');
+
+  // The uncomfortable specific: under the across-speaker denominator v1 outranks v2. It is
+  // pinned so nobody can later claim Phase 5 found otherwise — and so is the reason it does not
+  // argue for reverting, which is that v2 is still ahead per TOKEN, and a frame is one token.
+  const v1 = rows.find((x) => x.key === 'v1').r;
+  const v2 = rows.find((x) => x.key === 'v2').r;
+  assert.ok(v1.dAcrossSpeaker > v2.dAcrossSpeaker, 'v1 wins on the across-speaker denominator');
+  assert.ok(v2.dToken > v1.dToken, 'v2 wins per token, which is the operating point the app displays');
+  // Both are at ceiling as speaker discriminators; d′ is magnifying a difference AUC does not see.
+  assert.ok(v1.aucSpeaker > 0.99 && v2.aucSpeaker > 0.99,
+    `AUC v1 ${v1.aucSpeaker.toFixed(3)}, v2 ${v2.aucSpeaker.toFixed(3)} — both near-perfect per speaker`);
+});
+
+test('the shipped vowel constants sit measurably away from the real corpus', () => {
+  // §5's (d): re-derive, report the gap, propose. NOT swap — that moves f2Position, therefore a
+  // displayed metric, therefore §3.5's versioning applies.
+  const all = realSpeakers();
+  const T = realTemplates(all);
+  let worst = 0, worstVowel = null;
+  for (const v of HB_SET) {
+    const d = templateDistance(VOWEL_TEMPLATES[v], T[v], 2, VOWEL_RESIDUAL_SD);
+    if (d > worst) { worst = d; worstVowel = v; }
+  }
+  assert.equal(worstVowel, 'æ');
+  assert.ok(worst > VOWEL_ABSTAIN_MAX_DISTANCE,
+    `the shipped /æ/ template is ${worst.toFixed(3)} from the real one — past the 0.585 abstention gate`);
+
+  // VOWEL_RESIDUAL_SD is 12–18% wider than the real across-vowel spread, so every distance the
+  // classifier reports is smaller than it should be and both gates are correspondingly loose.
+  const rsd = realResidualSd(T);
+  for (let i = 0; i < 3; i++) {
+    const ratio = rsd[i] / VOWEL_RESIDUAL_SD[i];
+    assert.ok(ratio > 0.80 && ratio < 0.92, `dim ${i}: real SD is ${(100 * ratio).toFixed(0)}% of the shipped one`);
+  }
+
+  // VOWEL_SPEAKER_SCATTER is a single male-vs-female difference on P&B. Measured as the thing it
+  // is meant to be, it is substantially larger — and largest for children.
+  const scatter = realSpeakerScatter(all, { templates: T });
+  assert.ok(scatter.mean > VOWEL_SPEAKER_SCATTER * 1.3,
+    `real scatter ${scatter.mean.toFixed(4)} vs shipped ${VOWEL_SPEAKER_SCATTER}`);
+  assert.ok(scatter.byGroup.boys.mean > scatter.byGroup.men.mean,
+    'children scatter more than the adults the constant was derived from');
+});
+
+test('F4, measured for the first time, sharpens the scale and does not earn a template', () => {
+  // §3.2 predicted the first half; §7's open question 2 has been waiting on the second since
+  // Phase 2. Both from a hand-measured F4 rather than one placed at 3.5·ΔF of the vowel's own
+  // fit, which is the synthetic F4 that could not answer either question.
+  const f4 = f4ScaleStability();
+  assert.ok(f4.n > 130, `${f4.n} speakers with a full F4 inventory`);
+  assert.ok(f4.meanCvWithF4 < 0.8 * f4.meanCvWithoutF4,
+    `within-speaker across-vowel CV of ΔF: ${f4.meanCvWithoutF4.toFixed(4)} → ${f4.meanCvWithF4.toFixed(4)}`);
+  assert.ok(f4.improvedRate > 0.9, `improves for ${(100 * f4.improvedRate).toFixed(1)}% of speakers`);
+
+  const r4 = r4TemplateEvidence();
+  assert.ok(r4.r1.separability > 2 && r4.r2.separability > 2, 'r₁ and r₂ carry vowel identity');
+  assert.ok(r4.r4.separability < 1.5,
+    `r₄ separability ${r4.r4.separability.toFixed(2)} — it reports the speaker nearly as much as the vowel`);
+  // And the direct test: a 4-dimension classifier is worse than a 3-dimension one on real
+  // speakers, so VOWEL_TEMPLATE_FORMANTS stays at 3 for a measured reason rather than because
+  // P&B published no F4.
+  const c = f4ClassifierEval();
+  assert.ok(c[4].correct / c[4].n < c[3].correct / c[3].n, '4 dims is worse than 3');
+  assert.equal(VOWEL_TEMPLATE_FORMANTS, 3);
+
+  // The one place r₄ does separate: the rhotic. §5's Phase 4 entry abandoned the "F4 corroborates
+  // a lowered F3" test because the synthesized corpus had dragged the synthetic /ɝ/'s F4 down
+  // with its F3. On real speakers it has not been.
+  const others = Object.entries(r4.r4.template).filter(([v]) => v !== 'ɝ').map(([, x]) => x);
+  assert.ok(r4.r4.template['ɝ'] > Math.max(...others) + 0.05,
+    `real /ɝ/ r₄ ${r4.r4.template['ɝ'].toFixed(3)} sits above every other vowel — F3 drops, F4 stays up`);
+});
+
+test('the rhotic, on real formants: the assignment floor is the blocker, not the thresholds', () => {
+  const rh = rhoticReal();
+  const s = rh.f3.all;
+  assert.ok(s.n > 120, `${s.n} real /ɝ/ tokens with a measurable F3`);
+
+  // The standard 2000 Hz F3 admission floor excludes most real rhotics and EVERY adult male one.
+  assert.ok(s.belowStandardFloor / s.n > 0.6,
+    `${(100 * s.belowStandardFloor / s.n).toFixed(1)}% of real /ɝ/ F3s are below ${F3_FLOOR_HZ} Hz`);
+  assert.equal(rh.f3.byGroup.men.belowStandardFloor, rh.f3.byGroup.men.n,
+    'every adult male /ɝ/ is below the standard floor');
+  // P&B's 1690 Hz adult-male mean was not an averaging artefact.
+  assert.ok(Math.abs(rh.f3.byGroup.men.mean - 1690) < 60,
+    `real adult-male /ɝ/ F3 mean ${rh.f3.byGroup.men.mean.toFixed(0)} Hz vs P&B's 1690`);
+
+  // The widened floor covers essentially all of them, and opens NO false-positive surface:
+  // not one non-rhotic token in the whole corpus has an F3 in the band it newly admits.
+  assert.ok(s.belowRhoticFloor / s.n < 0.02, 'the widened floor covers >98% of real rhotics');
+  assert.equal(rh.nonRhoticInBand, 0,
+    `${rh.nonRhoticInBand} of ${rh.nonRhoticTotal} non-rhotic tokens sit in [${F3_RHOTIC_FLOOR_HZ}, ${F3_FLOOR_HZ})`);
+
+  // ρ and the shipped threshold, held out across 139 real speakers, clear Phase 3's strict
+  // criterion (≥50% recall, ≤5% false positives) — on a threshold derived from two published
+  // norms and never tuned.
+  assert.ok(rh.rhoDetector.recall > 0.5, `ρ recall ${(100 * rh.rhoDetector.recall).toFixed(1)}%`);
+  assert.ok(rh.rhoDetector.falsePositiveRate < 0.05,
+    `ρ false positives ${(100 * rh.rhoDetector.falsePositiveRate).toFixed(1)}%`);
+  assert.ok(rh.rho['ɝ'].mean < 0.8, `real /ɝ/ ρ ${rh.rho['ɝ'].mean.toFixed(3)}`);
+  for (const [v, o] of Object.entries(rh.rho)) {
+    if (v !== 'ɝ') assert.ok(o.mean > 0.9, `/${v}/ ρ ${o.mean.toFixed(3)} stays clear of the rhotic band`);
+  }
+
+  // WHAT THIS DOES NOT ESTABLISH, asserted as a comment on the corpus rather than left implied:
+  // these are the author's hand-corrected formants. Whether the live extractor can produce and
+  // admit a 1700 Hz F3 from AUDIO is Tier 2, and the audio is deliberately not in the fixture.
+  assert.ok(HB.absent.some((a) => /Audio/i.test(a)));
+});
+
+test('f2Position on real speakers: the GAVT result survives, with a much smaller margin', () => {
+  const f2 = f2PositionReal();
+  const oracle = f2PositionReal({ oracle: true });
+
+  // Contrast 1 — women vs men. Phase 4 demoted this to a descriptive figure precisely because
+  // f2Position has tract size divided out. With an oracle vowel the real-speaker number
+  // reproduces the P&B one almost exactly (0.105).
+  assert.ok(Math.abs(oracle.sex.f2Position.dAcrossVowel - 0.105) < 0.05,
+    `oracle sex d′ ${oracle.sex.f2Position.dAcrossVowel.toFixed(3)} vs P&B's 0.105`);
+  assert.ok(f2.sex.rawF2.dAcrossVowel > f2.sex.f2Position.dAcrossVowel,
+    'raw F2 still beats f2Position on the contrast f2Position is not for');
+
+  // Contrast 2 — §1.5's published within-speaker GAVT shift, the contrast the feature IS for.
+  // On P&B the margin is 13×. On real speakers it is smaller, and the number is pinned rather
+  // than the adjective.
+  const ratio = f2.training.f2Position.dAcrossVowel / f2.training.rawF2.dAcrossVowel;
+  const oracleRatio = oracle.training.f2Position.dAcrossVowel / oracle.training.rawF2.dAcrossVowel;
+  assert.ok(ratio > 2 && ratio < 8, `f2Position beats raw F2 by ${ratio.toFixed(1)}× on real speakers`);
+  assert.ok(oracleRatio > 2, `and by ${oracleRatio.toFixed(1)}× with the vowel supplied`);
+  // The shipped, classifier-driven figure is partly self-fulfilling — the nearest template makes
+  // the observed r₂ close to the template r₂ by construction — which is why the oracle column is
+  // LOWER and is the one to quote against a future estimator.
+  assert.ok(oracle.training.f2Position.dAcrossVowel < f2.training.f2Position.dAcrossVowel);
+
+  // §3.1's actual claim still holds, at about a third of the strength P&B suggested.
+  assert.ok(f2.varianceRemoved.ratio > 2, `across-vowel variance removed: ${f2.varianceRemoved.ratio.toFixed(1)}×`);
+  assert.ok(f2.varianceRemoved.ratio < 11.4, 'and it is well below the 11.4× measured on two mean speakers');
+});
+
+test('a vowel outside the shipped inventory is named rather than declined', () => {
+  // §6 asks the classifier to degrade to "no vowel this frame" rather than guess. /e/ and /o/
+  // are real vowels of the language with no template; the two abstention gates catch almost
+  // none of them, because a residual thrown squarely onto a neighbour is exactly what neither
+  // gate sees — the same hole §5's Phase 2 entry names at the frame level, now measured on real
+  // productions. Reported, not fixed: this phase does not tune.
+  const oo = outOfInventoryEval();
+  assert.ok(oo.n > 250, `${oo.n} out-of-inventory tokens`);
+  assert.ok(oo.abstentionRate < 0.15,
+    `only ${(100 * oo.abstentionRate).toFixed(1)}% abstained — the gates do not catch an unmodelled vowel`);
+  assert.ok(Object.keys(oo.got).length === 2);
+});
+
+test('nothing in Phase 5 moved the P&B benchmark it extends', () => {
+  // The displayed metric must not move. The P&B numbers every earlier phase is quoted on are
+  // recomputed here from the same functions Phase 5 now also calls, so an accidental edit to the
+  // shared library shows up as a failure of the OLD numbers rather than as a quiet drift.
+  assert.ok(Math.abs(dPrime(scoreV1, BENCH_SET).d - 0.858) < 0.001);
+  assert.ok(Math.abs(dPrime(scoreV2, BENCH_SET).d - 1.734) < 0.001);
+  assert.ok(Math.abs(dPrime(scoreV1, FULL_SET).d - 0.757) < 0.001);
+  assert.ok(Math.abs(dPrime(scoreV2, FULL_SET).d - 1.220) < 0.001);
+  const e = classifierEval(FULL_SET, { dims: 2 });
+  assert.equal(e.correct, 19);
+  assert.equal(e.abstain, 0);
 });
