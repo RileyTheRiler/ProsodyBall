@@ -86,6 +86,34 @@ export async function getMicDiagnostics(ctx) {
   };
 }
 
+// Security enhancement: Add sanitizeUrl utility to prevent DOM-based XSS when dynamically rendering user-supplied or location-based URLs
+export function sanitizeUrl(url, base = 'http://localhost') {
+  if (typeof url !== 'string') return 'about:blank';
+
+  const str = url.trim();
+  let parsed;
+  try {
+    parsed = new URL(str);
+  } catch (e) {
+    try {
+      parsed = new URL(str, base);
+    } catch (e2) {
+      return 'about:blank';
+    }
+
+    if (str.startsWith(':') || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(str)) {
+      return 'about:blank';
+    }
+  }
+
+  const allowedProtocols = ['http:', 'https:', 'mailto:', 'tel:', 'blob:', 'file:'];
+  if (!allowedProtocols.includes(parsed.protocol)) {
+    return 'about:blank';
+  }
+
+  return url;
+}
+
 export function clamp01(v) {
   return Math.max(0, Math.min(1, v));
 }
