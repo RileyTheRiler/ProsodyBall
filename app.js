@@ -2939,7 +2939,11 @@ export class VoiceAnalyzer {
       this._rhoWindow.push({ rho: pattern.scaleFactor, vowel: vc.vowel });
       if (this._rhoWindow.length > FORMANT_SCALE_POOL_FRAMES) this._rhoWindow.shift();
     }
-    const rhos = this._rhoWindow.map((e) => e.rho).sort((a, b) => a - b);
+    // ⚡ Bolt optimization: Pre-allocate Float64Array for numeric sort without intermediate allocations
+    const windowLength = this._rhoWindow.length;
+    const rhos = new Float64Array(windowLength);
+    for (let i = 0; i < windowLength; i++) rhos[i] = this._rhoWindow[i].rho;
+    rhos.sort();
     const medianRho = rhos.length ? rhos[Math.floor(rhos.length / 2)] : 1;
     const distinctVowels = new Set(this._rhoWindow.map((e) => e.vowel)).size;
     // TWO INDEPENDENT ROUTES TO A RHOTIC, and both have to be checked, because they fail in
