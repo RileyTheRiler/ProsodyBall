@@ -2939,7 +2939,8 @@ export class VoiceAnalyzer {
       this._rhoWindow.push({ rho: pattern.scaleFactor, vowel: vc.vowel });
       if (this._rhoWindow.length > FORMANT_SCALE_POOL_FRAMES) this._rhoWindow.shift();
     }
-    const rhos = this._rhoWindow.map((e) => e.rho).sort((a, b) => a - b);
+    // ⚡ Bolt: Optimize sorting by mapping directly into natively-sorted TypedArrays to eliminate intermediate allocations
+    const rhos = Float64Array.from(this._rhoWindow, (e) => e.rho).sort();
     const medianRho = rhos.length ? rhos[Math.floor(rhos.length / 2)] : 1;
     const distinctVowels = new Set(this._rhoWindow.map((e) => e.vowel)).size;
     // TWO INDEPENDENT ROUTES TO A RHOTIC, and both have to be checked, because they fail in
