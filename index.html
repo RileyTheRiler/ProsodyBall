@@ -372,7 +372,8 @@
     input:focus-visible,
     textarea:focus-visible,
     .toggle-switch input:focus-visible + .toggle-slider,
-    .help-tab:focus-visible {
+    .help-tab:focus-visible,
+    label:has(input[type="file"]:focus-visible) {
       outline: 3px solid rgba(77, 150, 255, 0.9);
       outline-offset: 2px;
     }
@@ -380,7 +381,8 @@
     :root.colorblind button:focus-visible,
     :root.colorblind select:focus-visible,
     :root.colorblind input:focus-visible,
-    :root.colorblind textarea:focus-visible {
+    :root.colorblind textarea:focus-visible,
+    :root.colorblind label:has(input[type="file"]:focus-visible) {
       outline-color: rgba(86, 180, 233, 0.9);
     }
 
@@ -4770,7 +4772,7 @@
             <polyline points="17 8 12 3 7 8"></polyline>
             <line x1="12" y1="3" x2="12" y2="15"></line>
           </svg>
-          <input type="file" id="audioUploadInput" accept="audio/*" style="display: none;">
+          <input type="file" id="audioUploadInput" accept="audio/*" class="sr-only">
         </label>
         <button class="btn btn-voice-rec" id="voiceRecBtn" aria-pressed="false" title="Record your voice" aria-label="Record your voice"><span class="rec-dot"></span></button>
         <button class="btn btn-voice-play" id="voicePlayBtn" disabled title="Play your last recording"><span aria-hidden="true">▶</span><span class="voice-play-label">&nbsp;Play</span></button>
