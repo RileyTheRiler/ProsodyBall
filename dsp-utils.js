@@ -2451,3 +2451,26 @@ export function rhoticFromRho(rho, {
   return { rhotic: rel < threshold, rhoRelative: rel, reason: rel < threshold ? 'rhotic' : 'not-rhotic' };
 }
 
+
+// 🛡️ Sentinel: Sanitize URLs to prevent DOM-based XSS when assigning to href
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  const trimmed = String(url).trim().replace(/[\x00-\x1F\x7F]/g, '');
+  try {
+    const parsed = new URL(trimmed);
+    if (['http:', 'https:', 'blob:', 'data:'].includes(parsed.protocol)) {
+      return url;
+    }
+    return 'about:blank';
+  } catch (e) {
+    try {
+      new URL(trimmed, 'http://localhost');
+      if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(trimmed) || trimmed.startsWith('://')) {
+        return 'about:blank';
+      }
+      return url;
+    } catch(err) {
+      return 'about:blank';
+    }
+  }
+}

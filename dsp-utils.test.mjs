@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError,
+  sanitizeUrl, computeRawProsody, computeProsodyScore, pitchHzToPosition, correctOctaveError,
   computeFrameReliability, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction,
   steadyStateWeight, selectResonanceMethod, formantEstimateConfidence,
   SNR_GREEN_DB, SNR_YELLOW_DB, OVERSUB_MIN, OVERSUB_MAX, STEADY_WEIGHT_FLOOR
@@ -205,4 +205,11 @@ test('selectResonanceMethod picks LPC clean, cepstral mid, centroid noisy', () =
   assert.equal(selectResonanceMethod(15), 'cepstral');          // between the tiers
   assert.equal(selectResonanceMethod(SNR_YELLOW_DB), 'cepstral');// yellow edge inclusive
   assert.equal(selectResonanceMethod(5), 'centroid');           // below yellow
+});
+
+test('sanitizeUrl handles valid and invalid urls', () => {
+  assert.equal(sanitizeUrl('http://example.com'), 'http://example.com');
+  assert.equal(sanitizeUrl('blob:http://localhost/123'), 'blob:http://localhost/123');
+  assert.equal(sanitizeUrl('javascript:alert(1)'), 'about:blank');
+  assert.equal(sanitizeUrl('  javascript:alert(1)'), 'about:blank');
 });
