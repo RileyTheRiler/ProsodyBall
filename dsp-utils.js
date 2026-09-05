@@ -545,13 +545,24 @@ export function summarizeVoiceCloud(points) {
   const meanLog = logSum / wSum;
   const meanRes = resSum / wSum;
   let varLog = 0, varRes = 0;
+  // ⚡ Bolt: Eliminate `.map().sort()` allocations for median calculation.
+  // Pre-allocating typed arrays and populating them in the same pass
+  // allows us to use native C++ sorting without intermediate allocations.
+  const hzValues = new Float64Array(n);
+  const resValues = new Float64Array(n);
+  let i = 0;
   for (const p of pts) {
     const w = Math.max(1e-6, p.w != null ? p.w : 1);
     const dl = Math.log2(p.hz) - meanLog;
     const dr = clamp01(p.res) - meanRes;
     varLog += dl * dl * w;
     varRes += dr * dr * w;
+    hzValues[i] = p.hz;
+    resValues[i] = clamp01(p.res);
+    i++;
   }
+  hzValues.sort();
+  resValues.sort();
   const mid = (arr) => (arr.length % 2
     ? arr[(arr.length - 1) / 2]
     : (arr[arr.length / 2 - 1] + arr[arr.length / 2]) / 2);
@@ -561,8 +572,8 @@ export function summarizeVoiceCloud(points) {
     sdSemitones: Math.sqrt(varLog / wSum) * 12,      // log2-octaves → semitones
     meanRes,
     sdRes: Math.sqrt(varRes / wSum),
-    medianHz: mid(pts.map((p) => p.hz).sort((a, b) => a - b)),
-    medianRes: mid(pts.map((p) => clamp01(p.res)).sort((a, b) => a - b)),
+    medianHz: mid(hzValues),
+    medianRes: mid(resValues),
   };
 }
 
