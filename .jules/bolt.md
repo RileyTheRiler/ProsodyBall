@@ -1,0 +1,3 @@
+## 2024-05-24 - TypedArray Native Sorting
+**Learning:** The `.map().sort()` pattern on standard JavaScript arrays (like `pts.map(p => p.hz).sort((a,b) => a-b)`) involves intermediate array allocations and overhead for executing the lambda callback during sorts.
+**Action:** Replace this pattern when optimizing inner loops. Pre-allocate `Float64Array` buffers and populate them during an existing loop traversal, then call `.sort()`. Since TypedArrays sort natively as numbers, it entirely eliminates callback overhead and intermediate array object instantiation, resulting in significant performance gains for calculating medians.
