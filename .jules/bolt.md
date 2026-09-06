@@ -1,0 +1,3 @@
+## 2024-09-06 - TypedArray sorting performance
+**Learning:** In Javascript, using `Array.prototype.map(mapFn).sort((a,b) => a-b)` or `Float64Array.from(array, mapFn).sort()` is significantly slower than pre-allocating a typed array, populating it with a standard `for` loop, and then calling `.sort()`. Standard arrays have intermediate allocation overheads and standard `.sort()` defaults to lexicographical comparison requiring a comparator function, whereas typed array `.sort()` uses native C++ numerical sorting.
+**Action:** When extracting mapping out numerical data from objects and sorting the values (especially repeatedly in a tight loop), use pre-allocated typed arrays and standard for loops.
