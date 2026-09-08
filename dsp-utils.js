@@ -552,6 +552,16 @@ export function summarizeVoiceCloud(points) {
     varLog += dl * dl * w;
     varRes += dr * dr * w;
   }
+  // Bolt optimization: use TypedArrays for sorting numbers to avoid intermediate allocations and string parsing
+  const hzArray = new Float64Array(pts.length);
+  const resArray = new Float64Array(pts.length);
+  for (let i = 0; i < pts.length; i++) {
+    hzArray[i] = pts[i].hz;
+    resArray[i] = clamp01(pts[i].res);
+  }
+  hzArray.sort();
+  resArray.sort();
+
   const mid = (arr) => (arr.length % 2
     ? arr[(arr.length - 1) / 2]
     : (arr[arr.length / 2 - 1] + arr[arr.length / 2]) / 2);
@@ -561,8 +571,8 @@ export function summarizeVoiceCloud(points) {
     sdSemitones: Math.sqrt(varLog / wSum) * 12,      // log2-octaves → semitones
     meanRes,
     sdRes: Math.sqrt(varRes / wSum),
-    medianHz: mid(pts.map((p) => p.hz).sort((a, b) => a - b)),
-    medianRes: mid(pts.map((p) => clamp01(p.res)).sort((a, b) => a - b)),
+    medianHz: mid(hzArray),
+    medianRes: mid(resArray),
   };
 }
 
@@ -1722,7 +1732,12 @@ export function aggregateExercise(samples) {
 // the streaming form further down so a session's numbers and a fixture's cannot diverge.
 export function nucleusFromRun(run, { minFrames = 3 } = {}) {
   if (!Array.isArray(run) || run.length < minFrames) return null;
-  const vs = run.map((s) => s.value).sort((a, b) => a - b);
+  // Bolt optimization: use TypedArrays for sorting numbers to avoid intermediate allocations and string parsing
+  const vs = new Float64Array(run.length);
+  for (let i = 0; i < run.length; i++) {
+    vs[i] = run[i].value;
+  }
+  vs.sort();
   const mid = vs.length >> 1;
   return {
     vowel: run[0].vowel,

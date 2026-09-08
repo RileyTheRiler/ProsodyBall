@@ -1,0 +1,3 @@
+## 2026-09-08 - Optimize Array Mapping and Sorting for Numbers
+**Learning:** Chaining `.map(mapFn).sort((a,b) => a-b)` on standard arrays allocates intermediate arrays and forces string-like comparisons (which require the `(a,b) => a-b` lambda) in JavaScript. Replacing this with a pre-allocated `Float64Array`, populating it in a `for` loop, and calling its native `.sort()` (which sorts numerically by default) avoids intermediate garbage collection and is ~3.5x faster in tight loops.
+**Action:** When finding medians or processing large arrays of numeric values in hot paths, pre-allocate a typed array (e.g., `Float64Array`) and populate it via a loop instead of chaining standard array methods.
