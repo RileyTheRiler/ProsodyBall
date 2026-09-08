@@ -1,5 +1,28 @@
 import * as DSP_CONST from './dsp-constants.generated.js';
 
+export function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  try {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      parsed = new URL(url, 'http://localhost');
+      if (parsed.pathname.startsWith('/://') || parsed.pathname.startsWith('//')) {
+        return 'about:blank';
+      }
+    }
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:' || parsed.protocol === 'blob:') {
+      if (parsed.origin === 'http://localhost' && url.startsWith('/')) {
+        return url;
+      }
+      return url;
+    }
+  } catch (e) {
+  }
+  return 'about:blank';
+}
+
 export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
