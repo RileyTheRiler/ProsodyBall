@@ -4881,23 +4881,23 @@
         <span class="settings-label">Perceived-gender cues</span>
         <div class="settings-row">
           <label for="genderCueModalF0">Modal (median) pitch</label>
-          <label class="toggle-switch"><input id="genderCueModalF0" type="checkbox" aria-label="Use modal pitch cue" checked><span class="toggle-slider"></span></label>
+          <label class="toggle-switch" for="genderCueModalF0"><input id="genderCueModalF0" type="checkbox" aria-label="Use modal pitch cue" checked><span class="toggle-slider"></span></label>
         </div>
         <div class="settings-row">
           <label for="genderCueDispersion">Resonance spacing (vocal-tract size)</label>
-          <label class="toggle-switch"><input id="genderCueDispersion" type="checkbox" aria-label="Use formant dispersion cue" checked><span class="toggle-slider"></span></label>
+          <label class="toggle-switch" for="genderCueDispersion"><input id="genderCueDispersion" type="checkbox" aria-label="Use formant dispersion cue" checked><span class="toggle-slider"></span></label>
         </div>
         <div class="settings-row">
           <label for="genderCueSibilant">/s/ brightness</label>
-          <label class="toggle-switch"><input id="genderCueSibilant" type="checkbox" aria-label="Use sibilant centroid cue" checked><span class="toggle-slider"></span></label>
+          <label class="toggle-switch" for="genderCueSibilant"><input id="genderCueSibilant" type="checkbox" aria-label="Use sibilant centroid cue" checked><span class="toggle-slider"></span></label>
         </div>
         <div class="settings-row">
           <label for="genderCueCpp">Breathiness</label>
-          <label class="toggle-switch"><input id="genderCueCpp" type="checkbox" aria-label="Use breathiness cue" checked><span class="toggle-slider"></span></label>
+          <label class="toggle-switch" for="genderCueCpp"><input id="genderCueCpp" type="checkbox" aria-label="Use breathiness cue" checked><span class="toggle-slider"></span></label>
         </div>
         <div class="settings-row">
           <label for="genderCueIntonation">Intonation dynamism <em>(stereotype, not anatomy)</em></label>
-          <label class="toggle-switch"><input id="genderCueIntonation" type="checkbox" aria-label="Use intonation dynamism cue"><span class="toggle-slider"></span></label>
+          <label class="toggle-switch" for="genderCueIntonation"><input id="genderCueIntonation" type="checkbox" aria-label="Use intonation dynamism cue"><span class="toggle-slider"></span></label>
         </div>
       </div>
 
@@ -4908,19 +4908,19 @@
         </select>
         <div class="settings-row">
           <label for="echoCancelToggle">Echo cancellation</label>
-          <label class="toggle-switch"><input id="echoCancelToggle" type="checkbox" aria-label="Toggle echo cancellation"><span class="toggle-slider"></span></label>
+          <label class="toggle-switch" for="echoCancelToggle"><input id="echoCancelToggle" type="checkbox" aria-label="Toggle echo cancellation"><span class="toggle-slider"></span></label>
         </div>
         <div class="settings-row">
           <label for="noiseSuppressToggle">Noise suppression</label>
-          <label class="toggle-switch"><input id="noiseSuppressToggle" type="checkbox" aria-label="Toggle noise suppression"><span class="toggle-slider"></span></label>
+          <label class="toggle-switch" for="noiseSuppressToggle"><input id="noiseSuppressToggle" type="checkbox" aria-label="Toggle noise suppression"><span class="toggle-slider"></span></label>
         </div>
         <div class="settings-row">
           <label for="autoGainToggle">Auto gain control</label>
-          <label class="toggle-switch"><input id="autoGainToggle" type="checkbox" aria-label="Toggle auto gain control"><span class="toggle-slider"></span></label>
+          <label class="toggle-switch" for="autoGainToggle"><input id="autoGainToggle" type="checkbox" aria-label="Toggle auto gain control"><span class="toggle-slider"></span></label>
         </div>
         <div class="settings-row">
           <label for="speechGateToggle">Measure voice only</label>
-          <label class="toggle-switch"><input id="speechGateToggle" type="checkbox" aria-label="Toggle voice-only measurement"><span class="toggle-slider"></span></label>
+          <label class="toggle-switch" for="speechGateToggle"><input id="speechGateToggle" type="checkbox" aria-label="Toggle voice-only measurement"><span class="toggle-slider"></span></label>
         </div>
         <p class="settings-hint" style="margin:4px 0">
           Ignores fans, hum, traffic and clatter so only your voice moves the meters.
@@ -4955,7 +4955,7 @@
         <span class="settings-label">Smart Bulb</span>
         <div class="settings-row">
           <label for="bulbEnableToggle">Mirror ball color to bulb</label>
-          <label class="toggle-switch"><input id="bulbEnableToggle" type="checkbox" aria-label="Enable smart bulb sync"><span class="toggle-slider"></span></label>
+          <label class="toggle-switch" for="bulbEnableToggle"><input id="bulbEnableToggle" type="checkbox" aria-label="Enable smart bulb sync"><span class="toggle-slider"></span></label>
         </div>
         <div class="bulb-sim"><div id="bulbSimSwatch" class="bulb-swatch" aria-hidden="true"></div><span class="bulb-sim-label">Simulated bulb</span></div>
         <select id="bulbTransportSelect" class="theme-select btn-fill" aria-label="Smart bulb connection type">
@@ -4969,7 +4969,7 @@
         </select>
         <div id="bulbBtFields" class="bulb-fields" style="display:none">
           <button class="btn btn-help btn-fill" id="bulbConnectBtn" aria-label="Connect to a Bluetooth bulb" title="Pick your bulb over Bluetooth">Connect bulb (Bluetooth)</button>
-          <label class="bulb-reconnect"><input id="bulbAutoReconnect" type="checkbox"> Reconnect automatically next session</label>
+          <label class="bulb-reconnect" for="bulbAutoReconnect"><input id="bulbAutoReconnect" type="checkbox"> Reconnect automatically next session</label>
         </div>
         <div id="bulbGenericbleFields" class="bulb-fields" style="display:none">
           <input id="bulbBleNamePrefix" class="bulb-input" type="text" placeholder="Advanced: name filter (optional)" aria-label="Bluetooth device name filter">
@@ -5137,7 +5137,7 @@
 
         <div class="vib-master">
           <label for="vibMasterToggle">Vibration alerts</label>
-          <label class="toggle-switch">
+          <label class="toggle-switch" for="vibMasterToggle">
             <input type="checkbox" id="vibMasterToggle" aria-label="Toggle all vibration alerts">
             <span class="toggle-slider"></span>
           </label>
@@ -5167,7 +5167,7 @@
         </div>
         <div class="vib-master">
           <label for="dafEnableToggle">Enable DAF</label>
-          <label class="toggle-switch">
+          <label class="toggle-switch" for="dafEnableToggle">
             <input type="checkbox" id="dafEnableToggle" aria-label="Enable Delayed Auditory Feedback">
             <span class="toggle-slider"></span>
           </label>
@@ -5194,7 +5194,7 @@
         </div>
         <div class="settings-row">
           <label for="dafBassFilterToggle" style="font-size:0.88rem">Cut bass below 150 Hz</label>
-          <label class="toggle-switch">
+          <label class="toggle-switch" for="dafBassFilterToggle">
             <input type="checkbox" id="dafBassFilterToggle"
               aria-label="Cut bass frequencies below 150Hz">
             <span class="toggle-slider"></span>
