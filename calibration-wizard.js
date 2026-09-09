@@ -74,7 +74,8 @@ export class CalibrationWizard {
   }
 
   _clearVisual() {
-    if (this.visualEl) this.visualEl.innerHTML = '';
+    // Security enhancement: use safe DOM manipulation instead of innerHTML to prevent DOM-based XSS
+    if (this.visualEl) this.visualEl.textContent = '';
   }
 
   _strong(text) {
