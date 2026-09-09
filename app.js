@@ -7250,11 +7250,13 @@ export class VoxBallGame {
 
         const toggleLabel = document.createElement('label');
         toggleLabel.className = 'toggle-switch';
+        toggleLabel.htmlFor = `vibRuleToggle_${rule.id}`;
         toggleLabel.style.marginLeft = '4px';
 
         const toggleInput = document.createElement('input');
         toggleInput.type = 'checkbox';
         toggleInput.className = 'vib-rule-toggle';
+        toggleInput.id = `vibRuleToggle_${rule.id}`;
         toggleInput.setAttribute('aria-label', 'Enable alert rule');
         if (rule.enabled) toggleInput.checked = true;
 
