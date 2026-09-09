@@ -552,6 +552,18 @@ export function summarizeVoiceCloud(points) {
     varLog += dl * dl * w;
     varRes += dr * dr * w;
   }
+  // Performance optimization: Use pre-allocated typed arrays instead of intermediate
+  // Array.map allocations. Typed arrays sort numerically natively (in C++) and avoid
+  // garbage collection overhead from intermediate array objects.
+  const hzArray = new Float64Array(n);
+  const resArray = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    hzArray[i] = pts[i].hz;
+    resArray[i] = clamp01(pts[i].res);
+  }
+  hzArray.sort();
+  resArray.sort();
+
   const mid = (arr) => (arr.length % 2
     ? arr[(arr.length - 1) / 2]
     : (arr[arr.length / 2 - 1] + arr[arr.length / 2]) / 2);
@@ -561,8 +573,8 @@ export function summarizeVoiceCloud(points) {
     sdSemitones: Math.sqrt(varLog / wSum) * 12,      // log2-octaves → semitones
     meanRes,
     sdRes: Math.sqrt(varRes / wSum),
-    medianHz: mid(pts.map((p) => p.hz).sort((a, b) => a - b)),
-    medianRes: mid(pts.map((p) => clamp01(p.res)).sort((a, b) => a - b)),
+    medianHz: mid(hzArray),
+    medianRes: mid(resArray),
   };
 }
 
