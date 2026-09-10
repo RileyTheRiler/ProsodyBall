@@ -1,0 +1,3 @@
+## 2024-09-10 - Pre-allocate typed arrays for numeric sorting
+**Learning:** In JavaScript, sorting arrays of numbers using `.map().sort((a,b) => a-b)` is very inefficient because it creates intermediate arrays and forces the sort engine to use a JS callback. When the data is inherently numeric (like pitch values or resonance), allocating a `Float64Array`, copying the values in a single pass, and using its native `sort()` method avoids garbage collection overhead and executes much faster (often 3-4x faster).
+**Action:** Replace `pts.map(p => p.hz).sort((a,b) => a-b)` chains with `Float64Array` population and native `.sort()` when summarizing metrics on hot paths like `summarizeVoiceCloud`.
