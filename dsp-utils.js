@@ -2451,3 +2451,32 @@ export function rhoticFromRho(rho, {
   return { rhotic: rel < threshold, rhoRelative: rel, reason: rel < threshold ? 'rhotic' : 'not-rhotic' };
 }
 
+
+/**
+ * Sanitizes a URL strictly to prevent JavaScript pseudo-protocol execution (javascript: or data:)
+ * while allowing http, https, and relative URLs.
+ * 🛡️ Sentinel: Defense-in-depth against DOM-based XSS by ensuring URLs cannot execute scripts when assigned to .href or innerHTML.
+ *
+ * @param {string} url The URL to sanitize
+ * @param {string} fallback The fallback URL if sanitization fails (defaults to '#')
+ * @returns {string} The sanitized URL
+ */
+export function sanitizeUrl(url, fallback = '#') {
+  if (!url) return fallback;
+  try {
+    const parsed = new URL(url, 'https://example.com');
+    if (['javascript:', 'data:', 'vbscript:', 'file:'].includes(parsed.protocol)) {
+      return fallback;
+    }
+    // Also prevent cases where url parses without base fallback as a script
+    try {
+      const strictParse = new URL(url);
+      if (['javascript:', 'data:', 'vbscript:', 'file:'].includes(strictParse.protocol)) {
+        return fallback;
+      }
+    } catch(e) {}
+    return url;
+  } catch (e) {
+    return fallback;
+  }
+}

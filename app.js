@@ -1,4 +1,4 @@
-import { computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, fitFormantDispersion, formantEstimateConfidence, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake, fitFormantScale, formantPatternResiduals, resonanceAbsoluteV2, poolFormantScale, resonanceScoreV1, classifyVowel, f2PositionFromResidual, normalizeResidualScale, VOWEL_TEMPLATE_FORMANTS, ResonanceAggregator, frameValidity, formantMeasurementNoise, crossEstimatorAgreement, resonanceConfidence, RESONANCE_CONFIDENCE_FLOOR, spectralBrightness, windowHomogeneity, rhoticFromRho, residualScaleFactor, selectLpcCeiling, LPC_DEFAULT_CEILING_HZ, LPC_CEILING_CANDIDATES_HZ, LPC_CEILING_MIN_FRAMES, FORMANT_NOISE_F0_REF_HZ } from './dsp-utils.js';
+import { sanitizeUrl, computeProsodyScore, computeRawProsody, pitchHzToPosition, getMicDiagnostics, ensureAudioContextRunning, clamp01, computeFrameReliability, normalizeAgainstPercentiles, normalizeAgainstRange, computeWeightTarget, computeAttackHardness, computeGenderScore, genderScoreToHue, computeSpectralCentroid, fitFormantDispersion, formantEstimateConfidence, computeCepstrum, computeCPP, computeGenderScoreMulti, computeModalF0Femininity, computeSibilantFemininity, dispersionToFemininity, cppToFemininity, correctOctaveError, aPosterioriSnrDb, snrToConfidence, snrTier, adaptiveOverSubtraction, NOISE_PROFILE_UPDATE_RATE, steadyStateWeight, selectResonanceMethod, FEMINIZATION_CUE_WEIGHTS, MASCULINIZATION_CUE_WEIGHTS, pitchHzToLogPosition, summarizeVoiceCloud, voiceMapZoneFromRules, fitPersonalRange, rangeFromExtremeSamples, summarizeClipMetrics, summarizePhraseTake, fitFormantScale, formantPatternResiduals, resonanceAbsoluteV2, poolFormantScale, resonanceScoreV1, classifyVowel, f2PositionFromResidual, normalizeResidualScale, VOWEL_TEMPLATE_FORMANTS, ResonanceAggregator, frameValidity, formantMeasurementNoise, crossEstimatorAgreement, resonanceConfidence, RESONANCE_CONFIDENCE_FLOOR, spectralBrightness, windowHomogeneity, rhoticFromRho, residualScaleFactor, selectLpcCeiling, LPC_DEFAULT_CEILING_HZ, LPC_CEILING_CANDIDATES_HZ, LPC_CEILING_MIN_FRAMES, FORMANT_NOISE_F0_REF_HZ } from './dsp-utils.js';
 import {
   RESONANCE_METRIC_VERSION, RESONANCE_SCALE_ABSOLUTE, RESONANCE_SCALE_CONTROL,
   RESONANCE_POPULATION_SPAN, RESONANCE_PROFILE_KEY,
@@ -5823,13 +5823,14 @@ export class VoxBallGame {
     // Detect iframe on load and show helpful notice
     if (isInIframe && iframeNotice) {
       // Build direct URL — HF Spaces has multiple URL patterns
-      let directUrl = window.location.href;
+      // 🛡️ Sentinel: Sanitize window.location.href before using it to build fallback links to prevent DOM-based XSS
+      let directUrl = sanitizeUrl(window.location.href);
       try {
         // Try to build the *.hf.space direct URL from the current location
         const url = new URL(window.location.href);
         // If we're already on a .hf.space domain, just use it directly
         if (!url.hostname.endsWith('.hf.space')) {
-          directUrl = window.location.href;
+          directUrl = sanitizeUrl(window.location.href);
         }
       } catch (e) { }
       iframeNotice.textContent = '';
@@ -6190,7 +6191,8 @@ export class VoxBallGame {
         errNode.appendChild(document.createTextNode('This requires HTTPS and a modern browser. '));
         if (isInIframe) {
           const link = document.createElement('a');
-          link.href = window.location.href;
+          // 🛡️ Sentinel: Sanitize window.location.href to prevent potential DOM-based XSS vector
+          link.href = sanitizeUrl(window.location.href);
           link.target = '_blank';
           link.rel = 'noopener noreferrer';
           link.textContent = 'Try opening in a new tab ↗';
@@ -6219,7 +6221,8 @@ export class VoxBallGame {
         try {
           const { stream, cleanup } = await startPhoneMicSession((status, code) => {
             if (status === 'waiting') {
-              const url = new URL('phone.html', window.location.href);
+              // 🛡️ Sentinel: Provide safe origin when building relative URLs from window.location
+              const url = new URL('phone.html', sanitizeUrl(window.location.href, window.location.origin));
               url.searchParams.set('room', code);
               url.searchParams.set('ec', this.micInputPreferences.echoCancellation ? '1' : '0');
               url.searchParams.set('ns', this.micInputPreferences.noiseSuppression ? '1' : '0');
@@ -6272,7 +6275,8 @@ export class VoxBallGame {
             msg.appendChild(document.createTextNode('🎙 Microphone blocked by browser — this usually happens inside iframes.'));
             msg.appendChild(document.createElement('br'));
             const link = document.createElement('a');
-            link.href = window.location.href;
+            // 🛡️ Sentinel: Sanitize window.location.href to prevent potential DOM-based XSS vector
+            link.href = sanitizeUrl(window.location.href);
             link.target = '_blank';
             link.rel = 'noopener noreferrer';
             link.textContent = 'Open in a new tab for full mic access ↗';

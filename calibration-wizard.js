@@ -74,7 +74,8 @@ export class CalibrationWizard {
   }
 
   _clearVisual() {
-    if (this.visualEl) this.visualEl.innerHTML = '';
+    // 🛡️ Sentinel: Replace innerHTML with textContent to ensure Trusted Types compatibility and prevent XSS
+    if (this.visualEl) this.visualEl.textContent = '';
   }
 
   _strong(text) {
