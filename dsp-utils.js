@@ -1,5 +1,27 @@
 import * as DSP_CONST from './dsp-constants.generated.js';
 
+/**
+ * Sanitizes URLs to prevent DOM-based XSS when assigning to href or src attributes.
+ * Allows safe protocols (http, https, mailto, tel) and gracefully falls back to about:blank.
+ */
+export function sanitizeUrl(url, base = typeof window !== 'undefined' ? window.location.href : undefined) {
+  try {
+    // Test without base first to catch inherently invalid URLs like "://invalid"
+    try { new URL(url); } catch (e) {
+      if (typeof url === 'string' && url.includes('://')) return 'about:blank';
+      // If it fails to parse without a base and no base is provided, it might be a relative URL
+      if (!base) return url;
+    }
+    const parsed = new URL(url, base);
+    if (['http:', 'https:', 'mailto:', 'tel:', 'blob:'].includes(parsed.protocol)) {
+      return parsed.href;
+    }
+  } catch (e) {
+    // If it fails to parse, it's unsafe or invalid
+  }
+  return 'about:blank';
+}
+
 export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
