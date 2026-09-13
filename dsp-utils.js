@@ -561,8 +561,19 @@ export function summarizeVoiceCloud(points) {
     sdSemitones: Math.sqrt(varLog / wSum) * 12,      // log2-octaves → semitones
     meanRes,
     sdRes: Math.sqrt(varRes / wSum),
-    medianHz: mid(pts.map((p) => p.hz).sort((a, b) => a - b)),
-    medianRes: mid(pts.map((p) => clamp01(p.res)).sort((a, b) => a - b)),
+    // ⚡ Bolt: Fast native numeric sort on pre-allocated typed arrays avoids intermediate allocations.
+    medianHz: mid((() => {
+      const arr = new Float64Array(n);
+      for (let i = 0; i < n; i++) arr[i] = pts[i].hz;
+      arr.sort();
+      return arr;
+    })()),
+    medianRes: mid((() => {
+      const arr = new Float64Array(n);
+      for (let i = 0; i < n; i++) arr[i] = clamp01(pts[i].res);
+      arr.sort();
+      return arr;
+    })()),
   };
 }
 
