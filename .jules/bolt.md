@@ -1,0 +1,3 @@
+## 2024-05-24 - YIN algorithm early exit
+**Learning:** In the YIN pitch detection algorithm, the true pitch is usually the first local minimum in the Cumulative Mean Normalized Difference (CMND) function that falls below the threshold. By continuously checking if the threshold has been crossed and the value has started rising again, we can abort the correlation loop early, bypassing expensive calculations for lower frequencies and massively reducing latency on clear signals.
+**Action:** Always evaluate mathematical algorithms for early exit conditions that preserve exact identical behavior for expected inputs, particularly when they involve looping over large correlation window frames.
