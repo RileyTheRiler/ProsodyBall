@@ -24,12 +24,29 @@ export function estimatePitchYin(input, {
     sumSq0 += samples[i] * samples[i];
     sumSqTau += samples[i + 1] * samples[i + 1];
   }
+  let bestTau = -1;
+  let minimumCmnd = Infinity;
+
   for (let tau = 1; tau <= maxPeriod; tau++) {
     let correlation = 0;
     for (let i = 0; i < windowSize; i++) correlation += samples[i] * samples[i + tau];
     const difference = Math.max(0, sumSq0 + sumSqTau - 2 * correlation);
     runningSum += difference;
     cmnd[tau] = difference * tau / (runningSum || 1);
+
+    // Bolt Optimization: Early exit for YIN algorithm
+    // YIN selects the first local minimum below the threshold. If we find a dip
+    // that crosses the threshold and starts rising again, we have found our pitch.
+    // Breaking early skips expensive correlation calculations for higher periods,
+    // which substantially reduces time spent in the loop.
+    if (tau >= minPeriod) {
+      if (cmnd[tau] < minimumCmnd) minimumCmnd = cmnd[tau];
+      if (bestTau === -1 && cmnd[tau] < threshold && cmnd[tau] > cmnd[tau - 1]) {
+        bestTau = tau - 1;
+        break;
+      }
+    }
+
     if (tau < maxPeriod) {
       const removed = samples[tau];
       const added = samples[tau + windowSize];
@@ -37,23 +54,24 @@ export function estimatePitchYin(input, {
     }
   }
 
-  let bestTau = -1;
-  for (let tau = minPeriod; tau <= maxPeriod; tau++) {
-    if (cmnd[tau] < threshold) {
-      while (tau + 1 <= maxPeriod && cmnd[tau + 1] < cmnd[tau]) tau++;
-      bestTau = tau;
-      break;
-    }
-  }
-  if (bestTau < 0) {
-    let minimum = Infinity;
+  if (bestTau === -1) {
     for (let tau = minPeriod; tau <= maxPeriod; tau++) {
-      if (cmnd[tau] < minimum) {
-        minimum = cmnd[tau];
+      if (cmnd[tau] < threshold) {
+        while (tau + 1 <= maxPeriod && cmnd[tau + 1] < cmnd[tau]) tau++;
         bestTau = tau;
+        break;
       }
     }
-    if (minimum > 0.4) return { hz: 0, confidence: 0 };
+    if (bestTau < 0) {
+      if (minimumCmnd > 0.4) return { hz: 0, confidence: 0 };
+      let minimum = Infinity;
+      for (let tau = minPeriod; tau <= maxPeriod; tau++) {
+        if (cmnd[tau] < minimum) {
+          minimum = cmnd[tau];
+          bestTau = tau;
+        }
+      }
+    }
   }
 
   bestTau = correctOctaveError(cmnd, bestTau, { maxPeriod });
