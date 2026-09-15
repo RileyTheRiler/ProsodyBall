@@ -6867,6 +6867,7 @@ export class VoxBallGame {
         this.colorblindMode = !this.colorblindMode;
         document.documentElement.classList.toggle('colorblind', this.colorblindMode);
         cbBtn.classList.toggle('active', this.colorblindMode);
+        cbBtn.setAttribute('aria-pressed', String(this.colorblindMode));
       });
     }
 
