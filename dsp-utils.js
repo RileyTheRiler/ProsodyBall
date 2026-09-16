@@ -552,6 +552,16 @@ export function summarizeVoiceCloud(points) {
     varLog += dl * dl * w;
     varRes += dr * dr * w;
   }
+  // ⚡ Bolt: Optimize median calculation using pre-allocated Float64Array and native sorting
+  // instead of allocating intermediate arrays via map() and using custom comparators.
+  const hzArr = new Float64Array(pts.length);
+  const resArr = new Float64Array(pts.length);
+  for (let i = 0; i < pts.length; i++) {
+    hzArr[i] = pts[i].hz;
+    resArr[i] = clamp01(pts[i].res);
+  }
+  hzArr.sort();
+  resArr.sort();
   const mid = (arr) => (arr.length % 2
     ? arr[(arr.length - 1) / 2]
     : (arr[arr.length / 2 - 1] + arr[arr.length / 2]) / 2);
@@ -561,8 +571,8 @@ export function summarizeVoiceCloud(points) {
     sdSemitones: Math.sqrt(varLog / wSum) * 12,      // log2-octaves → semitones
     meanRes,
     sdRes: Math.sqrt(varRes / wSum),
-    medianHz: mid(pts.map((p) => p.hz).sort((a, b) => a - b)),
-    medianRes: mid(pts.map((p) => clamp01(p.res)).sort((a, b) => a - b)),
+    medianHz: mid(hzArr),
+    medianRes: mid(resArr),
   };
 }
 
