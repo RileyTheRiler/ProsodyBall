@@ -1,7 +1,7 @@
 from playwright.sync_api import sync_playwright
 
 def run_cuj(page):
-    page.goto("http://localhost:3000")
+    page.goto("http://localhost:8000")
     page.wait_for_timeout(500)
 
     # Trigger showError with embedded link to window.location.href
