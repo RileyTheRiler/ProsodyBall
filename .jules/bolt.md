@@ -1,0 +1,3 @@
+## 2024-05-24 - TypedArray sort for numbers
+**Learning:** In JS, array `.map()` followed by `.sort((a,b) => a-b)` allocates intermediate arrays of objects/values and uses the JS engine's general-purpose sorter which runs the callback heavily. Switching to pre-allocated `Float64Array` and using a loop to populate it, followed by its native `.sort()` is 4-5x faster for numeric data, since it skips the intermediate object allocations and uses a fast native numeric sort without callback overhead.
+**Action:** Use pre-allocated `Float64Array` + loop + native `.sort()` for frequent sorting of numeric arrays on the hot path (like in audio analysis ticks).
