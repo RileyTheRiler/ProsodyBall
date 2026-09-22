@@ -1,5 +1,32 @@
 import * as DSP_CONST from './dsp-constants.generated.js';
 
+// Security enhancement: Sanitize untrusted or dynamic URLs to prevent DOM-based XSS.
+export function sanitizeUrl(urlStr) {
+  if (!urlStr) return 'about:blank';
+  const str = String(urlStr).trim();
+  let parsed;
+  try {
+    parsed = new URL(str);
+  } catch (e) {
+    try {
+      parsed = new URL(str, 'http://localhost');
+      if (str.match(/^[a-zA-Z0-9+.-]+:/) || str.startsWith('://')) {
+        return 'about:blank';
+      }
+    } catch (e2) {
+      return 'about:blank';
+    }
+  }
+
+  const protocol = parsed.protocol.toLowerCase();
+  const safeProtocols = ['http:', 'https:', 'mailto:', 'tel:', 'blob:', 'file:'];
+  if (!safeProtocols.includes(protocol)) {
+    return 'about:blank';
+  }
+
+  return str;
+}
+
 export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
