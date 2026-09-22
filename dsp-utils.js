@@ -1,5 +1,27 @@
 import * as DSP_CONST from './dsp-constants.generated.js';
 
+// Security enhancement: Validate URL protocols to prevent DOM-based XSS vulnerabilities
+// such as javascript: or data: URIs when binding dynamic URLs to the DOM.
+export function sanitizeUrl(url) {
+  if (typeof url !== 'string' || !url.trim()) return 'about:blank';
+  try {
+    const parsed = new URL(url);
+    const safeProtocols = ['http:', 'https:', 'mailto:', 'tel:', 'blob:', 'file:'];
+    if (safeProtocols.includes(parsed.protocol)) {
+      return url;
+    }
+    return 'about:blank';
+  } catch (e) {
+    if (/^[^/]*:/.test(url)) return 'about:blank';
+    try {
+      new URL(url, 'http://dummybase.com');
+      return url;
+    } catch (e2) {
+      return 'about:blank';
+    }
+  }
+}
+
 export function clamp(value, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
