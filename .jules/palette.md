@@ -24,3 +24,9 @@
 ## $(date +%Y-%m-%d) - [Inaccessible custom toggle switches due to duplicate IDs]
 **Learning:** Discovered that custom toggle switches built with `<label class="toggle-switch">` wrapping an `<input type="checkbox">` were failing because the `id` on the `<input>` was duplicated elsewhere in the DOM. This breaks the `<label for="[id]">` association, rendering the toggle invisible to screen readers and difficult to click.
 **Action:** Ensure custom toggle `<input>` elements have strictly unique IDs across the entire document so they correctly link with their `<label>` elements.
+## 2026-08-13 - [Disabled button context]
+**Learning:** Found that the disabled Play Voice button lacked a clear explanation for why it was disabled, which was either because recording was in progress or there were no recordings yet.
+**Action:** Added a dynamic  tooltip to the disabled Play Voice button that explains the reason (e.g. 'Cannot play while recording', 'No recording available to play'), providing much needed clarity in disabled states.
+## 2026-08-13 - [Disabled button context]
+**Learning:** Found that the disabled Play Voice button lacked a clear explanation for why it was disabled, which was either because recording was in progress or there were no recordings yet.
+**Action:** Added a dynamic `title` tooltip to the disabled Play Voice button that explains the reason (e.g. 'Cannot play while recording', 'No recording available to play'), providing much needed clarity in disabled states.
