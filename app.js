@@ -52,6 +52,25 @@ function escapeHtml(text) {
     .replace(/'/g, "&#039;");
 }
 
+// Security enhancement: Defend against DOM-based XSS when assigning to .href
+// by explicitly allowing only safe protocols and gracefully failing on invalid URLs.
+function sanitizeUrl(url) {
+  if (!url) return 'about:blank';
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:', 'mailto:', 'tel:', 'blob:', 'file:'].includes(parsed.protocol)) {
+      return 'about:blank';
+    }
+    return parsed.href;
+  } catch (err) {
+    const str = String(url).trim();
+    if (/^[a-zA-Z0-9+.-]+:/.test(str) || str.startsWith('://')) {
+      return 'about:blank';
+    }
+    return str;
+  }
+}
+
 // Guided phrase practice curriculum + scoring now live in phrase-coach.js:
 // each phrase declares what it trains (focus), the expected phrase-final
 // contour, a coaching tip, and its leniently-graded function words.
@@ -5422,7 +5441,8 @@ export class VoxBallGame {
     const url = this._recordingUrls.create(rec.blob, `download:${rec.id}`);
     const a = document.createElement('a');
     try {
-      a.href = url;
+      // Security enhancement: sanitize .href to prevent URL-based XSS
+      a.href = sanitizeUrl(url);
       a.download = `${rec.name}${this._extensionForMimeType(rec.mimeType)}`;
       document.body.appendChild(a);
       a.click();
@@ -5836,7 +5856,8 @@ export class VoxBallGame {
       iframeNotice.appendChild(document.createTextNode('This app needs microphone access, which may be blocked when embedded.'));
       iframeNotice.appendChild(document.createElement('br'));
       const link = document.createElement('a');
-      link.href = directUrl;
+      // Security enhancement: sanitize .href to prevent URL-based XSS
+      link.href = sanitizeUrl(directUrl);
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       link.textContent = 'Open in new tab for full access ↗';
@@ -6190,7 +6211,8 @@ export class VoxBallGame {
         errNode.appendChild(document.createTextNode('This requires HTTPS and a modern browser. '));
         if (isInIframe) {
           const link = document.createElement('a');
-          link.href = window.location.href;
+          // Security enhancement: sanitize .href to prevent URL-based XSS
+          link.href = sanitizeUrl(window.location.href);
           link.target = '_blank';
           link.rel = 'noopener noreferrer';
           link.textContent = 'Try opening in a new tab ↗';
@@ -6224,7 +6246,8 @@ export class VoxBallGame {
               url.searchParams.set('ec', this.micInputPreferences.echoCancellation ? '1' : '0');
               url.searchParams.set('ns', this.micInputPreferences.noiseSuppression ? '1' : '0');
               url.searchParams.set('ag', this.micInputPreferences.autoGainControl ? '1' : '0');
-              if (phoneMicUrlEl) { phoneMicUrlEl.href = url.href; phoneMicUrlEl.textContent = url.href; phoneMicUrlEl.style.display = ''; }
+              // Security enhancement: sanitize .href to prevent URL-based XSS
+              if (phoneMicUrlEl) { phoneMicUrlEl.href = sanitizeUrl(url.href); phoneMicUrlEl.textContent = url.href; phoneMicUrlEl.style.display = ''; }
               if (phoneMicCodeEl) { phoneMicCodeEl.style.display = ''; phoneMicCodeEl.querySelector('strong').textContent = code; }
               if (phoneMicStatusEl) { phoneMicStatusEl.style.display = ''; phoneMicStatusEl.textContent = 'Waiting for phone to connect...'; }
               showError(`📱 Open on your phone: ${url.href}`);
@@ -6272,7 +6295,8 @@ export class VoxBallGame {
             msg.appendChild(document.createTextNode('🎙 Microphone blocked by browser — this usually happens inside iframes.'));
             msg.appendChild(document.createElement('br'));
             const link = document.createElement('a');
-            link.href = window.location.href;
+            // Security enhancement: sanitize .href to prevent URL-based XSS
+            link.href = sanitizeUrl(window.location.href);
             link.target = '_blank';
             link.rel = 'noopener noreferrer';
             link.textContent = 'Open in a new tab for full mic access ↗';
