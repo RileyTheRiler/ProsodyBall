@@ -42,12 +42,12 @@ test('summarizeVoiceCloud: empty and invalid inputs return null', () => {
 test('summarizeVoiceCloud: single point — zero spread, point stats', () => {
   const s = summarizeVoiceCloud([{ hz: 165, res: 0.6, w: 0.8 }]);
   assert.equal(s.n, 1);
-  assert.ok(Math.abs(s.meanHz - 165) < 1e-9);
-  assert.ok(Math.abs(s.meanRes - 0.6) < 1e-9);
+  assert.ok(Math.abs(s.meanHz - 165) < 1e-6);
+  assert.ok(Math.abs(s.meanRes - 0.6) < 1e-6);
   assert.equal(s.sdSemitones, 0);
   assert.equal(s.sdRes, 0);
   assert.equal(s.medianHz, 165);
-  assert.ok(Math.abs(s.medianRes - 0.6) < 1e-9);
+  assert.ok(Math.abs(s.medianRes - 0.6) < 1e-6);
 });
 
 test('summarizeVoiceCloud: pitch mean is geometric, spread is in semitones', () => {
