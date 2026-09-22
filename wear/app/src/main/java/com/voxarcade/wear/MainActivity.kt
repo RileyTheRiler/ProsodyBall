@@ -42,6 +42,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
@@ -88,7 +91,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun VoxApp() {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val engine = remember { MicEngine() }
+    val micSession = remember { WearMicSession(engine) }
     val haptics = remember { Haptics(context) }
 
     var hasMic by remember {
@@ -97,7 +102,7 @@ private fun VoxApp() {
                 == PackageManager.PERMISSION_GRANTED
         )
     }
-    var listening by remember { mutableStateOf(false) }
+    var permissionDenied by remember { mutableStateOf(false) }
     var viewTab by remember { mutableStateOf(ViewTab.VOICE) }
 
     // Necklace settings, persisted across restarts via DataStore (milestone 5).
@@ -132,9 +137,13 @@ private fun VoxApp() {
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasMic = granted
-        if (granted) { engine.start(); listening = true }
+        permissionDenied = !granted
+        micSession.onPermissionResult(granted)
     }
 
+    val micState by engine.state.collectAsState()
+    val micError by engine.lastError.collectAsState()
+    val listening = micState == WearMicState.STARTING || micState == WearMicState.RUNNING
     val level by engine.level.collectAsState()
     val pitchHz by engine.pitchHz.collectAsState()
     val pitchConfidence by engine.pitchConfidence.collectAsState()
@@ -143,7 +152,22 @@ private fun VoxApp() {
     val f1Hz by engine.f1Hz.collectAsState()
     val f2Hz by engine.f2Hz.collectAsState()
 
-    DisposableEffect(Unit) { onDispose { engine.stop() } }
+    // The session owns this one lifecycle listener. Backgrounding, activity teardown,
+    // and composition disposal all invalidate late permission/capture callbacks first.
+    DisposableEffect(lifecycleOwner, micSession) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP || event == Lifecycle.Event.ON_DESTROY) {
+                micSession.stop()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        micSession.lifecycleListenerAttached()
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            micSession.lifecycleListenerDetached()
+            micSession.stop()
+        }
+    }
 
     val voiced = pitchHz > 0f && pitchConfidence > 0.4f
     val direction = when {
@@ -283,12 +307,32 @@ private fun VoxApp() {
                 Button(
                     onClick = {
                         when {
-                            !hasMic -> permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                            listening -> { engine.stop(); listening = false }
-                            else -> { engine.start(); listening = true }
+                            listening -> micSession.stop()
+                            else -> {
+                                permissionDenied = false
+                                micSession.start(hasMic) {
+                                    permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            }
                         }
                     }
                 ) { Text(if (listening) "Stop" else "Start") }
+
+                val micStatus = when {
+                    permissionDenied -> "Mic blocked — retry"
+                    micState == WearMicState.STARTING -> "Starting microphone…"
+                    micState == WearMicState.FAILED -> "Microphone stopped: ${micError ?: "device unavailable"}"
+                    else -> null
+                }
+                if (micStatus != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = micStatus,
+                        color = ALERT,
+                        style = MaterialTheme.typography.caption2,
+                        textAlign = TextAlign.Center,
+                    )
+                }
 
                 Spacer(Modifier.height(20.dp))
             }

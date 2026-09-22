@@ -48,6 +48,14 @@ estimate). See `docs/DSP_CONTRACT.md` for the canonical feature-packet definitio
   Blobs, playback elements, object URLs, recorder timers, and playback listeners. See
   [`RECORDING_LIFECYCLE.md`](./RECORDING_LIFECYCLE.md) for limits and release events.
 
+## Native Wear boundary
+
+The Wear OS v2 application does not instantiate `VoiceAnalyzer` or borrow the web
+session stream. Its `MicEngine` exclusively owns one native `AudioRecord`, capture
+thread, PCM buffers, and estimator state per generation. `WearMicSession` owns the
+permission attempt and activity-lifecycle cancellation guard. See
+[`WEAR_MIC_LIFECYCLE.md`](./WEAR_MIC_LIFECYCLE.md).
+
 ## Module boundary (phase 1)
 
 `voice-analyzer-core.js` now owns shared normalization/reliability math.

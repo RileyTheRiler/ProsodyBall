@@ -4,11 +4,15 @@ name: Build Wear OS APK
 # Download it from the run's "Artifacts" section, then follow wear/README.md.
 
 on:
+  pull_request:
+    paths:
+      - "wear/**"
+      - ".github/workflows/wear-build.yml"
   push:
     branches:
       # Build main on every merge so the "latest APK" artifact always matches the
-      # canonical (WebView-overlay) app, plus any claude/* feature branch that
-      # touches the watch files for pre-merge validation.
+      # canonical native app, plus any claude/* feature branch that touches the
+      # watch files for pre-merge validation.
       - main
       - "claude/**"
     paths:
@@ -46,7 +50,7 @@ jobs:
 
       - name: Build debug APK
         working-directory: wear
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        run: gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
