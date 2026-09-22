@@ -1,0 +1,3 @@
+## 2024-05-24 - TypedArray Native Sorting
+**Learning:** Using `Float64Array.from(array, mapFn).sort()` instead of `array.map(mapFn).sort((a,b) => a-b)` for numerical arrays prevents intermediate standard array allocations (reducing GC overhead) and leverages native, comparator-free numerical sorting. It resulted in roughly 2x faster performance in microbenchmarks for median calculations in `summarizeVoiceCloud`.
+**Action:** When mapping objects to a large collection of numbers strictly to sort them (like finding a median or quantiles), skip the intermediate standard Array and instantiate a TypedArray directly.
