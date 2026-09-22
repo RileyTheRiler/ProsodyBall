@@ -555,14 +555,26 @@ export function summarizeVoiceCloud(points) {
   const mid = (arr) => (arr.length % 2
     ? arr[(arr.length - 1) / 2]
     : (arr[arr.length / 2 - 1] + arr[arr.length / 2]) / 2);
+  // ⚡ Bolt: Optimize array mapping/sorting by using Float64Array.
+  // Pre-allocating and populating a Typed Array via a loop, then calling .sort() natively,
+  // eliminates intermediate allocations and runs significantly faster than .map().sort().
+  const hzArr = new Float64Array(n);
+  const resArr = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    hzArr[i] = pts[i].hz;
+    resArr[i] = clamp01(pts[i].res);
+  }
+  hzArr.sort();
+  resArr.sort();
+
   return {
     n,
     meanHz: Math.pow(2, meanLog),                    // geometric mean
     sdSemitones: Math.sqrt(varLog / wSum) * 12,      // log2-octaves → semitones
     meanRes,
     sdRes: Math.sqrt(varRes / wSum),
-    medianHz: mid(pts.map((p) => p.hz).sort((a, b) => a - b)),
-    medianRes: mid(pts.map((p) => clamp01(p.res)).sort((a, b) => a - b)),
+    medianHz: mid(hzArr),
+    medianRes: mid(resArr),
   };
 }
 

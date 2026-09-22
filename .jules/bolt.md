@@ -1,0 +1,3 @@
+## 2026-09-22 - TypedArray Sorting Optimization
+**Learning:** Using `array.map(mapFn).sort((a,b) => a-b)` on arrays of objects creates large GC pressure due to intermediate array allocations and uses a slower JS-based sort. Pre-allocating a `Float64Array`, populating it in a `for` loop, and then calling `.sort()` leverages native C++ numerical sorting and is significantly faster, even for arrays under 1000 items.
+**Action:** Always prefer TypedArray allocation and native `.sort()` over `.map().sort()` when sorting numerical values derived from an array of objects in hot code paths like `summarizeVoiceCloud`.
