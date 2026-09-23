@@ -51,3 +51,8 @@
 **Vulnerability:** Safe DOM construction using `document.createDocumentFragment()` and `.append()` was not consistently applied in `app.js` (e.g. `_showSessionSummary`, `renderTeleprompter`) or `calibration-wizard.js`. This allowed potential injection if dynamic data was ever used within loops with string concatenation, and led to conflicts with `innerHTML`.
 **Learning:** Relying on `innerHTML` for UI construction is inherently risky. Furthermore, manual DOM mocks in tests (like `MockEl`) require robust state initialization (e.g., `this.childNodes`) to correctly support safe DOM traversal methods like `.append()`.
 **Prevention:** Replace all complex `innerHTML` assignments with safe programmatic elements (`DocumentFragment`, `.createElement()`, `.textContent`). Ensure any manual DOM mocks fully implement necessary Node properties.
+
+## 2026-09-23 - [DOM-based XSS Risk via innerHTML in UI components]
+**Vulnerability:** Unsafe assignments to `innerHTML` in `calibration-wizard.js` (`_clearVisual`) allowed potential injection or unsafe clearing of DOM elements.
+**Learning:** Reconstructing or clearing UI elements using `innerHTML = ''` is less secure than `textContent = ''`, which completely avoids HTML parsing contexts. Mocks for tests using `innerHTML` also require updates when transitioning to `textContent`.
+**Prevention:** Eliminate `innerHTML` from DOM update and clear loops by consistently appending safely created nodes (`Node.append`) or using text updates (`textContent = ''`).
