@@ -11,8 +11,8 @@ class MockClassList {
 
 class MockEl {
   constructor() {
+    // Security enhancement test update: innerHTML removed in favor of textContent for DOM manipulation
     this.textContent = '';
-    this.innerHTML = '';
     this.style = {};
     this.classList = new MockClassList();
     this.listeners = new Map();
