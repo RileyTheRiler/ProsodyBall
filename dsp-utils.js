@@ -552,17 +552,24 @@ export function summarizeVoiceCloud(points) {
     varLog += dl * dl * w;
     varRes += dr * dr * w;
   }
-  const mid = (arr) => (arr.length % 2
-    ? arr[(arr.length - 1) / 2]
-    : (arr[arr.length / 2 - 1] + arr[arr.length / 2]) / 2);
+  // OPTIMIZATION: Pre-allocate typed arrays and use standard loops instead of .map().sort()
+  // Eliminates intermediate array allocations and uses native C++ numerical sorting.
+  const hzArr = new Float64Array(n);
+  const resArr = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    hzArr[i] = pts[i].hz;
+    resArr[i] = clamp01(pts[i].res);
+  }
+  hzArr.sort();
+  resArr.sort();
   return {
     n,
     meanHz: Math.pow(2, meanLog),                    // geometric mean
     sdSemitones: Math.sqrt(varLog / wSum) * 12,      // log2-octaves → semitones
     meanRes,
     sdRes: Math.sqrt(varRes / wSum),
-    medianHz: mid(pts.map((p) => p.hz).sort((a, b) => a - b)),
-    medianRes: mid(pts.map((p) => clamp01(p.res)).sort((a, b) => a - b)),
+    medianHz: n % 2 ? hzArr[(n - 1) / 2] : (hzArr[n / 2 - 1] + hzArr[n / 2]) / 2,
+    medianRes: n % 2 ? resArr[(n - 1) / 2] : (resArr[n / 2 - 1] + resArr[n / 2]) / 2,
   };
 }
 
@@ -1722,12 +1729,19 @@ export function aggregateExercise(samples) {
 // the streaming form further down so a session's numbers and a fixture's cannot diverge.
 export function nucleusFromRun(run, { minFrames = 3 } = {}) {
   if (!Array.isArray(run) || run.length < minFrames) return null;
-  const vs = run.map((s) => s.value).sort((a, b) => a - b);
-  const mid = vs.length >> 1;
+  // OPTIMIZATION: Pre-allocate typed array and use standard loop instead of .map().sort()
+  // Eliminates intermediate array allocations and uses native C++ numerical sorting.
+  const len = run.length;
+  const vs = new Float64Array(len);
+  for (let i = 0; i < len; i++) {
+    vs[i] = run[i].value;
+  }
+  vs.sort();
+  const mid = len >> 1;
   return {
     vowel: run[0].vowel,
-    frames: run.length,
-    value: vs.length % 2 ? vs[mid] : (vs[mid - 1] + vs[mid]) / 2,
+    frames: len,
+    value: len % 2 ? vs[mid] : (vs[mid - 1] + vs[mid]) / 2,
     startIndex: run[0].index,
   };
 }
