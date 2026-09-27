@@ -52,6 +52,20 @@ function escapeHtml(text) {
     .replace(/'/g, "&#039;");
 }
 
+// Security enhancement: sanitize URLs to prevent DOM-based XSS when assigning to .href
+function sanitizeUrl(urlStr) {
+  try {
+    const url = new URL(urlStr);
+    if (['http:', 'https:', 'file:'].indexOf(url.protocol) === -1) {
+      return 'about:blank';
+    }
+    return url.href;
+  } catch (e) {
+    // If it fails to parse without a base, it's likely a relative URL.
+    return urlStr;
+  }
+}
+
 // Guided phrase practice curriculum + scoring now live in phrase-coach.js:
 // each phrase declares what it trains (focus), the expected phrase-final
 // contour, a coaching tip, and its leniently-graded function words.
@@ -5836,7 +5850,7 @@ export class VoxBallGame {
       iframeNotice.appendChild(document.createTextNode('This app needs microphone access, which may be blocked when embedded.'));
       iframeNotice.appendChild(document.createElement('br'));
       const link = document.createElement('a');
-      link.href = directUrl;
+      link.href = sanitizeUrl(directUrl);
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       link.textContent = 'Open in new tab for full access ↗';
@@ -6190,7 +6204,7 @@ export class VoxBallGame {
         errNode.appendChild(document.createTextNode('This requires HTTPS and a modern browser. '));
         if (isInIframe) {
           const link = document.createElement('a');
-          link.href = window.location.href;
+          link.href = sanitizeUrl(window.location.href);
           link.target = '_blank';
           link.rel = 'noopener noreferrer';
           link.textContent = 'Try opening in a new tab ↗';
@@ -6272,7 +6286,7 @@ export class VoxBallGame {
             msg.appendChild(document.createTextNode('🎙 Microphone blocked by browser — this usually happens inside iframes.'));
             msg.appendChild(document.createElement('br'));
             const link = document.createElement('a');
-            link.href = window.location.href;
+            link.href = sanitizeUrl(window.location.href);
             link.target = '_blank';
             link.rel = 'noopener noreferrer';
             link.textContent = 'Open in a new tab for full mic access ↗';
