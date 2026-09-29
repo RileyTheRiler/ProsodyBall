@@ -21,6 +21,9 @@
 ## 2026-03-15 - [Inaccessible custom toggle switches]
 **Learning:** Discovered that custom toggle switches built with `<label class="toggle-switch">` wrapping an `<input type="checkbox">` and `<span class="toggle-slider">` were inaccessible to screen readers because they lacked `aria-label` attributes on the actual `<input>` element. Also, adjacent descriptive text was using generic `<span>` tags, resulting in poor clickable hit-areas.
 **Action:** Always add an explicit `aria-label` directly to the `<input>` element inside custom toggle components. In addition, replace adjacent text elements like `<span>` with `<label for="[input-id]">` to drastically improve the clickable hit-area for mouse and touch users.
-## $(date +%Y-%m-%d) - [Inaccessible custom toggle switches due to duplicate IDs]
+## 2026-09-29 - [Inaccessible custom toggle switches due to duplicate IDs]
 **Learning:** Discovered that custom toggle switches built with `<label class="toggle-switch">` wrapping an `<input type="checkbox">` were failing because the `id` on the `<input>` was duplicated elsewhere in the DOM. This breaks the `<label for="[id]">` association, rendering the toggle invisible to screen readers and difficult to click.
 **Action:** Ensure custom toggle `<input>` elements have strictly unique IDs across the entire document so they correctly link with their `<label>` elements.
+## 2026-09-29 - [Inaccessible file inputs with display: none]
+**Learning:** Found that using `display: none` on file inputs wrapped in a label functioning as a custom upload button completely removes them from keyboard focus, making the upload functionality inaccessible to keyboard-only users.
+**Action:** When implementing custom file upload buttons (wrapping the input in a `<label>`), replace `display: none` or `hidden` on the input with `class="sr-only"` to preserve keyboard focusability. Apply a focus outline to the parent label using a tightly scoped `:has()` selector, like `label:has(#inputId:focus-visible)`. Never add `tabindex="-1"`.
