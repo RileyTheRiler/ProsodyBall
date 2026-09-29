@@ -42,6 +42,24 @@ import {
   diagnoseSilentOutput,
 } from './daf-engine.js';
 
+function sanitizeUrl(url) {
+  if (!url) return '';
+  const strUrl = String(url).trim();
+  try {
+    const parsed = new URL(strUrl, undefined);
+    const protocol = parsed.protocol.toLowerCase();
+    if (['http:', 'https:', 'file:', 'blob:'].includes(protocol)) {
+      return parsed.href;
+    }
+    return 'about:blank';
+  } catch (e) {
+    if (/^(?:javascript|data|vbscript):/i.test(strUrl)) {
+      return 'about:blank';
+    }
+    return strUrl;
+  }
+}
+
 function escapeHtml(text) {
   if (!text) return text;
   return String(text)
@@ -5836,7 +5854,7 @@ export class VoxBallGame {
       iframeNotice.appendChild(document.createTextNode('This app needs microphone access, which may be blocked when embedded.'));
       iframeNotice.appendChild(document.createElement('br'));
       const link = document.createElement('a');
-      link.href = directUrl;
+      link.href = sanitizeUrl(directUrl);
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       link.textContent = 'Open in new tab for full access ↗';
@@ -6190,7 +6208,7 @@ export class VoxBallGame {
         errNode.appendChild(document.createTextNode('This requires HTTPS and a modern browser. '));
         if (isInIframe) {
           const link = document.createElement('a');
-          link.href = window.location.href;
+          link.href = sanitizeUrl(window.location.href);
           link.target = '_blank';
           link.rel = 'noopener noreferrer';
           link.textContent = 'Try opening in a new tab ↗';
@@ -6224,7 +6242,7 @@ export class VoxBallGame {
               url.searchParams.set('ec', this.micInputPreferences.echoCancellation ? '1' : '0');
               url.searchParams.set('ns', this.micInputPreferences.noiseSuppression ? '1' : '0');
               url.searchParams.set('ag', this.micInputPreferences.autoGainControl ? '1' : '0');
-              if (phoneMicUrlEl) { phoneMicUrlEl.href = url.href; phoneMicUrlEl.textContent = url.href; phoneMicUrlEl.style.display = ''; }
+              if (phoneMicUrlEl) { phoneMicUrlEl.href = sanitizeUrl(url.href); phoneMicUrlEl.textContent = url.href; phoneMicUrlEl.style.display = ''; }
               if (phoneMicCodeEl) { phoneMicCodeEl.style.display = ''; phoneMicCodeEl.querySelector('strong').textContent = code; }
               if (phoneMicStatusEl) { phoneMicStatusEl.style.display = ''; phoneMicStatusEl.textContent = 'Waiting for phone to connect...'; }
               showError(`📱 Open on your phone: ${url.href}`);
@@ -6272,7 +6290,7 @@ export class VoxBallGame {
             msg.appendChild(document.createTextNode('🎙 Microphone blocked by browser — this usually happens inside iframes.'));
             msg.appendChild(document.createElement('br'));
             const link = document.createElement('a');
-            link.href = window.location.href;
+            link.href = sanitizeUrl(window.location.href);
             link.target = '_blank';
             link.rel = 'noopener noreferrer';
             link.textContent = 'Open in a new tab for full mic access ↗';
