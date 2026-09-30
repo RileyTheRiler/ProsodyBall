@@ -24,3 +24,7 @@
 ## $(date +%Y-%m-%d) - [Inaccessible custom toggle switches due to duplicate IDs]
 **Learning:** Discovered that custom toggle switches built with `<label class="toggle-switch">` wrapping an `<input type="checkbox">` were failing because the `id` on the `<input>` was duplicated elsewhere in the DOM. This breaks the `<label for="[id]">` association, rendering the toggle invisible to screen readers and difficult to click.
 **Action:** Ensure custom toggle `<input>` elements have strictly unique IDs across the entire document so they correctly link with their `<label>` elements.
+
+## 2026-09-30 - Audio Upload Keyboard Accessibility
+**Learning:** Using `display: none;` on file inputs breaks keyboard navigation. They must be hidden visually with a screen-reader-only class (like `.sr-only`) while remaining focusable. Since the `<label>` acts as the visible button, the CSS `:has()` pseudo-class can be used to apply focus styles to the parent label when the hidden input receives focus.
+**Action:** Replaced `display: none;` with `class="sr-only"` on the file input and added a tightly scoped `label:has(#audioUploadInput:focus-visible)` CSS rule.
