@@ -1722,12 +1722,20 @@ export function aggregateExercise(samples) {
 // the streaming form further down so a session's numbers and a fixture's cannot diverge.
 export function nucleusFromRun(run, { minFrames = 3 } = {}) {
   if (!Array.isArray(run) || run.length < minFrames) return null;
-  const vs = run.map((s) => s.value).sort((a, b) => a - b);
-  const mid = vs.length >> 1;
+
+  // ⚡ Bolt: optimize mapping and numerical sort by pre-allocating a typed array
+  const len = run.length;
+  const vs = new Float64Array(len);
+  for (let i = 0; i < len; i++) {
+    vs[i] = run[i].value;
+  }
+  vs.sort();
+
+  const mid = len >> 1;
   return {
     vowel: run[0].vowel,
-    frames: run.length,
-    value: vs.length % 2 ? vs[mid] : (vs[mid - 1] + vs[mid]) / 2,
+    frames: len,
+    value: len % 2 ? vs[mid] : (vs[mid - 1] + vs[mid]) / 2,
     startIndex: run[0].index,
   };
 }
