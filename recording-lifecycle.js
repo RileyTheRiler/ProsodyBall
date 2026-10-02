@@ -15,17 +15,24 @@ export const RECORDING_LIMITS = Object.freeze({
 });
 
 export function retainedAudioBytes(recordings) {
-  return (Array.isArray(recordings) ? recordings : []).reduce(
-    (total, recording) => total + Math.max(0, Number(recording?.blob?.size) || 0),
-    0,
-  );
+  // ⚡ Bolt: Replace reduce with traditional loop for performance
+  const recs = Array.isArray(recordings) ? recordings : [];
+  let total = 0;
+  for (let i = 0; i < recs.length; i++) {
+    total += Math.max(0, Number(recs[i]?.blob?.size) || 0);
+  }
+  return total;
 }
 
 export function retainedMetricSamples(recordings) {
-  return (Array.isArray(recordings) ? recordings : []).reduce(
-    (total, recording) => total + (Array.isArray(recording?.contourSeries) ? recording.contourSeries.length : 0),
-    0,
-  );
+  // ⚡ Bolt: Replace reduce with traditional loop for performance
+  const recs = Array.isArray(recordings) ? recordings : [];
+  let total = 0;
+  for (let i = 0; i < recs.length; i++) {
+    const series = recs[i]?.contourSeries;
+    total += Array.isArray(series) ? series.length : 0;
+  }
+  return total;
 }
 
 export function recordingCapacity(recordings, limits = RECORDING_LIMITS) {
