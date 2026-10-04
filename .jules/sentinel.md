@@ -51,3 +51,8 @@
 **Vulnerability:** Safe DOM construction using `document.createDocumentFragment()` and `.append()` was not consistently applied in `app.js` (e.g. `_showSessionSummary`, `renderTeleprompter`) or `calibration-wizard.js`. This allowed potential injection if dynamic data was ever used within loops with string concatenation, and led to conflicts with `innerHTML`.
 **Learning:** Relying on `innerHTML` for UI construction is inherently risky. Furthermore, manual DOM mocks in tests (like `MockEl`) require robust state initialization (e.g., `this.childNodes`) to correctly support safe DOM traversal methods like `.append()`.
 **Prevention:** Replace all complex `innerHTML` assignments with safe programmatic elements (`DocumentFragment`, `.createElement()`, `.textContent`). Ensure any manual DOM mocks fully implement necessary Node properties.
+
+## 2024-10-04 - [DOM-based XSS Risk via innerHTML clearing]
+**Vulnerability:** `innerHTML = ''` was used in `calibration-wizard.js` (`_clearVisual`) to clear DOM content. While functionally correct, using `innerHTML` triggers Trusted Types violations in strict CSP environments.
+**Learning:** Even empty string assignments to `innerHTML` are flagged by SAST tools and blocked by Trusted Types because `innerHTML` parses content as HTML.
+**Prevention:** Always use `textContent = ''` for clearing DOM element content instead of `innerHTML = ''` to guarantee CSP compatibility and remove unnecessary attack surfaces.
