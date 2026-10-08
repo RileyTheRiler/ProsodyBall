@@ -2368,10 +2368,24 @@ export const WINDOW_HETEROGENEITY_CV = 0.05;
 export function windowHomogeneity(entries) {
   const usable = (Array.isArray(entries) ? entries : []).filter((e) => e && e.deltaF > 0 && e.weight > 0);
   if (usable.length < 2) return { cv: 0, n: usable.length, homogeneous: true };
-  const total = usable.reduce((s, e) => s + e.weight, 0);
-  const mean = usable.reduce((s, e) => s + e.deltaF * e.weight, 0) / total;
+
+  // Performance optimization: Replace reduce chains with a single-pass traditional for loop
+  // to avoid closure allocation overhead. Using E[X^2] - (E[X])^2 to compute variance in one pass.
+  let total = 0;
+  let sumW = 0;
+  let sumWSq = 0;
+  for (let i = 0; i < usable.length; i++) {
+    const e = usable[i];
+    total += e.weight;
+    sumW += e.deltaF * e.weight;
+    sumWSq += e.weight * e.deltaF * e.deltaF;
+  }
+
+  const mean = total > 0 ? sumW / total : 0;
   if (!(mean > 0)) return { cv: 0, n: usable.length, homogeneous: true };
-  const varW = usable.reduce((s, e) => s + e.weight * (e.deltaF - mean) ** 2, 0) / total;
+
+  const varW = Math.max(0, (sumWSq / total) - (mean * mean));
+
   const cv = Math.sqrt(varW) / mean;
   return { cv, n: usable.length, mean, homogeneous: cv < WINDOW_HETEROGENEITY_CV };
 }
