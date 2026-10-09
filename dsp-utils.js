@@ -2366,14 +2366,37 @@ export function spectralBrightness(centroidHz, {
 export const WINDOW_HETEROGENEITY_CV = 0.05;
 
 export function windowHomogeneity(entries) {
-  const usable = (Array.isArray(entries) ? entries : []).filter((e) => e && e.deltaF > 0 && e.weight > 0);
-  if (usable.length < 2) return { cv: 0, n: usable.length, homogeneous: true };
-  const total = usable.reduce((s, e) => s + e.weight, 0);
-  const mean = usable.reduce((s, e) => s + e.deltaF * e.weight, 0) / total;
-  if (!(mean > 0)) return { cv: 0, n: usable.length, homogeneous: true };
-  const varW = usable.reduce((s, e) => s + e.weight * (e.deltaF - mean) ** 2, 0) / total;
+  const arr = Array.isArray(entries) ? entries : [];
+  let n = 0;
+  let total = 0;
+  let sumDeltaFWeight = 0;
+
+  // ⚡ Bolt: Replace .filter() and multiple .reduce() passes with single-pass and dual-pass
+  // traditional for-loops to eliminate closure allocation overhead and intermediate arrays.
+  for (let i = 0; i < arr.length; i++) {
+    const e = arr[i];
+    if (e && e.deltaF > 0 && e.weight > 0) {
+      n++;
+      total += e.weight;
+      sumDeltaFWeight += e.deltaF * e.weight;
+    }
+  }
+
+  if (n < 2) return { cv: 0, n, homogeneous: true };
+  const mean = sumDeltaFWeight / total;
+  if (!(mean > 0)) return { cv: 0, n, homogeneous: true };
+
+  let sumSqDiffWeight = 0;
+  for (let i = 0; i < arr.length; i++) {
+    const e = arr[i];
+    if (e && e.deltaF > 0 && e.weight > 0) {
+      sumSqDiffWeight += e.weight * (e.deltaF - mean) ** 2;
+    }
+  }
+
+  const varW = sumSqDiffWeight / total;
   const cv = Math.sqrt(varW) / mean;
-  return { cv, n: usable.length, mean, homogeneous: cv < WINDOW_HETEROGENEITY_CV };
+  return { cv, n, mean, homogeneous: cv < WINDOW_HETEROGENEITY_CV };
 }
 
 // ρ for the ten P&B vowels in the pooled frame, i.e. Σ L_i r_i when the scale is the speaker's
