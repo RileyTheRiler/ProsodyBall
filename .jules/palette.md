@@ -24,3 +24,6 @@
 ## $(date +%Y-%m-%d) - [Inaccessible custom toggle switches due to duplicate IDs]
 **Learning:** Discovered that custom toggle switches built with `<label class="toggle-switch">` wrapping an `<input type="checkbox">` were failing because the `id` on the `<input>` was duplicated elsewhere in the DOM. This breaks the `<label for="[id]">` association, rendering the toggle invisible to screen readers and difficult to click.
 **Action:** Ensure custom toggle `<input>` elements have strictly unique IDs across the entire document so they correctly link with their `<label>` elements.
+## 2026-10-12 - [Inaccessible File Inputs via display: none]
+**Learning:** Found that using `style="display: none;"` on an `<input type="file">` element wrapped in a `<label>` removes it from the keyboard focus flow entirely, making it inaccessible to keyboard and screen reader users.
+**Action:** When styling file inputs wrapped in labels, replace `display: none` with the `sr-only` class to visually hide the input while keeping it focusable. Use the `:has()` CSS pseudo-class (e.g., `label:has(#inputId:focus-visible)`) to explicitly surface the focus ring on the visible parent label.
