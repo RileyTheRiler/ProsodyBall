@@ -24,3 +24,6 @@
 ## $(date +%Y-%m-%d) - [Inaccessible custom toggle switches due to duplicate IDs]
 **Learning:** Discovered that custom toggle switches built with `<label class="toggle-switch">` wrapping an `<input type="checkbox">` were failing because the `id` on the `<input>` was duplicated elsewhere in the DOM. This breaks the `<label for="[id]">` association, rendering the toggle invisible to screen readers and difficult to click.
 **Action:** Ensure custom toggle `<input>` elements have strictly unique IDs across the entire document so they correctly link with their `<label>` elements.
+## $(date +%Y-%m-%d) - [Inaccessible disconnected inputs and file inputs]
+**Learning:** Discovered that even when inputs are wrapped in `<label>` elements, explicitly mapping them using `for="[id]"` is still required for best screen reader compatibility. Additionally, hidden inputs such as `<input type="file" hidden>` lack accessibility names, which although hidden, can trigger strict automated a11y auditing tools.
+**Action:** Always map inputs to labels explicitly with `for="[id]"`, even if nested. Add `aria-label`s to inputs that perform important actions, like file uploads, even if structurally hidden, to satisfy robust auditing standards.
