@@ -12,7 +12,6 @@ class MockClassList {
 class MockEl {
   constructor() {
     this.textContent = '';
-    this.innerHTML = '';
     this.style = {};
     this.classList = new MockClassList();
     this.listeners = new Map();
