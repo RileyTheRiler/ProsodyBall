@@ -2366,14 +2366,38 @@ export function spectralBrightness(centroidHz, {
 export const WINDOW_HETEROGENEITY_CV = 0.05;
 
 export function windowHomogeneity(entries) {
-  const usable = (Array.isArray(entries) ? entries : []).filter((e) => e && e.deltaF > 0 && e.weight > 0);
-  if (usable.length < 2) return { cv: 0, n: usable.length, homogeneous: true };
-  const total = usable.reduce((s, e) => s + e.weight, 0);
-  const mean = usable.reduce((s, e) => s + e.deltaF * e.weight, 0) / total;
-  if (!(mean > 0)) return { cv: 0, n: usable.length, homogeneous: true };
-  const varW = usable.reduce((s, e) => s + e.weight * (e.deltaF - mean) ** 2, 0) / total;
+  const arr = Array.isArray(entries) ? entries : [];
+  let n = 0;
+  let total = 0;
+  let wSum = 0;
+
+  // Single pass filtering and sum calculation to avoid closure allocation overhead in hot path
+  for (let i = 0; i < arr.length; i++) {
+    const e = arr[i];
+    if (e && e.deltaF > 0 && e.weight > 0) {
+      n++;
+      total += e.weight;
+      wSum += e.deltaF * e.weight;
+    }
+  }
+
+  if (n < 2) return { cv: 0, n, homogeneous: true };
+
+  const mean = wSum / total;
+  if (!(mean > 0)) return { cv: 0, n, homogeneous: true };
+
+  let varW = 0;
+  // Second pass for variance calculation to avoid closure allocation overhead
+  for (let i = 0; i < arr.length; i++) {
+    const e = arr[i];
+    if (e && e.deltaF > 0 && e.weight > 0) {
+      varW += e.weight * (e.deltaF - mean) ** 2;
+    }
+  }
+  varW /= total;
+
   const cv = Math.sqrt(varW) / mean;
-  return { cv, n: usable.length, mean, homogeneous: cv < WINDOW_HETEROGENEITY_CV };
+  return { cv, n, mean, homogeneous: cv < WINDOW_HETEROGENEITY_CV };
 }
 
 // ρ for the ten P&B vowels in the pooled frame, i.e. Σ L_i r_i when the scale is the speaker's
