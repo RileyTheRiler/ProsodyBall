@@ -2368,10 +2368,26 @@ export const WINDOW_HETEROGENEITY_CV = 0.05;
 export function windowHomogeneity(entries) {
   const usable = (Array.isArray(entries) ? entries : []).filter((e) => e && e.deltaF > 0 && e.weight > 0);
   if (usable.length < 2) return { cv: 0, n: usable.length, homogeneous: true };
-  const total = usable.reduce((s, e) => s + e.weight, 0);
-  const mean = usable.reduce((s, e) => s + e.deltaF * e.weight, 0) / total;
+
+  // ⚡ Bolt: Replaced multiple .reduce() calls with traditional for-loops to eliminate closure
+  // allocation overhead in this DSP hot path.
+  let total = 0;
+  let meanAcc = 0;
+  for (let i = 0; i < usable.length; i++) {
+    const e = usable[i];
+    total += e.weight;
+    meanAcc += e.deltaF * e.weight;
+  }
+  const mean = meanAcc / total;
   if (!(mean > 0)) return { cv: 0, n: usable.length, homogeneous: true };
-  const varW = usable.reduce((s, e) => s + e.weight * (e.deltaF - mean) ** 2, 0) / total;
+
+  let varWAcc = 0;
+  for (let i = 0; i < usable.length; i++) {
+    const e = usable[i];
+    varWAcc += e.weight * (e.deltaF - mean) ** 2;
+  }
+  const varW = varWAcc / total;
+
   const cv = Math.sqrt(varW) / mean;
   return { cv, n: usable.length, mean, homogeneous: cv < WINDOW_HETEROGENEITY_CV };
 }
