@@ -45,7 +45,7 @@
   },
   "devDependencies": {
     "node-wav": "^0.0.2",
-    "puppeteer": "^24.40.0",
+    "puppeteer": "^25.14.0",
     "serve": "^14.2.0"
   },
   "pnpm": {
