@@ -4776,7 +4776,7 @@
         <button class="btn btn-voice-play" id="voicePlayBtn" disabled title="Play your last recording"><span aria-hidden="true">▶</span><span class="voice-play-label">&nbsp;Play</span></button>
         <button class="btn btn-daf" id="dafBtn" title="Delayed Auditory Feedback" aria-label="Open Delayed Auditory Feedback settings" aria-expanded="false" aria-controls="dafPanel">DAF</button>
         <button class="btn btn-rec" id="recBtn"><span class="rec-dot"></span><span class="rec-label">Rec</span></button>
-        <button class="btn btn-recordings" id="recordingsBtn" aria-expanded="false" aria-controls="recordingsDrawer"><span>Clips&nbsp;</span><span class="badge" id="recBadge">0</span></button>
+        <button class="btn btn-recordings" id="recordingsBtn" aria-label="View Clips recordings" aria-expanded="false" aria-controls="recordingsDrawer"><span>Clips&nbsp;</span><span class="badge" id="recBadge">0</span></button>
       </div>
       <div class="hud-controls hud-secondary" aria-label="Secondary settings">
         <button class="btn btn-cb" id="settingsBtn" title="Open Settings" aria-label="Open Settings" aria-expanded="false" aria-controls="settingsPanel">
@@ -4969,7 +4969,7 @@
         </select>
         <div id="bulbBtFields" class="bulb-fields" style="display:none">
           <button class="btn btn-help btn-fill" id="bulbConnectBtn" aria-label="Connect to a Bluetooth bulb" title="Pick your bulb over Bluetooth">Connect bulb (Bluetooth)</button>
-          <label class="bulb-reconnect"><input id="bulbAutoReconnect" type="checkbox"> Reconnect automatically next session</label>
+          <label class="bulb-reconnect" for="bulbAutoReconnect"><input id="bulbAutoReconnect" type="checkbox" aria-label="Reconnect automatically next session"> Reconnect automatically next session</label>
         </div>
         <div id="bulbGenericbleFields" class="bulb-fields" style="display:none">
           <input id="bulbBleNamePrefix" class="bulb-input" type="text" placeholder="Advanced: name filter (optional)" aria-label="Bluetooth device name filter">
