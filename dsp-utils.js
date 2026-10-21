@@ -2368,10 +2368,27 @@ export const WINDOW_HETEROGENEITY_CV = 0.05;
 export function windowHomogeneity(entries) {
   const usable = (Array.isArray(entries) ? entries : []).filter((e) => e && e.deltaF > 0 && e.weight > 0);
   if (usable.length < 2) return { cv: 0, n: usable.length, homogeneous: true };
-  const total = usable.reduce((s, e) => s + e.weight, 0);
-  const mean = usable.reduce((s, e) => s + e.deltaF * e.weight, 0) / total;
+
+  // ⚡ Bolt Optimization: Replaced 3x .reduce() with traditional for-loops.
+  // This avoids closure allocation overhead and reduces GC pressure in this hot path
+  // which processes large rolling windows of audio frames.
+  let total = 0;
+  let sumDeltaF = 0;
+  for (let i = 0; i < usable.length; i++) {
+    const e = usable[i];
+    total += e.weight;
+    sumDeltaF += e.deltaF * e.weight;
+  }
+  const mean = total > 0 ? sumDeltaF / total : 0;
   if (!(mean > 0)) return { cv: 0, n: usable.length, homogeneous: true };
-  const varW = usable.reduce((s, e) => s + e.weight * (e.deltaF - mean) ** 2, 0) / total;
+
+  let varW = 0;
+  for (let i = 0; i < usable.length; i++) {
+    const e = usable[i];
+    varW += e.weight * (e.deltaF - mean) ** 2;
+  }
+  varW /= total;
+
   const cv = Math.sqrt(varW) / mean;
   return { cv, n: usable.length, mean, homogeneous: cv < WINDOW_HETEROGENEITY_CV };
 }
