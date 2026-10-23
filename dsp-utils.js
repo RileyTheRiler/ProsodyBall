@@ -1762,8 +1762,16 @@ export function aggregateSpeech(samples, { minFrames = 3 } = {}) {
   if (!nuclei.length) return { value: 0, n: 0, nuclei: 0, heldFrames: 0 };
   // Equal weight per nucleus — the whole point. A 240-frame hold and a 4-frame /ɪ/ in
   // "the rain" each contribute exactly one number.
-  const value = nuclei.reduce((a, x) => a + x.value, 0) / nuclei.length;
-  return { value, n: nuclei.length, nuclei: nuclei.length, heldFrames: nuclei.reduce((a, x) => a + x.frames, 0) };
+  // Performance optimization: Replaced double reduce with a single-pass traditional
+  // for loop to avoid closure allocation overhead in this critical DSP path.
+  let sumValue = 0;
+  let sumFrames = 0;
+  for (let i = 0; i < nuclei.length; i++) {
+    sumValue += nuclei[i].value;
+    sumFrames += nuclei[i].frames;
+  }
+  const value = sumValue / nuclei.length;
+  return { value, n: nuclei.length, nuclei: nuclei.length, heldFrames: sumFrames };
 }
 
 // Convenience: both modes over one stream, so a caller cannot accidentally compute them from
