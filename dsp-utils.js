@@ -1333,17 +1333,25 @@ export function resonanceAbsoluteV2(deltaFScaleHz, referenceDeltaFHz = RESONANCE
 // which callers must not read as "a very short tract".
 export function poolFormantScale(entries, { minSamples = 8 } = {}) {
   if (!Array.isArray(entries)) return { deltaF: 0, n: 0, weight: 0 };
-  const usable = entries.filter((e) => e && e.deltaF > 0 && e.weight > 0);
-  if (usable.length < minSamples) return { deltaF: 0, n: usable.length, weight: 0 };
-  const sorted = usable.slice().sort((a, b) => a.deltaF - b.deltaF);
-  const total = sorted.reduce((s, e) => s + e.weight, 0);
-  let acc = 0;
-  for (const e of sorted) {
-    acc += e.weight;
-    if (acc >= total / 2) return { deltaF: e.deltaF, n: sorted.length, weight: total };
+  const usable = [];
+  let total = 0;
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (e && e.deltaF > 0 && e.weight > 0) {
+      usable.push(e);
+      total += e.weight;
+    }
   }
-  const last = sorted[sorted.length - 1];
-  return { deltaF: last.deltaF, n: sorted.length, weight: total };
+  if (usable.length < minSamples) return { deltaF: 0, n: usable.length, weight: 0 };
+  usable.sort((a, b) => a.deltaF - b.deltaF);
+  let acc = 0;
+  for (let i = 0; i < usable.length; i++) {
+    const e = usable[i];
+    acc += e.weight;
+    if (acc >= total / 2) return { deltaF: e.deltaF, n: usable.length, weight: total };
+  }
+  const last = usable[usable.length - 1];
+  return { deltaF: last.deltaF, n: usable.length, weight: total };
 }
 
 // --- resonanceAbsolute v1, as a pure function ------------------------------
@@ -1762,8 +1770,14 @@ export function aggregateSpeech(samples, { minFrames = 3 } = {}) {
   if (!nuclei.length) return { value: 0, n: 0, nuclei: 0, heldFrames: 0 };
   // Equal weight per nucleus — the whole point. A 240-frame hold and a 4-frame /ɪ/ in
   // "the rain" each contribute exactly one number.
-  const value = nuclei.reduce((a, x) => a + x.value, 0) / nuclei.length;
-  return { value, n: nuclei.length, nuclei: nuclei.length, heldFrames: nuclei.reduce((a, x) => a + x.frames, 0) };
+  let totalValue = 0;
+  let heldFrames = 0;
+  for (let i = 0; i < nuclei.length; i++) {
+    totalValue += nuclei[i].value;
+    heldFrames += nuclei[i].frames;
+  }
+  const value = totalValue / nuclei.length;
+  return { value, n: nuclei.length, nuclei: nuclei.length, heldFrames };
 }
 
 // Convenience: both modes over one stream, so a caller cannot accidentally compute them from
@@ -2366,14 +2380,30 @@ export function spectralBrightness(centroidHz, {
 export const WINDOW_HETEROGENEITY_CV = 0.05;
 
 export function windowHomogeneity(entries) {
-  const usable = (Array.isArray(entries) ? entries : []).filter((e) => e && e.deltaF > 0 && e.weight > 0);
-  if (usable.length < 2) return { cv: 0, n: usable.length, homogeneous: true };
-  const total = usable.reduce((s, e) => s + e.weight, 0);
-  const mean = usable.reduce((s, e) => s + e.deltaF * e.weight, 0) / total;
-  if (!(mean > 0)) return { cv: 0, n: usable.length, homogeneous: true };
-  const varW = usable.reduce((s, e) => s + e.weight * (e.deltaF - mean) ** 2, 0) / total;
-  const cv = Math.sqrt(varW) / mean;
-  return { cv, n: usable.length, mean, homogeneous: cv < WINDOW_HETEROGENEITY_CV };
+  if (!Array.isArray(entries)) return { cv: 0, n: 0, homogeneous: true };
+  let n = 0;
+  let total = 0;
+  let weightedSum = 0;
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (e && e.deltaF > 0 && e.weight > 0) {
+      n++;
+      total += e.weight;
+      weightedSum += e.deltaF * e.weight;
+    }
+  }
+  if (n < 2) return { cv: 0, n, homogeneous: true };
+  const mean = weightedSum / total;
+  if (!(mean > 0)) return { cv: 0, n, homogeneous: true };
+  let varWSum = 0;
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (e && e.deltaF > 0 && e.weight > 0) {
+      varWSum += e.weight * (e.deltaF - mean) ** 2;
+    }
+  }
+  const cv = Math.sqrt(varWSum / total) / mean;
+  return { cv, n, mean, homogeneous: cv < WINDOW_HETEROGENEITY_CV };
 }
 
 // ρ for the ten P&B vowels in the pooled frame, i.e. Σ L_i r_i when the scale is the speaker's
