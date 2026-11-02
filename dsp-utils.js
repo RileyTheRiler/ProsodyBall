@@ -2368,10 +2368,17 @@ export const WINDOW_HETEROGENEITY_CV = 0.05;
 export function windowHomogeneity(entries) {
   const usable = (Array.isArray(entries) ? entries : []).filter((e) => e && e.deltaF > 0 && e.weight > 0);
   if (usable.length < 2) return { cv: 0, n: usable.length, homogeneous: true };
-  const total = usable.reduce((s, e) => s + e.weight, 0);
-  const mean = usable.reduce((s, e) => s + e.deltaF * e.weight, 0) / total;
+  let sumW = 0, sumWX = 0, sumWX2 = 0;
+  for (const e of usable) {
+    sumW += e.weight;
+    const wx = e.deltaF * e.weight;
+    sumWX += wx;
+    sumWX2 += e.deltaF * wx;
+  }
+  const mean = sumW > 0 ? sumWX / sumW : 0;
   if (!(mean > 0)) return { cv: 0, n: usable.length, homogeneous: true };
-  const varW = usable.reduce((s, e) => s + e.weight * (e.deltaF - mean) ** 2, 0) / total;
+  let varW = (sumWX2 / sumW) - (mean * mean);
+  if (varW < 0) varW = 0;
   const cv = Math.sqrt(varW) / mean;
   return { cv, n: usable.length, mean, homogeneous: cv < WINDOW_HETEROGENEITY_CV };
 }
