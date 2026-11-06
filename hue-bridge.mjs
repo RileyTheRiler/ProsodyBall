@@ -145,7 +145,8 @@ function serveStatic(req, res) {
   const urlPath = decodeURIComponent(req.url.split('?')[0]);
   let rel = urlPath === '/' ? '/index.html' : urlPath;
   const filePath = path.normalize(path.join(__dirname, rel));
-  if (!filePath.startsWith(__dirname)) { res.writeHead(403); res.end(); return; }
+  const safeDir = path.join(__dirname, path.sep);
+  if (!filePath.startsWith(safeDir)) { res.writeHead(403); res.end(); return; }
   fs.readFile(filePath, (err, data) => {
     if (err) { res.writeHead(404); res.end('Not found'); return; }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(filePath)] || 'application/octet-stream' });
