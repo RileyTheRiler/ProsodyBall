@@ -24,3 +24,6 @@
 ## $(date +%Y-%m-%d) - [Inaccessible custom toggle switches due to duplicate IDs]
 **Learning:** Discovered that custom toggle switches built with `<label class="toggle-switch">` wrapping an `<input type="checkbox">` were failing because the `id` on the `<input>` was duplicated elsewhere in the DOM. This breaks the `<label for="[id]">` association, rendering the toggle invisible to screen readers and difficult to click.
 **Action:** Ensure custom toggle `<input>` elements have strictly unique IDs across the entire document so they correctly link with their `<label>` elements.
+## $(date +%Y-%m-%d) - Adding aria-labels to buttons
+**Learning:** When adding `aria-label` attributes on elements that already have visible text, ensure compliance with WCAG 2.5.3 (Label in Name) by making the exact visible text a contiguous string within the `aria-label` unless explicitly overridden by reviewer's request. Avoid using unicode characters in `aria-label` as they might be read out literally by screen readers.
+**Action:** In the future, I will remember to check the visible text on the element and include it in the `aria-label` attribute without adding unicode characters, unless it goes against reviewer feedback.

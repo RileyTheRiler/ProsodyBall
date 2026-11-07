@@ -4773,9 +4773,9 @@
           <input type="file" id="audioUploadInput" accept="audio/*" style="display: none;">
         </label>
         <button class="btn btn-voice-rec" id="voiceRecBtn" aria-pressed="false" title="Record your voice" aria-label="Record your voice"><span class="rec-dot"></span></button>
-        <button class="btn btn-voice-play" id="voicePlayBtn" disabled title="Play your last recording"><span aria-hidden="true">▶</span><span class="voice-play-label">&nbsp;Play</span></button>
+        <button class="btn btn-voice-play" id="voicePlayBtn" aria-label="Play last recording" disabled title="Play your last recording"><span aria-hidden="true">▶</span><span class="voice-play-label">&nbsp;Play</span></button>
         <button class="btn btn-daf" id="dafBtn" title="Delayed Auditory Feedback" aria-label="Open Delayed Auditory Feedback settings" aria-expanded="false" aria-controls="dafPanel">DAF</button>
-        <button class="btn btn-rec" id="recBtn"><span class="rec-dot"></span><span class="rec-label">Rec</span></button>
+        <button class="btn btn-rec" id="recBtn" aria-label="Record session"><span class="rec-dot"></span><span class="rec-label">Rec</span></button>
         <button class="btn btn-recordings" id="recordingsBtn" aria-expanded="false" aria-controls="recordingsDrawer"><span>Clips&nbsp;</span><span class="badge" id="recBadge">0</span></button>
       </div>
       <div class="hud-controls hud-secondary" aria-label="Secondary settings">
@@ -5228,7 +5228,7 @@
       <div class="practice-actions">
         <button class="btn practice-record" id="practiceRecordBtn"><span class="rec-dot"></span>&nbsp;Record</button>
         <button class="btn" id="practiceSkipBtn">Skip</button>
-        <button class="btn" id="practicePlayBtn" hidden>▶ Play</button>
+        <button class="btn" id="practicePlayBtn" aria-label="Play practice take" hidden>▶ Play</button>
         <button class="btn" id="practiceSpeakBtn" hidden aria-label="Hear a spoken summary of your results">🔊 Hear feedback</button>
         <button class="btn" id="practiceRetryBtn" hidden>Retry</button>
         <button class="btn practice-record" id="practiceNextBtn" hidden>Next phrase</button>
