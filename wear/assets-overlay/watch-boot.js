@@ -361,21 +361,56 @@
 
     var overlay = document.createElement('div');
     overlay.className = 'watch-start';
-    overlay.innerHTML =
-      '<button class="watch-gear" id="watchGear" aria-label="Settings">⚙</button>' +
-      '<div class="watch-start__ball" aria-hidden="true"></div>' +
-      '<div class="watch-start__title">Vox Arcade</div>' +
-      '<button class="watch-choice" id="watchChoiceBall">' +
-        '<span class="watch-choice__icon" aria-hidden="true">●</span>' +
-        '<span class="watch-choice__label">Vox Ball</span>' +
-        '<span class="watch-choice__sub">Visual game</span>' +
-      '</button>' +
-      '<button class="watch-choice" id="watchChoiceNecklace">' +
-        '<span class="watch-choice__icon" aria-hidden="true">📿</span>' +
-        '<span class="watch-choice__label">Necklace</span>' +
-        '<span class="watch-choice__sub">Eyes-free buzz</span>' +
-      '</button>' +
-      '<div class="watch-start__hint" id="watchStartHint"></div>';
+
+    var gear = document.createElement('button');
+    gear.className = 'watch-gear';
+    gear.id = 'watchGear';
+    gear.textContent = '⚙';
+    gear.setAttribute('aria-label', 'Settings');
+
+    var ball = document.createElement('div');
+    ball.className = 'watch-start__ball';
+    ball.setAttribute('aria-hidden', 'true');
+
+    var title = document.createElement('div');
+    title.className = 'watch-start__title';
+    title.textContent = 'Vox Arcade';
+
+    var btnBall = document.createElement('button');
+    btnBall.className = 'watch-choice';
+    btnBall.id = 'watchChoiceBall';
+    var btnBallIcon = document.createElement('span');
+    btnBallIcon.className = 'watch-choice__icon';
+    btnBallIcon.textContent = '●';
+    btnBallIcon.setAttribute('aria-hidden', 'true');
+    var btnBallLabel = document.createElement('span');
+    btnBallLabel.className = 'watch-choice__label';
+    btnBallLabel.textContent = 'Vox Ball';
+    var btnBallSub = document.createElement('span');
+    btnBallSub.className = 'watch-choice__sub';
+    btnBallSub.textContent = 'Visual game';
+    btnBall.append(btnBallIcon, btnBallLabel, btnBallSub);
+
+    var btnNecklace = document.createElement('button');
+    btnNecklace.className = 'watch-choice';
+    btnNecklace.id = 'watchChoiceNecklace';
+    var btnNecklaceIcon = document.createElement('span');
+    btnNecklaceIcon.className = 'watch-choice__icon';
+    btnNecklaceIcon.textContent = '📿';
+    btnNecklaceIcon.setAttribute('aria-hidden', 'true');
+    var btnNecklaceLabel = document.createElement('span');
+    btnNecklaceLabel.className = 'watch-choice__label';
+    btnNecklaceLabel.textContent = 'Necklace';
+    var btnNecklaceSub = document.createElement('span');
+    btnNecklaceSub.className = 'watch-choice__sub';
+    btnNecklaceSub.textContent = 'Eyes-free buzz';
+    btnNecklace.append(btnNecklaceIcon, btnNecklaceLabel, btnNecklaceSub);
+
+    var hint = document.createElement('div');
+    hint.className = 'watch-start__hint';
+    hint.id = 'watchStartHint';
+
+    overlay.append(gear, ball, title, btnBall, btnNecklace, hint);
     document.body.appendChild(overlay);
 
     overlay.querySelector('#watchGear').addEventListener('click', function (e) {
