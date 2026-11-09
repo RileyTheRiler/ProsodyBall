@@ -361,21 +361,34 @@
 
     var overlay = document.createElement('div');
     overlay.className = 'watch-start';
-    overlay.innerHTML =
-      '<button class="watch-gear" id="watchGear" aria-label="Settings">⚙</button>' +
-      '<div class="watch-start__ball" aria-hidden="true"></div>' +
-      '<div class="watch-start__title">Vox Arcade</div>' +
-      '<button class="watch-choice" id="watchChoiceBall">' +
-        '<span class="watch-choice__icon" aria-hidden="true">●</span>' +
-        '<span class="watch-choice__label">Vox Ball</span>' +
-        '<span class="watch-choice__sub">Visual game</span>' +
-      '</button>' +
-      '<button class="watch-choice" id="watchChoiceNecklace">' +
-        '<span class="watch-choice__icon" aria-hidden="true">📿</span>' +
-        '<span class="watch-choice__label">Necklace</span>' +
-        '<span class="watch-choice__sub">Eyes-free buzz</span>' +
-      '</button>' +
-      '<div class="watch-start__hint" id="watchStartHint"></div>';
+
+    var gear = Object.assign(document.createElement('button'), { className: 'watch-gear', id: 'watchGear', textContent: '⚙' });
+    gear.setAttribute('aria-label', 'Settings');
+    var ball = Object.assign(document.createElement('div'), { className: 'watch-start__ball' });
+    ball.setAttribute('aria-hidden', 'true');
+    var title = Object.assign(document.createElement('div'), { className: 'watch-start__title', textContent: 'Vox Arcade' });
+
+    var cBall = Object.assign(document.createElement('button'), { className: 'watch-choice', id: 'watchChoiceBall' });
+    var cBallIcon = Object.assign(document.createElement('span'), { className: 'watch-choice__icon', textContent: '●' });
+    cBallIcon.setAttribute('aria-hidden', 'true');
+    cBall.append(
+      cBallIcon,
+      Object.assign(document.createElement('span'), { className: 'watch-choice__label', textContent: 'Vox Ball' }),
+      Object.assign(document.createElement('span'), { className: 'watch-choice__sub', textContent: 'Visual game' })
+    );
+
+    var cNeck = Object.assign(document.createElement('button'), { className: 'watch-choice', id: 'watchChoiceNecklace' });
+    var cNeckIcon = Object.assign(document.createElement('span'), { className: 'watch-choice__icon', textContent: '📿' });
+    cNeckIcon.setAttribute('aria-hidden', 'true');
+    cNeck.append(
+      cNeckIcon,
+      Object.assign(document.createElement('span'), { className: 'watch-choice__label', textContent: 'Necklace' }),
+      Object.assign(document.createElement('span'), { className: 'watch-choice__sub', textContent: 'Eyes-free buzz' })
+    );
+
+    var hint = Object.assign(document.createElement('div'), { className: 'watch-start__hint', id: 'watchStartHint' });
+
+    overlay.append(gear, ball, title, cBall, cNeck, hint);
     document.body.appendChild(overlay);
 
     overlay.querySelector('#watchGear').addEventListener('click', function (e) {
